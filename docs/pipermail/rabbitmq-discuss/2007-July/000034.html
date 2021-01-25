@@ -1,0 +1,155 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Multiple consumers
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20Multiple%20consumers&In-Reply-To=lyir8tmzr1.fsf%40tanto.lshift.net">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000029.html">
+   <LINK REL="Next"  HREF="000038.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Multiple consumers</H1>
+    <B>Ben Hood</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20Multiple%20consumers&In-Reply-To=lyir8tmzr1.fsf%40tanto.lshift.net"
+       TITLE="[rabbitmq-discuss] Multiple consumers">0x6e6562 at gmail.com
+       </A><BR>
+    <I>Mon Jul  9 16:13:38 BST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000029.html">[rabbitmq-discuss] Multiple consumers
+</A></li>
+        <LI>Next message: <A HREF="000038.html">[rabbitmq-discuss] Multiple consumers
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#34">[ date ]</a>
+              <a href="thread.html#34">[ thread ]</a>
+              <a href="subject.html#34">[ subject ]</a>
+              <a href="author.html#34">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Matthias,
+
+&gt;<i> I gather that what you are trying to accomplish is to pull items off a
+</I>&gt;<i> queue and process them concurrently, correct?
+</I>
+Correct.
+
+&gt;<i>
+</I>&gt;<i> The Java client libraries use one thread per connection, and the
+</I>&gt;<i> handleDelivery callback is executed in that. So in order to process
+</I>&gt;<i> messages concurrently you need to do one of the following:
+</I>&gt;<i>
+</I>&gt;<i> - use multiple connections
+</I>&gt;<i>
+</I>&gt;<i> - spawn a thread, perhaps from a pool, in handleDelivery
+</I>&gt;<i>
+</I>&gt;<i> - introduce some Java queuing / synchronisation to let handleDelivery
+</I>&gt;<i> pass messages to a pool of worker threads.
+</I>&gt;<i>
+</I>&gt;<i> There is some support for the last method in the next version of the
+</I>&gt;<i> client libraries, which introduces a QueuingConsumer class that places a
+</I>&gt;<i> deliveries into a Java queue from where they can be removed by worker
+</I>&gt;<i> threads. There are many possible alternative designs though. For
+</I>&gt;<i> example, you may want to use a bounded queue in order to get some flow
+</I>&gt;<i> control.
+</I>
+Understood.
+
+&gt;<i>
+</I>&gt;<i> &gt; I assume also that the same logic applies if you implement your
+</I>&gt;<i> &gt; consumers using the native erlang API.
+</I>&gt;<i>
+</I>&gt;<i> Are you referring to the queue API that is used by the management
+</I>&gt;<i> service? In that case, yes, in essence you have similar design choices
+</I>&gt;<i> there on how to process the 'deliver' messages sent to the native queue
+</I>&gt;<i> process. Be aware though that with this API you are implementing a
+</I>&gt;<i> *queue*, not a *client*. So, for example, you end up blocking the
+</I>&gt;<i> channel process through which the message was sent until you return from
+</I>&gt;<i> the 'deliver' call.
+</I>
+Thanks for pointing this out. When you say that, do you mean the
+defining a queue using the pseudo_queue method is implementing a queue
+rather than a client, e.g.
+
+Queue = rabbit_amqqueue:pseudo_queue(RealmName, QueueName, self())
+
+Can I avoid this blocking by using the rabbit_amqqueue:basic_consume()
+method instead?
+
+&gt;<i>
+</I>&gt;<i> &gt; BTW, what things do you have to consider when using the native API, if
+</I>&gt;<i> &gt; you want to program your application in erlang. As far as I can tell,
+</I>&gt;<i> &gt; it's pretty straightforward with the semantics being the same as the
+</I>&gt;<i> &gt; java API except that you don't have the framing in the middle.
+</I>&gt;<i>
+</I>&gt;<i> That depends on what APIs you are using. Much of the AMQP semantics is
+</I>&gt;<i> concerned with notions of connections and channels, and much of the that
+</I>&gt;<i> is tied up with networking code in the rabbit_{reader,writer,channel}
+</I>&gt;<i> modules. Also, many aspects of the protocol, such as access control, are
+</I>&gt;<i> dealt with in rabbit_channel, since they are closely tied to the notion
+</I>&gt;<i> of a channel. So if you are bypassing all that and instead are directly
+</I>&gt;<i> calling into the modules for exchange, queue etc, then quite a big chunk
+</I>&gt;<i> of AMQP is cut out, though you are still left with the &quot;essence&quot; of
+</I>&gt;<i> routing and queuing.
+</I>
+Basically I have a remote consumers using the Java API and I have
+implemented business services in Erlang, which has the *luxury* of
+being able to call the API without having to frame methods and send
+stuff over a wire. So I think it quite good to just be able to use the
+asynchronous processing capabilities of the actual exchange.
+Furthermore, if use Erlang on the server side, I don't need to worry
+about concurrency issues and limitations that you would do in Java
+(please correct me if I'm wrong).
+
+&gt;<i>
+</I>&gt;<i> A should also point out that none of the Erlang APIs are official, and
+</I>&gt;<i> they *will* change.
+</I>&gt;<i>
+</I>&gt;<i> Several people have asked whether there is an Erlang client for AMQP,
+</I>&gt;<i> i.e. an Erlang API that implements the client portion of the
+</I>&gt;<i> protocol. There currently isn't, but it is definitely something we'd
+</I>&gt;<i> like to see developed. Contributions are welcome. Such a client would
+</I>&gt;<i> present a relatively stable and interoperable API for Erlang code
+</I>&gt;<i> wanting to use AMQP. It could also be designed in a way that allows the
+</I>&gt;<i> framing to be bypassed when talking to RabbitMQ.
+</I>
+Have you got any pointers as to how to go about this? I mean, would
+you just define
+
+a) The data structures as part of the interface spec (i.e. the
+rabbit.hrl header file)
+b) Methods to be exposed to client, e.g. openChannel0, openChannelN,
+accessRequest, basicConsume, basicPublish, etc
+c) Then implement these exported functions by sending the appropriate
+messages to the appropriate internal servers?
+
+
+Ben
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000029.html">[rabbitmq-discuss] Multiple consumers
+</A></li>
+	<LI>Next message: <A HREF="000038.html">[rabbitmq-discuss] Multiple consumers
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#34">[ date ]</a>
+              <a href="thread.html#34">[ thread ]</a>
+              <a href="subject.html#34">[ subject ]</a>
+              <a href="author.html#34">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

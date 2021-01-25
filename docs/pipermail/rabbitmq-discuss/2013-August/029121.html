@@ -1,0 +1,340 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] shutdownCompleted is not called when queue is	deleted
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20shutdownCompleted%20is%20not%20called%20when%20queue%20is%0A%09deleted&In-Reply-To=%3C1375818496145-28621.post%40n5.nabble.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="029133.html">
+   <LINK REL="Next"  HREF="029216.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] shutdownCompleted is not called when queue is	deleted</H1>
+    <B>jchappelle</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20shutdownCompleted%20is%20not%20called%20when%20queue%20is%0A%09deleted&In-Reply-To=%3C1375818496145-28621.post%40n5.nabble.com%3E"
+       TITLE="[rabbitmq-discuss] shutdownCompleted is not called when queue is	deleted">jchappelle at 4redi.com
+       </A><BR>
+    <I>Tue Aug  6 20:48:16 BST 2013</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="029133.html">[rabbitmq-discuss] If 2 nodes out a 3 node cluster, the third one becomes unresponsive until one of the nodes is brought back.
+</A></li>
+        <LI>Next message: <A HREF="029216.html">[rabbitmq-discuss] shutdownCompleted is not called when queue is deleted
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#29121">[ date ]</a>
+              <a href="thread.html#29121">[ thread ]</a>
+              <a href="subject.html#29121">[ subject ]</a>
+              <a href="author.html#29121">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>I have implemented a Consumer that extends DefaultConsumer. When I delete my
+queue using the web interface it fires the handleCancel event in my consumer
+but it does not call shutdownCompleted in the class that is managing my
+connections. I'm trying to make my application fault tolerant so that it
+will re-connect in this case. I throw a ConsumerCancelledException in my
+handleCancel method thinking that the DefaultExceptionHandler will close the
+channel and ultimately fire the event that calls the shutdownCompleted
+method but this does not happen. My code works fine in the event that the
+server goes down, because shutdownCompleted is called and I'm able to
+re-establish the connection. 
+
+Is there some other way that I should be handling this? I have listed my
+code below:
+
+
+package com.redi.email.service;
+
+import java.io.IOException;
+
+import org.apache.log4j.Logger;
+
+import com.google.gson.Gson;
+import com.google.gson.JsonSyntaxException;
+import com.rabbitmq.client.AMQP.BasicProperties;
+import com.rabbitmq.client.*;
+import com.redi.email.*;
+import com.redi.email.rabbitmq.QueuedEmail;
+
+public class EmailConsumerApplication implements Application,
+ShutdownListener
+{
+	private static final Logger logger =
+Logger.getLogger(EmailConsumerApplication.class);
+	
+	private final EmailConfig defaultEmailConfig;
+ 
+	private boolean stopped;
+	private final ConnectionFactory factory;
+	private Connection connection = null;
+	private Channel channel = null;
+
+	private EmailConsumer consumer;
+	private final String queue;
+	private static final String EXCHANGE = &quot;email&quot;;
+	
+	public EmailConsumerApplication(MqConfig mqConfig, EmailConfig
+defaultEmailConfig)
+	{
+		factory = new ConnectionFactory();
+	    factory.setHost(mqConfig.getHost());
+	    factory.setUsername(mqConfig.getUsername());
+	    factory.setPassword(mqConfig.getPassword());
+	    factory.setVirtualHost(mqConfig.getVhost());
+	    
+	    this.queue = mqConfig.getQueue();
+	    this.defaultEmailConfig = defaultEmailConfig;
+	}
+
+	public void run()
+	{
+		connectAndConsume();
+	}
+
+	private void connectAndConsume()
+	{
+		int connectionRetries = 0;
+		int retrySeconds = 30;
+		boolean connected = false;
+		while(!stopped &amp;&amp; !connected)
+		{
+			try
+			{
+				boolean autoAck = false;
+				boolean durable = true;
+				
+				logger.debug(&quot;Establishing a connection&quot;);
+				connection = factory.newConnection();
+				connection.addShutdownListener(this);
+				channel = connection.createChannel();
+				channel.addShutdownListener(this);
+				
+				logger.debug(&quot;Setting up channel&quot;);
+				channel.exchangeDeclare(EXCHANGE, &quot;direct&quot;, true);
+				channel.queueDeclare(queue, durable, false, false, null);
+				channel.queueBind(queue, EXCHANGE, queue);
+				channel.basicQos(1);
+				
+				logger.info(&quot;Waiting for messages.&quot;);
+				consumer = new EmailConsumer(channel, defaultEmailConfig);
+				channel.basicConsume(queue, autoAck, consumer);
+				connected = true;
+			}
+			catch(Exception e)
+			{
+				close();
+				logger.error(&quot;Unable to establish a connection to the RabbitMQ server.
+Retry #&quot; + connectionRetries++ + &quot; in &quot; + retrySeconds + &quot; seconds...&quot;, e);
+				Utils.sleep(retrySeconds);
+			}
+		}
+	}
+
+	private void close()
+	{
+		logger.debug(&quot;Closing channel and connection&quot;);
+		try
+		{
+			Utils.close(channel);
+			Utils.close(connection);
+		}
+		catch(Exception e)
+		{
+			logger.debug(&quot;Unable to abort consumer&quot;, e);
+		}
+	}
+
+	public void stop()
+	{
+		logger.debug(&quot;Stopping Consumer&quot;);
+		stopped = true;
+		close();
+	}
+
+	public boolean isStopped()
+	{
+		return stopped;
+	}
+
+	@Override
+	public void shutdownCompleted(ShutdownSignalException cause)
+	{
+		logger.debug(&quot;handleShutdownOrCancel&quot;);
+		if(stopped)
+		{
+			logger.info(&quot;Consumer shutdown completed.&quot;);
+		}
+		else
+		{
+			logger.info(&quot;Connection has been shutdown.&quot;, cause);
+			logger.info(&quot;Re-establishing connection&quot;);
+			connectAndConsume();
+		}
+	}
+	
+	private class EmailConsumer extends DefaultConsumer
+	{
+		private EmailService emailService = new DefaultEmailService();
+		private DeduplicateService deduplicateService = new
+DefaultDeduplicateService();
+
+		private final EmailConfig defaultEmailConfig;
+	 
+		public EmailConsumer(Channel channel, EmailConfig defaultEmailConfig)
+		{
+			super(channel);
+			
+			this.defaultEmailConfig = defaultEmailConfig;
+		}
+
+		@Override
+		public void handleDelivery(String consumerTag, Envelope envelope,
+BasicProperties properties, byte[] body) throws IOException
+		{
+			if(body == null)
+			{
+				logger.warn(&quot;Ignoring null message!&quot;);
+			}
+			else
+			{
+				String rawMessage = new String(body, &quot;UTF-8&quot;);
+				logger.debug(&quot;Received '&quot; + rawMessage + &quot;'&quot;);     
+				sendEmail(rawMessage);
+				logger.debug(&quot;Done&quot;);
+				getChannel().basicAck(envelope.getDeliveryTag(), false);
+			}
+		}
+
+		private void sendEmail(String rawMessage)
+		{
+			try
+			{
+				QueuedEmail queuedEmail = makeQueuedEmail(rawMessage);
+				if(deduplicateService.isDuplicate(queuedEmail))
+				{
+					logger.warn(&quot;Ignoring duplicate message id=&quot; + queuedEmail.getMsgId());
+				}
+				else
+				{
+					Email email = queuedEmail.getEmail();
+					if(email.getEmailConfig() == null)
+					{
+						email.setEmailConfig(defaultEmailConfig);
+					}
+					emailService.sendEmail(email);
+				}
+			}
+			catch(EmailException e)
+			{
+				logger.error(&quot;Unable to send email&quot;, e);
+			}
+		}
+		
+		private QueuedEmail makeQueuedEmail(String rawMessage)
+		{
+			try
+			{
+				Gson gson = new Gson();
+				return gson.fromJson(rawMessage, QueuedEmail.class);
+			}
+			catch(JsonSyntaxException e)
+			{
+				logger.error(&quot;Could not create QueuedEmail from json string &quot; +
+rawMessage, e);
+				throw e;
+			}
+		}
+		
+		@Override
+		public void handleShutdownSignal(String consumerTag,
+ShutdownSignalException sig)
+		{
+			logger.debug(&quot;handleShutdownSignal&quot;);
+		}
+		
+		@Override
+		public void handleCancelOk(String consumerTag)
+		{
+			logger.debug(&quot;handleCancelOk&quot;);
+		}
+
+		@Override
+		public void handleCancel(String consumerTag) throws IOException
+		{
+			logger.debug(&quot;handleCancel&quot;);
+			throw new ConsumerCancelledException();
+		}
+	}
+}
+
+
+
+
+--
+View this message in context: <A HREF="http://rabbitmq.1065348.n5.nabble.com/shutdownCompleted-is-not-called-when-queue-is-deleted-tp28621.html">http://rabbitmq.1065348.n5.nabble.com/shutdownCompleted-is-not-called-when-queue-is-deleted-tp28621.html</A>
+Sent from the RabbitMQ mailing list archive at Nabble.com.
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="029133.html">[rabbitmq-discuss] If 2 nodes out a 3 node cluster, the third one becomes unresponsive until one of the nodes is brought back.
+</A></li>
+	<LI>Next message: <A HREF="029216.html">[rabbitmq-discuss] shutdownCompleted is not called when queue is deleted
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#29121">[ date ]</a>
+              <a href="thread.html#29121">[ thread ]</a>
+              <a href="subject.html#29121">[ subject ]</a>
+              <a href="author.html#29121">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

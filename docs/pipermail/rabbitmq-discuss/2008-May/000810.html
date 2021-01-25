@@ -1,0 +1,207 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Channel crashes after basic.cancel_ok.
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20Channel%20crashes%20after%20basic.cancel_ok.&In-Reply-To=6c2563b20805080704i3850a81r545155f42fa16188%40mail.gmail.com">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000809.html">
+   <LINK REL="Next"  HREF="000824.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Channel crashes after basic.cancel_ok.</H1>
+    <B>Ben Hood</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20Channel%20crashes%20after%20basic.cancel_ok.&In-Reply-To=6c2563b20805080704i3850a81r545155f42fa16188%40mail.gmail.com"
+       TITLE="[rabbitmq-discuss] Channel crashes after basic.cancel_ok.">0x6e6562 at gmail.com
+       </A><BR>
+    <I>Thu May  8 21:11:13 BST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000809.html">[rabbitmq-discuss] Channel crashes after basic.cancel_ok.
+</A></li>
+        <LI>Next message: <A HREF="000824.html">[rabbitmq-discuss] Channel crashes after basic.cancel_ok.
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#810">[ date ]</a>
+              <a href="thread.html#810">[ thread ]</a>
+              <a href="subject.html#810">[ subject ]</a>
+              <a href="author.html#810">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Ed,
+
+On 8 May 2008, at 15:04, Edwin Fine wrote:
+
+&gt;<i> Ben,
+</I>&gt;<i> Thanks for looking into this. In the &quot;real&quot; code, all the setup is  
+</I>&gt;<i> actually done within a single Erlang process, and the only thing the  
+</I>&gt;<i> consumers do is handle the basic.deliver, as well as any  
+</I>&gt;<i> basic.consume_ok  or basic.cancel_ok messages that may arise. In the  
+</I>&gt;<i> test code, I rearranged some things specifically to be done  
+</I>&gt;<i> concurrently, which I now see was a mistake. However, this is a bug  
+</I>&gt;<i> in the test code, not in the production code. I will change the test  
+</I>&gt;<i> code so that there is no concurrent work being done on a channel  
+</I>&gt;<i> other than responding with basic.ack to basic.deliver messages.
+</I>
+I've begun a discussion on this topic and it looks like we will add  
+the intelligence to the amqp_channel module to be able to serialize  
+concurrent RPC requests to the channel. I understand that you have a  
+workaround anyway, but on reflection, it seems like a good idea to put  
+this capability into the client. will let you know when it is done.
+
+&gt;<i> I note that there is a special version of amqp_channel:send/3, used  
+</I>&gt;<i> only for a basic.consume method, with the last argument being the  
+</I>&gt;<i> pid of the process subscribing. Am I correct to assume because of  
+</I>&gt;<i> this that the basic.consume method can indeed be sent concurrently  
+</I>&gt;<i> by different consumers on the same channel? But the basic.cancel  
+</I>&gt;<i> operation does not have this property (specifying a PID in the amqp  
+</I>&gt;<i> call) , as far as I can see, which means that a consumer cannot  
+</I>&gt;<i> cancel its own subscription without potentially clashing with other  
+</I>&gt;<i> consumers that are canceling.
+</I>
+amqp_channel:send/3? There isn't an exported function of that name. I  
+think you mean call/3.
+
+Any which way, the reason behind sending a consume request with a Pid  
+to the channel process is to allow the channel to register the  
+consumer process against a tag. The channel process and the broker use  
+a consumer tag to correlate messages across the wire. The broker does  
+not know anything about the consuming process. The process looks like  
+this:
+
+1. Subscribe:
+				
+a) User -----(Consumer Pid, Tag?)-----&gt; Channel Process ----(Tag)----- 
+ &gt; Broker
+b) User &lt;-----(Tag Ok)----- Channel Process &lt;----(Tag Ok)----- Broker
+
+2. Receive messages:
+
+User &lt;-----(Data)----- Channel Process &lt;----(Tag, Data)----- Broker
+
+3. Unsubscribe:
+
+a) User -----(Tag)-----&gt; Channel Process ----(Tag)-----&gt; Broker
+b) User &lt;----(Tag Ok)-----&gt; Channel Process &lt;---(Tag Ok)----- Broker
+
+ From an user perspective, you *could* get away without the acks in  
+steps 1b and 3b. However, to be consistent with the Java client API, 3  
+different types of messages are sent to a consuming process:
+
+1. ConsumeOk - to acknowledge the registration of a tag or to inform  
+the receiver of an auto-generated tag;
+2. Delivery - normal message delivery;
+3. CancelOk - to let the consuming process know that it's subscription  
+has been cancelled.
+
+In step 1, the channel process registers the consuming Pid against a  
+tag, so that subsequent messages it receives with that tag can get  
+routed to the correct consumer. The fact that the ack is resent to the  
+consumer is just a matter of the client side API - it provides a  
+consumer with explicit lifecycle events, whether or not they actually  
+care about them.
+
+When it comes to cancellation, you don't need a Pid, just a tag. This  
+is because the channel process maintains a map between tags and  
+consumers, so you only require the tag to kick off the cancellation  
+process. So whether you cancel yourself or some other process, all you  
+need is the tag.
+
+The upshot of this is that you can't clash on cancelling, because you  
+can correlate with the tag. However as indicated above, there is a  
+current limitation with concurrent synchronous calls, which I'm hoping  
+to remove now. In fact, being able to cancel a subscription is  
+something that you might want to kick off from a consuming process,  
+which means that forcing application code to serialize this may be a  
+drawback.
+
+In essence, I think the current subscribe/unsubscribe model makes  
+sense, it just requires the intelligence to serialize synchronous  
+client requests.
+
+If you think that passing the consume_ok and cancel_ok acks to the  
+consumer is counterintuitive, maybe we could consider parametrizing  
+the client side call so that the client can choose whether the  
+consumer really cares about these lifecycle events. Which ever way,  
+there will only be 2 lifecycle events per consumer, so these could  
+*thereotically* just be left in the consumer's mailbox.
+
+
+&gt;<i> So I will change the code back so that everything OTHER than  
+</I>&gt;<i> basic.consume and basic.cancel is done within a single process, and  
+</I>&gt;<i> take it from there.
+</I>&gt;<i>
+</I>&gt;<i> I think this has, however, shed some light on what might have  
+</I>&gt;<i> happened in the production code. I am using the consumer process to  
+</I>&gt;<i> unsubscribe itself. When there are many consumer processes, this  
+</I>&gt;<i> could be a problem because I think basic.cancel does not allow you  
+</I>&gt;<i> to specify a return pid and maybe this is causing upset in the  
+</I>&gt;<i> channel.
+</I>&gt;<i>
+</I>&gt;<i>     #'basic.consume_ok'{consumer_tag = ConsumerTag} =  
+</I>&gt;<i> amqp_channel:call(Channel, BasicConsume, self()), %%% Notice return  
+</I>&gt;<i> pid
+</I>&gt;<i>     #'basic.cancel_ok'{consumer_tag = ConsumerTag} =  
+</I>&gt;<i> amqp_channel:call(Channel, BasicCancel), %%% Notice - no return pid
+</I>&gt;<i>
+</I>&gt;<i> So maybe this should be added to the handling of basic.cancel? Why  
+</I>&gt;<i> shouldn't a consumer cancel itself? In fact, why can't all client  
+</I>&gt;<i> channel calls specify which PID is calling?
+</I>
+As indicated above, you don't need a Pid to cancel a subscription,  
+just the tag. So a consumer can cancel itself, if it wants to.
+
+BTW, all channel calls are aware of the calling pid by default because  
+the channel uses the gen_server behaviour. So if the channel needs to  
+know which Pid invoked what call, it can. In general, it doesn't need  
+to.
+
+&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> One other source of confusion for me is this: when sending an  
+</I>&gt;<i> amqp_channel:basic.consume call, why is there both a synchronous  
+</I>&gt;<i> response to the call itself and an asynchronous response on the  
+</I>&gt;<i> channel?
+</I>&gt;<i>
+</I>&gt;<i>     #'basic.consume_ok'{consumer_tag = ConsumerTag} =  
+</I>&gt;<i> amqp_channel:call(Channel, BasicConsume, self()),
+</I>&gt;<i>     receive
+</I>&gt;<i>         #'basic.consume_ok'{consumer_tag = ConsumerTag} -&gt;
+</I>&gt;<i>             io:format(&quot;[~p] ~p got consume_ok~n&quot;, [self(),  
+</I>&gt;<i> BasicConsume#'basic.consume'.consumer_tag])
+</I>&gt;<i>     end.
+</I>&gt;<i>
+</I>
+This question was answered above.
+
+HTH,
+
+Ben
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: <A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20080508/97cff685/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20080508/97cff685/attachment.htm</A> 
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000809.html">[rabbitmq-discuss] Channel crashes after basic.cancel_ok.
+</A></li>
+	<LI>Next message: <A HREF="000824.html">[rabbitmq-discuss] Channel crashes after basic.cancel_ok.
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#810">[ date ]</a>
+              <a href="thread.html#810">[ thread ]</a>
+              <a href="subject.html#810">[ subject ]</a>
+              <a href="author.html#810">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,109 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] RabbitMQ writes non stop to disk
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20RabbitMQ%20writes%20non%20stop%20to%20disk&In-Reply-To=%3C20111026233601.GD4602%40wellquite.org%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="015796.html">
+   <LINK REL="Next"  HREF="015798.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] RabbitMQ writes non stop to disk</H1>
+    <B>Matthew Sackman</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20RabbitMQ%20writes%20non%20stop%20to%20disk&In-Reply-To=%3C20111026233601.GD4602%40wellquite.org%3E"
+       TITLE="[rabbitmq-discuss] RabbitMQ writes non stop to disk">matthew at rabbitmq.com
+       </A><BR>
+    <I>Thu Oct 27 00:36:02 BST 2011</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="015796.html">[rabbitmq-discuss] RabbitMQ writes non stop to disk
+</A></li>
+        <LI>Next message: <A HREF="015798.html">[rabbitmq-discuss] RabbitMQ writes non stop to disk
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#15797">[ date ]</a>
+              <a href="thread.html#15797">[ thread ]</a>
+              <a href="subject.html#15797">[ subject ]</a>
+              <a href="author.html#15797">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>On Wed, Oct 26, 2011 at 04:26:38PM -0700, Raphael Simon wrote:
+&gt;<i> Thank you for the long explanation Matthew, you had already explained this
+</I>&gt;<i> to me once and I have a vague understanding of how the memory allocation
+</I>&gt;<i> algorithm works at a high level. I don't think what we are seeing is normal
+</I>&gt;<i> though and can be explained by this. From what I could gather looking at the
+</I>&gt;<i> files written by rabbit they contain messages addressed to queues that are
+</I>&gt;<i> part of the &quot;active&quot; group. Also even if rabbit was to write every single
+</I>&gt;<i> message it gets through all the queues it would not result in that many
+</I>&gt;<i> writes. We don't have a throughput of 6000 msg/sec which is the number of
+</I>&gt;<i> writes iostat reports (spikes at 17,000/s). Our rate is more like 20 msg/sec
+</I>&gt;<i> across all queues.
+</I>
+For a persistent msg to a durable queue, each message will result in the
+following writes:
+
+1. The message itself. This is heavily buffered and should be done in
+one write. However, I've no idea what iostat actually reports (pages
+written? or syscalls to writev? or...?)
+
+2. The fact that the msg has been published to the queue.
+
+3. When the msg is delivered, the fact that the msg has been delivered
+by the queue.
+
+4. When the msg is ack'd, the fact that the msg has been ack'd.
+
+2, 3 and 4 are journalled on a per queue basis. They are tiny writes (3
+and 4 especially) and should again be heavily buffered, but I think we
+have some timers going on that are forcing fsyncs of this journal very
+often and thus may be resulting in vastly higher numbers of writes than
+necessary. However, thinking about it, I don't think that existed back
+in 2.4.1.
+
+The journal involved in 2, 3 and 4 periodically gets written out which
+could result in further writes for this msg in this queue.
+
+So I would say that for each message, you're looking at a maximum of 7
+&quot;writes&quot;. Whether these writes gets coalesced or even cancelled out
+entirely is difficult to say. The average should be much lower than 7
+though for your use case.
+
+Matthew
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="015796.html">[rabbitmq-discuss] RabbitMQ writes non stop to disk
+</A></li>
+	<LI>Next message: <A HREF="015798.html">[rabbitmq-discuss] RabbitMQ writes non stop to disk
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#15797">[ date ]</a>
+              <a href="thread.html#15797">[ thread ]</a>
+              <a href="subject.html#15797">[ subject ]</a>
+              <a href="author.html#15797">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

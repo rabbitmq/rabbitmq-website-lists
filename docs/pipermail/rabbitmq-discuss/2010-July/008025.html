@@ -1,0 +1,157 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Having some issues with RabbitMQ
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Having%20some%20issues%20with%20RabbitMQ&In-Reply-To=%3C20100717231449.GA11469%40wellquite.org%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="008024.html">
+   <LINK REL="Next"  HREF="008026.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Having some issues with RabbitMQ</H1>
+    <B>Matthew Sackman</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Having%20some%20issues%20with%20RabbitMQ&In-Reply-To=%3C20100717231449.GA11469%40wellquite.org%3E"
+       TITLE="[rabbitmq-discuss] Having some issues with RabbitMQ">matthew at rabbitmq.com
+       </A><BR>
+    <I>Sun Jul 18 00:14:50 BST 2010</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="008024.html">[rabbitmq-discuss] Having some issues with RabbitMQ
+</A></li>
+        <LI>Next message: <A HREF="008026.html">[rabbitmq-discuss] Having some issues with RabbitMQ
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#8025">[ date ]</a>
+              <a href="thread.html#8025">[ thread ]</a>
+              <a href="subject.html#8025">[ subject ]</a>
+              <a href="author.html#8025">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi Christian,
+
+On Sat, Jul 17, 2010 at 02:54:11PM -0700, Christian Legnitto wrote:
+&gt;<i> <A HREF="http://bit.ly/9P3IEX">http://bit.ly/9P3IEX</A>
+</I>
+I replied on your blog with (mostly) the following, but it's easier to
+keep the discussion on the mailing list.
+
+The new persister branch is regularly merged into from the current
+default branch. Whilst it is correct to say it is currently based off
+the 1.8 release, that&#8217;s only true in the sense of the above. The new
+persister stores messages in a completely different format from the old,
+and there is currently no tool to allow upgrading from a released
+version of Rabbit to the new persister without losing persistent
+messages.
+
+The issue you ran into when going 1.7 to 1.8 is subtly different. Whilst
+both use the old persister, both the on-disk format of the messages when
+they are written to disk, and a database schema changed, again,
+resulting in no state-maintaining upgrade path. To date we have never
+produced a tool which can do upgrades maintaining state when database
+schema or on-disk formats have changed.
+
+You talk about users creating queues. I think that what you want is for
+all users to use queues which have server-generated names, thus you
+guarantee they are private, and you want to declare them &#8220;exclusive&#8221;,
+which means that when the connection that created the queue disappears,
+the queue itself (and any bindings to the queue) also automatically get
+deleted.
+
+I quote this text from
+<A HREF="http://www.rabbitmq.com/admin-guide.html#access-control:">http://www.rabbitmq.com/admin-guide.html#access-control:</A>
+
+&#8220;Some AMQP operations can create resources with server-generated names.
+Every user has configure, write and read permissions for such resources.
+However, the names are strong and not discoverable as part of the
+protocol, only through management functionality. Therefore these
+resources are in effect private to the user unless they choose to
+dilvuge their names to other users.&#8221;
+
+Thus I think that if you force users to create server-named queues, you
+don&#8217;t need to grant any write privileges to your public user. It&#8217;ll need
+read access to the exchange to create the binding, and it should
+automatically have write access to create the binding to the private
+queues. If this doesn&#8217;t work please let us know.
+
+The 1.8 semantic changes concern what happens when you *re*declare a
+queue. Previously, if the queue already existed and you redeclare it,
+but with different attributes, it would still come back with an OK
+result. This is misleading because it could lead the user to think that
+a queue had been created with the specified attributes when in fact it
+has not. Thus now, you must ensure you redeclare with the same
+attributes as created the queue otherwise the redeclaration will fail
+and close the channel. Full details can be found in the lower half of
+<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-announce/2010-June/000025.html">http://lists.rabbitmq.com/pipermail/rabbitmq-announce/2010-June/000025.html</A>
+
+I am very curious about you managing to get the new persister to crash.
+Could you provide the rabbit logs (or the end of the logs) which should
+show some sort of stack trace? The new persister just *should not*
+crash.
+
+One thing that might be happening is that Rabbit is raising flow
+control, to request that publishers stop sending further messages to
+Rabbit &#8211; even with the new persister this can happen sometimes to allow
+disks to catch up, but this tends to only be necessary at high data
+rates. The client must respond with a flow_ok message to the broker to
+confirm it understands the flow control, and it must then not send any
+further messages &#8211; this is usually handled by the AMQP client library as
+it just makes any subsequent publishes block &#8211; until it receives a
+further flow control message from the broker, informing it it can
+resume. Now I notice you&#8217;re using a python client, and they have
+historically not supported flow control, which can lead to Rabbit
+forcibly disconnecting clients that do not respond appropriately to the
+flow control messages. This may crash a badly written client, but it
+should not crash the broker itself.
+
+You have a very interesting use case, and there is absolutely nothing
+about it that shouldn&#8217;t work perfectly well with RabbitMQ.
+
+Best wishes,
+
+Matthew
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="008024.html">[rabbitmq-discuss] Having some issues with RabbitMQ
+</A></li>
+	<LI>Next message: <A HREF="008026.html">[rabbitmq-discuss] Having some issues with RabbitMQ
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#8025">[ date ]</a>
+              <a href="thread.html#8025">[ thread ]</a>
+              <a href="subject.html#8025">[ subject ]</a>
+              <a href="author.html#8025">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

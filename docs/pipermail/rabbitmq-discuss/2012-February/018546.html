@@ -1,0 +1,131 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] 2.7.1 mirrored queues leak a lot of memory	on slave nodes
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%202.7.1%20mirrored%20queues%20leak%20a%20lot%20of%20memory%0A%09on%20slave%20nodes&In-Reply-To=%3C7c0ffdda-7cec-4907-8c04-664c99922d2c%40ob7g2000pbb.googlegroups.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="018455.html">
+   <LINK REL="Next"  HREF="018352.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] 2.7.1 mirrored queues leak a lot of memory	on slave nodes</H1>
+    <B>Max Kalika</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%202.7.1%20mirrored%20queues%20leak%20a%20lot%20of%20memory%0A%09on%20slave%20nodes&In-Reply-To=%3C7c0ffdda-7cec-4907-8c04-664c99922d2c%40ob7g2000pbb.googlegroups.com%3E"
+       TITLE="[rabbitmq-discuss] 2.7.1 mirrored queues leak a lot of memory	on slave nodes">max.kalika at gmail.com
+       </A><BR>
+    <I>Fri Feb 24 15:19:18 GMT 2012</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="018455.html">[rabbitmq-discuss] 2.7.1 mirrored queues leak a lot of memory on slave nodes
+</A></li>
+        <LI>Next message: <A HREF="018352.html">[rabbitmq-discuss] [help] [beginner] server stops sending messages; publish (in transaction) hangs on commit
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#18546">[ date ]</a>
+              <a href="thread.html#18546">[ thread ]</a>
+              <a href="subject.html#18546">[ subject ]</a>
+              <a href="author.html#18546">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>This turned out to be worse than we first realized.  When two of the
+servers exhibited high memory usage, clients became blocked and
+stopped receiving data.  I was able to unwedge the running process
+with some erlang surgery.  Obviously, this was a high-risk operation
+on a running production system, but it seemed to have (mostly)
+recovered and allowed data to flow again.  I say mostly because
+there's a caveat which I'll describe later.
+
+My procedure to fix this is as follows:
+1) attach an erlang remote shell to the running process:
+
+  erl -sname rabbitdbg@$(hostname -s) -setcookie $(sudo cat /var/lib/
+rabbitmq/.erlang.cookie) -remsh rabbit@$(hostname -s) -hidden
+
+2) list processes and look for anything consuming an unusually large
+amount of memory pages (second column from the right):
+
+  i().
+
+3) There was one process with over 2 million pages.  It was constantly
+running lists:zipwith/3.  Info on it showed lots and lots of messages
+in the mailbox that just wasn't decreasing.
+
+  process_info(list_to_pid(&quot;&lt;0.XXXXX.XXX&gt;&quot;)).
+
+4) With fingers and toes crossed, I forced this process to die.  As
+soon as this was executed, memory usage dropped and data started
+flowing again:
+
+  exit(list_to_pid(&quot;&lt;0.XXXXX.XXX&gt;&quot;), kill).
+
+
+I mentioned earlier that the system is *mostly* recovered.  The
+remaining problem is disk utilization.  I suspect that since our
+messages are marked durable, disk cleanup didn't occur.  I'm not sure
+how to sync this up with runtime reality without restarting.
+
+On Feb 22, 12:12&#160;pm, Reverend Chip &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rev.c... at gmail.com</A>&gt; wrote:
+&gt;<i> I have a four-node 2.7.1 cluster. &#160;I just started experimenting with
+</I>&gt;<i> mirrored queues. &#160;One queue is mirrored across nodes 1&amp;2, a second queue
+</I>&gt;<i> is mirrored across nodes 3&amp;4. &#160;I've been feeding a lot of large messages
+</I>&gt;<i> through, using delivery-mode 2. &#160;Most of the messages I've purged, since
+</I>&gt;<i> the reader process can't keep up yet.
+</I>&gt;<i>
+</I>&gt;<i> Here's the problem: Memory usage. &#160;Nodes 1 &amp; 3, presumably the master
+</I>&gt;<i> nodes for the queues, have maintained a normal memory profile, 3-6GB.
+</I>&gt;<i> But nodes 2 &amp; 4, the presumable slaves, have had their memory grow to
+</I>&gt;<i> 58GB each. &#160;Worse, when I purged and then even deleted the queues, the
+</I>&gt;<i> memory usage did not go down. &#160;It seems I may have to reboot these nodes
+</I>&gt;<i> to get the memory back, and obviously I can't use mirrored queues if
+</I>&gt;<i> they're going to make my nodes do this, which is disappointing. &#160;I do
+</I>&gt;<i> have a workaround involving alternate exchanges, but the workaround can
+</I>&gt;<i> leave data stranded if a node is lost forever.
+</I>&gt;<i>
+</I>&gt;<i> Is there any other info I can provide to help diagnose and/or fix this?
+</I>&gt;<i>
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-disc... at lists.rabbitmq.comhttps</A>://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss
+</I></PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="018455.html">[rabbitmq-discuss] 2.7.1 mirrored queues leak a lot of memory on slave nodes
+</A></li>
+	<LI>Next message: <A HREF="018352.html">[rabbitmq-discuss] [help] [beginner] server stops sending messages; publish (in transaction) hangs on commit
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#18546">[ date ]</a>
+              <a href="thread.html#18546">[ thread ]</a>
+              <a href="subject.html#18546">[ subject ]</a>
+              <a href="author.html#18546">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

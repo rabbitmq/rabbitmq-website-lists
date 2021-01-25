@@ -1,0 +1,133 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] The rabbitmq-server stop command hangs
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20The%20rabbitmq-server%20stop%20command%20hangs&In-Reply-To=%3C3AB49965-C52F-4B59-82F2-E7007E450D9F%40rabbitmq.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="024148.html">
+   <LINK REL="Next"  HREF="024181.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] The rabbitmq-server stop command hangs</H1>
+    <B>Tim Watson</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20The%20rabbitmq-server%20stop%20command%20hangs&In-Reply-To=%3C3AB49965-C52F-4B59-82F2-E7007E450D9F%40rabbitmq.com%3E"
+       TITLE="[rabbitmq-discuss] The rabbitmq-server stop command hangs">tim at rabbitmq.com
+       </A><BR>
+    <I>Wed Nov 28 11:29:59 GMT 2012</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="024148.html">[rabbitmq-discuss] The rabbitmq-server stop command hangs
+</A></li>
+        <LI>Next message: <A HREF="024181.html">[rabbitmq-discuss] The rabbitmq-server stop command hangs
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#24180">[ date ]</a>
+              <a href="thread.html#24180">[ thread ]</a>
+              <a href="subject.html#24180">[ subject ]</a>
+              <a href="author.html#24180">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi Liz,
+
+Can you please confirm a couple of things for us: what plugins are enabled in your setup? Are you clustered (I'm assuming yes) and have you got some mirrored queues set up (also assuming yes)?
+
+Would you be able to post the rabbit.log and rabbit-sasl.log for all your nodes please? 
+
+I'm not 100% sure what is causing this to hang, but I can see a few things in the trace data that make me suspicious.
+
+The rabbit_reader seems to be attempting to consume data, and appears to be in 'start_connection' at shutdown time. I notice that both reader and writer processes are running using the rabbit_framing_amqp_0_8 layer - do you have AMQP-0.8 clients connected to the broker?
+
+The 'rabbit_reader:start_connection' trace looks a bit suspect too:
+
+stacktrace: [{rabbit_net,recv,2,[]},
+             {rabbit_reader,mainloop,2,[]},
+             {rabbit_reader,start_connection,7,[]},
+             {proc_lib,init_p_do_apply,3,[{file,&quot;proc_lib.erl&quot;},{line,227}]}]
+
+I wonder if a handshake has got stuck somehow? The rabbit_net:recv/2 implementation does result in a blocking receive. 
+
+The only other things I wonder about are that there appears to be one queue process with a ton of data in its state record, but that doesn't necessarily mean anything if the supervision hierarchy shutdown hasn't reached that point yet.
+
+It might take some time to get to the bottom of this issue just by looking at traces, but having the logs would help and obviously if you are able to get us access to the machine where your rabbit is stuck, that would help too. If necessary, vmware might be willing to sign some kind of NDA with regards access to your machine/data, if that helps at all.
+
+Cheers,
+Tim
+
+On 27 Nov 2012, at 00:17, Elizabeth Liao wrote:
+
+&gt;<i> Here's the output:
+</I>&gt;<i> 
+</I>&gt;<i> # rabbitmqctl eval 'app_utils:app_dependency_order([os_mon, mnesia,rabbit] ++ rabbit_plugins:active(),true).'
+</I>&gt;<i> [mnesia,mochiweb,amqp_client,webmachine,rabbitmq_mochiweb,os_mon,rabbit,
+</I>&gt;<i> rabbitmq_management_agent,rabbitmq_shovel,rabbitmq_management]
+</I>&gt;<i> 
+</I>&gt;<i> As for access to the machine, it's doubtful but I'll ask.
+</I>&gt;<i> 
+</I>&gt;<i> Liz
+</I>&gt;<i> ________________________________________
+</I>&gt;<i> From: Matthias Radestock [<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">matthias at rabbitmq.com</A>]
+</I>&gt;<i> Sent: Monday, November 26, 2012 6:47 PM
+</I>&gt;<i> To: Discussions about RabbitMQ
+</I>&gt;<i> Cc: Elizabeth Liao
+</I>&gt;<i> Subject: Re: [rabbitmq-discuss] The rabbitmq-server stop command hangs
+</I>&gt;<i> 
+</I>&gt;<i> Liz,
+</I>&gt;<i> 
+</I>&gt;<i> On 26/11/12 22:19, Elizabeth Liao wrote:
+</I>&gt;&gt;<i> I've attached the inspect trace when using 3.0.
+</I>&gt;<i> 
+</I>&gt;<i> Thanks.
+</I>&gt;<i> 
+</I>&gt;<i> When your rabbit is running normally, i.e. it's not stuck in a shutdown,
+</I>&gt;<i> what does
+</I>&gt;<i> 
+</I>&gt;<i> rabbitmqctl eval 'app_utils:app_dependency_order([os_mon, mnesia,
+</I>&gt;<i> rabbit] ++ rabbit_plugins:active(),true).'
+</I>&gt;<i> 
+</I>&gt;<i> (all on one line)
+</I>&gt;<i> 
+</I>&gt;<i> return?
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> Also, is there any way you could give Tim or me access to the machine
+</I>&gt;<i> while you have a stuck rabbit?
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> Regards,
+</I>&gt;<i> 
+</I>&gt;<i> Matthias.
+</I>&gt;<i> Email Confidentiality Notice
+</I>&gt;<i> 
+</I>&gt;<i> The information contained in this transmission is confidential, proprietary or privileged and may be subject to protection under the law. This message is intended for the sole use of the individual or entity to whom it's addressed. If you are not the intended recipient, you are notified that any use, distribution or copying of the message is strictly prohibited and may subject you to criminal or civil penalties. If you received this transmission in error, please contact the sender immediately by replying to this email and delete the material from any computer.
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>
+</PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="024148.html">[rabbitmq-discuss] The rabbitmq-server stop command hangs
+</A></li>
+	<LI>Next message: <A HREF="024181.html">[rabbitmq-discuss] The rabbitmq-server stop command hangs
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#24180">[ date ]</a>
+              <a href="thread.html#24180">[ thread ]</a>
+              <a href="subject.html#24180">[ subject ]</a>
+              <a href="author.html#24180">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

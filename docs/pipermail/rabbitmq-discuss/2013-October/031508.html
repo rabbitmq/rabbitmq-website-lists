@@ -1,0 +1,140 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] [BUG] Management interface fails to render queues with non utf-8 names.
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20%5BBUG%5D%20Management%20interface%20fails%20to%20render%0A%20queues%20with%20non%20utf-8%20names.&In-Reply-To=%3C52712BC5.6080307%40rabbitmq.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="031505.html">
+   <LINK REL="Next"  HREF="031507.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] [BUG] Management interface fails to render queues with non utf-8 names.</H1>
+    <B>Simon MacMullen</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20%5BBUG%5D%20Management%20interface%20fails%20to%20render%0A%20queues%20with%20non%20utf-8%20names.&In-Reply-To=%3C52712BC5.6080307%40rabbitmq.com%3E"
+       TITLE="[rabbitmq-discuss] [BUG] Management interface fails to render queues with non utf-8 names.">simon at rabbitmq.com
+       </A><BR>
+    <I>Wed Oct 30 15:54:45 GMT 2013</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="031505.html">[rabbitmq-discuss] [BUG] Management interface fails to render queues with non utf-8 names.
+</A></li>
+        <LI>Next message: <A HREF="031507.html">[rabbitmq-discuss] Cannot log in to management interface since 3.2.0
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#31508">[ date ]</a>
+              <a href="thread.html#31508">[ thread ]</a>
+              <a href="subject.html#31508">[ subject ]</a>
+              <a href="author.html#31508">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hmm. Yeah, this is a bug. I am much more inclined to say that it's the 
+comment in rabbit_channel that is at fault though. Since the AMQP spec 
+requires these things be UTF-8 (and doesn't give a way to specify an 
+alternate encoding) then if you send an invalid UTF-8 sequence then you 
+haven't really sent a string.
+
+I guess we need to tighten this up in the channel. Thanks for the report.
+
+Cheers, Simon
+
+On 30/10/13 14:56, Ceri Storey wrote:
+&gt;<i> Hi,
+</I>&gt;<i>
+</I>&gt;<i> We noticed that one of our customers has created some queues whose names
+</I>&gt;<i> aren't valid UTF-8. From the AMQP spec it looks like short-strings
+</I>&gt;<i> should be valid UTF-8, and contain only certain character classes.
+</I>&gt;<i> However, my colleague Frank has tracked down some code in
+</I>&gt;<i> rabbit_channel:check_name/2
+</I>&gt;<i> &lt;<A HREF="https://github.com/rabbitmq/rabbitmq-server/blob/dc37e725f535861f6d98e7b9c4592978aae57a04/src/rabbit_channel.erl#L560">https://github.com/rabbitmq/rabbitmq-server/blob/dc37e725f535861f6d98e7b9c4592978aae57a04/src/rabbit_channel.erl#L560</A>&gt;,
+</I>&gt;<i> where there's a comment to the effect that those rules aren't enforced
+</I>&gt;<i> deliberately.
+</I>&gt;<i>
+</I>&gt;<i> However, if we try to request the list of queues via the API, we get the
+</I>&gt;<i> following backtrace:
+</I>&gt;<i>
+</I>&gt;<i> webmachine error: path=&quot;/api/queues&quot;
+</I>&gt;<i> {error,{exit,{ucs,{bad_utf8_character_code}},
+</I>&gt;<i> [{xmerl_ucs,from_utf8,1,[{file,&quot;xmerl_ucs.erl&quot;},{line,185}]},
+</I>&gt;<i>                {mochijson2,json_encode_string,2,[]},
+</I>&gt;<i> {mochijson2,'-json_encode_proplist/2-fun-0-',3,[]},
+</I>&gt;<i> {lists,foldl,3,[{file,&quot;lists.erl&quot;},{line,1248}]},
+</I>&gt;<i>                {mochijson2,json_encode_proplist,2,[]},
+</I>&gt;<i> {mochijson2,'-json_encode_array/2-fun-0-',3,[]},
+</I>&gt;<i> {lists,foldl,3,[{file,&quot;lists.erl&quot;},{line,1248}]},
+</I>&gt;<i>                {mochijson2,json_encode_array,2,[]}]}}
+</I>&gt;<i>
+</I>&gt;<i> Which seems to indicate that the management console assumes that entity
+</I>&gt;<i> names are valid UTF-8. We've advised our customer to consider renaming
+</I>&gt;<i> their queues, but it'd be good to somehow rectify the difference in
+</I>&gt;<i> assumptions around name encodings. My first thought might be to
+</I>&gt;<i> percent-encoded non-utf8 data. but there's likely better ways to handle
+</I>&gt;<i> this.
+</I>&gt;<i>
+</I>&gt;<i> The quickest way to reproduce the problem would be to run this ruby
+</I>&gt;<i> script using Bunny (assuming you have a local rabbit with the default
+</I>&gt;<i> credentials):
+</I>&gt;<i>
+</I>&gt;<i> require 'bunny'
+</I>&gt;<i> bunny = Bunny.new().tap { |b| b.start }
+</I>&gt;<i> q = bunny.queue(&quot;foo\316null&quot;)
+</I>&gt;<i>
+</I>&gt;<i> Once you've done that, if you try to list the queues in the root
+</I>&gt;<i> virtualhost, you'll find you get the above exception.
+</I>&gt;<i>
+</I>&gt;<i> Thanks!
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>&gt;<i>
+</I>
+
+-- 
+Simon MacMullen
+RabbitMQ, Pivotal
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="031505.html">[rabbitmq-discuss] [BUG] Management interface fails to render queues with non utf-8 names.
+</A></li>
+	<LI>Next message: <A HREF="031507.html">[rabbitmq-discuss] Cannot log in to management interface since 3.2.0
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#31508">[ date ]</a>
+              <a href="thread.html#31508">[ thread ]</a>
+              <a href="subject.html#31508">[ subject ]</a>
+              <a href="author.html#31508">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,405 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] RabbitMQ perfomance testing &amp; troubles
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20RabbitMQ%20perfomance%20testing%20%26%20troubles&In-Reply-To=">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000688.html">
+   <LINK REL="Next"  HREF="000682.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] RabbitMQ perfomance testing &amp; troubles</H1>
+    <B>Alexey Slynko</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20RabbitMQ%20perfomance%20testing%20%26%20troubles&In-Reply-To="
+       TITLE="[rabbitmq-discuss] RabbitMQ perfomance testing &amp; troubles">slynko at brandproduction.ru
+       </A><BR>
+    <I>Wed Apr  9 11:55:35 BST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000688.html">[rabbitmq-discuss] RabbitMQ and monit?
+</A></li>
+        <LI>Next message: <A HREF="000682.html">[rabbitmq-discuss] RabbitMQ perfomance testing &amp; troubles
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#673">[ date ]</a>
+              <a href="thread.html#673">[ thread ]</a>
+              <a href="subject.html#673">[ subject ]</a>
+              <a href="author.html#673">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>
+Hi,
+
+we have done some stress tests of rabbitmq. Our main goal was the ~10K
+messages per second and maximum cpu &amp; ram usage. Two servers with equal
+configuration listed below were used for this task.
+
+
+Intel SR1500AL:
+Intel S5000PAL MB, 2 Quad Core Xeon 5345 2,33Ghz, 4Gb FB RAM :
+
+
+$ /usr/sbin/prtdiag
+System Configuration: Intel S5000PAL
+BIOS Configuration: Intel Corporation S5000.86B.10.00.0085.112920071426
+11/29/2007
+BMC Configuration: IPMI 2.0 (KCS: Keyboard Controller Style)
+
+==== Processor Sockets ====================================
+
+Version                          Location Tag
+-------------------------------- --------------------------
+Intel(R) Xeon(R) CPU           E5345  @ 2.33GHz CPU1
+Intel(R) Xeon(R) CPU           E5345  @ 2.33GHz CPU2
+
+==== Memory Device Sockets ================================
+
+Type    Status Set Device Locator      Bank Locator
+------- ------ --- ------------------- --------------------
+Unknown in use 1   ONBOARD DIMM_A1     Channel A
+Unknown empty  2   ONBOARD DIMM_A2     Channel A
+Unknown in use 1   ONBOARD DIMM_B1     Channel B
+Unknown empty  2   ONBOARD DIMM_B2     Channel B
+Unknown in use 5   ONBOARD DIMM_C1     Channel C
+Unknown empty  6   ONBOARD DIMM_C2     Channel C
+Unknown in use 5   ONBOARD DIMM_D1     Channel D
+Unknown empty  6   ONBOARD DIMM_D2     Channel D
+
+==== On-Board Devices =====================================
+ATI Rage XL
+Intel 82546EB Ethernet 1
+Intel 82546EB Ethernet 2
+ESB2 Integrated SATA Controller
+NS PC87427 SIO3
+
+==== Upgradeable Slots ====================================
+
+ID  Status    Type             Description
+--- --------- ---------------- ----------------------------
+1   available PCI Express      FH Slot 1, PCI EXP x8
+1   available PCI Express      LP Slot 1, PCI EXP x8
+10  available PCI Express      I/O Module
+
+These servers were connected with network link Ethernet 100Mb. The first
+server (AMQP broker) powered by
+Debian GNU/Linux Etch. Versions of installed software listed below:
+
+# cat /etc/debian_version
+4.0
+
+# uname -sr
+Linux 2.6.18-6-686-bigmem
+
+# free
+                total       used       free     shared    buffers     cached
+Mem:       4139508     514148    3625360          0     210648     150388
+-/+ buffers/cache:     153112    3986396
+Swap:      4194296          0    4194296
+
+
+Erlang version (stable debian distribution) :
+
+# dpkg -l erlang\* | grep ii
+ii  erlang-base      11.b.2-4       Concurrent, real-time, distributed
+functiona
+ii  erlang-nox       11.b.2-4       Concurrent, real-time, distributed
+functiona
+
+# erl
+Erlang (BEAM) emulator version 5.5.2 [source] [async-threads:0]
+[kernel-poll:false]
+
+Eshell V5.5.2  (abort with ^G)
+
+
+
+RabbitMQ version:
+
+# apt-cache show rabbitmq-server | grep Version
+Version: 1.3.0-1
+
+
+We have modified startup script for handling more than 1024 tcp/connections:
+
+--- rabbitmq-server.orig        2008-04-07 21:59:48.000000000 +0400
++++ /etc/init.d/rabbitmq-server 2008-04-04 18:05:25.000000000 +0400
+@@ -24,8 +24,10 @@
+
+   set -e
+   cd /
+
++ulimit -n 65535
++
+start_rabbitmq () {
+         set +e
+         su rabbitmq -s /bin/sh -c &quot;$DAEMON start_all ${NODE_COUNT}&quot; &gt;
+/var/log/rabbitmq/startup.log 2&gt; /var/log/rabbitmq/startup.err
+   case &quot;$?&quot; in
+
+
+Another midfications were done for normal mnesia work (errors listed below)
+
+ERROR REPORT==== 4-Apr-2008::18:29:14 ===
+Error in process &lt;0.20713.0&gt; on node '<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at altair</A>' with exit value:
+{{case_clause,{error,{system_limit,&quot;Cannot create an ets table for
+the local transaction
+store&quot;,{system_limit,[{ets,new,[mnesia_trans_store,[bag,public]]},{mnesia_tm,doit_loop,1},{mnesia_sp,init_proc,4},{
+proc_lib...
+
+and for increasing common throughput
+
+# diff -u rabbitmq-server.orig /usr/sbin/rabbitmq-server
+--- rabbitmq-server.orig        2008-04-07 22:27:26.000000000 +0400
++++ /usr/sbin/rabbitmq-server   2008-04-07 22:28:40.000000000 +0400
+@@ -28,7 +28,7 @@
+   [ &quot;x&quot; = &quot;x$NODE_IP_ADDRESS&quot; ] &amp;&amp; NODE_IP_ADDRESS=0.0.0.0
+   [ &quot;x&quot; = &quot;x$NODE_PORT&quot; ] &amp;&amp; NODE_PORT=5672
+
+-ERL_ARGS=&quot;+K true +A30 -kernel inet_default_listen_options
+[{sndbuf,16384},{recbuf,4096}]&quot;
++ERL_ARGS=&quot;-env ERL_MAX_ETS_TABLES 10240 -env ERL_MAX_PORTS 10240 +K
+true +A300 +P512000 -kernel inet_default_listen_options
+[{sndbuf,65535},{recbuf,65535},{reuseaddr,true}] -smp auto&quot;
+   CLUSTER_CONFIG_FILE=/etc/default/rabbitmq_cluster.config
+   CONFIG_FILE=/etc/default/rabbitmq
+
+
+There is a system state after rabbitmq startup:
+
+top - 22:41:58 up 3 days,  5:10,  3 users,  load average: 0.00, 0.00, 0.00
+Tasks: 116 total,   1 running, 115 sleeping,   0 stopped,   0 zombie
+Cpu(s):  0.0%us,  0.0%sy,  0.0%ni,100.0%id,  0.0%wa,  0.0%hi,  0.0%si,
+0.0%st
+Mem:   4139508k total,   572228k used,  3567280k free,   212784k buffers
+Swap:  4194296k total,        0k used,  4194296k free,   188600k cached
+
+    PID USER      PR  NI  VIRT  RES  SHR S %CPU %MEM    TIME+  COMMAND
+
+31089 rabbitmq  15   0 2499m  15m 1620 S    0  0.4   0:00.29 beam.smp
+
+30909 rabbitmq  15   0  1812  380  252 S    0  0.0   0:00.00 epmd
+
+31085 rabbitmq  18   0  4176 1548 1080 S    0  0.0   0:00.01
+rabbitmq-server
+31410 rabbitmq  17   0  1808  452  360 S    0  0.0   0:00.00
+inet_gethost
+31411 rabbitmq  18   0  1852  580  468 S    0  0.0   0:00.00
+inet_gethost
+
+
+The second server (producer &amp; consumer clients) powered by Solaris 10
+07/. Versions of installed software listed below:
+
+$ java -version
+java version &quot;1.5.0_12&quot;
+Java(TM) 2 Runtime Environment, Standard Edition (build 1.5.0_12-b04)
+Java HotSpot(TM) Server VM (build 1.5.0_12-b04, mixed mode)
+
+Client source code attached to this message.
+
+So, let's try to start 100 producer's and
+100 consumer's. Each producer generate 10 msgs/sec (t
+1000 msgs/sec at all)
+
+$ java -jar RabbitmqFastMessagingProducerTest.jar 100 &gt; client.log
+
+System snapshot:
+
+top - 22:50:39 up 3 days,  5:19,  3 users,  load average: 0.51, 0.11, 0.04
+Tasks: 116 total,   1 running, 115 sleeping,   0 stopped,   0 zombie
+Cpu(s): 30.1%us,  5.3%sy,  0.0%ni, 64.2%id,  0.0%wa,  0.0%hi,  0.4%si,
+0.0%st
+Mem:   4139508k total,   590664k used,  3548844k free,   212844k buffers
+Swap:  4194296k total,        0k used,  4194296k free,   188960k cached
+
+    PID USER      PR  NI  VIRT  RES  SHR S %CPU %MEM    TIME+  COMMAND
+
+31089 rabbitmq  15   0 2520m  33m 1620 S  281  0.8   0:45.94 beam.smp
+
+30909 rabbitmq  15   0  1812  380  252 S    0  0.0   0:00.00 epmd
+31085 rabbitmq  18   0  4176 1548 1080 S    0  0.0   0:00.01 rabbitmq-server
+31410 rabbitmq  17   0  1808  452  360 S    0  0.0   0:00.00 inet_gethost
+31411 rabbitmq  18   0  1852  580  468 S    0  0.0   0:00.00 inet_gethost
+
+Client eat about 5-7% CPU.
+Client log file listed below:
+
+&gt;<i> CLIENT_PRODUCER_THREAD_ID: 63 TIME: 1207594715030 MESSAGE: 1032 TIME: 1207594715030
+</I>&gt;<i> CLIENT_PRODUCER_THREAD_ID: 85 TIME: 1207594715030 MESSAGE: 1031 TIME: 1207594715030
+</I>&gt;<i> CLIENT_PRODUCER_THREAD_ID: 62 TIME: 1207594715030 MESSAGE: 1033 TIME: 1207594715030
+</I>&gt;<i> CLIENT_PRODUCER_THREAD_ID: 4 TIME: 1207594715030 MESSAGE: 1031 TIME: 1207594715030
+</I>&gt;<i> CLIENT_CONSUMER_THREAD_ID: 80 TIME: 1207594715051 MESSAGE: 1032 TIME: 1207594715030
+</I>&gt;<i> CLIENT_CONSUMER_THREAD_ID: 85 TIME: 1207594715051 MESSAGE: 1031 TIME: 1207594715030
+</I>&gt;<i> CLIENT_CONSUMER_THREAD_ID: 63 TIME: 1207594715052 MESSAGE: 1032 TIME: 1207594715030
+</I>
+Ok, try to calculate delay:
+
+&gt;<i> $ tail -f client.log | awk '/CLIENT_CONSUMER_THREAD_ID/ {print &quot;DELAY: &quot; $4-$8 &quot; &quot; $0}'
+</I>
+&gt;<i> DELAY: 15 CLIENT_CONSUMER_THREAD_ID: 96 TIME: 1207594667285 MESSAGE: 596 TIME: 1207594667270
+</I>&gt;<i> DELAY: 15 CLIENT_CONSUMER_THREAD_ID: 76 TIME: 1207594667285 MESSAGE: 595 TIME: 1207594667270
+</I>&gt;<i> DELAY: 16 CLIENT_CONSUMER_THREAD_ID: 3 TIME: 1207594667286 MESSAGE: 596 TIME: 1207594667270
+</I>&gt;<i> DELAY: 2 CLIENT_CONSUMER_THREAD_ID: 49 TIME: 1207594667292 MESSAGE: 596 TIME: 1207594667290
+</I>&gt;<i> DELAY: 3 CLIENT_CONSUMER_THREAD_ID: 63 TIME: 1207594667293 MESSAGE: 596 TIME: 1207594667290
+</I>&gt;<i> DELAY: 3 CLIENT_CONSUMER_THREAD_ID: 0 TIME: 1207594667303 MESSAGE: 594 TIME: 1207594667300
+</I>&gt;<i> DELAY: 3 CLIENT_CONSUMER_THREAD_ID: 33 TIME: 1207594667303 MESSAGE: 596 TIME: 1207594667300
+</I>&gt;<i> DELAY: 43 CLIENT_CONSUMER_THREAD_ID: 12 TIME: 1207594667303 MESSAGE: 596 TIME: 1207594667260
+</I>&gt;<i> DELAY: 44 CLIENT_CONSUMER_THREAD_ID: 65 TIME: 1207594667304 MESSAGE: 593 TIME: 1207594667260
+</I>&gt;<i> DELAY: 4 CLIENT_CONSUMER_THREAD_ID: 42 TIME: 1207594667304 MESSAGE: 595 TIME: 1207594667300
+</I>&gt;<i> DELAY: 5 CLIENT_CONSUMER_THREAD_ID: 45 TIME: 1207594667305 MESSAGE: 596 TIME: 1207594667300
+</I>&gt;<i> DELAY: 45 CLIENT_CONSUMER_THREAD_ID: 29 TIME: 1207594667305 MESSAGE: 594 TIME: 1207594667260
+</I>&gt;<i> DELAY: 2 CLIENT_CONSUMER_THREAD_ID: 39 TIME: 1207594667312 MESSAGE: 596 TIME: 1207594667310
+</I>&gt;<i> DELAY: 6 CLIENT_CONSUMER_THREAD_ID: 54 TIME: 1207594667336 MESSAGE: 597 TIME: 1207594667330
+</I>&gt;<i> DELAY: 7 CLIENT_CONSUMER_THREAD_ID: 85 TIME: 1207594667337 MESSAGE: 595 TIME: 1207594667330
+</I>&gt;<i> DELAY: 8 CLIENT_CONSUMER_THREAD_ID: 22 TIME: 1207594667338 MESSAGE: 597 TIME: 1207594667330
+</I>&gt;<i> DELAY: 8 CLIENT_CONSUMER_THREAD_ID: 79 TIME: 1207594667338 MESSAGE: 596 TIME: 1207594667330
+</I>&gt;<i> 
+</I>
+So, the latency between 2-50 ms. It's suitable result.
+
+We have increased thread count at the next step
+
+&gt;<i> $ java -jar RabbitmqFastMessagingProducerTest.jar 500 &gt; client.log
+</I>
+&gt;<i> $ tail -f client.log | awk '/CLIENT_CONSUMER_THREAD_ID/ {print &quot;DELAY: &quot; $4-$8 &quot; &quot; $0}'
+</I>&gt;<i> DELAY: 23338 CLIENT_CONSUMER_THREAD_ID: 367 TIME: 1207595791068 MESSAGE: 9 TIME: 1207595767730
+</I>&gt;<i> DELAY: 23210 CLIENT_CONSUMER_THREAD_ID: 417 TIME: 1207595791070 MESSAGE: 9 TIME: 1207595767860
+</I>&gt;<i> DELAY: 23326 CLIENT_CONSUMER_THREAD_ID: 464 TIME: 1207595791117 MESSAGE: 9 TIME: 1207595767791
+</I>&gt;<i> DELAY: 23147 CLIENT_CONSUMER_THREAD_ID: 481 TIME: 1207595791117 MESSAGE: 9 TIME: 1207595767970
+</I>&gt;<i> DELAY: 23327 CLIENT_CONSUMER_THREAD_ID: 386 TIME: 1207595791117 MESSAGE: 9 TIME: 1207595767790
+</I>&gt;<i> DELAY: 23197 CLIENT_CONSUMER_THREAD_ID: 469 TIME: 1207595791117 MESSAGE: 9 TIME: 1207595767920
+</I>&gt;<i> DELAY: 23984 CLIENT_CONSUMER_THREAD_ID: 322 TIME: 1207595791155 MESSAGE: 11 TIME: 1207595767171
+</I>&gt;<i> DELAY: 23307 CLIENT_CONSUMER_THREAD_ID: 350 TIME: 1207595791157 MESSAGE: 9 TIME: 1207595767850
+</I>&gt;<i> DELAY: 23158 CLIENT_CONSUMER_THREAD_ID: 453 TIME: 1207595791158 MESSAGE: 9 TIME: 1207595768000
+</I>&gt;<i> DELAY: 23258 CLIENT_CONSUMER_THREAD_ID: 306 TIME: 1207595791158 MESSAGE: 9 TIME: 1207595767900
+</I>&gt;<i> DELAY: 23283 CLIENT_CONSUMER_THREAD_ID: 356 TIME: 1207595791213 MESSAGE: 9 TIME: 1207595767930
+</I>&gt;<i> DELAY: 23294 CLIENT_CONSUMER_THREAD_ID: 256 TIME: 1207595791214 MESSAGE: 9 TIME: 1207595767920
+</I>&gt;<i> DELAY: 23144 CLIENT_CONSUMER_THREAD_ID: 456 TIME: 1207595791214 MESSAGE: 9 TIME: 1207595768070
+</I>&gt;<i> DELAY: 24063 CLIENT_CONSUMER_THREAD_ID: 112 TIME: 1207595791214 MESSAGE: 11 TIME: 1207595767151
+</I>&gt;<i> DELAY: 23144 CLIENT_CONSUMER_THREAD_ID: 484 TIME: 1207595791214 MESSAGE: 9 TIME: 1207595768070
+</I>
+Latency increased to 20-25 sec (not suitable).
+
+System state snapshot:
+
+   top - 23:22:10 up 3 days,  5:51,  3 users,  load average: 4.91, 2.89, 
+1.56
+Tasks: 116 total,   1 running, 115 sleeping,   0 stopped,   0 zombie
+Cpu(s): 45.9%us,  5.9%sy,  0.0%ni, 47.3%id,  0.0%wa,  0.1%hi,  0.8%si,
+0.0%st
+Mem:   4139508k total,  1155792k used,  2983716k free,   213068k buffers
+Swap:  4194296k total,        0k used,  4194296k free,   196008k cached
+
+    PID USER      PR  NI  VIRT  RES  SHR S %CPU %MEM    TIME+  COMMAND
+
+31566 rabbitmq  15   0 3062m 572m 1620 S  412 14.2  12:14.58 beam.smp
+
+30909 rabbitmq  15   0  1812  380  252 S    0  0.0   0:00.00 epmd
+
+31562 rabbitmq  18   0  4172 1548 1080 S    0  0.0   0:00.00
+rabbitmq-server
+31887 rabbitmq  18   0  1808  452  360 S    0  0.0   0:00.00
+inet_gethost
+31888 rabbitmq  19   0  1852  576  468 S    0  0.0   0:00.00
+inet_gethost
+
+
+Try to increase threads up to 1000:
+
+&gt;<i> $ java -jar RabbitmqFastMessagingProducerTest.jar 1000 &gt; client.log
+</I>
+&gt;<i> $ tail -f client.log | awk '/CLIENT_CONSUMER_THREAD_ID/ {print &quot;DELAY: &quot; $4-$8 &quot; &quot; $0}'
+</I>&gt;<i> DELAY: 78805 CLIENT_CONSUMER_THREAD_ID: 562 TIME: 1207597161505 MESSAGE: 577 TIME: 1207597082700
+</I>&gt;<i> DELAY: 78843 CLIENT_CONSUMER_THREAD_ID: 602 TIME: 1207597161593 MESSAGE: 577 TIME: 1207597082750
+</I>&gt;<i> DELAY: 31985 CLIENT_CONSUMER_THREAD_ID: 483 TIME: 1207597161687 MESSAGE: 84 TIME: 1207597129702
+</I>&gt;<i> DELAY: 59055 CLIENT_CONSUMER_THREAD_ID: 694 TIME: 1207597161896 MESSAGE: 235 TIME: 1207597102841
+</I>&gt;<i> DELAY: 79510 CLIENT_CONSUMER_THREAD_ID: 562 TIME: 1207597162311 MESSAGE: 578 TIME: 1207597082801
+</I>&gt;<i> DELAY: 79512 CLIENT_CONSUMER_THREAD_ID: 602 TIME: 1207597162372 MESSAGE: 578 TIME: 1207597082860
+</I>&gt;<i> DELAY: 32710 CLIENT_CONSUMER_THREAD_ID: 483 TIME: 1207597162521 MESSAGE: 85 TIME: 1207597129811
+</I>&gt;<i> DELAY: 59680 CLIENT_CONSUMER_THREAD_ID: 694 TIME: 1207597162630 MESSAGE: 236 TIME: 1207597102950
+</I>&gt;<i> DELAY: 79967 CLIENT_CONSUMER_THREAD_ID: 562 TIME: 1207597162878 MESSAGE: 579 TIME: 1207597082911
+</I>&gt;<i> DELAY: 79953 CLIENT_CONSUMER_THREAD_ID: 602 TIME: 1207597162923 MESSAGE: 579 TIME: 1207597082970
+</I>&gt;<i> DELAY: 33231 CLIENT_CONSUMER_THREAD_ID: 483 TIME: 1207597163152 MESSAGE: 86 TIME: 1207597129921
+</I>
+Latency become unsuitable, and errors detected in client log:
+
+&gt;<i> Apr 7, 2008 11:39:54 PM rabbitmqfastmessagingproducertest.FastMessagingProducer run
+</I>&gt;<i> SEVERE: null
+</I>&gt;<i> java.net.SocketException: Socket closed
+</I>&gt;<i>         at java.net.SocketOutputStream.socketWrite(SocketOutputStream.java:99)
+</I>&gt;<i>         at java.net.SocketOutputStream.write(SocketOutputStream.java:136)
+</I>&gt;<i>         at java.io.BufferedOutputStream.flushBuffer(BufferedOutputStream.java:65)
+</I>&gt;<i>         at java.io.BufferedOutputStream.flush(BufferedOutputStream.java:123)
+</I>&gt;<i>         at java.io.DataOutputStream.flush(DataOutputStream.java:106)
+</I>&gt;<i>         at com.rabbitmq.client.impl.SocketFrameHandler.writeFrame(SocketFrameHandler.java:156)
+</I>&gt;<i>         at com.rabbitmq.client.impl.AMQConnection.writeFrame(AMQConnection.java:297)
+</I>&gt;<i>         at com.rabbitmq.client.impl.AMQCommand.transmit(AMQCommand.java:175)
+</I>&gt;<i>         at com.rabbitmq.client.impl.ChannelN.basicPublish(ChannelN.java:369)
+</I>&gt;<i>         at com.rabbitmq.client.impl.ChannelN.basicPublish(ChannelN.java:350)
+</I>&gt;<i>         at rabbitmqfastmessagingproducertest.FastMessagingProducer.run(FastMessagingProducer.java:83)
+</I>&gt;<i> 
+</I>
+there are also errors in rabbitmq log:
+
+&gt;<i> =WARNING REPORT==== 7-Apr-2008::23:34:04 ===
+</I>&gt;<i> Mnesia(<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at altair</A>): ** WARNING ** Mnesia is overloaded: {mnesia_tm,
+</I>&gt;<i>                                                                message_queue_len,
+</I>&gt;<i>                                                                [732,626]}
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>
+CPU and RAM at AMQP broker server only half done.
+
+
+Is there any way to increse common system throughput up to 10K msgs/sec?
+Any ideas?
+
+Thanks in advance
+
+
+-- 
+Alexey Slynko
+
+
+
+
+-------------- next part --------------
+A non-text attachment was scrubbed...
+Name: rabbitmqfastmessagingproducertest.tar.gz
+Type: application/x-compressed-tar
+Size: 1951 bytes
+Desc: not available
+Url : <A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20080409/366f4891/attachment.bin">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20080409/366f4891/attachment.bin</A> 
+-------------- next part --------------
+A non-text attachment was scrubbed...
+Name: RabbitmqFastMessagingProducerTest.jar
+Type: application/x-java-archive
+Size: 12199 bytes
+Desc: not available
+Url : <A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20080409/366f4891/attachment-0001.bin">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20080409/366f4891/attachment-0001.bin</A> 
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000688.html">[rabbitmq-discuss] RabbitMQ and monit?
+</A></li>
+	<LI>Next message: <A HREF="000682.html">[rabbitmq-discuss] RabbitMQ perfomance testing &amp; troubles
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#673">[ date ]</a>
+              <a href="thread.html#673">[ thread ]</a>
+              <a href="subject.html#673">[ subject ]</a>
+              <a href="author.html#673">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

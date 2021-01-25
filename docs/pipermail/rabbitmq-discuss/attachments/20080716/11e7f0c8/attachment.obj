@@ -1,0 +1,197 @@
+%%%-------------------------------------------------------------------
+%%% Author  : Edwin M. Fine <emofine@usa.net>
+%%% Description : 
+%%% This provides an administration interface to RabbitMQ, to be able
+%%% to configure realms, users, and so on using Erlang rather than
+%%% the command-line.
+%%%
+%%% Created:  18 Mar 2008 by Edwin M. Fine <emofine@usa.net>
+%%%-------------------------------------------------------------------
+-module(rbmq_admin).
+
+-include("rabbit.hrl").
+
+%% API
+-export(
+    [
+        stop/1,
+        stop_app/1,
+        start_app/1,
+        reset/1,
+        force_reset/1,
+        cluster/2,
+        status/1,
+        add_user/3,
+        delete_user/2,
+        change_password/3,
+        list_users/1,
+        add_vhost/2,
+        delete_vhost/2,
+        list_vhosts/1,
+        map_user_vhost/3,
+        unmap_user_vhost/3,
+        list_user_vhosts/2,
+        list_vhost_users/2,
+        add_realm/3,
+        delete_realm/3,
+        list_realms/2,
+        set_permissions/5,
+        list_permissions/3,
+        list_queues/1,
+        delete_queue/3,
+        permission_list/1
+    ]).
+
+%%====================================================================
+%% API
+%%====================================================================
+% Internal exports
+-export([to_binary/1, to_atom/1]).
+
+-define(RPC_TIMEOUT, 30000).
+
+stop(Node) when is_atom(Node) ->
+    call(Node, {rabbit, stop_and_halt, []}).
+
+stop_app(Node) when is_atom(Node) ->
+    call(Node, {rabbit, stop, []}).
+
+start_app(Node) when is_atom(Node) ->
+    call(Node, {rabbit, start, []}).
+
+reset(Node) when is_atom(Node) ->
+    call(Node, {rabbit_mnesia, reset, []}).
+
+force_reset(Node) when is_atom(Node) ->
+    call(Node, {rabbit_mnesia, force_reset, []}).
+
+cluster(Node, ClusterNodeSs) when is_atom(Node) ->
+    ClusterNodes = lists:map(fun to_atom/1, ClusterNodeSs),
+    rpc_call(Node, rabbit_mnesia, cluster, [ClusterNodes]).
+
+status(Node) when is_atom(Node) ->
+    call(Node, {rabbit, status, []}).
+
+add_user(Node, Username, Password) when is_atom(Node) ->
+    call(Node, {rabbit_access_control, add_user, [Username, Password]}).
+
+delete_user(Node, Username) when is_atom(Node) ->
+    call(Node, {rabbit_access_control, delete_user, [Username]}).
+
+change_password(Node, Username, NewPassword) when is_atom(Node) ->
+    call(Node, {rabbit_access_control, change_password, [Username, NewPassword]}).
+
+list_users(Node) when is_atom(Node) ->
+    call(Node, {rabbit_access_control, list_users, []}).
+
+add_vhost(Node, VHostPath) when is_atom(Node) ->
+    call(Node, {rabbit_access_control, add_vhost, [VHostPath]}).
+
+delete_vhost(Node, VHostPath) when is_atom(Node) ->
+    call(Node, {rabbit_access_control, delete_vhost, [VHostPath]}).
+
+list_vhosts(Node) when is_atom(Node) ->
+    call(Node, {rabbit_access_control, list_vhosts, []}).
+
+map_user_vhost(Node, Username, VHostPath) when is_atom(Node) ->
+    call(Node, {rabbit_access_control, map_user_vhost, [Username, VHostPath]}).
+
+unmap_user_vhost(Node, Username, VHostPath) when is_atom(Node) ->
+    call(Node, {rabbit_access_control, unmap_user_vhost, [Username, VHostPath]}).
+
+list_user_vhosts(Node, Username) when is_atom(Node) ->
+    call(Node, {rabbit_access_control, list_user_vhosts, [Username]}).
+
+list_vhost_users(Node, VHostPath) when is_atom(Node) ->
+    call(Node, {rabbit_access_control, list_vhost_users, [VHostPath]}).
+
+add_realm(Node, VHostPath, RealmName) when is_atom(Node) ->
+    rpc_call(Node, rabbit_realm, add_realm,
+             [realm_rsrc(VHostPath, RealmName)]).
+
+delete_realm(Node, VHostPath, RealmName) when is_atom(Node) ->
+    rpc_call(Node, rabbit_realm, delete_realm,
+             [realm_rsrc(VHostPath, RealmName)]).
+
+list_realms(Node, VHostPath) when is_atom(Node) ->
+    call(Node, {rabbit_realm, list_vhost_realms, [VHostPath]}).
+
+set_permissions(Node, Username, VHostPath, RealmName, Permissions)
+when is_atom(Node), is_list(Permissions) ->
+    CheckedPermissions = check_permissions(Permissions),
+    Ticket = #ticket{
+      realm_name   = realm_rsrc(VHostPath, RealmName),
+      passive_flag = lists:member(passive, CheckedPermissions),
+      active_flag  = lists:member(active,  CheckedPermissions),
+      write_flag   = lists:member(write,   CheckedPermissions),
+      read_flag    = lists:member(read,    CheckedPermissions)},
+    rpc_call(Node, rabbit_access_control, map_user_realm,
+             [to_binary(Username), Ticket]).
+
+list_permissions(Node, Username, VHostPath) when is_atom(Node) ->
+    call(Node, {rabbit_access_control, list_user_realms, [Username, VHostPath]}).
+
+list_queues(Node) when is_atom(Node) ->
+    rpc_call(Node, rabbit_amqqueue, stat_all, []). 
+
+delete_queue(Node, Vhost, QueueName) when is_atom(Node), is_binary(Vhost), is_binary(QueueName) ->
+    ResourceSpec = rpc_call(Node, rabbit_misc, r, [Vhost, queue, QueueName]),
+    case rpc_call(Node, rabbit_amqqueue, lookup, [ResourceSpec]) of
+        {ok, #amqqueue{} = QSpec} ->
+            DeleteEvenIfNotEmpty = false, % Delete the queue even if it is not empty
+            OnlyDeleteIfUnused = true,    % only delete the queue is it is unused
+            {ok, _MsgsLost} = rpc_call(Node, rabbit_amqqueue, delete, [QSpec, OnlyDeleteIfUnused, DeleteEvenIfNotEmpty]);
+        _Other ->
+            {ok, 0}
+    end.
+
+check_permissions([]) -> [];
+check_permissions([P | R]) when is_list(P) ->
+    check_permissions([list_to_atom(P) | R]);
+check_permissions([all | R]) ->
+    [passive, active, write, read | check_permissions(R)];
+check_permissions([P | R]) when (P == passive) or
+                                (P == active)  or
+                                (P == write)   or
+                                (P == read) ->
+    [P | check_permissions(R)].
+
+permission_list(Ticket = #ticket{}) ->
+    lists:foldr(fun ({Field, Label}, L) ->
+                       case element(Field, Ticket) of
+                           true -> [Label | L];
+                           false -> L
+                       end
+                end,
+                [],
+                [{#ticket.passive_flag, passive},
+                 {#ticket.active_flag,  active},
+                 {#ticket.write_flag,   write},
+                 {#ticket.read_flag,    read}]).
+
+realm_rsrc(VHostPath, RealmName) ->
+    rabbit_misc:r(to_binary(VHostPath),
+                  realm,
+                  to_binary(RealmName)).
+
+call(Node, {Mod, Fun, Args}) ->
+    rpc_call(Node, Mod, Fun, lists:map(fun to_binary/1, Args)).
+
+rpc_call(Node, Mod, Fun, Args) ->
+    rpc:call(Node, Mod, Fun, Args, ?RPC_TIMEOUT).
+
+to_atom(X) when is_atom(X) ->
+    X;
+to_atom(X) when is_list(X) ->
+    list_to_atom(X);
+to_atom(X) when is_integer(X) ->
+    list_to_atom(integer_to_list(X)).
+
+to_binary(X) when is_binary(X) ->
+    X;
+to_binary(X) when is_integer(X) ->
+    list_to_binary(integer_to_list(X));
+to_binary(X) when is_atom(X) ->
+    list_to_binary(atom_to_list(X));
+to_binary(X) when is_list(X) ->
+    list_to_binary(X).

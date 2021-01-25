@@ -1,0 +1,629 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] MQTT Plugin - missed and received in wrong order	with QoS=0
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20MQTT%20Plugin%20-%20missed%20and%20received%20in%20wrong%20order%0A%09with%20QoS%3D0&In-Reply-To=%3C186598c3d2d4531a1f83b53edc97b67f%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="032452.html">
+   <LINK REL="Next"  HREF="032327.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] MQTT Plugin - missed and received in wrong order	with QoS=0</H1>
+    <B>Adrian Yip</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20MQTT%20Plugin%20-%20missed%20and%20received%20in%20wrong%20order%0A%09with%20QoS%3D0&In-Reply-To=%3C186598c3d2d4531a1f83b53edc97b67f%40mail.gmail.com%3E"
+       TITLE="[rabbitmq-discuss] MQTT Plugin - missed and received in wrong order	with QoS=0">ayip at recondynamics.com
+       </A><BR>
+    <I>Tue Dec  3 22:38:43 GMT 2013</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="032452.html">[rabbitmq-discuss] Recurring partitioning problem on local	network
+</A></li>
+        <LI>Next message: <A HREF="032327.html">[rabbitmq-discuss] MQTT Plugin - missed and received in wrong order with QoS=0
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#32298">[ date ]</a>
+              <a href="thread.html#32298">[ thread ]</a>
+              <a href="subject.html#32298">[ subject ]</a>
+              <a href="author.html#32298">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi,
+
+
+
+I am testing a Mosquitto client publishing 100s of messages to RabbitMQ
+exchange via the MQTT plugin with different QoS levels and I am seeing
+issues with messages being received out of order and also what appears to
+be the TCP socket going down (seeing TCP FINs in tshark).  This is all done
+on localhost inside an Ubuntu VM
+
+
+
+This happens when the inter-message delay is reduced to &lt; 0.07s with QoS =
+0 and &lt; 0.5s with QoS = 1.  (RabbitMQ 3.2.1, Erlang R14B04) (Pika 0.9.13)
+(mosquito 1.2.2)
+
+
+
+The client consumer simply expects to see msgs received in order and prints
+an error if the msg id # is not +1 from the previous.  If I send in a
+similar manner via AMQP using pika client, there is no issue with messages
+being received out of order or seeing any socket disconnects (FINs)
+
+
+
+The problem gets worse with QoS=1 seeing the connection failing and the
+publisher stops receiving confirmations.
+
+
+
+In the example below 200 message are published with 0s delay between them
+at QoS=0.  All the messages are received up to 51, then 52 is missed, then
+every 10 messages are received and one skipped.  At the end of the log, it
+shows receiving the skipped messages being output in reversed order&#8230;
+received 112, 102, 92, 82&#8230;all the way to 52&#8230;
+
+
+
+I&#8217;ve set the client.max_inflight_messages_set(0) in the mosquito client and
+the mqtt rabbitmq plugin config is set with prefetch=0 for infinite
+messaging which I think only applies for QoS=1.  Also in the mosquito
+client, I&#8217;ve trigger the mosquito client thread to run to process the
+publish cfm from the broker plugin.
+
+
+
+Any insights would be appreciated.  Seems like an issue with mqtt plugin as
+when I look at tcpdumps of the traces the mqtt messages are aggregated
+together into tcp messages with the low delays and with higher delays they
+are separated into individual tcp messages.
+
+
+
+I&#8217;ve included the example invocation, output and code below.
+
+
+
+Adrian
+
+
+
+
+
+*Mosquitto MQTT Publisher:*
+
+
+
+*Example&#8230;send 200 messages with 0 delay at QoS=0*
+
+
+
+*% python mqtt_publisher_json.py 200 0 0*
+
+
+
+Sending JSON msg 1 via MQTT
+
+
+
+&#8230;
+
+
+
+Sending JSON msg 198 via MQTT
+
+Sending JSON msg 199 via MQTT
+
+Sending JSON msg 200 via MQTT
+
+
+
+
+
+*AMQP Consumer using PIKA*
+
+
+
+*Receive messages published on the mqtt topic exchange*
+
+
+
+% python amqp_receive_mqtt_json.py
+
+[x] 'mqtt_json_routing_key':{u'id': 1}
+
+[x] 'mqtt_json_routing_key':{u'id': 2}
+
+[x] 'mqtt_json_routing_key':{u'id': 3}
+
+&#8230;all messages received here
+
+[x] 'mqtt_json_routing_key':{u'id': 50}
+
+[x] 'mqtt_json_routing_key':{u'id': 51}
+
+[x] 'mqtt_json_routing_key':{u'id': 53}  &lt;- Got 53 instead of 52
+
+*Missing 52*
+
+[x] 'mqtt_json_routing_key':{u'id': 54}  &lt;- now receive 54&#8230;61 in order
+
+[x] 'mqtt_json_routing_key':{u'id': 55}
+
+[x] 'mqtt_json_routing_key':{u'id': 56}
+
+[x] 'mqtt_json_routing_key':{u'id': 57}
+
+[x] 'mqtt_json_routing_key':{u'id': 58}
+
+[x] 'mqtt_json_routing_key':{u'id': 59}
+
+[x] 'mqtt_json_routing_key':{u'id': 60}
+
+[x] 'mqtt_json_routing_key':{u'id': 61}
+
+[x] 'mqtt_json_routing_key':{u'id': 63}  &lt;- Got 63 instead of 62
+
+*Missing 62*
+
+[x] 'mqtt_json_routing_key':{u'id': 64}
+
+[x] 'mqtt_json_routing_key':{u'id': 65}
+
+[x] 'mqtt_json_routing_key':{u'id': 66}
+
+[x] 'mqtt_json_routing_key':{u'id': 67}
+
+[x] 'mqtt_json_routing_key':{u'id': 68}
+
+[x] 'mqtt_json_routing_key':{u'id': 69}
+
+[x] 'mqtt_json_routing_key':{u'id': 70}
+
+[x] 'mqtt_json_routing_key':{u'id': 71}
+
+[x] 'mqtt_json_routing_key':{u'id': 73}  &lt;- etc&#8230;
+
+*Missing 72*
+
+[x] 'mqtt_json_routing_key':{u'id': 74}
+
+[x] 'mqtt_json_routing_key':{u'id': 75}
+
+[x] 'mqtt_json_routing_key':{u'id': 76}
+
+[x] 'mqtt_json_routing_key':{u'id': 77}
+
+[x] 'mqtt_json_routing_key':{u'id': 78}
+
+[x] 'mqtt_json_routing_key':{u'id': 79}
+
+[x] 'mqtt_json_routing_key':{u'id': 80}
+
+[x] 'mqtt_json_routing_key':{u'id': 81}
+
+[x] 'mqtt_json_routing_key':{u'id': 83}
+
+*Missing 82*
+
+[x] 'mqtt_json_routing_key':{u'id': 84}
+
+[x] 'mqtt_json_routing_key':{u'id': 85}
+
+[x] 'mqtt_json_routing_key':{u'id': 86}
+
+[x] 'mqtt_json_routing_key':{u'id': 87}
+
+[x] 'mqtt_json_routing_key':{u'id': 88}
+
+[x] 'mqtt_json_routing_key':{u'id': 89}
+
+[x] 'mqtt_json_routing_key':{u'id': 90}
+
+[x] 'mqtt_json_routing_key':{u'id': 91}
+
+[x] 'mqtt_json_routing_key':{u'id': 93}
+
+*Missing 92*
+
+[x] 'mqtt_json_routing_key':{u'id': 94}
+
+[x] 'mqtt_json_routing_key':{u'id': 95}
+
+[x] 'mqtt_json_routing_key':{u'id': 96}
+
+[x] 'mqtt_json_routing_key':{u'id': 97}
+
+[x] 'mqtt_json_routing_key':{u'id': 98}
+
+[x] 'mqtt_json_routing_key':{u'id': 99}
+
+[x] 'mqtt_json_routing_key':{u'id': 100}
+
+[x] 'mqtt_json_routing_key':{u'id': 101}
+
+ [x] 'mqtt_json_routing_key':{u'id': 103}
+
+*Missing 102*
+
+[x] 'mqtt_json_routing_key':{u'id': 104}
+
+[x] 'mqtt_json_routing_key':{u'id': 105}
+
+[x] 'mqtt_json_routing_key':{u'id': 106}
+
+[x] 'mqtt_json_routing_key':{u'id': 107}
+
+[x] 'mqtt_json_routing_key':{u'id': 108}
+
+[x] 'mqtt_json_routing_key':{u'id': 109}
+
+[x] 'mqtt_json_routing_key':{u'id': 110}
+
+[x] 'mqtt_json_routing_key':{u'id': 111}
+
+[x] 'mqtt_json_routing_key':{u'id': 113}
+
+*Missing 112*
+
+[x] 'mqtt_json_routing_key':{u'id': 114}
+
+[x] 'mqtt_json_routing_key':{u'id': 115}
+
+
+
+&#8230;all messages received in order here&#8230;
+
+
+
+[x] 'mqtt_json_routing_key':{u'id': 199}
+
+[x] 'mqtt_json_routing_key':{u'id': 200}   *&lt;- last message sent*
+
+* [x] 'mqtt_json_routing_key':{u'id': 112}   &lt;- Now here come all the
+skipped messages in reverse order.*
+
+Missing 201
+
+* [x] 'mqtt_json_routing_key':{u'id': 102}*
+
+Missing 113
+
+* [x] 'mqtt_json_routing_key':{u'id': 92}*
+
+Missing 103
+
+* [x] 'mqtt_json_routing_key':{u'id': 82}*
+
+Missing 93
+
+* [x] 'mqtt_json_routing_key':{u'id': 72}*
+
+Missing 83
+
+* [x] 'mqtt_json_routing_key':{u'id': 62}*
+
+Missing 73
+
+* [x] 'mqtt_json_routing_key':{u'id': 52}*
+
+Missing 63
+
+
+
+*mqtt_publisher_json.py:*
+
+
+
+# Example of mosquitto json publisher
+
+import mosquitto
+
+import sys
+
+import time
+
+import random
+
+import json
+
+
+
+def on_connect(mosq, obj, rc):
+
+    if rc == 0:
+
+        print(&quot;on_connect ok...&quot;)
+
+    else:
+
+        print(&quot;on_connect failed rc=&quot;,rc)
+
+
+
+
+
+def on_publish(mosq,obj,mid):
+
+    print(&quot;Message published: &quot;, mid)
+
+
+
+def on_disconnect(mosq, obj, rc):
+
+    print(&quot;Disconnected...&quot;)
+
+
+
+def on_log(mosq,userdata,level,buf):
+
+    print(&quot;on_log:&quot;,userdata,level,buf)
+
+
+
+
+
+if len(sys.argv) != 4:
+
+    print &quot;Usage: cnt sleep_s qos&quot;
+
+    exit(-1)
+
+cnt = int(sys.argv[1])
+
+sleep_s = float(sys.argv[2])
+
+qos = int(sys.argv[3])
+
+
+
+client = mosquitto.Mosquitto(&quot;test-client%d&quot; % random.randint(1,100))
+
+print client._client_id
+
+client.on_connect = on_connect
+
+client.on_disconnect = on_disconnect
+
+#client.on_log = on_log
+
+#client.on_publish = on_publish
+
+
+
+client.max_inflight_messages_set(0)
+
+client.connect(&quot;localhost&quot;,port=1884)
+
+
+
+# Start mosquitto thread to deal with inflight acks
+
+client.loop_start()
+
+
+
+# Transmit a bunch of messages space sleep_s apart
+
+i = 1
+
+while i &lt;=  cnt:
+
+    print &quot;Sending JSON msg %d via MQTT&quot; % i
+
+    msg = {}
+
+    #msg[&quot;msg&quot;] = &quot;JSON msg#%d via MQTT&quot; % i
+
+    msg[&quot;id&quot;] = i
+
+
+
+    try :
+
+        rc = client.publish(&quot;mqtt_json_routing_key&quot;,json.dumps(msg),qos=qos)
+
+    except :
+
+        print &quot;Unexpected publish error: &quot;,sys.exc_info()[0]
+
+    i = i + 1
+
+
+
+    time.sleep(sleep_s)
+
+
+
+# Some delay for last message to go out
+
+wait_s = 2
+
+print &quot;Waiting %d seconds for last message out...&quot; % wait_s
+
+time.sleep(wait_s)
+
+
+
+# Stop the threaded Mosquitto client
+
+client.loop_stop()
+
+
+
+# Now disconnect
+
+try:
+
+    client.disconnect()
+
+except:
+
+    print &quot;Unexpected disconnect error: &quot;,sys.exc_info()[0]
+
+
+
+*amqp_receive_mqtt_json.py*
+
+
+
+# Usage: python amqp_receive_mqtt_json [debug]
+
+#
+
+#  [0/1 - debug enable/disable - default enable]
+
+#
+
+#  Consumer to receive AMQP messages from mqtt-json-queue from mqtt.topic
+exchange
+
+#  code expectes a json 'id' field in the message body and will report if
+the 'id'
+
+#  is not +1 from previous
+
+#
+
+prev_id = 0
+
+debug = 1
+
+
+
+def callback(ch, method, properties, body):
+
+    global prev_id, debug
+
+
+
+    ch.basic_ack(delivery_tag=method.delivery_tag)
+
+    msgBody = json.loads(body)
+
+    if debug != 0:
+
+        print &quot; [x] %r:%r&quot; % (method.routing_key,msgBody,)
+
+    if prev_id + 1 != int(msgBody['id']):
+
+        print &quot;Missing %d&quot; % (prev_id + 1)
+
+    prev_id = msgBody['id']
+
+    return
+
+
+
+if len(sys.argv) &gt; 1:
+
+    debug = int(sys.argv[1])
+
+
+
+while True:
+
+    try:
+
+
+
+        connection = pika.BlockingConnection(pika.ConnectionParameters(
+
+                host='localhost'))
+
+        channel = connection.channel()
+
+
+
+        channel.exchange_declare(exchange='mqtt.topic',
+
+                                 type='topic')
+
+
+
+        result = channel.queue_declare(&quot;mqtt-json-queue&quot;)
+
+        queue_name = result.method.queue
+
+
+
+        # topic here is what the mqtt plugin posts to
+
+        channel.queue_bind(exchange='mqtt.topic',
+
+                           queue=queue_name,
+
+                           routing_key=&quot;mqtt_json_routing_key&quot;)
+
+
+
+        print ' [*] Waiting for logs. To exit press CTRL+C'
+
+
+
+        channel.basic_consume(callback,
+
+                              queue=queue_name
+
+                              )
+
+
+
+        channel.start_consuming()
+
+
+
+    except Exception, e:
+
+        traceback.print_exc()
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20131203/8bae20b3/attachment.html">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20131203/8bae20b3/attachment.html</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="032452.html">[rabbitmq-discuss] Recurring partitioning problem on local	network
+</A></li>
+	<LI>Next message: <A HREF="032327.html">[rabbitmq-discuss] MQTT Plugin - missed and received in wrong order with QoS=0
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#32298">[ date ]</a>
+              <a href="thread.html#32298">[ thread ]</a>
+              <a href="subject.html#32298">[ subject ]</a>
+              <a href="author.html#32298">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,97 @@
+from twisted.internet import reactor, defer
+from twisted.internet.protocol import ClientFactory
+import qpid.spec
+from qpid.content import Content
+from fluidinfo.amqp.protocol import AMQClient
+
+exchange = "test-exchange"
+queue = "test-queue-%d"
+routing_key = "test-key-%d"
+
+class SimpleAMQClient(AMQClient):
+
+    def serverGreeting(self):
+        if self.greetDeferred is not None:
+            d, self.greetDeferred = self.greetDeferred, None
+            d.callback(self)
+
+class SimpleAMQClientFactory(ClientFactory):
+
+    protocol = SimpleAMQClient
+
+    def __init__(self, spec, vhost, onConn):
+        self.spec = spec
+        self.vhost = vhost
+        self.onConn = onConn
+
+    def buildProtocol(self, addr):
+        # We need to override buildProtocol, AMQClient needs the AMQP spec
+        # as a constructor parameter
+        p = self.protocol(self.spec, vhost=self.vhost)
+        p.factory = self
+        p.greetDeferred = self.onConn
+        return p
+
+def gotMessage(msg, channel, channelNumber):
+    assert channelNumber == msg.content.body
+    print "Received message at channel %s: %s" % (channelNumber, msg.content.body)
+    channel.basic_ack(delivery_tag=msg.delivery_tag)
+    channel.deferred.addCallback(gotMessage, channel, channelNumber)
+
+def publishMessages(channels):
+    import random
+    max = len(channels) - 1
+    for j in range(0, 100):
+        idx = random.randint(0, max)
+        i = idx + 1
+        content = Content(str(i))
+        channels[idx].basic_publish(exchange=exchange, routing_key=routing_key % i, content=content)
+
+@defer.inlineCallbacks
+def gotClient(client, username, password):
+    yield client.start({"LOGIN": username, "PASSWORD": password})
+    # For AMQP 0.9
+    # yield client.start("\0" + username + "\0" + password)
+
+    channel = yield client.channel(1)
+    yield channel.channel_open()
+    yield channel.exchange_declare(exchange=exchange, type="direct", auto_delete=True)
+    yield channel.channel_close(reply_code=200, reply_text="Ok")
+
+    channels = []
+    
+    for i in range(1, 6):
+        channel = yield client.channel(i)
+        yield channel.channel_open()
+
+        yield channel.queue_declare(queue=queue % i, auto_delete=True)
+        yield channel.queue_bind(queue=queue % i, exchange=exchange, routing_key=routing_key % i)
+
+        yield channel.basic_consume(queue=queue % i)
+ 
+        channel.deferred.addCallback(gotMessage, channel, str(i))
+
+        channels.append(channel)
+
+    defer.returnValue(channels)
+
+if __name__ == '__main__':
+    import sys
+    if len(sys.argv) != 7:
+        print "%s host port vhost username password path_to_spec" % sys.argv[0]
+        sys.exit(1)
+
+    host = sys.argv[1]
+    port = int(sys.argv[2])
+    vhost = sys.argv[3]
+    username = sys.argv[4]
+    password = sys.argv[5]
+    specFile = sys.argv[6]
+
+    d = defer.Deferred()
+    d.addCallback(gotClient, username, password).addCallback(publishMessages)
+
+    f = SimpleAMQClientFactory(qpid.spec.load(specFile), vhost, d)
+
+    reactor.connectTCP(host, port, f)
+    reactor.run()

@@ -1,0 +1,193 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] pub-sub part 2: erlang consume
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20pub-sub%20part%202%3A%20erlang%20consume&In-Reply-To=">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000697.html">
+   <LINK REL="Next"  HREF="000692.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] pub-sub part 2: erlang consume</H1>
+    <B>Joe Lee</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20pub-sub%20part%202%3A%20erlang%20consume&In-Reply-To="
+       TITLE="[rabbitmq-discuss] pub-sub part 2: erlang consume">codewalkerjoe at gmail.com
+       </A><BR>
+    <I>Thu Apr 10 00:17:25 BST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000697.html">[rabbitmq-discuss] OSGi Demo for RabbitMQ Client
+</A></li>
+        <LI>Next message: <A HREF="000692.html">[rabbitmq-discuss] pub-sub part 2: erlang consume
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#689">[ date ]</a>
+              <a href="thread.html#689">[ thread ]</a>
+              <a href="subject.html#689">[ subject ]</a>
+              <a href="author.html#689">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>I have published the message asynchronously to the exchange.  Now to consume
+the messages from the exchange, I can use either BasicGet or BasicConsume.
+When you are consuming messages in pub/sub model, do you have to specify
+what exchange to look for?  In addition, when you consume message from an
+exchange regardless of messaging model(pub/sub), you still have to declare a
+queue, bind it and consume the message from the queue?
+
+BasicConsume and BasicGet there is a variable named queue = Q. In pub-sub
+case, how do you define null queue in Erlang-client? In basic.consume I set
+the queue = &lt;&lt;&quot;&quot;&gt;&gt; like below:
+
+BasicConsume = #'basic.consume'{ticket = Ticket,
+                                    queue = &lt;&lt;&quot;&quot;&gt;&gt;,
+
+In basic.publish, I set immediate = false so that when the consumer started
+later, message will be in the queue for it to consume.
+
+Rabbitmq server throwing errors when I run the consumer code after the
+message have been published to the exchange.
+
+(<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at home</A>)5&gt; amqp_async_consume:amqp_lifecycle_consume().
+Connection: {&lt;0.178.0&gt;,direct}
+** exception exit: {{amqp_async_consume,amqp_lifecycle_consume,0},
+                    {line,40},
+                    match,
+                    [{'queue.declare_ok',
+                         &lt;&lt;&quot;<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">amq.q.gen1_rabbit at home_20080409224223_</A>&quot;&gt;&gt;,0,0}]}
+     in function  amqp_async_consume:amqp_lifecycle_consume/0
+
+
+This is the line causing the problem:
+amqp_channel:call(Channel,QueueDeclare) in
+#'queue.declare_ok'{queue = Q,
+                        message_count = MessageCount,
+                        consumer_count = ConsumerCount}
+                       = amqp_channel:call(Channel,QueueDeclare),
+
+
+-module(amqp_async_consume).
+
+-include_lib(&quot;rabbitmq_server/include/rabbit_framing.hrl&quot;).
+-include_lib(&quot;rabbitmq_server/include/rabbit.hrl&quot;).
+-include_lib(&quot;rabbitmq_client/include/amqp_client.hrl&quot;).
+
+-export([amqp_lifecycle_consume/0]).
+
+amqp_lifecycle_consume() -&gt;
+    User = Password = &quot;guest&quot;,
+    Realm = &lt;&lt;&quot;/data&quot;&gt;&gt;,
+
+    %% Start a connection to the server
+
+    Connection = amqp_connection:start(User, Password),
+    io:format(&quot;Connection: ~p~n&quot;,[Connection]),
+    %% Once you have a connection to the server, you can start an AMQP
+channel gain access to a realm
+
+    Channel = amqp_connection:open_channel(Connection),
+    Access = #'access.request'{realm = Realm,
+                               exclusive = false,
+                               passive = true,
+                               active = true,
+                               write = true,
+                               read = true},
+    #'access.request_ok'{ticket = Ticket} = amqp_channel:call(Channel,
+Access),
+
+    %% Register a consumer to listen to a queue
+    Q = &lt;&lt;&quot;&quot;&gt;&gt;,
+    X = &lt;&lt;&quot;x&quot;&gt;&gt;,
+    BindKey = &lt;&lt;&quot;a.b.c.*&quot;&gt;&gt;,
+
+    QueueDeclare = #'queue.declare'{ticket = Ticket, queue = Q,
+                                    passive = false, durable = false,
+                                    exclusive = false, auto_delete = false,
+                                    nowait = false, arguments = []},
+    #'queue.declare_ok'{queue = Q,
+                        message_count = MessageCount,
+                        consumer_count = ConsumerCount}
+                       = amqp_channel:call(Channel,QueueDeclare),
+
+
+    %ExchangeDeclare = #'exchange.declare'{ticket = Ticket, exchange = X,
+type = &lt;&lt;&quot;topic&quot;&gt;&gt;,
+    %                                      passive = false, durable = false,
+auto_delete = false, internal = false,
+    %                                      nowait = false, arguments = []},
+    %#'exchange.declare_ok'{} = amqp_channel:call(Channel, ExchangeDeclare),
+
+    QueueBind = #'queue.bind'{ticket = Ticket, queue = Q, exchange = X,
+                              routing_key = BindKey, nowait = false,
+arguments = []},
+    #'queue.bind_ok'{} = amqp_channel:call(Channel, QueueBind),
+
+
+
+    %ConsumerTag = &lt;&lt;&quot;&quot;&gt;&gt;,
+    %DeliveryTag = &lt;&lt;&quot;&quot;&gt;&gt;,
+    BasicConsume = #'basic.consume'{ticket = Ticket,
+                                    queue = Q,
+                                    consumer_tag = &lt;&lt;&quot;&quot;&gt;&gt;,
+                                    no_local = false,
+                                    no_ack = true,
+                                    exclusive = false,
+                                    nowait = false},
+    #'basic.consume_ok'{consumer_tag = ConsumerTag}
+        = amqp_channel:call(Channel, BasicConsume, self()),
+
+    %% If the registration was sucessful, then consumer will be notified
+
+    receive
+        #'basic.consume_ok'{consumer_tag = ConsumerTag} -&gt; ok
+    end,
+
+    %% When a message is routed to the queue, it will then be delivered to
+this consumer
+
+    receive
+        {#'basic.deliver'{delivery_tag = DeliveryTag}, Content} -&gt;
+            #content{payload_fragments_rev = [Payload]} = Content,
+            io:format(&quot;Message received: ~p~n&quot;, [Payload])
+    after 2000 -&gt;
+        exit(did_not_receive_message)
+    end,
+
+    %% After the consumer is finished interacting with the queue, it can
+deregister itself
+
+    BasicCancel = #'basic.cancel'{consumer_tag = ConsumerTag,
+                                  nowait = false},
+    #'basic.cancel_ok'{consumer_tag = ConsumerTag} =
+amqp_channel:call(Channel,BasicCancel).
+
+Thank you,
+Joe
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: <A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20080409/5c96a12d/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20080409/5c96a12d/attachment.htm</A> 
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000697.html">[rabbitmq-discuss] OSGi Demo for RabbitMQ Client
+</A></li>
+	<LI>Next message: <A HREF="000692.html">[rabbitmq-discuss] pub-sub part 2: erlang consume
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#689">[ date ]</a>
+              <a href="thread.html#689">[ thread ]</a>
+              <a href="subject.html#689">[ subject ]</a>
+              <a href="author.html#689">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

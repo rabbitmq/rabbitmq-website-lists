@@ -1,0 +1,165 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] [Q] best way to add a sequencer to the broker
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20%5BQ%5D%20best%20way%20to%20add%20a%20sequencer%20to%20the%20broker&In-Reply-To=BD09DC61-43EF-4B16-8EFE-8683F06F204D%40mac.com">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002351.html">
+   <LINK REL="Next"  HREF="002353.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] [Q] best way to add a sequencer to the broker</H1>
+    <B>Ben Hood</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20%5BQ%5D%20best%20way%20to%20add%20a%20sequencer%20to%20the%20broker&In-Reply-To=BD09DC61-43EF-4B16-8EFE-8683F06F204D%40mac.com"
+       TITLE="[rabbitmq-discuss] [Q] best way to add a sequencer to the broker">0x6e6562 at gmail.com
+       </A><BR>
+    <I>Tue Dec 30 17:15:04 GMT 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002351.html">[rabbitmq-discuss] [Q] best way to add a sequencer to the broker
+</A></li>
+        <LI>Next message: <A HREF="002353.html">[rabbitmq-discuss] [Q] best way to add a sequencer to the broker
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2352">[ date ]</a>
+              <a href="thread.html#2352">[ thread ]</a>
+              <a href="subject.html#2352">[ subject ]</a>
+              <a href="author.html#2352">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Chuck,
+
+On Tue, Dec 30, 2008 at 3:00 PM, Chuck Remes &lt;<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">cremes.devlist at mac.com</A>&gt; wrote:
+&gt;<i> I took a look but my lack of knowledge regarding Erlang made the code
+</I>&gt;<i> look like line noise. :)
+</I>
+Yes, well it's only an optimization over the dequeue/enqueue relay.
+
+&gt;&gt;<i> You still have the problem of how to maintain the global counter
+</I>&gt;&gt;<i> though.
+</I>&gt;<i>
+</I>&gt;<i> I don't understand this issue. Do you say this because the deliver/5
+</I>&gt;<i> function may be called from many Erlang threads thereby requiring the
+</I>&gt;<i> counter to be protected by a mutex? I thought Erlang serialized all
+</I>&gt;<i> accesses via messaging to &quot;mailboxes&quot; so these kinds of race
+</I>&gt;<i> conditions did not exist.
+</I>&gt;<i>
+</I>&gt;<i> What is the problem with doing (the Erlang equivalent of):
+</I>&gt;<i> global_counter++;
+</I>
+The issue is not thread safety - what you are suggesting is perfectly doable.
+
+The issue is that you have serialized access to a global counter,
+which just causes scalability and performance issues.
+
+So will not run into problems because of concurrency, rather you will
+run into problems through lack of concurrency because of the big
+global lock.
+
+&gt;<i> I am only concerned about the replay order.
+</I>&gt;<i>
+</I>&gt;&gt;<i> If your application could tolerate some perceived re-ordering, but
+</I>&gt;&gt;<i> still replays in the same order, you could request batches of ordering
+</I>&gt;&gt;<i> keys from your globally visible state. The effect of this would allow
+</I>&gt;&gt;<i> a degree of parallelization at the cost of some stuff *appearing* to
+</I>&gt;&gt;<i> have arrived out of the *true* global order. But you could replay in
+</I>&gt;&gt;<i> the same order and the things were stamped.
+</I>&gt;<i>
+</I>&gt;<i> This sounds reasonable.
+</I>&gt;<i>
+</I>&gt;<i> But let me make sure I am understanding you clearly. You are saying
+</I>&gt;<i> that it is possible for messages to be stamped in a different order
+</I>&gt;<i> than they were received by the Exchange. Is that the case? Or are you
+</I>&gt;<i> saying they may be delivered to queues in a different order than they
+</I>&gt;<i> were received by the Exchange?
+</I>
+There's really no such thing as an single instance of an exchange - an
+exchange is just the application of a routing rule based an exchange
+name and a routing key. Hence this can be evaluated in parallel by
+different processes or on different nodes. In contrast to queues,
+exchanges are not endpoints where messages land, they are just a
+convention to provide coherent routing functionality.
+
+&gt;<i> Off-list I received a message from Alexis who highlighted this issue.
+</I>&gt;<i> Apparently the 0-8 AMQP spec does not address any ordering constraints
+</I>&gt;<i> except in the case of Queues
+</I>
+This is true and this ties in with what I just said above - there is
+no notion of inbound queueing in 0-8 AMQP, just outbound queueing. So
+you will get strict ordering by queues but in order (pardon the pun)
+to get global inbound ordering, you are going to need to impose a
+barrier that each message has to pass through (as indicated above with
+the global lock).
+
+Consider the scenario where you have 2 queues bound to one exchange.
+If you send 2 messages to the exchange, then each queue instance will
+deliver 2 messages to a consumer in the order that they arrived at the
+queue. But on the input side, those 2 messages could have been
+published on a different channels (or on different nodes). There is no
+guarantee that 2 messages sent to the same exchange on different
+channels will not get re-ordered - to do so you would have to have
+some kind of barrier.
+
+&gt;&gt;<i> Having said that, you might find using plain jane timestamps easier,
+</I>&gt;&gt;<i> if you can relax this true global ordering constraint a bit.
+</I>&gt;<i>
+</I>&gt;<i> Why is a timestamp better? Is it because it pushes the access to a
+</I>&gt;<i> &quot;global counter&quot; (in this case the system clock) outside of Erlang?
+</I>&gt;<i> Your answer to the earlier ordering questions will likely answer this
+</I>&gt;<i> one too.
+</I>
+Yes, there might be some mileage in re-reading the entire thread,
+because I think that the conversation does not read entirely linearly.
+
+&gt;<i> I am not opposed to using a timestamp. I thought it would be *simpler*
+</I>&gt;<i> (and faster) to use an integer.
+</I>
+Not if this integer has to be atomically incremented across a cluster
+(or even between two different channels). This is effectively a global
+compare and swap operation which constitutes a very coarse grained
+lock.
+
+Using timestamps is cheaper because you don't have any contented
+locks. but you get this with a certain degree of inaccuracy. The same
+trade-off applies for the bulk counter fetch method I proposed in my
+previous post.
+
+At the end of the day I think you have to make the decision to either
+
+a) opt for true ordering and accept the cost (this would be perfectly valid);
+b) try to exploit a natural partition in your use case that allows you
+to break the global lock down into finer locks;
+c) redesign your application to be able to cope with eventual
+consistency rather than absolute consistency.
+
+HTH,
+
+Ben
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002351.html">[rabbitmq-discuss] [Q] best way to add a sequencer to the broker
+</A></li>
+	<LI>Next message: <A HREF="002353.html">[rabbitmq-discuss] [Q] best way to add a sequencer to the broker
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2352">[ date ]</a>
+              <a href="thread.html#2352">[ thread ]</a>
+              <a href="subject.html#2352">[ subject ]</a>
+              <a href="author.html#2352">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

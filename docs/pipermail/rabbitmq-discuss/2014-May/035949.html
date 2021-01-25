@@ -1,0 +1,186 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] RabbitMQ cluster is intermittently failing after federating between different VHOSTs on the same cluster
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20RabbitMQ%20cluster%20is%20intermittently%20failing%20after%0A%20federating%20between%20different%20VHOSTs%20on%20the%20same%20cluster&In-Reply-To=%3CCAAFQqzRCSWszJy5ukcH%3D9_sBa3UpA-KUe8%3DH0_-v2%3DVgNfU%3Dpw%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="035944.html">
+   <LINK REL="Next"  HREF="035950.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] RabbitMQ cluster is intermittently failing after federating between different VHOSTs on the same cluster</H1>
+    <B>Zac Bentley</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20RabbitMQ%20cluster%20is%20intermittently%20failing%20after%0A%20federating%20between%20different%20VHOSTs%20on%20the%20same%20cluster&In-Reply-To=%3CCAAFQqzRCSWszJy5ukcH%3D9_sBa3UpA-KUe8%3DH0_-v2%3DVgNfU%3Dpw%40mail.gmail.com%3E"
+       TITLE="[rabbitmq-discuss] RabbitMQ cluster is intermittently failing after federating between different VHOSTs on the same cluster">zbbentley at gmail.com
+       </A><BR>
+    <I>Tue May 13 18:49:06 BST 2014</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="035944.html">[rabbitmq-discuss] How to get messages count which are not consumed from queue?
+</A></li>
+        <LI>Next message: <A HREF="035950.html">[rabbitmq-discuss]  STOMP &amp; selector
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#35949">[ date ]</a>
+              <a href="thread.html#35949">[ thread ]</a>
+              <a href="subject.html#35949">[ subject ]</a>
+              <a href="author.html#35949">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>I also posted this to StackOverflow.
+
+We run several production rabbit clusters (two nodes each), and transfer
+messages between them using federation. In development/testing, we only
+have one cluster due to hardware/resource limitations. In order to (poorly,
+but still better than nothing) test federation, we create federation
+links *between
+two virtual hosts on the same cluster*. This is sketchy, I know, but it
+worked for us when using RabbitMQ 2.8.5, and usually works for us on 3.2.4
+(see the issue below). Someday we may succeed in making the case that we
+need a second development Rabbit cluster, but today is not that day.
+
+*How I setup intra-cluster federation:*
+
+Once the cluster is configured and all nodes report ready, I run a test
+that does the following. It always talks to one node in the cluster; it
+doesn't load-balance yet (once the test becomes stable, we will use a DNS
+load balancer across both cluster nodes).
+
+Frst, it sets up its environment. It creates a test user and a pair of
+testing virtual hosts, granting the appropriate permissions, and ensuring
+that it can access both vhosts via AMQP and the API as that user. Then, it
+sets up the federation links by creating an upstream on the first vhost
+(call it A) pointing to the second vhost on the same cluster (call it vhost
+B). Then, it creates a policy which applies the upstream (directly; we only
+use one, so I don't create any upstream sets, though I could if need be) to
+an exchange. It then polls the federation link via the API until it reports
+a status of &quot;running&quot;. I could also poll the exchange for existence on the
+upstream Vhost, but I haven't seen a need to do so.
+
+Then, to make sure federation is actually usable, I publish AMQP messages
+into the federated exchange on B, and make sure they are received on A.
+
+This test usually works. We did something similar on RabbitMQ 2.8.5, and it
+worked flawlessly (without the policies; using federation upstreams etc.
+configured in the file).
+
+*The problem:*
+
+This test *usually* works. However, sometimes (about 20% of the time, by my
+estimate) it breaks the cluster. Occasionally, between 1 and 5 minutes
+after running the test, the cluster stops being fully responsive. A full
+description of the symptoms follows:
+
+   - When the cluster is in this state, I can open AMQP connections
+   (authentication, tuning, etc all complete successfully), but I get no RPC
+   replies for any subsequent AMQP methods (declare*, consume, etc).
+   - The management API will not load the &quot;Admin&quot; section, doing nothing in
+   GUI mode, and returning [] in JSON mode.
+   - Attempting to publish a message via the management UI results in the
+   entire API becoming permanently inaccessible (pages only render the
+   RabbitMQ logo and no other components, and JSON requests time out).
+   - Nothing is written to the log (main file or SASL) after a few seconds
+   before the outage starts. The last log entry is unpredictable; sometimes it
+   is a record of the test user created for federation having its password
+   change, sometimes it is a record of test Vhost being automatically deleted
+   after the test, sometimes it is a record of an AMQP connection being
+   accepted. All subsequent events are not logged (even successful AMQP
+   connections, though, as detailed above, I can't do anything via RPC once
+   connected).
+   - Both the Beam and rabbitmq-server processes on both nodes consume
+   minimal resources while hung; running strace on rabbitmq-server, beam,
+   and the Erlang helper inet_gethostprocesses just shows a lot of system
+   select calls either sticking indefinitely or timing out and being
+   immediately retried.
+   - Checking the open sockets for processes owned by the rabbitmq user
+   shows that there are two (bidirectional, two sockets each) IPV4 links from
+   the master node of the cluster to itself (presumably those are the
+   federation links, or some other manager process). It also shows every API
+   HTTP connection initiated since the start of the outage in CLOSE_WAIT
+    status.
+
+Some interesting things happen when I try to shut down the cluster:
+
+   - Attempting to shut down either node of the cluster via the init
+   scripts or rabbitmqctl hangs indefinitely. Nothing is written to
+   shutdown_err unless I interrupt the hung shutdown, in which case a
+   notification of the interrupt is logged.
+   - After an attempted shutdown the management API/UI becomes
+   inaccessible, and any hung connections that were in CLOSE_WAIT status
+   dissapear.
+   - All RabbitMQ processes that were visible before the shutdown attempt
+   remain visible. AMQP operations are still impossible.
+   - Killing the RabbitMQ processes (via SIGTERM) and then restarting the
+   master node in the cluster resolves the issue. Rabbit starts back up, and
+   all objects, federation links, etc. created before the outage are available
+   and working.
+
+*Questions:*
+
+   1. Why is this happening?
+   2. Is this only happening because of the strange intra-cluster
+   federation setup I have, or is there another cause?
+   3. How do I resolve it?
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20140513/28612a33/attachment.html">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20140513/28612a33/attachment.html</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="035944.html">[rabbitmq-discuss] How to get messages count which are not consumed from queue?
+</A></li>
+	<LI>Next message: <A HREF="035950.html">[rabbitmq-discuss]  STOMP &amp; selector
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#35949">[ date ]</a>
+              <a href="thread.html#35949">[ thread ]</a>
+              <a href="subject.html#35949">[ subject ]</a>
+              <a href="author.html#35949">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

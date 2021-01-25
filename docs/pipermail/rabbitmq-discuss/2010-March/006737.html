@@ -1,0 +1,141 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] rabbitmq-jsonrpc &quot;shortcut&quot; HTTP calls?
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20rabbitmq-jsonrpc%20%22shortcut%22%20HTTP%20calls%3F&In-Reply-To=4BABDA08.8070506%40lshift.net">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="006720.html">
+   <LINK REL="Next"  HREF="006647.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] rabbitmq-jsonrpc &quot;shortcut&quot; HTTP calls?</H1>
+    <B>Ivan Delchev</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20rabbitmq-jsonrpc%20%22shortcut%22%20HTTP%20calls%3F&In-Reply-To=4BABDA08.8070506%40lshift.net"
+       TITLE="[rabbitmq-discuss] rabbitmq-jsonrpc &quot;shortcut&quot; HTTP calls?">ivdelchev at gmail.com
+       </A><BR>
+    <I>Sun Mar 28 12:20:33 BST 2010</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="006720.html">[rabbitmq-discuss] rabbitmq-jsonrpc &quot;shortcut&quot; HTTP calls?
+</A></li>
+        <LI>Next message: <A HREF="006647.html">[rabbitmq-discuss] rabbitmq_status_web crashed on daylight savings time switchover, took down RabbitMQ
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#6737">[ date ]</a>
+              <a href="thread.html#6737">[ thread ]</a>
+              <a href="subject.html#6737">[ subject ]</a>
+              <a href="author.html#6737">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi Tony,
+
+Nice to hear that! Anyway, I didn't have in mind changing the AMQP
+protocol, I can imagine that there are plenty of people that use it in
+its current form. In case of the HTTP impl I think the following
+simple steps could help and can be easily accomodated in the server
+impl:
+
+1. Combine the &quot;system.describe&quot; calls to /rpc/rabbitmq and
+/rpc/{service_hash}. Return a different hash in the &quot;name&quot; parameter
+if the URL is already in use, otherwise return the same.  Thus the 2
+&quot;system.describe&quot; calls can become 1.
+
+2. Bundle calls that do not depend on each other in one call - e.g by
+providing an array of method calls, that should be executed in the
+same order.
+
+If no anonymous declarations are used, this should be acceptable:
+
+{&quot;version&quot;:&quot;1.1&quot;,&quot;id&quot;:5,&quot;methods&quot; : [
+    {&quot;method&quot;:&quot;open&quot;,&quot;params&quot;:[&quot;2&quot;,&quot;5b3beb2605605b9ebf5055f3e9e29754&quot;,120,null]}
+    {&quot;method&quot;:&quot;call&quot;,&quot;params&quot;:[&quot;access.request&quot;,[&quot;/data&quot;,false,true,true,true,true]]},
+    {&quot;method&quot;:&quot;call&quot;,&quot;params&quot;:[&quot;exchange.declare&quot;,[1,&quot;exchange1&quot;,&quot;fanout&quot;,false,false,true,false,false,{}]]},
+    {&quot;method&quot;:&quot;call&quot;,&quot;params&quot;:[&quot;queue.declare&quot;,[1,&quot;queue1&quot;,false,false,true,true,false,{}]]},
+    {&quot;method&quot;:&quot;call&quot;,&quot;params&quot;:[&quot;queue.bind&quot;,[1,&quot;queue1&quot;,&quot;exchange1&quot;,&quot;&quot;,false,{}]]}
+    ]}
+
+Another options is in case of anonymous declarations to nest the
+declarations and compute the internal results first and use them as
+arguments for the upper ones:
+
+{&quot;version&quot;:&quot;1.1&quot;,&quot;id&quot;:5,&quot;methods&quot; : [
+    {&quot;method&quot;:&quot;open&quot;,&quot;params&quot;:[&quot;2&quot;,&quot;5b3beb2605605b9ebf5055f3e9e29754&quot;,120,null]}
+    {&quot;method&quot;:&quot;call&quot;,&quot;params&quot;:[&quot;access.request&quot;,[&quot;/data&quot;,false,true,true,true,true]]},
+    {&quot;method&quot;:&quot;call&quot;,&quot;params&quot;:[&quot;queue.bind&quot;,[1,
+        {&quot;method&quot;:&quot;call&quot;,&quot;params&quot;:[&quot;queue.declare&quot;,[1,&quot;&quot;,false,false,true,true,false,{}]]},
+        {&quot;method&quot;:&quot;call&quot;,&quot;params&quot;:[&quot;exchange.declare&quot;,[1,&quot;&quot;,&quot;fanout&quot;,false,false,true,false,false,{}]]},
+        &quot;&quot;,false,{}]]}
+    ]}
+
+That should be possible and I think and will save quite some HTTP
+roundtrips. If you provide the server-side I can try to deliver the
+javascript client :)
+
+Cheers,
+Ivan
+
+On Thu, Mar 25, 2010 at 10:47 PM, Tony Garnock-Jones &lt;<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">tonyg at lshift.net</A>&gt; wrote:
+&gt;<i> Hi Ivan,
+</I>&gt;<i>
+</I>&gt;<i> I like the idea. I like it not only for HTTP but also for AMQP's native
+</I>&gt;<i> wire protocol. I don't have time to work on it at the moment, but
+</I>&gt;<i> perhaps we can discuss it here: do you have any concrete suggestions for
+</I>&gt;<i> what it might look like? Maybe start with the HTTP setting and we can
+</I>&gt;<i> generalise to the AMQP wire protocol later. And of course if you had a
+</I>&gt;<i> prototype/proof-of-concept implementation, that'd be very welcome in
+</I>&gt;<i> terms of getting the ball rolling :-)
+</I>&gt;<i>
+</I>&gt;<i> Regards,
+</I>&gt;<i> &#160;Tony
+</I>&gt;<i>
+</I>&gt;<i> Ivan Delchev wrote:
+</I>&gt;&gt;<i> Hi guys,
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> I have a question about RabbitMQ and more specifically
+</I>&gt;&gt;<i> rabbitmq-jsonrpc. I know that this is an experimental download and is
+</I>&gt;&gt;<i> basically translation of AMQP to HTTP, but is there a way to optimize
+</I>&gt;&gt;<i> a typical process of e.g. authenticating yourself, declaring an
+</I>&gt;&gt;<i> exchange and declaring a queue? Currently this takes 7-8 requests in a
+</I>&gt;&gt;<i> row, which puts unnecessary load on the server. Does anyone know about
+</I>&gt;&gt;<i> &quot;shortcut&quot; HTTP requests that bundle multiple AMQP calls in one
+</I>&gt;&gt;<i> request in order to minimize overhead?
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> @RabbitGuys Do you have any plans to implement and support such features?
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Thanks a lot,
+</I>&gt;&gt;<i> Ivan
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> _______________________________________________
+</I>&gt;&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;&gt;<i> <A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;&gt;<i> <A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>&gt;<i>
+</I>
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="006720.html">[rabbitmq-discuss] rabbitmq-jsonrpc &quot;shortcut&quot; HTTP calls?
+</A></li>
+	<LI>Next message: <A HREF="006647.html">[rabbitmq-discuss] rabbitmq_status_web crashed on daylight savings time switchover, took down RabbitMQ
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#6737">[ date ]</a>
+              <a href="thread.html#6737">[ thread ]</a>
+              <a href="subject.html#6737">[ subject ]</a>
+              <a href="author.html#6737">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

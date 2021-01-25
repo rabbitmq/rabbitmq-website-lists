@@ -1,0 +1,263 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Publishing binary data using the java client
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Publishing%20binary%20data%20using%20the%20java%20client&In-Reply-To=%3C50F1A0F0.5090100%40mathematik.uni-marburg.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="024898.html">
+   <LINK REL="Next"  HREF="024902.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Publishing binary data using the java client</H1>
+    <B>Christian Strack</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Publishing%20binary%20data%20using%20the%20java%20client&In-Reply-To=%3C50F1A0F0.5090100%40mathematik.uni-marburg.de%3E"
+       TITLE="[rabbitmq-discuss] Publishing binary data using the java client">strack at Mathematik.Uni-Marburg.de
+       </A><BR>
+    <I>Sat Jan 12 17:44:16 GMT 2013</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="024898.html">[rabbitmq-discuss] Publishing binary data using the java client
+</A></li>
+        <LI>Next message: <A HREF="024902.html">[rabbitmq-discuss] Publishing binary data using the java client
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#24900">[ date ]</a>
+              <a href="thread.html#24900">[ thread ]</a>
+              <a href="subject.html#24900">[ subject ]</a>
+              <a href="author.html#24900">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hello Matthias and Michael and thank you for your fast response. In this 
+mail is the full code including de- and encoding:
+
+package de.bench.message.transport;
+
+import java.io.IOException;
+
+import com.rabbitmq.client.Channel;
+import com.rabbitmq.client.Connection;
+import com.rabbitmq.client.ConnectionFactory;
+import com.rabbitmq.client.ConsumerCancelledException;
+import com.rabbitmq.client.MessageProperties;
+import com.rabbitmq.client.QueueingConsumer;
+import com.rabbitmq.client.QueueingConsumer.Delivery;
+import com.rabbitmq.client.ShutdownSignalException;
+
+public class AMQPTransport extends Transport{
+
+     Connection connection;
+     Channel channel;
+     String exchange;
+     QueueingConsumer consumer;
+     int role;
+
+     public AMQPTransport() {
+         // TODO Auto-generated constructor stub
+     }
+
+     @Override
+     public void initialise(String info) {
+         String[] params = info.split(&quot;/&quot;);
+         ConnectionFactory factory = new ConnectionFactory();
+         factory.setHost(params[0]);
+         factory.setUsername(params[1]);
+         factory.setPassword(params[2]);
+         exchange = params[3];
+         role = Integer.parseInt(params[4]);
+
+
+         try {
+             connection = factory.newConnection();
+             channel = connection.createChannel();
+             channel.exchangeDeclare(exchange, &quot;fanout&quot;);
+
+             if(role == 1){
+                 String queue = channel.queueDeclare().getQueue();
+                 channel.queueBind(queue, exchange, &quot;&quot;);
+                 consumer = new QueueingConsumer(channel);
+                 channel.basicConsume(queue, true, consumer);
+             }
+         } catch (IOException e) {
+             // TODO Auto-generated catch block
+             e.printStackTrace();
+         }
+
+
+     }
+
+     @Override
+     public int write(byte[] sendData, int len) {
+         try {
+             channel.basicPublish(exchange, &quot;&quot;, false, 
+MessageProperties.BASIC, sendData);
+         } catch (IOException e) {
+             // TODO Auto-generated catch block
+             e.printStackTrace();
+         }
+         return 0;
+     }
+
+     @Override
+     public int read(byte[] data, int len) {
+         try {
+             Delivery delivery = consumer.nextDelivery();
+             if (delivery != null){
+                 data = delivery.getBody();
+                 System.out.println(new String(data));
+                 return len;
+             }
+             return 0;
+         } catch (ShutdownSignalException e) {
+             // TODO Auto-generated catch block
+             e.printStackTrace();
+             return -1;
+         } catch (ConsumerCancelledException e) {
+             // TODO Auto-generated catch block
+             e.printStackTrace();
+             return -2;
+         } catch (InterruptedException e) {
+             // TODO Auto-generated catch block
+             e.printStackTrace();
+             return -3;
+         }
+     }
+
+     @Override
+     public void close() {
+         try {
+             channel.close();
+             connection.close();
+         } catch (IOException e) {
+             // TODO Auto-generated catch block
+             e.printStackTrace();
+         }
+
+
+     }
+
+}
+
+Sender:
+     public void benchmarkPackageLossSender(Transport t, int count) 
+throws IOException{
+         bwLogWriter.write(&quot;Benchmark Package Loss As Sender&quot;);
+         bwLogWriter.newLine();
+         bwLogWriter.write(&quot;Count: &quot;+count);
+         bwLogWriter.newLine();
+         bwLogWriter.newLine();
+
+         for(int i=0; i&lt;count;i++){
+             ByteBuffer bb = ByteBuffer.allocate(4);
+             byte[] data = bb.putInt(i).array();
+             System.out.println(&quot;Sent package #&quot;+i);
+             t.write(data, data.length);
+         }
+         bwLogWriter.write(&quot;Benchmark finished&quot;);
+         bwLogWriter.newLine();
+     }
+
+Receiver
+     public void benchmarkPackageLossReceiver(Transport t, int count) 
+throws IOException{
+         bwLogWriter.write(&quot;Benchmark Package Loss As Receiver&quot;);
+         bwLogWriter.newLine();
+         bwLogWriter.write(&quot;Count: &quot;+count);
+         bwLogWriter.newLine();
+         bwLogWriter.newLine();
+
+         System.out.println(&quot;Begin Benchmark&quot;);
+
+         byte[] data = new byte[4];
+         int last_value = -1;
+         int new_value = -1;
+
+         for(int i=0; i&lt;count;i++){
+             t.read(data, 4);
+             System.out.println(&quot;Received Package #&quot;+i);
+             new_value = ByteBuffer.wrap(data).getInt();
+             // Here only random bytes are printed
+             System.out.println(&quot;Content: &quot;+new_value);
+             if(new_value != ++last_value){
+                 bwLogWriter.write(&quot;Message Loss! Last Message: 
+&quot;+last_value+&quot;\t New Message: &quot;+new_value);
+                 bwLogWriter.newLine();
+             }
+             last_value = new_value;
+         }
+         System.out.println(&quot;Benchmark finished&quot;);
+         bwLogWriter.write(&quot;Benchmark finished&quot;);
+         bwLogWriter.newLine();
+     }
+
+On 01/12/2013 06:04 PM, Matthias Radestock wrote:
+&gt;<i> Christian,
+</I>&gt;<i>
+</I>&gt;<i> On 12/01/13 14:41, Christian Strack wrote:
+</I>&gt;&gt;<i> for benchmarking purposes i have set up a an astract testing suite to
+</I>&gt;&gt;<i> transfer data using several transport implementations. The transmitted
+</I>&gt;&gt;<i> data are integers converted to byte arrays using ByteBuffer. While the
+</I>&gt;&gt;<i> en- and decoding of these data is successful using UDP sockets, the
+</I>&gt;&gt;<i> decoding fails when being transmitted using rabbitmq and the rabbitmq
+</I>&gt;&gt;<i> java libraries. The results are just random bytes but the array size is
+</I>&gt;&gt;<i> correct. I have tried to set the encoding to different BasicProperties
+</I>&gt;&gt;<i> which had no impact. Is there a flag that needs to be set to prevent
+</I>&gt;&gt;<i> that rabbitmq alters the data? Below are the important snippets of my 
+</I>&gt;&gt;<i> code.
+</I>&gt;<i>
+</I>&gt;<i> The RabbitMQ server does not touch the message body. So this is either 
+</I>&gt;<i> a problem with your code or, far less likely, the client library.
+</I>&gt;<i>
+</I>&gt;<i> I cannot see anything obviously wrong with the snippet you sent, but 
+</I>&gt;<i> since it's only a snippet the error is probably elsewhere. So please 
+</I>&gt;<i> submit a complete, self-contained program that publishes and consumes 
+</I>&gt;<i> a single byte[] message and exhibits the problem.
+</I>&gt;<i>
+</I>&gt;<i> Regards,
+</I>&gt;<i>
+</I>&gt;<i> Matthias.
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="024898.html">[rabbitmq-discuss] Publishing binary data using the java client
+</A></li>
+	<LI>Next message: <A HREF="024902.html">[rabbitmq-discuss] Publishing binary data using the java client
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#24900">[ date ]</a>
+              <a href="thread.html#24900">[ thread ]</a>
+              <a href="subject.html#24900">[ subject ]</a>
+              <a href="author.html#24900">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

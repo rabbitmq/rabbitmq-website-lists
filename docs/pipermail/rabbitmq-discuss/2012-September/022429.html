@@ -1,0 +1,150 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Publisher confirms performance
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Publisher%20confirms%20performance&In-Reply-To=%3CCAMCjWUtY9uQsm68J80w8saPsisa0AbE2OQDQ-2Gm6WYEzOn5yQ%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="022409.html">
+   <LINK REL="Next"  HREF="022441.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Publisher confirms performance</H1>
+    <B>Allen Riddle</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Publisher%20confirms%20performance&In-Reply-To=%3CCAMCjWUtY9uQsm68J80w8saPsisa0AbE2OQDQ-2Gm6WYEzOn5yQ%40mail.gmail.com%3E"
+       TITLE="[rabbitmq-discuss] Publisher confirms performance">allenriddle at google.com
+       </A><BR>
+    <I>Tue Sep 11 21:40:20 BST 2012</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="022409.html">[rabbitmq-discuss] Publisher confirms performance
+</A></li>
+        <LI>Next message: <A HREF="022441.html">[rabbitmq-discuss] Publisher confirms performance
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#22429">[ date ]</a>
+              <a href="thread.html#22429">[ thread ]</a>
+              <a href="subject.html#22429">[ subject ]</a>
+              <a href="author.html#22429">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Matthias,
+
+Thanks for the response, I really appreciate it. I am running 2.8.x. Good
+points on all the measuring too. I probably wasn't clear enough in my post,
+but what I was saying was if I remove the confirms piece, and make the
+queue non-durable, the speed of publishing a single message is &lt; 1 ms. I'm
+using Ruby and a rudimentary AMQP client that doesn't do any buffering.
+
+Coupled with your explanations and a little bit of research, it sounds like
+publisher confirms is only beneficial when done handled asynchronously. I
+am trying to publish messages from a Ruby web server. Ruby's threading
+model is very weak and uses in-process green threads. Because of this, I
+was trying to avoid running any additional threads to perform the async
+confirms.
+
+It really sounds like with my implementation, I'm doing what RabbitMQ
+transactions does with minor overhead because of an additional network
+call. I don't think I had a great enough understanding of confirms when I
+started this, it sounds like it's only beneficial over transactions if you
+can receive the confirms asynchronously. Is that true? Thanks again for
+your help.
+
+On Mon, Sep 10, 2012 at 5:36 PM, Matthias Radestock
+&lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">matthias at rabbitmq.com</A>&gt;wrote:
+
+&gt;<i> Allen,
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> On 10/09/12 22:06, Allen Riddle wrote:
+</I>&gt;<i>
+</I>&gt;&gt;<i> I am curious what people are seeing in their production deployments
+</I>&gt;&gt;<i> of RabbitMQ using publisher confirms in a cluster of nodes with
+</I>&gt;&gt;<i> durable queues.
+</I>&gt;&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> Do you see the same results when running your tests against a single
+</I>&gt;<i> node instead of a cluster? I suspect so, but would be good to get
+</I>&gt;<i> confirmation of that.
+</I>&gt;<i>
+</I>&gt;<i> Also, I am assuming you are running a recent (2.8.x) version of rabbit,
+</I>&gt;<i> right?
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>  With local benchmarks against a cluster with 2 nodes, I'm
+</I>&gt;&gt;<i> synchronously publishing messages and confirming each, and it takes
+</I>&gt;&gt;<i> roughly 46 ms on average per message.
+</I>&gt;&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> You are asking RabbitMQ to confirm that the message has been written to
+</I>&gt;<i> disk. That requires an fsync. Which is very, very expensive.
+</I>&gt;<i>
+</I>&gt;<i> You can amortise that cost by: a) dealing with confirms asynchronously,
+</I>&gt;<i> rather than waiting for a confirmation after every publish, and b)
+</I>&gt;<i> publishing on multiple connections/channels, as long as that is
+</I>&gt;<i> compatible with the message ordering guarantees your app requires.
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>  When I take away the publisher confirms piece, it falls down to 8 ms,
+</I>&gt;&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> Be careful what you are measuring here. If you don't wait for confirms
+</I>&gt;<i> then publishing is an entirely asynchronous operation, so if you are simply
+</I>&gt;<i> timing the duration of the 'publish' API call then you may just be timing
+</I>&gt;<i> how long it takes for the client API to stuff the message into a local
+</I>&gt;<i> buffer.
+</I>&gt;<i>
+</I>&gt;<i> Anyway, taking away confirms means that the client won't have to wait for
+</I>&gt;<i> a round trip to the server, and the fsync delay there.
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>  and when I remove durable queues, there is a net zero difference.
+</I>&gt;&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> Not sure what you mean here. Zero difference compared to what? Making the
+</I>&gt;<i> queues non-durable eliminates the need to wait for an fsync. There's still
+</I>&gt;<i> the roundtrip latency though.
+</I>&gt;<i>
+</I>&gt;<i> Regards,
+</I>&gt;<i>
+</I>&gt;<i> Matthias.
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20120911/4a8144b6/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20120911/4a8144b6/attachment.htm</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="022409.html">[rabbitmq-discuss] Publisher confirms performance
+</A></li>
+	<LI>Next message: <A HREF="022441.html">[rabbitmq-discuss] Publisher confirms performance
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#22429">[ date ]</a>
+              <a href="thread.html#22429">[ thread ]</a>
+              <a href="subject.html#22429">[ subject ]</a>
+              <a href="author.html#22429">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

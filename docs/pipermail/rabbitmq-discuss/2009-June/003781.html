@@ -1,0 +1,101 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] .NET client SimpleRpcServer question
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20.NET%20client%20SimpleRpcServer%20question&In-Reply-To=4A2E878E.3000700%40acceleration.net">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003775.html">
+   <LINK REL="Next"  HREF="003785.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] .NET client SimpleRpcServer question</H1>
+    <B>Ryan Davis</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20.NET%20client%20SimpleRpcServer%20question&In-Reply-To=4A2E878E.3000700%40acceleration.net"
+       TITLE="[rabbitmq-discuss] .NET client SimpleRpcServer question">ryan at acceleration.net
+       </A><BR>
+    <I>Tue Jun  9 19:21:15 BST 2009</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003775.html">[rabbitmq-discuss] .NET client SimpleRpcServer question
+</A></li>
+        <LI>Next message: <A HREF="003785.html">[rabbitmq-discuss] .NET client SimpleRpcServer question
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3781">[ date ]</a>
+              <a href="thread.html#3781">[ thread ]</a>
+              <a href="subject.html#3781">[ subject ]</a>
+              <a href="author.html#3781">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Ryan Davis wrote:
+&gt;<i> I don't follow how the foreach in MainLoop would
+</I>&gt;<i> terminate and start Disposing of things before the controller thread had
+</I>&gt;<i> gotten through subscription.Close() to set m_consumer to null.
+</I>&gt;<i>
+</I>&gt;<i> I've got a unit test that reproduces this behavior, so I'll  be playing
+</I>&gt;<i> with this today, stepping through to better understand what is happening.
+</I>&gt;<i>   
+</I>I think I figured it out.  The C# &quot;foreach&quot; loop also acts like a
+&quot;using&quot; statement, and will call Dispose() on my subscription when it
+finishes, which I didn't realize
+(<A HREF="http://mark.michaelis.net/Blog/CForeachWithArrays.aspx">http://mark.michaelis.net/Blog/CForeachWithArrays.aspx</A>).   This means
+I'm actually calling Subscription.Close() a total of 4 times.
+
+Here's the chronology
+# controller thread: calls RpcServer.Close() -&gt; Subscription.Close() -&gt;
+Model.BasicCancel()
+# worker thread: throws and catches exceptions in Subscription.Next(),
+terminating MainLoop's foreach
+# worker thread: calls Subscription.Dispose() -&gt; Subscription.Close() -&gt;
+Model.BasicCancel()
+# controller thread: completes Model.BasicCancel(), sets some variables
+to null
+# worker thread: nullref trying to use those variables
+
+I added some Console.WriteLine statements to the Close/Dispose methods,
+and that solved the problem, so it's definitely a race condition when
+calling Close() from another thread.
+
+I'm going to add a flag and test out calling Close() from various points
+in HandleCall/HandleCast/ProcessRequest.
+
+Thanks,
+
+Ryan Davis
+Acceleration.net
+Director of Programming Services
+2831 NW 41st street, suite B
+Gainesville, FL 32606
+
+Office: 352-335-6500 x 124
+Fax: 352-335-6506
+
+
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003775.html">[rabbitmq-discuss] .NET client SimpleRpcServer question
+</A></li>
+	<LI>Next message: <A HREF="003785.html">[rabbitmq-discuss] .NET client SimpleRpcServer question
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3781">[ date ]</a>
+              <a href="thread.html#3781">[ thread ]</a>
+              <a href="subject.html#3781">[ subject ]</a>
+              <a href="author.html#3781">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

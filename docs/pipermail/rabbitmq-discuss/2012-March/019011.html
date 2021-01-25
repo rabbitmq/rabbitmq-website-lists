@@ -1,0 +1,141 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Federated exchange slowdown
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Federated%20exchange%20slowdown&In-Reply-To=%3CCAOn7oW8%2BcOLvRTumbfD-MPcYnm-qzAMPx94rYeXau9nSjRV1WA%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="018977.html">
+   <LINK REL="Next"  HREF="019032.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Federated exchange slowdown</H1>
+    <B>Simone Busoli</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Federated%20exchange%20slowdown&In-Reply-To=%3CCAOn7oW8%2BcOLvRTumbfD-MPcYnm-qzAMPx94rYeXau9nSjRV1WA%40mail.gmail.com%3E"
+       TITLE="[rabbitmq-discuss] Federated exchange slowdown">simone.busoli at gmail.com
+       </A><BR>
+    <I>Tue Mar 20 23:03:00 GMT 2012</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="018977.html">[rabbitmq-discuss] Federated exchange slowdown
+</A></li>
+        <LI>Next message: <A HREF="019032.html">[rabbitmq-discuss] Federated exchange slowdown
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#19011">[ date ]</a>
+              <a href="thread.html#19011">[ thread ]</a>
+              <a href="subject.html#19011">[ subject ]</a>
+              <a href="author.html#19011">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi Simon, I'm confused as well. Please take my previous observation with a
+grain of salt as I was publishing somewhat big messages (100KB) at a rate
+that perhaps couldn't be handled very well by the network. As soon as I
+reduced the size to one tenth everything started going more smoothly, for
+as long as something weird didn't happen to the network. Here's the test
+environment I've set up to reproduce the issue: two physical machines
+connected each to a network switch (all devices are 100Mb), with the two
+switches connected to each other. Of course B1 and B2 live on the two
+machines, respectively. A bunch of consumers on each side. I'm faking a
+network latency of a few hundreds of milliseconds via software, and
+publishing 20 msg/s of 10 kB each on one side of a bidirectional federation
+exchange seems to work fine.
+If I try disconnecting the network cable which connects the two switched
+and plug it back a few seconds later implies that the federated exchanges
+never catch up with the messages queued up so far, in particular the
+outgoing queue on the broker acting as the downstream in this scenario (the
+one whose messages would then be discarded by the plugin once back to the
+publisher side) seems to not be emptied by anyone anymore.
+
+One other thing I noticed during the failure in the production environment
+is that if I deleted this automatically created queue (i.e. the queue B2 -&gt;
+B1, with B1 being the originator of the messages), affected the queue B1 -&gt;
+B2, which from a slow delivery rate stopped completely. Now, as far as my
+understanding goes each direction of an exchange federated between two
+brokers in both directions should be independent of the other, but I
+experienced exactly this, and given that a unidirectionally federated
+exchange under the same conditions described above works just fine I am
+wondering whether connecting two exchanges in this way implies some weird
+behavior in which each side influences the other in a sort of cascading
+behavior which leads to a deadlock.
+
+Although unlikely to be the cause of this, I'm wondering if using
+prefetch-count, which I'm using, could lead to this behavior. For example
+after the network bounce mentioned above the prefetch count was reached on
+both sides, so no more deliveries would be done until acks arrived from the
+other side. Might it happen that this could imply a deadlock in which each
+side is waiting for the other to send acknowledges before sending anymore
+messages?
+
+On Tue, Mar 20, 2012 at 13:21, Simon MacMullen &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">simon at rabbitmq.com</A>&gt; wrote:
+
+&gt;<i> On 19/03/12 14:00, Busoli, Simone wrote:
+</I>&gt;<i>
+</I>&gt;&gt;<i> Hi Simon, I think I've mostly tracked down the issue to the symmetric
+</I>&gt;&gt;<i> setup of the federated exchanges between the two brokers. I noticed
+</I>&gt;&gt;<i> that whenever I start publishing messages to an exchange configured
+</I>&gt;&gt;<i> that way the network starts behaving in surprisingly ways. For
+</I>&gt;&gt;<i> instance, I can no longer get two machines connected directly by two
+</I>&gt;&gt;<i> network switches to ping each other. Stop publishing messages and
+</I>&gt;&gt;<i> everything goes back to a normal state. A federated exchange which
+</I>&gt;&gt;<i> goes in one direction only as well as a shovel instead behave just
+</I>&gt;&gt;<i> fine.
+</I>&gt;&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> I am very confused by this.
+</I>&gt;<i>
+</I>&gt;<i> Really, nothing the federation plugin does should be able to stop ICMP
+</I>&gt;<i> pings from working, it's just a TCP connection after all.
+</I>&gt;<i>
+</I>&gt;<i> The only thing I can think of is that somehow federation is going mad and
+</I>&gt;<i> flooding the link with traffic - but I'm sure you would have noticed that.
+</I>&gt;<i> And pings should still get through anyway.
+</I>&gt;<i>
+</I>&gt;<i> Does wireshark / tcpdump / etc show anything unusual?
+</I>&gt;<i>
+</I>&gt;<i> Cheers, Simon
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> --
+</I>&gt;<i> Simon MacMullen
+</I>&gt;<i> RabbitMQ, VMware
+</I>&gt;<i> ______________________________**_________________
+</I>&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.</A>**rabbitmq.com&lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>&gt;
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/**cgi-bin/mailman/listinfo/**rabbitmq-discuss&lt;https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/**cgi-bin/mailman/listinfo/**rabbitmq-discuss&lt;https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>&gt;
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20120321/ca48a3cf/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20120321/ca48a3cf/attachment.htm</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="018977.html">[rabbitmq-discuss] Federated exchange slowdown
+</A></li>
+	<LI>Next message: <A HREF="019032.html">[rabbitmq-discuss] Federated exchange slowdown
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#19011">[ date ]</a>
+              <a href="thread.html#19011">[ thread ]</a>
+              <a href="subject.html#19011">[ subject ]</a>
+              <a href="author.html#19011">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

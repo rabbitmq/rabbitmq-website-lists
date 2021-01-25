@@ -1,0 +1,164 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Preventing uncontrolled crashes due to file	descriptor exhaustion
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Preventing%20uncontrolled%20crashes%20due%20to%20file%0A%09descriptor%20exhaustion&In-Reply-To=%3CAANLkTimYhYt0N4HZM6iU1nrrRkHnau6lJJt-hLsMRRP2%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="007961.html">
+   <LINK REL="Next"  HREF="007936.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Preventing uncontrolled crashes due to file	descriptor exhaustion</H1>
+    <B>Tony Spataro</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Preventing%20uncontrolled%20crashes%20due%20to%20file%0A%09descriptor%20exhaustion&In-Reply-To=%3CAANLkTimYhYt0N4HZM6iU1nrrRkHnau6lJJt-hLsMRRP2%40mail.gmail.com%3E"
+       TITLE="[rabbitmq-discuss] Preventing uncontrolled crashes due to file	descriptor exhaustion">tony at rightscale.com
+       </A><BR>
+    <I>Mon Jul 12 20:01:28 BST 2010</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="007961.html">[rabbitmq-discuss] mnesia is overloaded
+</A></li>
+        <LI>Next message: <A HREF="007936.html">[rabbitmq-discuss] Preventing uncontrolled crashes due to file	descriptor exhaustion
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#7931">[ date ]</a>
+              <a href="thread.html#7931">[ thread ]</a>
+              <a href="subject.html#7931">[ subject ]</a>
+              <a href="author.html#7931">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hello RabbitMQ users,
+
+While load testing my RabbitMQ-based RPC mechanism, I managed to get my
+RabbitMQ server into some very interesting states when it had a large number
+of connections. When the AMQP server exceeded ~1020 active connections, it
+would become unstable and eventually crash in a way that lost some data
+(including a few persistent messages that had been posted to durable
+queues).
+
+The cause for the crash wasn't hard to discover: the parent process of
+RabbitMQ was restricted to 1,024 open file handles (this is apparently the
+default for the Linux distro I was running), and the resource limit is
+inherited by child processes. Simply adding a &quot;ulimit -n 65535&quot; to the
+RabbitMQ init script and a &quot;+P 131072&quot; to the Erlang VM command-line gave
+the server enough file handles and Erlang processes to handle the load.
+
+What piqued my interest, however, was the catastrophic and data-lossy way in
+which the server crashed when it reached its limit. Normally, RabbitMQ is
+very good about avoiding data loss even when it crashes!
+
+Some scrutiny of the logs yielded the following explanation: exhausting the
+file handles available to the process prevents various fault-tolerance and
+process control mechanisms from working, including:
+-- a &quot;cpu-sup&quot; process that the VM is trying to communicate with via a port
+-- writing the Mnesia tables that hold persisted queue contents
+-- the &quot;rabbitmqctl&quot; process
+
+The result of all these failures taken together is that the server decides
+to shutdown but can't shutdown cleanly, leading to data loss.
+
+My ultimate solution is rather crude, but workable: using the iptables
+conntrack module, I will limit the number of inbound TCP connections to the
+server and ensure that the server has enough free file handles to take care
+of &quot;housekeeping&quot; operations.
+
+I thought I'd share my results with the group in case anyone else has
+encountered this problem, and also query whether anyone else has come up
+with a different/better solution. Has anyone run into this yet?
+
+Cheers,
+    Tony
+
+P.S. Here are some log excerpts from a RabbitMQ server under heavy load that
+exemplify the problem:
+
+=ERROR REPORT==== 8-Jul-2010::19:23:13 ===
+Error in process &lt;0.121.0&gt; on node '<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at TonyS</A>' with exit value:
+{{badmatch,{error,emfile}},[{cpu_sup,get_uint32_measurement,2},{cpu_sup,measurement_server_loop,1}]}
+
+=ERROR REPORT==== 8-Jul-2010::19:23:18 ===
+Error in process &lt;0.5307.0&gt; on node '<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at TonyS</A>' with exit value:
+{emfile,[{erlang,open_port,[{spawn,&quot;/usr/lib/erlang/lib/os_mon-2.2.5/priv/bin/cpu_sup&quot;},[stream]]},{cpu_sup,start_portprogram,0},{cpu_sup,port_server_init,1}]}
+
+=ERROR REPORT==== 8-Jul-2010::19:24:14 ===
+Mnesia(<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at TonyS</A>): ** ERROR ** (could not write core file: emfile)
+ ** FATAL ** Cannot open log file
+&quot;/var/lib/rabbitmq/mnesia/rabbit/rabbit_durable_queue.DCL&quot;: {file_error,
+
+
+&quot;/var/lib/rabbitmq/mnesia/rabbit/rabbit_durable_queue.DCL&quot;,
+
+                  emfile}
+
+=INFO REPORT==== 8-Jul-2010::19:24:14 ===
+    application: mnesia
+    exited: shutdown
+    type: permanent
+
+*-------^ someone decides to shutdown everything; tries to do a clean
+shutdown but can't persist state  ^-------*
+
+=ERROR REPORT==== 8-Jul-2010::19:24:14 ===
+** gen_event handler rabbit_error_logger crashed.
+** Was installed in error_logger
+** Last event was: {error,&lt;0.39.0&gt;,
+                       {&lt;0.42.0&gt;,
+                        &quot;Mnesia(~p): ** ERROR ** (could not write core file:
+~p)~n ** FATAL ** Cannot open log file ~p: ~p~n&quot;,
+                        [<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at TonyS</A>,emfile,
+
+&quot;/var/lib/rabbitmq/mnesia/rabbit/rabbit_durable_queue.DCL&quot;,
+                         {file_error,
+
+&quot;/var/lib/rabbitmq/mnesia/rabbit/rabbit_durable_queue.DCL&quot;,
+                             emfile}]}}
+
+*-------^ can't even write a crash dump ^-------*
+*
+*
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20100712/35f49704/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20100712/35f49704/attachment.htm</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="007961.html">[rabbitmq-discuss] mnesia is overloaded
+</A></li>
+	<LI>Next message: <A HREF="007936.html">[rabbitmq-discuss] Preventing uncontrolled crashes due to file	descriptor exhaustion
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#7931">[ date ]</a>
+              <a href="thread.html#7931">[ thread ]</a>
+              <a href="subject.html#7931">[ subject ]</a>
+              <a href="author.html#7931">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

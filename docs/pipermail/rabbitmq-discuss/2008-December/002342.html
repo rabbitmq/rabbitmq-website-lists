@@ -1,0 +1,131 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] [Q] best way to add a sequencer to the broker
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20%5BQ%5D%20best%20way%20to%20add%20a%20sequencer%20to%20the%20broker&In-Reply-To=0626524F-5125-4060-811A-78AC4497DF3A%40mac.com">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002345.html">
+   <LINK REL="Next"  HREF="002346.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] [Q] best way to add a sequencer to the broker</H1>
+    <B>Ben Hood</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20%5BQ%5D%20best%20way%20to%20add%20a%20sequencer%20to%20the%20broker&In-Reply-To=0626524F-5125-4060-811A-78AC4497DF3A%40mac.com"
+       TITLE="[rabbitmq-discuss] [Q] best way to add a sequencer to the broker">0x6e6562 at gmail.com
+       </A><BR>
+    <I>Mon Dec 29 18:29:51 GMT 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002345.html">[rabbitmq-discuss] [Q] best way to add a sequencer to the broker
+</A></li>
+        <LI>Next message: <A HREF="002346.html">[rabbitmq-discuss] [Q] best way to add a sequencer to the broker
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2342">[ date ]</a>
+              <a href="thread.html#2342">[ thread ]</a>
+              <a href="subject.html#2342">[ subject ]</a>
+              <a href="author.html#2342">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Chuck,
+
+On Mon, Dec 29, 2008 at 5:43 PM, Chuck Remes &lt;<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">cremes.devlist at mac.com</A>&gt; wrote:
+&gt;<i> Your last sentence quoted above gets it exactly. Each publisher will
+</I>&gt;<i> set the sequence number to 0 so that the republisher/sequencer service
+</I>&gt;<i> can add the global number stamp to it. I guess the publishers could
+</I>&gt;<i> also set it to nil; the initial value is irrelevant since the
+</I>&gt;<i> Sequencer will overwrite it.
+</I>
+Fair point. It need not be set until it passes through the broker.
+FWIW there are some standard header properties that could be misused
+for this purpose, e.g. the message_id field.
+
+&gt;<i> The use case is to stamp a global order on all messages through the
+</I>&gt;<i> broker for the purposes of replay, debugging and async logging. I
+</I>&gt;<i> realize that during normal operation the services will be publishing
+</I>&gt;<i> messages in an arbitrary order; it doesn't matter to me. I need to
+</I>&gt;<i> recreate that arbitrary order *exactly* for a replay.
+</I>
+What is the scope of the stamp? Is it globally monotonic
+
+a) accross the entire Rabbit cluster
+b) within a single Rabbit node
+c) within a single AMQP channel
+d) just through a particular queue
+
+?
+
+Obviously, as the scope widens the throughput will become more serial.
+
+And the last option is a giveaway - at the queue level you get the
+ordering *for free*.
+
+&gt;<i> Think of the sequencer as the software equivalent of a hardware bus
+</I>&gt;<i> clock. Alternately, think of the sequencer as the equivalent of adding
+</I>&gt;<i> an identity column to a database table (this column contains a
+</I>&gt;<i> monotonically increasing integer assigned by the server).
+</I>
+Strict ingress ordering is going to cost more than global identity,
+which could be achieved by a guid, for example.
+
+A timestamp would be cheaper, but than would not be strictly ordered,
+just asymptotically.
+
+&gt;<i> I think this does solve the issue. I don't know Erlang yet so I'll
+</I>&gt;<i> probably keep the Sequencer as an external Java client for the short-
+</I>&gt;<i> term, but it's nice to know I can get a performance win with a rewrite
+</I>&gt;<i> in Erlang. Avoiding the TCP overhead, even if it is short circuited on
+</I>&gt;<i> a localhost, is a good thing.
+</I>
+What would be more efficient would be a custom exchange implementation
+that stamps each message as it passes through, because you would avoid
+the delivery-redelivery overhead. This would also mean less moving
+parts.
+
+In contrast to the Erlang AMQP client, this would involve some coding
+in the server.
+
+
+&gt;<i> As other services declare exchanges and publish to them, I would like
+</I>&gt;<i> my Sequencer to dynamically detect the existence of a new Exchange so
+</I>&gt;<i> it can create a queue, bind the new queue to the Exchange and receive
+</I>&gt;<i> messages from it for processing and republishing.
+</I>
+ATM there is no notification facility present in Rabbit to tell
+somebody that an exchange has been created. One could extend Rabbit to
+do this (which wouldn't be rocket science) or you could also do this
+on the application level, i.e. maintain a notification queue that the
+sequencer listens on, and have whoever creates a new exchange also
+post to this queue.
+
+HTH,
+
+Ben
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002345.html">[rabbitmq-discuss] [Q] best way to add a sequencer to the broker
+</A></li>
+	<LI>Next message: <A HREF="002346.html">[rabbitmq-discuss] [Q] best way to add a sequencer to the broker
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2342">[ date ]</a>
+              <a href="thread.html#2342">[ thread ]</a>
+              <a href="subject.html#2342">[ subject ]</a>
+              <a href="author.html#2342">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

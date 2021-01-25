@@ -1,0 +1,214 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] RabbitMQ 2.0 hanging
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20RabbitMQ%202.0%20hanging&In-Reply-To=%3C408524.76533.qm%40web111011.mail.gq1.yahoo.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="008898.html">
+   <LINK REL="Next"  HREF="008913.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] RabbitMQ 2.0 hanging</H1>
+    <B>Dave Greggory</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20RabbitMQ%202.0%20hanging&In-Reply-To=%3C408524.76533.qm%40web111011.mail.gq1.yahoo.com%3E"
+       TITLE="[rabbitmq-discuss] RabbitMQ 2.0 hanging">davegreggory at yahoo.com
+       </A><BR>
+    <I>Tue Sep 14 16:11:45 BST 2010</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="008898.html">[rabbitmq-discuss] RabbitMQ 2.0 hanging
+</A></li>
+        <LI>Next message: <A HREF="008913.html">[rabbitmq-discuss] RabbitMQ 2.0 hanging
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#8910">[ date ]</a>
+              <a href="thread.html#8910">[ thread ]</a>
+              <a href="subject.html#8910">[ subject ]</a>
+              <a href="author.html#8910">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>So it happened again this morning. 
+
+rabbitmqctl status, list_connections and list_exchanges worked, but list_queues 
+and list_channels hung.
+
+This time there were no errors in the log, unlike the last time. This has been 
+quite common, that when it happens there's nothing in the logs. That's why I 
+didn't report it any earlier. Very mysterious.
+
+I have attached the output of status, list_connections, dmesg, and lsof from 
+both rabbitmq nodes in the cluster.
+
+
+
+
+----- Original Message ----
+From: Dave Greggory &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">davegreggory at yahoo.com</A>&gt;
+To: Matthew Sackman &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">matthew at rabbitmq.com</A>&gt;; <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+Sent: Mon, September 13, 2010 11:48:44 AM
+Subject: Re: [rabbitmq-discuss] RabbitMQ 2.0 hanging
+
+Wow... ok.
+
+I'll grab lsof / dmesg / syslog output next time this happens.
+
+Thanks for looking into it. Much appreciated.
+
+
+
+----- Original Message ----
+From: Matthew Sackman &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">matthew at rabbitmq.com</A>&gt;
+To: <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+Sent: Mon, September 13, 2010 10:53:24 AM
+Subject: Re: [rabbitmq-discuss] RabbitMQ 2.0 hanging
+
+Hi Dave,
+
+Sorry for the delay in getting back to you.
+
+Your node1 log had this in it:
+
+=ERROR REPORT==== 8-Sep-2010::09:45:43 ===
+** Generic server &lt;0.29.0&gt; terminating
+** Last message in was {'EXIT',&lt;0.30.0&gt;,eio}
+** When Server state == {state,user_sup,undefined,&lt;0.30.0&gt;,
+                               {&lt;0.29.0&gt;,user_sup}}
+** Reason for termination ==
+** eio
+
+This is utterly bizarre - we've never seen it before and it was
+certainly enough to take down the node1 or at least hang it.
+
+node2 log has:
+
+=ERROR REPORT==== 8-Sep-2010::09:41:38 ===
+** Generic server delegate_process_0 terminating
+** Last message in was {'$gen_cast',{thunk,#Fun&lt;delegate.4.123807736&gt;}}
+** When Server state == no_state
+** Reason for termination ==
+** {noproc,{gen_server2,call,
+                        [{delegate_process_1,'<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at ent-jms-qa-1</A>'},
+                         {thunk,#Fun&lt;delegate.5.131821234&gt;},
+                         infinity]}}
+
+This is basically node2 finding that node1 has gone down. This suggests
+(as does your timeline) that node1 actually failed some time previously
+but that the immediate error was not logged and only at some later point
+did a very generic &quot;eio&quot; come out of it - literally error in some form
+of IO operation.
+
+Now the eio comes out of process &lt;0.30.0&gt; which is a process which is
+started very early on in the Erlang VM boot process. I can't quite tell
+what the user_sup process is meant to be doing - it's so far buried that
+there's no documentation for it. It's quite possible you've found a bug
+in Erlang itself. Even having googled around for a while, I still can't
+really find out what &quot;user&quot; is for - the best I can find is:
+&quot;user is a server which responds to all the messages defined in the I/O
+interface. The code in user.erl can be used as a model for building
+alternative I/O servers.&quot; so that's nice and clear. Anyway, my guess is
+some error came out of said I/O server, took out user and user_sup which
+was then logged. But as to what the fault actually was, I'm afraid I
+have no idea.
+
+When this next happens, any chance you could check things like number of
+open file descriptors, see if there's any kernel log messages relevant
+etc? Sorry I can't be more helpful - it's just not something we've ever
+come across before.
+
+Matthew
+_______________________________________________
+rabbitmq-discuss mailing list
+<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+
+
+
+      
+_______________________________________________
+rabbitmq-discuss mailing list
+<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+
+
+
+      
+-------------- next part --------------
+An embedded and charset-unspecified text was scrubbed...
+Name: node2-status.txt
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20100914/60fdefbb/attachment-0008.txt">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20100914/60fdefbb/attachment-0008.txt</A>&gt;
+-------------- next part --------------
+An embedded and charset-unspecified text was scrubbed...
+Name: node1-connections.txt
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20100914/60fdefbb/attachment-0009.txt">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20100914/60fdefbb/attachment-0009.txt</A>&gt;
+-------------- next part --------------
+An embedded and charset-unspecified text was scrubbed...
+Name: node1-dmesg.txt
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20100914/60fdefbb/attachment-0010.txt">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20100914/60fdefbb/attachment-0010.txt</A>&gt;
+-------------- next part --------------
+An embedded and charset-unspecified text was scrubbed...
+Name: node1-lsof.txt
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20100914/60fdefbb/attachment-0011.txt">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20100914/60fdefbb/attachment-0011.txt</A>&gt;
+-------------- next part --------------
+An embedded and charset-unspecified text was scrubbed...
+Name: node1-status.txt
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20100914/60fdefbb/attachment-0012.txt">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20100914/60fdefbb/attachment-0012.txt</A>&gt;
+-------------- next part --------------
+An embedded and charset-unspecified text was scrubbed...
+Name: node2-connections.txt
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20100914/60fdefbb/attachment-0013.txt">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20100914/60fdefbb/attachment-0013.txt</A>&gt;
+-------------- next part --------------
+An embedded and charset-unspecified text was scrubbed...
+Name: node2-dmesg.txt
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20100914/60fdefbb/attachment-0014.txt">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20100914/60fdefbb/attachment-0014.txt</A>&gt;
+-------------- next part --------------
+An embedded and charset-unspecified text was scrubbed...
+Name: node2-lsof.txt
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20100914/60fdefbb/attachment-0015.txt">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20100914/60fdefbb/attachment-0015.txt</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="008898.html">[rabbitmq-discuss] RabbitMQ 2.0 hanging
+</A></li>
+	<LI>Next message: <A HREF="008913.html">[rabbitmq-discuss] RabbitMQ 2.0 hanging
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#8910">[ date ]</a>
+              <a href="thread.html#8910">[ thread ]</a>
+              <a href="subject.html#8910">[ subject ]</a>
+              <a href="author.html#8910">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

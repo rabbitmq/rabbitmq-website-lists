@@ -1,0 +1,119 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Simple benchmark and results
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20Simple%20benchmark%20and%20results&In-Reply-To=4AE06973.6010802%40lshift.net">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="005202.html">
+   <LINK REL="Next"  HREF="005209.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Simple benchmark and results</H1>
+    <B>David Glaubman</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20Simple%20benchmark%20and%20results&In-Reply-To=4AE06973.6010802%40lshift.net"
+       TITLE="[rabbitmq-discuss] Simple benchmark and results">dglaubman at acm.org
+       </A><BR>
+    <I>Thu Oct 22 21:34:55 BST 2009</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="005202.html">[rabbitmq-discuss] Simple benchmark and results
+</A></li>
+        <LI>Next message: <A HREF="005209.html">[rabbitmq-discuss] Simple benchmark and results
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#5208">[ date ]</a>
+              <a href="thread.html#5208">[ thread ]</a>
+              <a href="subject.html#5208">[ subject ]</a>
+              <a href="author.html#5208">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>
+Matthias,
+
+I did some profiling of a simple example (basically the SendString example, 
+with Publish called in a loop). I understand this is not a realistic
+scenario, 
+but it does give some sense of where Publish takes time against .Net.
+
+Anyway, almost all of the time was spent in Binarywriter.Write(byte) called
+from Frame.WriteTo.  Each Write(byte) was taking about 3-5 mu-sec. 
+
+Since this was so, I looked at NetworkBinarywriter, 
+since it calls BinaryWriter.Write(byte) 4x for every uint32 or int32 and 2X
+for every uint16.
+
+Using BinaryWriter as a guide, I turned the overrides of Write(int32) etc
+to write to a byte array in the proper network order 
+and then write the array to the underlying Stream.
+
+Running against the original RabbitMQ.Client dll, doing 10K Publishes of a
+24-char string to a remote server,
+I got about 1.5K messages per second:
+   C:\&gt; SendMultiString.exe ca1tesla1 directexchange direct key
+123456789012345678901234 10000
+   10000 messages sent in in 7248 mSec
+
+Buffering the int/short Writes in a modified version of NetworkBinaryWriter, 
+I got around 7.5K messages per sec.:  (5X speedup)
+   C:\&gt; SendMultiString.exe ca1tesla1 directexchange direct key
+123456789012345678901234 10000
+   10000 messages sent in in 1391 mSec
+
+Also turning on Nagle (setting TCP_NODELAY to false), got it up to 15K per
+sec: (total speed up &gt; 10X)
+  C:\&gt; SendMultiString.exe ca1tesla1 directexchange direct key
+123456789012345678901234 10000
+  10000 messages sent in in 676 mSec
+
+Nagle enabled with the original NetworkBinaryWriter was slightly better (in
+this case) than the modified NetworkBinarywriter: (about 8.5K)
+  C:\&gt; SendMultiString.exe ca1tesla1 directexchange direct key
+123456789012345678901234 10000
+  10000 messages sent in in 1136 mSec
+
+
+I'm not proposing that either the NBW should be rewritten along the lines
+above or that Nagle's algorithm be enabled on Windows.
+But I do think this shows there is something going on with Microsoft's
+Socket/TCPClient implementations and there may be real gains available in
+writing a whole Frame at once 
+to the socket stream (at least when using TCPClient on Windows).
+
+regards,
+David
+
+<A HREF="http://www.nabble.com/file/p26016750/NetworkBinaryReader.cs">http://www.nabble.com/file/p26016750/NetworkBinaryReader.cs</A>
+NetworkBinaryReader.cs 
+<A HREF="http://www.nabble.com/file/p26016750/SendMultiString.cs">http://www.nabble.com/file/p26016750/SendMultiString.cs</A> SendMultiString.cs 
+-- 
+View this message in context: <A HREF="http://www.nabble.com/Simple-benchmark-and-results-tp25968960p26016750.html">http://www.nabble.com/Simple-benchmark-and-results-tp25968960p26016750.html</A>
+Sent from the RabbitMQ mailing list archive at Nabble.com.
+
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="005202.html">[rabbitmq-discuss] Simple benchmark and results
+</A></li>
+	<LI>Next message: <A HREF="005209.html">[rabbitmq-discuss] Simple benchmark and results
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#5208">[ date ]</a>
+              <a href="thread.html#5208">[ thread ]</a>
+              <a href="subject.html#5208">[ subject ]</a>
+              <a href="author.html#5208">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

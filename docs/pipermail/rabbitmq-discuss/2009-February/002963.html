@@ -1,0 +1,173 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] memory usage
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20memory%20usage&In-Reply-To=167204d20902100012l19dba940u6482d5f379186c4e%40mail.gmail.com">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002958.html">
+   <LINK REL="Next"  HREF="002966.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] memory usage</H1>
+    <B>Valentino Volonghi</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20memory%20usage&In-Reply-To=167204d20902100012l19dba940u6482d5f379186c4e%40mail.gmail.com"
+       TITLE="[rabbitmq-discuss] memory usage">dialtone at gmail.com
+       </A><BR>
+    <I>Wed Feb 11 01:11:30 GMT 2009</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002958.html">[rabbitmq-discuss] memory usage
+</A></li>
+        <LI>Next message: <A HREF="002966.html">[rabbitmq-discuss] memory usage
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2963">[ date ]</a>
+              <a href="thread.html#2963">[ thread ]</a>
+              <a href="subject.html#2963">[ subject ]</a>
+              <a href="author.html#2963">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>-----BEGIN PGP SIGNED MESSAGE-----
+Hash: SHA1
+
+
+On Feb 10, 2009, at 12:12 AM, Alexis Richardson wrote:
+
+&gt;<i> Got it.  Thanks.
+</I>&gt;<i>
+</I>&gt;<i> Are you able to replicate the failure on local machines?  I would
+</I>&gt;<i> understand if you do not have a local harness, but even so, that
+</I>&gt;<i> strikes me as the next step.  (Unless we all replicate your EC2 set-up
+</I>&gt;<i> which might be non-trivial)
+</I>
+
+I can replicate it yes. at some point message delivery slows down  
+incredibly.
+
+but I have to explain the system a little bit more:
+
+shovel doesn't just forward messages, it waits until it receives X  
+messages,
+then packs them together and sends all at once, after that acks all of  
+them
+at once on the source rabbitmq. So in the second rabbitmq what used to  
+be
+a 600bytes message becomes a 40KB message (with compression and 1000
+messages). On EC2 the memory problem is with the frontend mochiweb  
+boxes.
+If I check the logs on the central rabbitmq in this configuration they  
+are normal,
+currently they are 8MB and the memory usage of that rabbitmq instance  
+is 32MB.
+Since shovel packs 1000 messages together the message rate the central  
+rabbitmq
+sees is 1000 times less than the frontends (usually on peak it's 1  
+message per
+second for each frontend server). The logs on the frontend instead  
+showed that
+never-shrinking behavior.
+
+I tried to run this test three or four times under the exact same load  
+parameters
+that I used on EC2 but on a single server internally. For the first 2  
+tests everything
+seemed to work fine, and actually memory usage on an x86-64 machine is  
+even
+lower than the 32bit machine on EC2 with a cold started system (100MB  
+vs 300MB).
+One thing though is that the rabbit_persister.LOG was never back to a  
+reasonable
+value after the tests and basically I've never seen it shrinking (in  
+either of the machines),
+and this is both in the frontend and the central rabbitmq (that for  
+this test setup were both
+running in the same machine, during the tests the load on the frontend  
+was 180%, not
+maxed out by the test, and the central rabbitmq was around 1-5%).  
+After the second
+test though message delivery stopped even though the logfile was more  
+than 140MB
+in both the rabbitmqs.
+
+I then started the test a third time and boom... After a while the  
+memory usage started
+ramping up unbounded until it reached more than 3.0gb per process  
+(machine is 64bit)
+at this point message delivery stopped completely, then when the load  
+went down
+a little bit it started again VERY slowly (1 message every 30 seconds  
+on average).
+
+At the end of the test the frontend was crashed completely using just  
+10MB of memory
+(it should use at least 100MB because it keeps in memory the geoip db  
+for lookup),
+and the central rabbitmq was at 3.7GB of memory used. Logfiles were  
+about 180MB
+on both and after a restart they were recovered and rolled so now they  
+are basically
+0 (and after restart another 2000 messages were delivered).
+
+&quot;unfortunately&quot; I cannot check the number of delivered messages  
+because the third
+time I repeated the test I thought that it could have been a consumer  
+problem in
+that it could be too slow (even though I have 3 consumers kept alive  
+by a process
+pool that does what the supervisor does in erlang) so I switched my  
+consumers to
+a simple version that just gets them without saving them. So I only  
+have an estimate
+and that estimate is around 700.000 lines (700 messages) delivered  
+while tsung
+tells me it did 1.3M requests, of course there was a crash in the  
+middle so I'd
+say that the lines were delivered until the system was running. I  
+should repeat it
+and see if I can count all of them using the default consumers.
+
+I'm now repeating the test again with more monitoring over requests  
+done and the size
+of the logs.
+
+- --
+Valentino Volonghi aka Dialtone
+Now running MacOS X 10.5
+Home Page: <A HREF="http://www.twisted.it">http://www.twisted.it</A>
+<A HREF="http://www.adroll.com">http://www.adroll.com</A>
+
+-----BEGIN PGP SIGNATURE-----
+Version: GnuPG v1.4.9 (Darwin)
+
+iEYEARECAAYFAkmSJcIACgkQ9Llz28widGUwLgCgoqRr++h6YbRImcXK5NviQMZN
+JFsAn25dlmkGzGe7JWO2Asy/rHYslKqo
+=rrTO
+-----END PGP SIGNATURE-----
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002958.html">[rabbitmq-discuss] memory usage
+</A></li>
+	<LI>Next message: <A HREF="002966.html">[rabbitmq-discuss] memory usage
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2963">[ date ]</a>
+              <a href="thread.html#2963">[ thread ]</a>
+              <a href="subject.html#2963">[ subject ]</a>
+              <a href="author.html#2963">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

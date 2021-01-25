@@ -1,0 +1,216 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] erlang-client issue, discarding content?
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20erlang-client%20issue%2C%20discarding%20content%3F&In-Reply-To=376f3e6f0907301252n773969abs220067999d1aed5f%40mail.gmail.com">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="004288.html">
+   <LINK REL="Next"  HREF="004290.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] erlang-client issue, discarding content?</H1>
+    <B>Suhail Doshi</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20erlang-client%20issue%2C%20discarding%20content%3F&In-Reply-To=376f3e6f0907301252n773969abs220067999d1aed5f%40mail.gmail.com"
+       TITLE="[rabbitmq-discuss] erlang-client issue, discarding content?">digitalwarfare at gmail.com
+       </A><BR>
+    <I>Thu Jul 30 20:54:40 BST 2009</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="004288.html">[rabbitmq-discuss] erlang-client issue, discarding content?
+</A></li>
+        <LI>Next message: <A HREF="004290.html">[rabbitmq-discuss] erlang-client issue, discarding content?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#4289">[ date ]</a>
+              <a href="thread.html#4289">[ thread ]</a>
+              <a href="subject.html#4289">[ subject ]</a>
+              <a href="author.html#4289">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Here's the erlang module I use to send items to rabbit, it's largely adapted
+from code open sourced online:
+Dpaste of it: <A HREF="http://dpaste.com/73447/">http://dpaste.com/73447/</A>
+
+-export([amqp_lifecycle/0, send_message/5, log/2]).
+
+-include_lib(&quot;rabbitmq-erlang-client/rabbitmq_server/include/rabbit.hrl&quot;).
+-include_lib(&quot;rabbitmq-erlang-client/rabbitmq_server/include/rabbit_framing.hrl&quot;).
+-include(&quot;rabbitmq-erlang-client/include/amqp_client.hrl&quot;).
+
+-record(rabbit_info, {channel, ticket, exchange, routing_key}).
+
+amqp_lifecycle() -&gt;
+    User = &quot;mixpanel&quot;,
+    Password = &quot;mixpanel0816&quot;,
+    Realm = &lt;&lt;&quot;mixpanel&quot;&gt;&gt;, %% virtual_host
+    Connection = amqp_connection:start(User, Password, &quot;127.0.0.1&quot;, Realm),
+    Channel = amqp_connection:open_channel(Connection),
+    Access = #'access.request'{
+        realm = Realm,
+        exclusive = false,
+        passive = true,
+        active = true,
+        write = true,
+        read = true
+    },
+    #'access.request_ok'{ticket = Ticket} = amqp_channel:call(Channel,
+Access),
+
+    Q = &lt;&lt;&quot;storage&quot;&gt;&gt;,
+    X = &lt;&lt;&quot;records&quot;&gt;&gt;,
+    BindKey = &lt;&lt;&quot;event&quot;&gt;&gt;,
+
+    QueueDeclare = #'queue.declare'{ticket = Ticket, queue = Q,
+                                    passive = false, durable = true,
+                                    exclusive = false, auto_delete = false,
+                                    nowait = false, arguments = []},
+
+    #'queue.declare_ok'{queue = Q} = amqp_channel:call(Channel,
+QueueDeclare),
+
+    ExchangeDeclare = #'exchange.declare'{ticket = Ticket,
+                                          exchange = X, type = &lt;&lt;&quot;direct&quot;&gt;&gt;,
+                                          passive = false, durable = true,
+                                          auto_delete = false, internal =
+false,
+                                          nowait = false, arguments = []},
+
+    #'exchange.declare_ok'{} = amqp_channel:call(Channel, ExchangeDeclare),
+    QueueBind = #'queue.bind'{ticket = Ticket,
+                              queue = Q,
+                              exchange = X,
+                              routing_key = BindKey,
+                              nowait = false, arguments = []},
+    #'queue.bind_ok'{} = amqp_channel:call(Channel, QueueBind),
+
+    RabbitInfo = #'rabbit_info'{
+        channel = Channel,
+        ticket = Ticket,
+        exchange = X,
+        routing_key = BindKey
+    },
+    RabbitInfo.
+
+send_message(Channel, Ticket, X, RoutingKey, Payload) -&gt;
+    BasicPublish = #'basic.publish'{ticket = Ticket,
+                                    exchange = X,
+                                    routing_key = RoutingKey,
+                                    mandatory = false,
+                                    immediate = false},
+    BasicProperties = amqp_util:basic_properties(),
+    Properties = BasicProperties#'P_basic'{delivery_mode=2}, %% Persistence
+plz
+    Content = #content{class_id = 60,
+         properties = Properties,
+         properties_bin = none,
+         payload_fragments_rev = [Payload]
+        },
+    amqp_channel:cast(Channel, BasicPublish, Content).
+
+log(Key,Value) -&gt;
+    io:format(&quot;~p: ~p~n&quot;,[Key,Value]).
+
+
+I do the following to send items to the queue:
+
+event_queue_data(QueueInfo, Data) -&gt;
+    send_message(
+        QueueInfo#'rabbit_info'.channel,
+        QueueInfo#'rabbit_info'.ticket,
+        QueueInfo#'rabbit_info'.exchange,
+        QueueInfo#'rabbit_info'.routing_key,
+        list_to_binary(Data)
+    ),
+    1.
+
+On Thu, Jul 30, 2009 at 12:52 PM, Suhail Doshi &lt;<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">digitalwarfare at gmail.com</A>&gt;wrote:
+
+&gt;<i> mplivelog1 ~: sudo /usr/sbin/rabbitmqctl list_queues -p myqueue name
+</I>&gt;<i> consumers messages messages_ready
+</I>&gt;<i>
+</I>&gt;<i> Listing queues ...
+</I>&gt;<i> storage 5 1 0
+</I>&gt;<i> ...done.
+</I>&gt;<i>
+</I>&gt;<i> I currently have it running again after a restart and that's usually the
+</I>&gt;<i> response I get, usually only 0-5 items in the queue, since it's being
+</I>&gt;<i> processed.
+</I>&gt;<i>
+</I>&gt;<i> When the error was occurring and I checked the queue, there were
+</I>&gt;<i> effectively *zero* items in the queue according to that command I ran above
+</I>&gt;<i> in the queue. In python I definitely do acknowledge items via:
+</I>&gt;<i>
+</I>&gt;<i> self.channel.basic_ack(data.delivery_tag)
+</I>&gt;<i>
+</I>&gt;<i> where self.channel is amqp.Connection(host=host, **info).channel()
+</I>&gt;<i>
+</I>&gt;<i> Suhail
+</I>&gt;<i>
+</I>&gt;<i> On Thu, Jul 30, 2009 at 12:46 PM, Matthias Radestock &lt;<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">matthias at lshift.net</A>&gt;wrote:
+</I>&gt;<i>
+</I>&gt;&gt;<i> Suhail Doshi wrote:
+</I>&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i> Looking in my logs shows a large gap in time, in bold is where it is:
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i> =INFO REPORT==== 30-Jul-2009::17:26:56 ===
+</I>&gt;&gt;&gt;<i>    alarm_handler: {set,{system_memory_high_watermark,[]}}
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> This indicates that rabbit got close to running out of memory and told all
+</I>&gt;&gt;<i> connected clients to stop sending any more messages. Hence the &quot;Discarding
+</I>&gt;&gt;<i> ...&quot; message you were seeing in the erlang client. Your consumers should
+</I>&gt;&gt;<i> continue to receive messages, albeit slowly if rabbit is swapping.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Perhaps your consumers are not acknowledging received messages, causing
+</I>&gt;&gt;<i> them to keep piling up at the server?
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> I recommend checking the queue lengths/sizes with 'rabbitmqctl
+</I>&gt;&gt;<i> list_queues'.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Regards,
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Matthias.
+</I>&gt;&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> --
+</I>&gt;<i> <A HREF="http://mixpanel.com">http://mixpanel.com</A>
+</I>&gt;<i> Blog: <A HREF="http://blog.mixpanel.com">http://blog.mixpanel.com</A>
+</I>&gt;<i>
+</I>
+
+
+-- 
+<A HREF="http://mixpanel.com">http://mixpanel.com</A>
+Blog: <A HREF="http://blog.mixpanel.com">http://blog.mixpanel.com</A>
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: <A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20090730/017609b0/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20090730/017609b0/attachment.htm</A> 
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="004288.html">[rabbitmq-discuss] erlang-client issue, discarding content?
+</A></li>
+	<LI>Next message: <A HREF="004290.html">[rabbitmq-discuss] erlang-client issue, discarding content?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#4289">[ date ]</a>
+              <a href="thread.html#4289">[ thread ]</a>
+              <a href="subject.html#4289">[ subject ]</a>
+              <a href="author.html#4289">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,189 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] rabbitmq-discuss Digest, Vol 18, Issue 34
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20rabbitmq-discuss%20Digest%2C%20Vol%2018%2C%20Issue%2034&In-Reply-To=57cfcbc70811161559k7796daeft674120283c7fdf22%40mail.gmail.com">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002023.html">
+   <LINK REL="Next"  HREF="002027.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] rabbitmq-discuss Digest, Vol 18, Issue 34</H1>
+    <B>Alexis Richardson</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20rabbitmq-discuss%20Digest%2C%20Vol%2018%2C%20Issue%2034&In-Reply-To=57cfcbc70811161559k7796daeft674120283c7fdf22%40mail.gmail.com"
+       TITLE="[rabbitmq-discuss] rabbitmq-discuss Digest, Vol 18, Issue 34">alexis.richardson at cohesiveft.com
+       </A><BR>
+    <I>Mon Nov 17 12:11:58 GMT 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002023.html">[rabbitmq-discuss] rabbitmq-discuss Digest, Vol 18, Issue 34
+</A></li>
+        <LI>Next message: <A HREF="002027.html">[rabbitmq-discuss] rabbitmq-discuss Digest, Vol 18, Issue 34
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2026">[ date ]</a>
+              <a href="thread.html#2026">[ thread ]</a>
+              <a href="subject.html#2026">[ subject ]</a>
+              <a href="author.html#2026">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Ilya
+
+Thanks very much for your input and detail on this.
+
+
+On Sun, Nov 16, 2008 at 11:59 PM, Ilya Grigorik &lt;<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">ilya at aiderss.com</A>&gt; wrote:
+&gt;&gt;<i>
+</I>&gt;&gt;<i> * I am assuming flow control does not solve your problem - I think you
+</I>&gt;&gt;<i> have made that clear, but can I just check?
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> Yep, in fact, I would much rather not throttle the producers - the queue
+</I>&gt;<i> becomes a leaky abstraction.
+</I>
+Good - that is what I thought.
+
+
+&gt;<i> I like to think of Rabbit (or any other
+</I>&gt;<i> router/queue in between) as a buffer, hence it should accept and fan out the
+</I>&gt;<i> messages without exposing the lag on the consumer side.
+</I>
+Absolutely.  You'll appreciate of course that when we began the
+RabbitMQ project we assumed that the use cases would align well with
+those which led to the original AMQP spec.  Of course since then we
+have learnt that AMQP really does has have potential for widespread
+applicability as a true 'internet protocol'.  And for general purpose
+messaging this can include the use case where vast numbers of messages
+must be persisted for a long time, because there are no consumers
+available.  Although supporting this case is a natural extension of
+the broker, let's see if we cannot find a workaround in the meantime.
+
+(Incidentally, at an early stage in AMQP's design it was intended to
+include file streaming as a core use case but this has been postponed
+at least at the protocol level.)
+
+
+
+&gt;<i> I may be conflating two different requirements, but here is an interesting
+</I>&gt;<i> scenario to think about: our entire infrastructure is deployed on EC2, and
+</I>&gt;<i> time and time again we've found SQS (simple queue service) a life savior for
+</I>&gt;<i> big data migrations or general maintenance. We're generating a lot of
+</I>&gt;<i> real-time data, and SQS allows us to reroute all of it into a temporary
+</I>&gt;<i> queue, and let it accumulate (we've pushed hundreds of GB's of data into it)
+</I>&gt;<i> while we do our work, and once we're done, we just flush the queue. No
+</I>&gt;<i> additional infrastructure required. (same thing for aggregate jobs, or even
+</I>&gt;<i> one-off trial projects)
+</I>
+The SQS use case is interesting and it is one that I am tracking.
+
+I think you have illustrated that you are not conflating requirements
+and that the notion of a buffer does not necessarily imply eager
+consumption.
+
+
+
+
+&gt;<i> Arguably, we could use a different piece of infrastructure to cover this
+</I>&gt;<i> case (another rabbit consumer which stores data into a database), but if
+</I>&gt;<i> Rabbit could handle this, life is much easier.
+</I>
+Well - this is where I was going - for a workaround.  I know of people
+who have done this and have been trying to tease these use cases into
+the public domain and on list..  Bear with us.
+
+
+
+&gt;<i> (Wild idea: provide an SQS adapter to reroute packets into at a certain
+</I>&gt;<i> threshold.. Perhaps not so wild if we get a pluggable interface)
+</I>
+Interesting, I'd prefer to address your core problem though.
+
+
+&gt;&gt;<i> * How often do you expect the 250Gb case to happen - do you consider
+</I>&gt;&gt;<i> it exceptional or normal?
+</I>&gt;<i>
+</I>&gt;<i> 250GB is an exception, but smaller amounts (1-5Gb) are fairly frequent
+</I>&gt;<i> (which is theoretically possible even with the current pure memory
+</I>&gt;<i> deployment).
+</I>
+So for 5Gb where the messages do not all need to be on one queue, you
+should be fine with a cluster of 1-4 broker nodes.  Obviously these
+would be persisted in the normal way.
+
+For cases where you do not have enough memory: You could use Ben's
+producer control flow to deliver an alert when a memory threshold is
+breached.  Then you could drain the messages into a data store.  This
+is workaround provided ordering and latency issues do not create
+bottlenecks or other problems at high scale.
+
+
+&gt;&gt;<i> * Do you have ordering constraints, and/or must all the messages be on one
+</I>&gt;&gt;<i> queue
+</I>&gt;<i>
+</I>&gt;<i> Depends on the data. Most of it is order agnostic, but there is some data
+</I>&gt;<i> which only makes sense when delivered in order.
+</I>
+Ok, then you could use multiple queues and rely on them for ordering.
+
+My general advice to people with cast amounts of data where consumers
+may need to recover production order later, is to attach application
+level identifiers to each message.  That way you can use as many
+queues as you like, in extremis, across any number of nodes and
+message storage locations.
+
+
+
+&gt;&gt;<i> * In the case where you need to page to disk due to a lack of machine
+</I>&gt;&gt;<i> memory, and because your queues are not being drained by consumers,
+</I>&gt;&gt;<i> does it matter what the latency of message delivery is once the
+</I>&gt;&gt;<i> consumers come back?
+</I>&gt;<i>
+</I>&gt;<i> No - within reason, of course. ;-)
+</I>
+So, it would be tolerable (performance wise) to retrieve your 250Gb of
+messages as a stream, which would be reconstructed from the putative
+overflow store.
+
+This is all pending a proper page-to-disk solution of course.
+
+
+&gt;&gt;<i> The point being that there may be some workaround that you can try,
+</I>&gt;&gt;<i> depending on the answer to the above.  You may be able to see where I
+</I>&gt;&gt;<i> am going by the last question... ;-)
+</I>&gt;<i>
+</I>&gt;<i> Absolutely. I'm not saying Rabbit should do all of the things I've described
+</I>&gt;<i> either. Of course the more the better, but even more importantly I'd like to
+</I>&gt;<i> see some sane overflow conditions: ttl, max queue size, etc. That I can plan
+</I>&gt;<i> for, crashing.. won't work. ;-)
+</I>
+Yes I think we are ALL on the same page here  (aargh, sorry ..)
+
+alexis
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002023.html">[rabbitmq-discuss] rabbitmq-discuss Digest, Vol 18, Issue 34
+</A></li>
+	<LI>Next message: <A HREF="002027.html">[rabbitmq-discuss] rabbitmq-discuss Digest, Vol 18, Issue 34
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2026">[ date ]</a>
+              <a href="thread.html#2026">[ thread ]</a>
+              <a href="subject.html#2026">[ subject ]</a>
+              <a href="author.html#2026">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

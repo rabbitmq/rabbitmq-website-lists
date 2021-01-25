@@ -1,0 +1,686 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Federation and upstream cluster
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Federation%20and%20upstream%20cluster&In-Reply-To=%3CCAE8ERywi3fi%3Dr4opdWLPznvJ-y6ptUyQCxODqXLBoo6cV%3DTheQ%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="024688.html">
+   <LINK REL="Next"  HREF="024690.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Federation and upstream cluster</H1>
+    <B>Vladislav Pernin</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Federation%20and%20upstream%20cluster&In-Reply-To=%3CCAE8ERywi3fi%3Dr4opdWLPznvJ-y6ptUyQCxODqXLBoo6cV%3DTheQ%40mail.gmail.com%3E"
+       TITLE="[rabbitmq-discuss] Federation and upstream cluster">vladislav.pernin at gmail.com
+       </A><BR>
+    <I>Fri Dec 28 09:32:43 GMT 2012</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="024688.html">[rabbitmq-discuss] Federation and upstream cluster
+</A></li>
+        <LI>Next message: <A HREF="024690.html">[rabbitmq-discuss] Federation and upstream cluster
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#24689">[ date ]</a>
+              <a href="thread.html#24689">[ thread ]</a>
+              <a href="subject.html#24689">[ subject ]</a>
+              <a href="author.html#24689">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi,
+
+
+&gt;&gt;<i> I'm running RabbitMQ 3.0.1 on two cluster of Linux servers.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Let's name the two clusters :
+</I>&gt;&gt;<i> - downstream cluster running a federation to get messages from upstream
+</I>&gt;&gt;<i> cluster
+</I>&gt;&gt;<i> - upstream cluster
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> The documentation explains well if a node fails, links to upstream
+</I>&gt;&gt;<i> exchanges will be recreated on a surviving node.
+</I>&gt;&gt;<i> There is no problem for the &quot;client&quot; side of the federation.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> I cannot use a load balancer if fail over mode to have high avaibility
+</I>&gt;&gt;<i> of the upstream cluster.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> What would be the recommended solution in this case ?
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i>
+</I>&gt;<i> I'm struggling to understand what the question is here Vladislav. The
+</I>&gt;<i> 'failover' that is being described in the federation plugin documentation
+</I>&gt;<i> is applied when using federation in a cluster, so if the node on which the
+</I>&gt;<i> downstream link is running dies, then another downstream node will take
+</I>&gt;<i> over (i.e., re-establish the links). There is a choice between clustering
+</I>&gt;<i> (i.e., ha/mirror queues) and federation - you do not get 'ha of the
+</I>&gt;<i> upstream cluster' in the same sense that mirror queues in a cluster are
+</I>&gt;<i> 'ha'. You have federated exchanges which copy data using AMQP (with ACKs
+</I>&gt;<i> enabled and some other guarantees) and the ability to try and re-establish
+</I>&gt;<i> links and so. Federation however, provides only the Availability and
+</I>&gt;<i> Partition tolerance parts of the CAP theorem, not the same Consistency
+</I>&gt;<i> guarantees as clustering/ha.
+</I>
+
+I did get that, no problem for the downstream side who hold the federation,
+it works well.
+Question is really : I have two nodes in the &quot;remote&quot; or upstream cluster,
+I want to get messages of one exchange in a reliable way and the network
+stream has to be establish by the downstream cluster ; how can I be
+tolerant to failure of one remote node ? That is what I have called high
+avaibility on the upstream cluster, but only regarding the transmission of
+the exchange messages to the downstream cluster.
+
+
+&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>  I have tried to set up two upstream and group them in a upstream set,
+</I>&gt;&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> Can you post the configuration you're using to do that?
+</I>
+
+The configuration has been done using the HTTP API.
+
+curl -i -w %{http_code} -k -u &quot;XXX:XXXX&quot; -XPUT -H
+&quot;content-type:application/json&quot; -d '{
+&quot;pattern&quot;:&quot;downstream-exchange&quot;,&quot;definition&quot;:{&quot;federation-upstream-set&quot;:&quot;upstreamset-test&quot;}
+}' <A HREF="https://localhost:15671/api/policies/%2f/federate-me">https://localhost:15671/api/policies/%2f/federate-me</A>
+
+curl -i -w %{http_code} -k -u &quot;XXX:XXXX&quot; -XPUT -H
+&quot;content-type:application/json&quot; -d '{
+&quot;name&quot;:&quot;local-nodename&quot;,&quot;value&quot;:&quot;federation-local&quot;
+}' <A HREF="https://localhost:15671/api/parameters/federation/%2f/local-nodename">https://localhost:15671/api/parameters/federation/%2f/local-nodename</A>
+
+curl -i -w %{http_code} -u &quot;XXX:XXXX&quot; -k -s -XPUT -H
+&quot;content-type:application/json&quot; -d &quot;{
+        &quot;value&quot;:{
+            &quot;uri&quot;:\&quot;<A HREF="amqps://XXX:XXX@remote-server1">amqps://XXX:XXX@remote-server1</A>
+?certfile=XXXXX&amp;keyfile=XXXX&amp;verify=verify_none&amp;fail_if_no_peer_cert=false&quot;
+        }
+    }&quot;
+<A HREF="https://localhost:15671/api/parameters/federation-upstream/%2f/upstream1">https://localhost:15671/api/parameters/federation-upstream/%2f/upstream1</A>
+
+curl -i -w %{http_code} -u &quot;XXX:XXXX&quot; -k -s -XPUT -H
+&quot;content-type:application/json&quot; -d &quot;{
+        &quot;value&quot;:{
+            &quot;uri&quot;:\&quot;<A HREF="amqps://XXX:XXX@remote-server2">amqps://XXX:XXX@remote-server2</A>
+?certfile=XXXXX&amp;keyfile=XXXX&amp;verify=verify_none&amp;fail_if_no_peer_cert=false&quot;
+        }
+    }&quot;
+<A HREF="https://localhost:15671/api/parameters/federation-upstream/%2f/upstream2">https://localhost:15671/api/parameters/federation-upstream/%2f/upstream2</A>
+
+curl -i -w %{http_code} -k -u &quot;XXX:XXXX&quot; -XPUT -H
+&quot;content-type:application/json&quot; -d '{
+&quot;value&quot;:[{&quot;upstream&quot;:&quot;upstream1&quot;,&quot;exchange&quot;:&quot;upstream-exchange&quot;},{&quot;upstream&quot;:&quot;upstream2&quot;,&quot;exchange&quot;:&quot;upstream-exchange&quot;}]
+}'
+<A HREF="https://localhost:15671/api/parameters/federation-upstream-set/%2f/upstreamset-test">https://localhost:15671/api/parameters/federation-upstream-set/%2f/upstreamset-test</A>
+
+
+&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>  but I have the following problem :
+</I>&gt;&gt;<i> - when I shut down one the node, the federation status shows the
+</I>&gt;&gt;<i> matching upstream down as expected but after having restarted the first
+</I>&gt;&gt;<i> one, if I shut down the other one, both the federation status shows both
+</I>&gt;&gt;<i> upstream down
+</I>&gt;&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> Just to confirm: you're saying that
+</I>&gt;<i>
+</I>&gt;<i> 1. you shut down one of the two upstream nodes
+</I>&gt;<i> 2. that node shows up dead in the web interface
+</I>&gt;<i> 3. you re-start that node
+</I>&gt;<i> 4. that node shows up alive in the web interface
+</I>&gt;<i> 5. you shut down the other upstream node
+</I>&gt;<i> 6. both nodes show up as dead in the web interface *but*
+</I>&gt;<i> 7. one of the upstream nodes *is* alive despite what the web admin says
+</I>&gt;<i>
+</I>&gt;<i> Have I understood that correctly?
+</I>
+
+Absolutely, you can find an extract of the downstream node log
+(<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at XXXX.log</A>) at the end of the mail.
+That is not that easy to read but I think there might be an explanation in
+the logs.
+
+Case 2 :
+web admin says :
+- upstream1 : running
+- upstream 2 : error (econnrefused)
+Everything is OK
+
+Case 6 :
+web admin says :
+- upstream1 : error (econnrefused)
+- upstream 2 : shutdown (server_initiated_code,404,&lt;&lt;&quot;NOT_FOUND ...
+the upstream1 (remote-server1) has been shutdown, but not the upstream2
+(remote-server2).
+
+
+&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>  - so, I tried to add a ha-mode policy to all on the federated queue, it
+</I>&gt;&gt;<i> is now possible to shutdown either one or the other node,
+</I>&gt;&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> I'm not sure I understand this at all. Are you saying it was not possible
+</I>&gt;<i> to shut down one or both of the upstream nodes before? That seems different
+</I>&gt;<i> from your earlier comment.
+</I>
+
+My bad ! It is not explained properly. When I was saying &quot;not possible to
+shutdown&quot;, I meant shutting down the remote node and having the proper
+status in the federation.
+
+
+&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>  but it seems that I'm losing some messages.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i>
+</I>&gt;<i> When you say 'the federated queue' do you mean the queue created in the
+</I>&gt;<i> upstream exchange's broker? Why would you want to add ha-mode policy that?
+</I>&gt;<i> The upstream queue is internal to the federation mechanism so you should be
+</I>&gt;<i> binding to the downstream exchange only. Or are you saying that you've
+</I>&gt;<i> bound a queue to the downstream exchange and made that ha-enabled? Because
+</I>&gt;<i> in the latter case, that will make no difference to reliability: if both
+</I>&gt;<i> upstream nodes go down before messages are delivered and ack'ed by the
+</I>&gt;<i> downstream for example.
+</I>&gt;<i>
+</I>
+Yes, &quot;federated queue&quot; is the queue created in the upstream exchange's
+broker. So, yes, it does not really make sense to add a ha policy, that was
+just an attempt in order to investigate a little bit further.
+And yes I did bound a ha queue to the downstream exchange, but I agree, it
+has nothing to do with the subject.
+
+
+&gt;<i>
+</I>&gt;<i> I'd be interested to hear how you've set this ha-mode policy and why and
+</I>&gt;<i> also how you've determined that there was message loss? I suspect that you
+</I>&gt;<i> have assumed expectations about the reliability of federation (in the face
+</I>&gt;<i> of node failures) that do not hold. If your messages sat in an exchange on
+</I>&gt;<i> an upstream node (or pair of exchanges/nodes, etc) and both nodes die
+</I>&gt;<i> before successfully transmitting the messages, then they will not arrive at
+</I>&gt;<i> the downstream exchange. The guarantees about message delivery for
+</I>&gt;<i> ha/mirror queues apply to nodes in *that* cluster only. The federation
+</I>&gt;<i> guarantees are different and orthogonal to ha/clustering.
+</I>&gt;<i>
+</I>
+I understand, I just want to make sure that the messages will arrive at the
+downstream exchange, not duplicated and without loss :
+- if one upstream node dies
+- if there is network failure between downstream and upstream nodes
+- if upstream nodes fail and come back again
+
+Thanks.
+Vlad
+
+*Extract of logs for case 2* :
+
+=WARNING REPORT==== 28-Dec-2012::10:27:08 ===
+Connection (&lt;0.14803.351&gt;) closing: received hard error {'connection.close',
+                                                         320,
+
+ &lt;&lt;&quot;CONNECTION_FORCED - broker forced connection closure with reason
+'shutdown'&quot;&gt;&gt;,
+                                                         0,0} from server
+
+=ERROR REPORT==== 28-Dec-2012::10:27:08 ===
+** Generic server &lt;0.14803.351&gt; terminating
+** Last message in was {#Ref&lt;0.0.127.4786&gt;,{error,closed}}
+** When Server state == {state,amqp_network_connection,
+                            {state,
+                                {ssl_socket,#Port&lt;0.46383&gt;,
+                                    {sslsocket,new_ssl,&lt;0.14806.351&gt;}},
+                                600,&lt;0.14808.351&gt;,131072,
+                                {server_initiated_close,320,
+                                    &lt;&lt;&quot;CONNECTION_FORCED - broker forced
+connection closure with reason 'shutdown'&quot;&gt;&gt;},
+                                false},
+                            &lt;0.14802.351&gt;,&lt;0.14805.351&gt;,
+                            {amqp_params_network,&lt;&lt;&quot;XXXX&quot;&gt;&gt;,
+                                &lt;&lt;&quot;XXXX&quot;&gt;&gt;,&lt;&lt;&quot;/&quot;&gt;&gt;,&quot;remote-server2&quot;,5671,0,
+                                0,0,infinity,
+                                [{fail_if_no_peer_cert,false},
+                                 {verify,verify_none},
+                                 {keyfile,
+                                     &quot;XXXX&quot;},
+                                 {certfile,
+                                     &quot;XXXX&quot;}],
+                                [#Fun&lt;amqp_uri.7.123484526&gt;,
+                                 #Fun&lt;amqp_uri.7.123484526&gt;],
+                                [],[]},
+                            0,
+                            [{&lt;&lt;&quot;capabilities&quot;&gt;&gt;,table,
+                              [{&lt;&lt;&quot;publisher_confirms&quot;&gt;&gt;,bool,true},
+                               {&lt;&lt;&quot;exchange_exchange_bindings&quot;&gt;&gt;,bool,true},
+                               {&lt;&lt;&quot;basic.nack&quot;&gt;&gt;,bool,true},
+                               {&lt;&lt;&quot;consumer_cancel_notify&quot;&gt;&gt;,bool,true}]},
+                             {&lt;&lt;&quot;copyright&quot;&gt;&gt;,longstr,
+                              &lt;&lt;&quot;Copyright (C) 2007-2012 VMware, Inc.&quot;&gt;&gt;},
+                             {&lt;&lt;&quot;information&quot;&gt;&gt;,longstr,
+                              &lt;&lt;&quot;Licensed under the MPL.  See
+<A HREF="http://www.rabbitmq.com/&quot;">http://www.rabbitmq.com/&quot;</A>&gt;&gt;},
+                             {&lt;&lt;&quot;platform&quot;&gt;&gt;,longstr,&lt;&lt;&quot;Erlang/OTP&quot;&gt;&gt;},
+                             {&lt;&lt;&quot;product&quot;&gt;&gt;,longstr,&lt;&lt;&quot;RabbitMQ&quot;&gt;&gt;},
+                             {&lt;&lt;&quot;version&quot;&gt;&gt;,longstr,&lt;&lt;&quot;3.0.1&quot;&gt;&gt;}],
+                            #Fun&lt;amqp_connection_sup.0.39273983&gt;,
+                            #Fun&lt;amqp_connection_sup.2.54430129&gt;,
+                            {closing,server_initiated_close,
+                                {'connection.close',320,
+                                    &lt;&lt;&quot;CONNECTION_FORCED - broker forced
+connection closure with reason 'shutdown'&quot;&gt;&gt;,
+                                    0,0},
+                                none}}
+** Reason for termination ==
+** socket_closed_unexpectedly
+
+=INFO REPORT==== 28-Dec-2012::10:27:08 ===
+Federation exchange 'downstream-exchange' in vhost '/' disconnected from
+exchange 'upstream-exchange' in vhost '/' on
+<A HREF="amqps://XXXX:XXXX@remote-server2">amqps://XXXX:XXXX@remote-server2</A>
+?certfile=XXXX&amp;keyfile=XXXX&amp;verify=verify_none&amp;fail_if_no_peer_cert=false
+{upstream_channel_down,
+    {connection_closing,
+        {server_initiated_close,320,
+            &lt;&lt;&quot;CONNECTION_FORCED - broker forced connection closure with
+reason 'shutdown'&quot;&gt;&gt;}}}
+
+=WARNING REPORT==== 28-Dec-2012::10:27:08 ===
+Federation exchange 'downstream-exchange' in vhost '/' did not connect to
+exchange 'upstream-exchange' in vhost '/' on
+<A HREF="amqps://XXXX:XXXX@remote-server2">amqps://XXXX:XXXX@remote-server2</A>
+?certfile=XXXX&amp;keyfile=XXXX&amp;verify=verify_none&amp;fail_if_no_peer_cert=false
+{error,econnrefused}
+
+==&gt; <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at XXXX-sasl.log</A> &lt;==
+
+=CRASH REPORT==== 28-Dec-2012::10:27:08 ===
+  crasher:
+    initial call: amqp_gen_connection:init/1
+    pid: &lt;0.14803.351&gt;
+    registered_name: []
+    exception exit: socket_closed_unexpectedly
+      in function  gen_server:terminate/6 (gen_server.erl, line 747)
+    ancestors: [&lt;0.14802.351&gt;,amqp_sup,&lt;0.49.0&gt;]
+    messages: []
+    links: [&lt;0.14802.351&gt;]
+    dictionary: []
+    trap_exit: true
+    status: running
+    heap_size: 2584
+    stack_size: 24
+    reductions: 1786
+  neighbours:
+
+=SUPERVISOR REPORT==== 28-Dec-2012::10:27:08 ===
+     Supervisor: {&lt;0.14802.351&gt;,amqp_connection_sup}
+     Context:    child_terminated
+     Reason:     socket_closed_unexpectedly
+     Offender:   [{pid,&lt;0.14803.351&gt;},
+                  {name,connection},
+                  {mfa,
+                      {amqp_gen_connection,start_link,
+                          [amqp_network_connection,
+                           {amqp_params_network,&lt;&lt;&quot;XXXX&quot;&gt;&gt;,
+                               &lt;&lt;&quot;XXXX&quot;&gt;&gt;,&lt;&lt;&quot;/&quot;&gt;&gt;,&quot;remote-server2&quot;,5671,0,0,
+                               0,infinity,
+                               [{fail_if_no_peer_cert,false},
+                                {verify,verify_none},
+                                {keyfile,
+                                    &quot;XXXX&quot;},
+                                {certfile,
+                                    &quot;XXXX&quot;}],
+                               [#Fun&lt;amqp_uri.7.123484526&gt;,
+                                #Fun&lt;amqp_uri.7.123484526&gt;],
+                               [],[]},
+                           #Fun&lt;amqp_connection_sup.0.39273983&gt;,
+                           #Fun&lt;amqp_connection_sup.2.54430129&gt;,[]]}},
+                  {restart_type,intrinsic},
+                  {shutdown,brutal_kill},
+                  {child_type,worker}]
+
+
+=SUPERVISOR REPORT==== 28-Dec-2012::10:27:08 ===
+     Supervisor: {&lt;0.14802.351&gt;,amqp_connection_sup}
+     Context:    shutdown
+     Reason:     reached_max_restart_intensity
+     Offender:   [{pid,&lt;0.14803.351&gt;},
+                  {name,connection},
+                  {mfa,
+                      {amqp_gen_connection,start_link,
+                          [amqp_network_connection,
+                           {amqp_params_network,&lt;&lt;&quot;XXXX&quot;&gt;&gt;,
+                               &lt;&lt;&quot;XXXX&quot;&gt;&gt;,&lt;&lt;&quot;/&quot;&gt;&gt;,&quot;remote-server2&quot;,5671,0,0,
+                               0,infinity,
+                               [{fail_if_no_peer_cert,false},
+                                {verify,verify_none},
+                                {keyfile,
+                                    &quot;XXXX&quot;},
+                                {certfile,
+                                    &quot;XXXX&quot;}],
+                               [#Fun&lt;amqp_uri.7.123484526&gt;,
+                                #Fun&lt;amqp_uri.7.123484526&gt;],
+                               [],[]},
+                           #Fun&lt;amqp_connection_sup.0.39273983&gt;,
+                           #Fun&lt;amqp_connection_sup.2.54430129&gt;,[]]}},
+                  {restart_type,intrinsic},
+                  {shutdown,brutal_kill},
+                  {child_type,worker}]
+
+
+==&gt; <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at XXXX.log</A> &lt;==
+
+=WARNING REPORT==== 28-Dec-2012::10:27:10 ===
+Federation exchange 'downstream-exchange' in vhost '/' did not connect to
+exchange 'upstream-exchange' in vhost '/' on
+<A HREF="amqps://XXXX:XXXX@remote-server2">amqps://XXXX:XXXX@remote-server2</A>
+?certfile=XXXX&amp;keyfile=XXXX&amp;verify=verify_none&amp;fail_if_no_peer_cert=false
+{error,econnrefused}
+
+
+*Extract of logs for case 6* :
+
+=WARNING REPORT==== 28-Dec-2012::10:16:42 ===
+Connection (&lt;0.32151.341&gt;) closing: received hard error {'connection.close',
+                                                         320,
+
+ &lt;&lt;&quot;CONNECTION_FORCED - broker forced connection closure with reason
+'shutdown'&quot;&gt;&gt;,
+                                                         0,0} from server
+
+=ERROR REPORT==== 28-Dec-2012::10:16:42 ===
+** Generic server &lt;0.32151.341&gt; terminating
+** Last message in was {#Ref&lt;0.0.123.217100&gt;,{error,closed}}
+** When Server state == {state,amqp_network_connection,
+                            {state,
+                                {ssl_socket,#Port&lt;0.45661&gt;,
+                                    {sslsocket,new_ssl,&lt;0.32161.341&gt;}},
+                                600,&lt;0.32170.341&gt;,131072,
+                                {server_initiated_close,320,
+                                    &lt;&lt;&quot;CONNECTION_FORCED - broker forced
+connection closure with reason 'shutdown'&quot;&gt;&gt;},
+                                false},
+                            &lt;0.32149.341&gt;,&lt;0.32154.341&gt;,
+                            {amqp_params_network,&lt;&lt;&quot;XXXX&quot;&gt;&gt;,
+                                &lt;&lt;&quot;XXXX&quot;&gt;&gt;,&lt;&lt;&quot;/&quot;&gt;&gt;,&quot;remote-server1&quot;,5671,0,
+                                0,0,infinity,
+                                [{fail_if_no_peer_cert,false},
+                                 {verify,verify_none},
+                                 {keyfile,
+                                     &quot;XXXX&quot;},
+                                 {certfile,
+                                     &quot;XXXX&quot;}],
+                                [#Fun&lt;amqp_uri.7.123484526&gt;,
+                                 #Fun&lt;amqp_uri.7.123484526&gt;],
+                                [],[]},
+                            0,
+                            [{&lt;&lt;&quot;capabilities&quot;&gt;&gt;,table,
+                              [{&lt;&lt;&quot;publisher_confirms&quot;&gt;&gt;,bool,true},
+                               {&lt;&lt;&quot;exchange_exchange_bindings&quot;&gt;&gt;,bool,true},
+                               {&lt;&lt;&quot;basic.nack&quot;&gt;&gt;,bool,true},
+                               {&lt;&lt;&quot;consumer_cancel_notify&quot;&gt;&gt;,bool,true}]},
+                             {&lt;&lt;&quot;copyright&quot;&gt;&gt;,longstr,
+                              &lt;&lt;&quot;Copyright (C) 2007-2012 VMware, Inc.&quot;&gt;&gt;},
+                             {&lt;&lt;&quot;information&quot;&gt;&gt;,longstr,
+                              &lt;&lt;&quot;Licensed under the MPL.  See
+<A HREF="http://www.rabbitmq.com/&quot;">http://www.rabbitmq.com/&quot;</A>&gt;&gt;},
+                             {&lt;&lt;&quot;platform&quot;&gt;&gt;,longstr,&lt;&lt;&quot;Erlang/OTP&quot;&gt;&gt;},
+                             {&lt;&lt;&quot;product&quot;&gt;&gt;,longstr,&lt;&lt;&quot;RabbitMQ&quot;&gt;&gt;},
+                             {&lt;&lt;&quot;version&quot;&gt;&gt;,longstr,&lt;&lt;&quot;3.0.1&quot;&gt;&gt;}],
+                            #Fun&lt;amqp_connection_sup.0.39273983&gt;,
+                            #Fun&lt;amqp_connection_sup.2.54430129&gt;,
+                            {closing,server_initiated_close,
+                                {'connection.close',320,
+                                    &lt;&lt;&quot;CONNECTION_FORCED - broker forced
+connection closure with reason 'shutdown'&quot;&gt;&gt;,
+                                    0,0},
+                                none}}
+** Reason for termination ==
+** socket_closed_unexpectedly
+
+=ERROR REPORT==== 28-Dec-2012::10:16:42 ===
+** Generic server &lt;0.32126.341&gt; terminating
+** Last message in was {'DOWN',#Ref&lt;0.0.123.217187&gt;,process,&lt;0.32193.341&gt;,
+                               shutdown}
+** When Server state == {state,
+                         {upstream,
+                          {amqp_params_network,&lt;&lt;&quot;XXXX&quot;&gt;&gt;,
+                           &lt;&lt;&quot;XXXX&quot;&gt;&gt;,&lt;&lt;&quot;/&quot;&gt;&gt;,&quot;remote-server1&quot;,undefined,0,
+                           0,0,infinity,
+                           [{fail_if_no_peer_cert,false},
+                            {verify,verify_none},
+                            {keyfile,
+                             &quot;XXXX&quot;},
+                            {certfile,
+                             &quot;XXXX&quot;}],
+                           [#Fun&lt;amqp_uri.7.123484526&gt;,
+                            #Fun&lt;amqp_uri.7.123484526&gt;],
+                           [],[]},
+                          &lt;&lt;&quot;<A HREF="amqps://XXXX:XXXX@remote-server1">amqps://XXXX:XXXX@remote-server1</A>
+?certfile=XXXX&amp;keyfile=XXXX&amp;verify=verify_none&amp;fail_if_no_peer_cert=false&quot;&gt;&gt;,
+                          {exchange,
+
+ {resource,&lt;&lt;&quot;/&quot;&gt;&gt;,exchange,&lt;&lt;&quot;upstream-exchange&quot;&gt;&gt;},
+                           direct,true,false,false,[],undefined,
+                           [{vhost,&lt;&lt;&quot;/&quot;&gt;&gt;},
+                            {name,&lt;&lt;&quot;federate-me&quot;&gt;&gt;},
+                            {pattern,&lt;&lt;&quot;downstream-exchange&quot;&gt;&gt;},
+                            {definition,
+                             [{&lt;&lt;&quot;federation-upstream-set&quot;&gt;&gt;,
+                               &lt;&lt;&quot;upstreamset-test&quot;&gt;&gt;}]},
+                            {priority,0}]},
+                          1000,1,1,none,none,false,none,&lt;&lt;&quot;upstream1&quot;&gt;&gt;},
+                         &lt;0.32151.341&gt;,&lt;0.32193.341&gt;,
+                         &lt;&lt;&quot;amq.ctag-iCWCgBnLBU7S3cWTi06V1A&quot;&gt;&gt;,
+                         &lt;&lt;&quot;federation: upstream-exchange -&gt;
+federation-local:downstream-exchange&quot;&gt;&gt;,
+                         &lt;&lt;&quot;federation: upstream-exchange -&gt;
+federation-local:downstream-exchange B&quot;&gt;&gt;,
+                         {0,nil},
+                         1,
+                         {dict,1,16,16,8,80,48,
+                          {[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[]},
+                          {{[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],
+                            [[{&lt;&lt;&quot;test&quot;&gt;&gt;,[]}|
+                              {set,1,16,16,8,80,48,
+
+ {[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],
+                                []},
+                               {{[],[],[],[],
+                                 [{resource,&lt;&lt;&quot;/&quot;&gt;&gt;,queue,
+                                   &lt;&lt;&quot;downstream-queue&quot;&gt;&gt;}],
+                                 [],[],[],[],[],[],[],[],[],[],[]}}}]]}}},
+                         &lt;0.32129.341&gt;,&lt;0.32141.341&gt;,
+
+ {resource,&lt;&lt;&quot;/&quot;&gt;&gt;,exchange,&lt;&lt;&quot;downstream-exchange&quot;&gt;&gt;},
+                         {0,nil}}
+** Reason for termination ==
+** {upstream_channel_down,shutdown}
+
+=INFO REPORT==== 28-Dec-2012::10:16:42 ===
+Federation exchange 'downstream-exchange' in vhost '/' received
+'basic.cancel'
+
+=WARNING REPORT==== 28-Dec-2012::10:16:42 ===
+Federation exchange 'downstream-exchange' in vhost '/' did not connect to
+exchange 'upstream-exchange' in vhost '/' on
+<A HREF="amqps://XXXX:XXXX@remote-server1">amqps://XXXX:XXXX@remote-server1</A>
+?certfile=XXXX&amp;keyfile=XXXX&amp;verify=verify_none&amp;fail_if_no_peer_cert=false
+{error,econnrefused}
+
+==&gt; <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at XXXX-sasl.log</A> &lt;==
+
+=CRASH REPORT==== 28-Dec-2012::10:16:42 ===
+  crasher:
+    initial call: amqp_gen_connection:init/1
+    pid: &lt;0.32151.341&gt;
+    registered_name: []
+    exception exit: socket_closed_unexpectedly
+      in function  gen_server:terminate/6 (gen_server.erl, line 747)
+    ancestors: [&lt;0.32149.341&gt;,amqp_sup,&lt;0.49.0&gt;]
+    messages: [socket_closed]
+    links: [&lt;0.32149.341&gt;]
+    dictionary: []
+    trap_exit: true
+    status: running
+    heap_size: 2584
+    stack_size: 24
+    reductions: 1794
+  neighbours:
+
+=SUPERVISOR REPORT==== 28-Dec-2012::10:16:42 ===
+     Supervisor: {&lt;0.32149.341&gt;,amqp_connection_sup}
+     Context:    child_terminated
+     Reason:     socket_closed_unexpectedly
+     Offender:   [{pid,&lt;0.32151.341&gt;},
+                  {name,connection},
+                  {mfa,
+                      {amqp_gen_connection,start_link,
+                          [amqp_network_connection,
+                           {amqp_params_network,&lt;&lt;&quot;XXXX&quot;&gt;&gt;,
+                               &lt;&lt;&quot;XXXX&quot;&gt;&gt;,&lt;&lt;&quot;/&quot;&gt;&gt;,&quot;remote-server1&quot;,5671,0,0,
+                               0,infinity,
+                               [{fail_if_no_peer_cert,false},
+                                {verify,verify_none},
+                                {keyfile,
+                                    &quot;XXXX&quot;},
+                                {certfile,
+                                    &quot;XXXX&quot;}],
+                               [#Fun&lt;amqp_uri.7.123484526&gt;,
+                                #Fun&lt;amqp_uri.7.123484526&gt;],
+                               [],[]},
+                           #Fun&lt;amqp_connection_sup.0.39273983&gt;,
+                           #Fun&lt;amqp_connection_sup.2.54430129&gt;,[]]}},
+                  {restart_type,intrinsic},
+                  {shutdown,brutal_kill},
+                  {child_type,worker}]
+
+
+=SUPERVISOR REPORT==== 28-Dec-2012::10:16:42 ===
+     Supervisor: {&lt;0.32149.341&gt;,amqp_connection_sup}
+     Context:    shutdown
+     Reason:     reached_max_restart_intensity
+     Offender:   [{pid,&lt;0.32151.341&gt;},
+                  {name,connection},
+                  {mfa,
+                      {amqp_gen_connection,start_link,
+                          [amqp_network_connection,
+                           {amqp_params_network,&lt;&lt;&quot;XXXX&quot;&gt;&gt;,
+                               &lt;&lt;&quot;XXXX&quot;&gt;&gt;,&lt;&lt;&quot;/&quot;&gt;&gt;,&quot;remote-server1&quot;,5671,0,0,
+                               0,infinity,
+                               [{fail_if_no_peer_cert,false},
+                                {verify,verify_none},
+                                {keyfile,
+                                    &quot;XXXX&quot;},
+                                {certfile,
+                                    &quot;XXXX&quot;}],
+                               [#Fun&lt;amqp_uri.7.123484526&gt;,
+                                #Fun&lt;amqp_uri.7.123484526&gt;],
+                               [],[]},
+                           #Fun&lt;amqp_connection_sup.0.39273983&gt;,
+                           #Fun&lt;amqp_connection_sup.2.54430129&gt;,[]]}},
+                  {restart_type,intrinsic},
+                  {shutdown,brutal_kill},
+                  {child_type,worker}]
+
+
+=CRASH REPORT==== 28-Dec-2012::10:16:42 ===
+  crasher:
+    initial call: gen:init_it/6
+    pid: &lt;0.32126.341&gt;
+    registered_name: []
+    exception exit: {upstream_channel_down,shutdown}
+      in function  gen_server2:terminate/3
+    ancestors: [&lt;0.32125.341&gt;,&lt;0.218.0&gt;,rabbit_federation_link_sup_sup,
+                  rabbit_federation_sup,rabbit_sup,&lt;0.165.0&gt;]
+    messages: [{'DOWN',#Ref&lt;0.0.123.217038&gt;,process,&lt;0.32141.341&gt;,normal}]
+    links: [&lt;0.32125.341&gt;]
+    dictionary: []
+    trap_exit: true
+    status: running
+    heap_size: 1597
+    stack_size: 24
+    reductions: 2291192
+  neighbours:
+
+==&gt; <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at XXXX.log</A> &lt;==
+
+=WARNING REPORT==== 28-Dec-2012::10:16:44 ===
+Federation exchange 'downstream-exchange' in vhost '/' did not connect to
+exchange 'upstream-exchange' in vhost '/' on
+<A HREF="amqps://XXXX:XXXX@remote-server1">amqps://XXXX:XXXX@remote-server1</A>
+?certfile=XXXX&amp;keyfile=XXXX&amp;verify=verify_none&amp;fail_if_no_peer_cert=false
+{error,econnrefused}
+
+=WARNING REPORT==== 28-Dec-2012::10:16:46 ===
+Federation exchange 'downstream-exchange' in vhost '/' did not connect to
+exchange 'upstream-exchange' in vhost '/' on
+<A HREF="amqps://XXXX:XXXX@remote-server2">amqps://XXXX:XXXX@remote-server2</A>
+?certfile=XXXX&amp;keyfile=XXXX&amp;verify=verify_none&amp;fail_if_no_peer_cert=false
+{{shutdown,{server_initiated_close,404,
+                                   &lt;&lt;&quot;NOT_FOUND - home node
+'<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at remote-server1</A>' of durable queue 'federation: upstream-exchange -&gt;
+federation-local:downstream-exchange' in vhost '/' is down or
+inaccessible&quot;&gt;&gt;}},
+ {gen_server,call,
+             [&lt;0.7847.351&gt;,
+              {call,{'queue.declare',0,
+                                     &lt;&lt;&quot;federation: upstream-exchange -&gt;
+federation-local:downstream-exchange&quot;&gt;&gt;,
+                                     false,true,false,false,false,[]},
+                    none,&lt;0.7815.351&gt;},
+              infinity]}}
+
+=WARNING REPORT==== 28-Dec-2012::10:16:48 ===
+Federation exchange 'downstream-exchange' in vhost '/' did not connect to
+exchange 'upstream-exchange' in vhost '/' on
+<A HREF="amqps://XXXX:XXXX@remote-server1">amqps://XXXX:XXXX@remote-server1</A>
+?certfile=XXXX&amp;keyfile=XXXX&amp;verify=verify_none&amp;fail_if_no_peer_cert=false
+{error,econnrefused}
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20121228/e7f20c49/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20121228/e7f20c49/attachment.htm</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="024688.html">[rabbitmq-discuss] Federation and upstream cluster
+</A></li>
+	<LI>Next message: <A HREF="024690.html">[rabbitmq-discuss] Federation and upstream cluster
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#24689">[ date ]</a>
+              <a href="thread.html#24689">[ thread ]</a>
+              <a href="subject.html#24689">[ subject ]</a>
+              <a href="author.html#24689">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

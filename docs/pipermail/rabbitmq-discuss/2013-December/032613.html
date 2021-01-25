@@ -1,0 +1,176 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Best practices for cluster upgrades with	uninterrupted service
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Best%20practices%20for%20cluster%20upgrades%20with%0A%09uninterrupted%20service&In-Reply-To=%3CCACLE7iy4djybXhAyhkV-ttutv1wAnDJqycFUf20J_KdPBNDdYA%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="032421.html">
+   <LINK REL="Next"  HREF="032677.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Best practices for cluster upgrades with	uninterrupted service</H1>
+    <B>Matt Pietrek</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Best%20practices%20for%20cluster%20upgrades%20with%0A%09uninterrupted%20service&In-Reply-To=%3CCACLE7iy4djybXhAyhkV-ttutv1wAnDJqycFUf20J_KdPBNDdYA%40mail.gmail.com%3E"
+       TITLE="[rabbitmq-discuss] Best practices for cluster upgrades with	uninterrupted service">mpietrek at skytap.com
+       </A><BR>
+    <I>Mon Dec 16 17:37:59 GMT 2013</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="032421.html">[rabbitmq-discuss] Best practices for cluster upgrades with	uninterrupted service
+</A></li>
+        <LI>Next message: <A HREF="032677.html">[rabbitmq-discuss] Best practices for cluster upgrades with uninterrupted service
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#32613">[ date ]</a>
+              <a href="thread.html#32613">[ thread ]</a>
+              <a href="subject.html#32613">[ subject ]</a>
+              <a href="author.html#32613">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hey all (and in particular the RabbitMQ devs).
+
+Just wanted to call attention to my original question. I didn't get any
+responses, and given the excellent level of help I've gotten in the past, I
+figure my question was just overlooked in the general deluge of messages.
+
+Thanks much,
+
+Matt
+
+
+
+On Mon, Dec 9, 2013 at 2:42 PM, Matt Pietrek &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">mpietrek at skytap.com</A>&gt; wrote:
+
+&gt;<i> Hey all RabbitMQ devs and experts,
+</I>&gt;<i>
+</I>&gt;<i> I&#8217;m looking for a validation of an approach, or a better suggestion on how
+</I>&gt;<i> to accomplish.
+</I>&gt;<i>
+</I>&gt;<i> The big picture is that we want to improve how we upgrade our clusters
+</I>&gt;<i> without interruptions in service. I know RabbitMQ supports running mixed
+</I>&gt;<i> versions within a cluster, but for us, upgrade may also mean bringing down
+</I>&gt;<i> a node for reconfiguration, an Erlang upgrade, or any other number of
+</I>&gt;<i> scenarios.
+</I>&gt;<i>
+</I>&gt;<i> Today we do controlled switchover of load from one RabbitMQ cluster to
+</I>&gt;<i> another, and then switch it back. We use two clusters (a master and an
+</I>&gt;<i> alternate). Both clusters are identically configured with two RabbitMQ
+</I>&gt;<i> instances, i.e &#8220;master&#8221; is node1,node2, and &#8220;alternate&#8221; is node3,node4.
+</I>&gt;<i>
+</I>&gt;<i> All queues are mirrored. We direct traffic to the master or alternate via
+</I>&gt;<i> a VIP.
+</I>&gt;<i>
+</I>&gt;<i> Today our upgrade process looks like this:
+</I>&gt;<i>
+</I>&gt;<i> --------
+</I>&gt;<i>
+</I>&gt;<i> * master is operation normally, and pointed to by the VIP.
+</I>&gt;<i>
+</I>&gt;<i> * Shut down both alternate nodes, upgrade them in whatever manner is
+</I>&gt;<i> necessary. Newer version, more ram, whatever.
+</I>&gt;<i>
+</I>&gt;<i> * Start up alternate cluster, then create the same set of queues on it as
+</I>&gt;<i> the master has.
+</I>&gt;<i>
+</I>&gt;<i> * Redirect the VIP to point to the alternate.
+</I>&gt;<i>
+</I>&gt;<i> * Clients see a connection drop because of the VIP change, but are
+</I>&gt;<i> tolerant and auto-reconnect.
+</I>&gt;<i>
+</I>&gt;<i> * Copy all queue contents from the master&#8217;s queues to the alternate&#8217;s
+</I>&gt;<i> same-named queues.
+</I>&gt;<i>
+</I>&gt;<i> * Shut down the master nodes and upgrade them.
+</I>&gt;<i>
+</I>&gt;<i> * Perform similar steps as above to move the VIP and messages back to the
+</I>&gt;<i> master.
+</I>&gt;<i>
+</I>&gt;<i> --------
+</I>&gt;<i>
+</I>&gt;<i> While this generally works, there are small but important problems with
+</I>&gt;<i> it. One problem is that some of our queues are created/deleted. I have seen
+</I>&gt;<i> scenarios where unfortunate timing can cause a queue to not be on the right
+</I>&gt;<i> cluster at the right moment.
+</I>&gt;<i>
+</I>&gt;<i> Looking at newer RabbitMQ features, in particular policy based mirroring
+</I>&gt;<i> control, I&#8217;m thinking something like this would be better:
+</I>&gt;<i>
+</I>&gt;<i> -------
+</I>&gt;<i>
+</I>&gt;<i> * Have node1/node2 running along normally, with the VIP pointing at it.
+</I>&gt;<i>
+</I>&gt;<i> * Start up node3/node4 in the same cluster
+</I>&gt;<i>
+</I>&gt;<i> * Use policy to make all queues mirrored by all four nodes. Use
+</I>&gt;<i> synch_queue as necessary to force synchronization in a reasonable time
+</I>&gt;<i> frame.
+</I>&gt;<i>
+</I>&gt;<i> * When all queues are synched, remove node1/node2 from the cluster and
+</I>&gt;<i> upgrade them.
+</I>&gt;<i>
+</I>&gt;<i> * Because our VIP is managed by keepalived, either node3 or node4 will
+</I>&gt;<i> obtain the VIP when node1/node2 are removed.
+</I>&gt;<i>
+</I>&gt;<i> --------
+</I>&gt;<i>
+</I>&gt;<i> The advantage of this is that it eliminates queue location timing windows
+</I>&gt;<i> and we don&#8217;t have to manually copy messages around. The only downside I&#8217;m
+</I>&gt;<i> aware of is that it won&#8217;t work when upgrading major/minor versions. That
+</I>&gt;<i> is, it should be fine from 3.4.3 to 3.4.7, but not 3.4 to 3.5. In that
+</I>&gt;<i> case, we'd use our original upgrade logic.
+</I>&gt;<i>
+</I>&gt;<i> Thoughts? Suggestions? Better ideas?
+</I>&gt;<i>
+</I>&gt;<i> Thanks,
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> Matt
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20131216/9ba0e2ff/attachment.html">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20131216/9ba0e2ff/attachment.html</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="032421.html">[rabbitmq-discuss] Best practices for cluster upgrades with	uninterrupted service
+</A></li>
+	<LI>Next message: <A HREF="032677.html">[rabbitmq-discuss] Best practices for cluster upgrades with uninterrupted service
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#32613">[ date ]</a>
+              <a href="thread.html#32613">[ thread ]</a>
+              <a href="subject.html#32613">[ subject ]</a>
+              <a href="author.html#32613">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

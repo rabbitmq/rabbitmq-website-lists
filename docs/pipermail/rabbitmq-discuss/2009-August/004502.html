@@ -1,0 +1,144 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] How to sanely bind one queue to many	exchanges?
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20How%20to%20sanely%20bind%20one%20queue%20to%20many%0A%09exchanges%3F&In-Reply-To=65a6e3960908111220t1364e184mef27eb38098c6a51%40mail.gmail.com">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="004475.html">
+   <LINK REL="Next"  HREF="004533.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] How to sanely bind one queue to many	exchanges?</H1>
+    <B>Paul Jones</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20How%20to%20sanely%20bind%20one%20queue%20to%20many%0A%09exchanges%3F&In-Reply-To=65a6e3960908111220t1364e184mef27eb38098c6a51%40mail.gmail.com"
+       TITLE="[rabbitmq-discuss] How to sanely bind one queue to many	exchanges?">pauljones23 at gmail.com
+       </A><BR>
+    <I>Thu Aug 13 10:54:12 BST 2009</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="004475.html">[rabbitmq-discuss] How to sanely bind one queue to many exchanges?
+</A></li>
+        <LI>Next message: <A HREF="004533.html">[rabbitmq-discuss] How to sanely bind one queue to many	exchanges?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#4502">[ date ]</a>
+              <a href="thread.html#4502">[ thread ]</a>
+              <a href="subject.html#4502">[ subject ]</a>
+              <a href="author.html#4502">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi Nathan,
+
+Would it be possible to detail a bit more about your use case, and thus why
+you don't know when exchanges will come and go? In most scenarios, we'd
+recommend that you just declare the exchanges in a non-passive manner - but
+I take it that there is something special about your use case that prevents
+this.
+
+If your requirement definitely does stand, there isn't really a cleaner way
+to do this from the queue-binding end. Speculating a bit on your use case,
+if you're trying to bind every exchange in your system to a single queue,
+would it be possible to perform the binding at the point of exchange
+creation (ie, instead of a queue binding to a well-known exchange, bind the
+exchange to a well-known queue).
+
+Exchange-to-exchange bindings are still just a proposal at the moment I'm
+afraid.
+
+Thanks,
+Paul.
+
+On Tue, Aug 11, 2009 at 8:20 PM, Nathan Gray &lt;<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">n8gray at n8gray.org</A>&gt; wrote:
+
+&gt;<i> Hi folks,
+</I>&gt;<i>
+</I>&gt;<i> I'm using rabbitmq as an event notification system.  In my application
+</I>&gt;<i> each client will subscribe to a number of exchanges.  Exchanges may
+</I>&gt;<i> come and go.  The client cannot be expected to know in advance which
+</I>&gt;<i> exchanges no longer exist, so they will use exchange.declare(...,
+</I>&gt;<i> passive=True,...) to find out which ones exist.  However,
+</I>&gt;<i> exchange.declare in passive mode raises a channel exception and kills
+</I>&gt;<i> the channel if the exchange doesn't exist.  Assuming I want to use one
+</I>&gt;<i> channel per client I'm stuck with ugly, racy code to subscribe to
+</I>&gt;<i> multiple exchanges.  (See the end of the post for the python code to
+</I>&gt;<i> do it.)  And if something goes wrong and kills the channel I have to
+</I>&gt;<i> go through the whole dance again.  This seems crazy.
+</I>&gt;<i>
+</I>&gt;<i> My question is, what's the right way for one client to get messages
+</I>&gt;<i> from multiple exchanges?  Can one auto-delete queue be bound in
+</I>&gt;<i> multiple channels, and if so is that the proper approach?  Should I be
+</I>&gt;<i> making N queues &amp; channels to subscribe to N exchanges?
+</I>&gt;<i>
+</I>&gt;<i> Also, exchange-exchange binding [1] would solve a lot of problems for
+</I>&gt;<i> me -- does it work or is it just a proposal?
+</I>&gt;<i>
+</I>&gt;<i> Thanks,
+</I>&gt;<i> -n8
+</I>&gt;<i>
+</I>&gt;<i> --
+</I>&gt;<i> <A HREF="http://n8gray.org">http://n8gray.org</A>
+</I>&gt;<i>
+</I>&gt;<i> [1]: <A HREF="https://dev.rabbitmq.com/wiki/ExchangeToExchangeBindings">https://dev.rabbitmq.com/wiki/ExchangeToExchangeBindings</A>
+</I>&gt;<i>
+</I>&gt;<i> while True:
+</I>&gt;<i>    chan = connection.channel()
+</I>&gt;<i>    found = []
+</I>&gt;<i>    for xc in exchanges:
+</I>&gt;<i>        try:
+</I>&gt;<i>            chan.exchange_declare(exchange=xc, passive=True, ...)
+</I>&gt;<i>            found.append(xc)
+</I>&gt;<i>        except amqp.exceptions.AMQPChannelException, e:
+</I>&gt;<i>            if e.amqp_reply_code == 404:
+</I>&gt;<i>                # Channel got closed.  Open a new channel.
+</I>&gt;<i>                chan = connection.channel()
+</I>&gt;<i>            else:
+</I>&gt;<i>                raise e
+</I>&gt;<i>    # Sure hope nothing gets deleted at this point!
+</I>&gt;<i>    qname, _, _ = chan.queue_declare(exclusive=True)
+</I>&gt;<i>    try:
+</I>&gt;<i>        for xc in found:
+</I>&gt;<i>            chan.queue_bind(queue=qname, exchange=xc)
+</I>&gt;<i>    except amqp.exceptions.AMQPChannelException, e:
+</I>&gt;<i>        if e.amqp_reply_code == 404:
+</I>&gt;<i>            # Oops, an exchange got deleted.  Start over.
+</I>&gt;<i>            continue
+</I>&gt;<i>        else:
+</I>&gt;<i>            raise e
+</I>&gt;<i>    # No exception raised, so we're done (until something
+</I>&gt;<i>    # else goes wrong &amp; kills the channel...)
+</I>&gt;<i>    break
+</I>&gt;<i>
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;<i> <A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;<i> <A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: <A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20090813/6e7d2c05/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20090813/6e7d2c05/attachment.htm</A> 
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="004475.html">[rabbitmq-discuss] How to sanely bind one queue to many exchanges?
+</A></li>
+	<LI>Next message: <A HREF="004533.html">[rabbitmq-discuss] How to sanely bind one queue to many	exchanges?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#4502">[ date ]</a>
+              <a href="thread.html#4502">[ thread ]</a>
+              <a href="subject.html#4502">[ subject ]</a>
+              <a href="author.html#4502">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

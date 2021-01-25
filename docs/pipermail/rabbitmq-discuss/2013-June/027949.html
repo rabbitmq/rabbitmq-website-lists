@@ -1,0 +1,388 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] |Spam| Re: Possible memory leak in the management plugin
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20%7CSpam%7C%20Re%3A%20Possible%20memory%20leak%20in%20the%0A%20management%20plugin&In-Reply-To=%3C51C080FC.9090506%40rabbitmq.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="027948.html">
+   <LINK REL="Next"  HREF="027956.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] |Spam| Re: Possible memory leak in the management plugin</H1>
+    <B>Simon MacMullen</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20%7CSpam%7C%20Re%3A%20Possible%20memory%20leak%20in%20the%0A%20management%20plugin&In-Reply-To=%3C51C080FC.9090506%40rabbitmq.com%3E"
+       TITLE="[rabbitmq-discuss] |Spam| Re: Possible memory leak in the management plugin">simon at rabbitmq.com
+       </A><BR>
+    <I>Tue Jun 18 16:47:08 BST 2013</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="027948.html">[rabbitmq-discuss] Possible memory leak in the management plugin
+</A></li>
+        <LI>Next message: <A HREF="027956.html">[rabbitmq-discuss] |Spam| Re: Possible memory leak in the management plugin
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#27949">[ date ]</a>
+              <a href="thread.html#27949">[ thread ]</a>
+              <a href="subject.html#27949">[ subject ]</a>
+              <a href="author.html#27949">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>OK, that definitely looks like a leak. Could you also give me the output 
+from:
+
+rabbitmqctl eval '{[{T, ets:info(T,size), ets:info(T,memory)} || T &lt;- 
+lists:sort(ets:all()), rabbit_mgmt_db &lt;- [ets:info(T, name)]], 
+sys:get_status(global:whereis_name(rabbit_mgmt_db))}.'
+
+to make sure I'm clear on which table is leaking.
+
+Cheers, Simon
+
+On 18/06/13 16:11, Travis Mehlinger wrote:
+&gt;<i> Hi Simon,
+</I>&gt;<i>
+</I>&gt;<i> We declare those queues as exclusive so they're getting cleaned up
+</I>&gt;<i> automatically.
+</I>&gt;<i>
+</I>&gt;<i> I ran the command you gave periodically over the course of the last two
+</I>&gt;<i> hours. The row count and total size in the highlighted line are
+</I>&gt;<i> definitely growing unchecked. All other values hovered closely around
+</I>&gt;<i> what you see in the gist.
+</I>&gt;<i>
+</I>&gt;<i> <A HREF="https://gist.github.com/tmehlinger/0c9a9a0d5fe1d31c8f6d#file-gistfile1-txt-L9">https://gist.github.com/tmehlinger/0c9a9a0d5fe1d31c8f6d#file-gistfile1-txt-L9</A>
+</I>&gt;<i>
+</I>&gt;<i> Thanks, Travis
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> On Tue, Jun 18, 2013 at 5:23 AM, Simon MacMullen &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">simon at rabbitmq.com</A>
+</I>&gt;<i> &lt;mailto:<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">simon at rabbitmq.com</A>&gt;&gt; wrote:
+</I>&gt;<i>
+</I>&gt;<i>     Hi. So I assume your monitoring code is not actually leaking those
+</I>&gt;<i>     queues - they are getting deleted I assume? How? (Are they
+</I>&gt;<i>     autodelete, exclusive, x-expires, deleted manually?)
+</I>&gt;<i>
+</I>&gt;<i>     If so, can you run:
+</I>&gt;<i>
+</I>&gt;<i>     rabbitmqctl eval '[{ets:info(T,size), ets:info(T,memory)} || T &lt;-
+</I>&gt;<i>     lists:sort(ets:all()), rabbit_mgmt_db &lt;- [ets:info(T, name)]].'
+</I>&gt;<i>
+</I>&gt;<i>     periodically? This will output a list of tuples showing the rows and
+</I>&gt;<i>     bytes per table for each table in the mgmt DB. Do these increase?
+</I>&gt;<i>
+</I>&gt;<i>     Cheers, Simon
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>     On 17/06/13 20:08, Travis Mehlinger wrote:
+</I>&gt;<i>
+</I>&gt;<i>         Hi Simon,
+</I>&gt;<i>
+</I>&gt;<i>         I have more information for you. It turns out I hadn't fully
+</I>&gt;<i>         understood
+</I>&gt;<i>         the interaction causing this to happen.
+</I>&gt;<i>
+</I>&gt;<i>         Aside from their regular communication, our services also declare a
+</I>&gt;<i>         queue bound on # to an exchange that we use for collecting stats the
+</I>&gt;<i>         services store internally. In addition to hitting the REST API for
+</I>&gt;<i>         information about the broker, the monitor also opens a
+</I>&gt;<i>         connection/channel, declares an anonymous queue for itself, then
+</I>&gt;<i>         sends a
+</I>&gt;<i>         message indicating to our services that they should respond with
+</I>&gt;<i>         their
+</I>&gt;<i>         statistics. The services then send a message with a routing key that
+</I>&gt;<i>         will direct the response onto the queue declared by the monitor.
+</I>&gt;<i>         This
+</I>&gt;<i>         happens every five seconds.
+</I>&gt;<i>
+</I>&gt;<i>         It appears that this is in fact responsible for memory consumption
+</I>&gt;<i>         growing out of control. If I disable that aspect of monitoring
+</I>&gt;<i>         and leave
+</I>&gt;<i>         the REST API monitor up, memory consumption stays level.
+</I>&gt;<i>
+</I>&gt;<i>         The problem seems reminiscent of the issues described in this
+</I>&gt;<i>         mailing
+</I>&gt;<i>         list thread:
+</I>&gt;<i>         <A HREF="http://rabbitmq.1065348.n5.__nabble.com/RabbitMQ-Queues-__memory-leak-td25813.html">http://rabbitmq.1065348.n5.__nabble.com/RabbitMQ-Queues-__memory-leak-td25813.html</A>
+</I>&gt;<i>         &lt;<A HREF="http://rabbitmq.1065348.n5.nabble.com/RabbitMQ-Queues-memory-leak-td25813.html">http://rabbitmq.1065348.n5.nabble.com/RabbitMQ-Queues-memory-leak-td25813.html</A>&gt;.
+</I>&gt;<i>         However, the queues we declare for stats collection are *not*
+</I>&gt;<i>         mirrored.
+</I>&gt;<i>
+</I>&gt;<i>         Hope that helps narrow things down. :)
+</I>&gt;<i>
+</I>&gt;<i>         Best, Travis
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>         On Mon, Jun 17, 2013 at 12:58 PM, Travis Mehlinger
+</I>&gt;<i>         &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">tmehlinger at gmail.com</A> &lt;mailto:<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">tmehlinger at gmail.com</A>&gt;
+</I>&gt;<i>         &lt;mailto:<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">tmehlinger at gmail.com</A> &lt;mailto:<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">tmehlinger at gmail.com</A>&gt;&gt;&gt; wrote:
+</I>&gt;<i>
+</I>&gt;<i>              Hi Simon,
+</I>&gt;<i>
+</I>&gt;<i>              I flipped our monitor back on and let Rabbit consume some
+</I>&gt;<i>         additional
+</I>&gt;<i>              memory. Invoking the garbage collector had no impact.
+</I>&gt;<i>
+</I>&gt;<i>              Let me know what further information you'd like to see and
+</I>&gt;<i>         I'll be
+</I>&gt;<i>              happy to provide it.
+</I>&gt;<i>
+</I>&gt;<i>              Thanks, Travis
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>              On Mon, Jun 17, 2013 at 10:32 AM, Simon MacMullen
+</I>&gt;<i>              &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">simon at rabbitmq.com</A> &lt;mailto:<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">simon at rabbitmq.com</A>&gt;
+</I>&gt;<i>         &lt;mailto:<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">simon at rabbitmq.com</A> &lt;mailto:<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">simon at rabbitmq.com</A>&gt;&gt;&gt; wrote:
+</I>&gt;<i>
+</I>&gt;<i>                  On 17/06/13 15:45, Travis Mehlinger wrote:
+</I>&gt;<i>
+</I>&gt;<i>                      Hi Simon,
+</I>&gt;<i>
+</I>&gt;<i>                      Thanks for getting back to me. I'll need to restart our
+</I>&gt;<i>                      monitor and give
+</I>&gt;<i>                      it some time to leak the memory. I'll let you know the
+</I>&gt;<i>                      results sometime
+</I>&gt;<i>                      later today.
+</I>&gt;<i>
+</I>&gt;<i>                      One thing I failed to mention in my initial report:
+</I>&gt;<i>         whenever we
+</I>&gt;<i>                      restarted one of our services, the queues they were
+</I>&gt;<i>         using
+</I>&gt;<i>                      would get
+</I>&gt;<i>                      cleaned up (we have them set to auto-delete) and
+</I>&gt;<i>         redeclared.
+</I>&gt;<i>                      Whenever we
+</I>&gt;<i>                      did that, we would see the memory consumption of the
+</I>&gt;<i>                      management DB fall
+</I>&gt;<i>                      off sharply before starting to rise again.
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>                  That is presumably because the historical data the
+</I>&gt;<i>         management
+</I>&gt;<i>                  plugin has been retaining for those queues got thrown
+</I>&gt;<i>         away. If
+</I>&gt;<i>                  you don't want to retain this data at all, change the
+</I>&gt;<i>                  configuration as documented here:
+</I>&gt;<i>
+</I>&gt;<i>         <A HREF="http://www.rabbitmq.com/____management.html#sample-____retention">http://www.rabbitmq.com/____management.html#sample-____retention</A>
+</I>&gt;<i>         &lt;<A HREF="http://www.rabbitmq.com/__management.html#sample-__retention">http://www.rabbitmq.com/__management.html#sample-__retention</A>&gt;
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>         &lt;<A HREF="http://www.rabbitmq.com/__management.html#sample-__retention">http://www.rabbitmq.com/__management.html#sample-__retention</A>
+</I>&gt;<i>         &lt;<A HREF="http://www.rabbitmq.com/management.html#sample-retention">http://www.rabbitmq.com/management.html#sample-retention</A>&gt;&gt;
+</I>&gt;<i>
+</I>&gt;<i>                  However, I (currently) don't believe it's this
+</I>&gt;<i>         historical data
+</I>&gt;<i>                  you are seeing as &quot;leaking&quot; since making queries should not
+</I>&gt;<i>                  cause any more of it to be retained.
+</I>&gt;<i>
+</I>&gt;<i>                  Cheers, Simon
+</I>&gt;<i>
+</I>&gt;<i>                      Let me know if you'd like any further information
+</I>&gt;<i>         in the
+</I>&gt;<i>                      meantime.
+</I>&gt;<i>
+</I>&gt;<i>                      Best, Travis
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>                      On Mon, Jun 17, 2013 at 6:39 AM, Simon MacMullen
+</I>&gt;<i>                      &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">simon at rabbitmq.com</A> &lt;mailto:<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">simon at rabbitmq.com</A>&gt;
+</I>&gt;<i>         &lt;mailto:<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">simon at rabbitmq.com</A> &lt;mailto:<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">simon at rabbitmq.com</A>&gt;&gt;
+</I>&gt;<i>                      &lt;mailto:<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">simon at rabbitmq.com</A>
+</I>&gt;<i>         &lt;mailto:<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">simon at rabbitmq.com</A>&gt; &lt;mailto:<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">simon at rabbitmq.com</A>
+</I>&gt;<i>         &lt;mailto:<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">simon at rabbitmq.com</A>&gt;&gt;&gt;&gt; wrote:
+</I>&gt;<i>
+</I>&gt;<i>                           Hi. Thanks for the report.
+</I>&gt;<i>
+</I>&gt;<i>                           My first guess is that garbage collection for the
+</I>&gt;<i>                      management DB
+</I>&gt;<i>                           process is happening too slowly. Can you invoke:
+</I>&gt;<i>
+</I>&gt;<i>                           $ rabbitmqctl eval
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>         'P=global:whereis_name(rabbit_______mgmt_db),M1=process_info(__P,
+</I>&gt;<i>
+</I>&gt;<i>           memory),garbage_collect(P),M2=______process_info(P,
+</I>&gt;<i>                           memory),{M1,M2,rabbit_vm:______memory()}.'
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>                           and post the results?
+</I>&gt;<i>
+</I>&gt;<i>                           Cheers, Simon
+</I>&gt;<i>
+</I>&gt;<i>                           On 15/06/13 03:09, Travis Mehlinger wrote:
+</I>&gt;<i>
+</I>&gt;<i>                               We recently upgraded RabbitMQ from 3.0.4
+</I>&gt;<i>         to 3.1.1
+</I>&gt;<i>                      after noticing
+</I>&gt;<i>                               two bug
+</I>&gt;<i>                               fixes in 3.1.0 related to our RabbitMQ
+</I>&gt;<i>         deployment:
+</I>&gt;<i>
+</I>&gt;<i>                                  * 25524 fix memory leak in mirror queue
+</I>&gt;<i>         slave
+</I>&gt;<i>                      with many
+</I>&gt;<i>                               short-lived
+</I>&gt;<i>                                    publishing channel
+</I>&gt;<i>                                  * 25290 fix per-queue memory leak recording
+</I>&gt;<i>                      stats for mirror
+</I>&gt;<i>                               queue slaves
+</I>&gt;<i>
+</I>&gt;<i>                               However, in our case, it seems that the
+</I>&gt;<i>         management
+</I>&gt;<i>                      plugin may
+</I>&gt;<i>                               still have
+</I>&gt;<i>                               a memory leak. We have a monitoring agent
+</I>&gt;<i>         that hits
+</I>&gt;<i>                      the REST API to
+</I>&gt;<i>                               gather information about the broker (number of
+</I>&gt;<i>                      queues, queue depth,
+</I>&gt;<i>                               etc.). With the monitoring agent running
+</I>&gt;<i>         and making
+</I>&gt;<i>                      requests
+</I>&gt;<i>                               against the
+</I>&gt;<i>                               API, memory consumption steadily
+</I>&gt;<i>         increased; when we
+</I>&gt;<i>                      stopped the
+</I>&gt;<i>                               agent,
+</I>&gt;<i>                               memory consumption in the management
+</I>&gt;<i>         plugin leveled
+</I>&gt;<i>                      off.
+</I>&gt;<i>
+</I>&gt;<i>                               Here a couple graphs detailing memory
+</I>&gt;<i>         consumption
+</I>&gt;<i>                      in the broker (the
+</I>&gt;<i>                               figures are parsed from rabbitmqctl
+</I>&gt;<i>         report). The
+</I>&gt;<i>                      first graph
+</I>&gt;<i>                               shows the
+</I>&gt;<i>                               ebb and flow of memory consumption in a
+</I>&gt;<i>         number of
+</I>&gt;<i>                      components and the
+</I>&gt;<i>                               second shows just consumption by the
+</I>&gt;<i>         management
+</I>&gt;<i>                      plugin. You can see
+</I>&gt;<i>                               pretty clearly where we stopped the monitoring
+</I>&gt;<i>                      agent at 1:20.
+</I>&gt;<i>
+</I>&gt;<i>         <A HREF="https://dl.dropboxusercontent.______com/u/7022167/Screenshots/__n-____np6obt-m9f.png">https://dl.dropboxusercontent.______com/u/7022167/Screenshots/__n-____np6obt-m9f.png</A>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>         &lt;<A HREF="https://dl.__dropboxuserconte__nt.com/u/__7022167/__Screenshots/n-np6obt-__m9f.png">https://dl.__dropboxuserconte__nt.com/u/__7022167/__Screenshots/n-np6obt-__m9f.png</A>
+</I>&gt;<i>         &lt;<A HREF="http://dropboxusercontent.com/u/__7022167/Screenshots/n-np6obt-__m9f.png">http://dropboxusercontent.com/u/__7022167/Screenshots/n-np6obt-__m9f.png</A>&gt;
+</I>&gt;<i>
+</I>&gt;<i>         &lt;<A HREF="https://dl.__dropboxusercontent.com/u/__7022167/Screenshots/n-np6obt-__m9f.png">https://dl.__dropboxusercontent.com/u/__7022167/Screenshots/n-np6obt-__m9f.png</A>
+</I>&gt;<i>         &lt;<A HREF="https://dl.dropboxusercontent.com/u/7022167/Screenshots/n-np6obt-m9f.png">https://dl.dropboxusercontent.com/u/7022167/Screenshots/n-np6obt-m9f.png</A>&gt;&gt;&gt;
+</I>&gt;<i>         <A HREF="https://dl.dropboxusercontent.______com/u/7022167/Screenshots/______an6dpup33xvx.png">https://dl.dropboxusercontent.______com/u/7022167/Screenshots/______an6dpup33xvx.png</A>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>         &lt;<A HREF="https://dl.__dropboxuserconte__nt.com/u/__7022167/__Screenshots/__an6dpup33xvx.png">https://dl.__dropboxuserconte__nt.com/u/__7022167/__Screenshots/__an6dpup33xvx.png</A>
+</I>&gt;<i>         &lt;<A HREF="http://dropboxusercontent.com/u/__7022167/Screenshots/__an6dpup33xvx.png">http://dropboxusercontent.com/u/__7022167/Screenshots/__an6dpup33xvx.png</A>&gt;
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>         &lt;<A HREF="https://dl.__dropboxusercontent.com/u/__7022167/Screenshots/__an6dpup33xvx.png">https://dl.__dropboxusercontent.com/u/__7022167/Screenshots/__an6dpup33xvx.png</A>
+</I>&gt;<i>         &lt;<A HREF="https://dl.dropboxusercontent.com/u/7022167/Screenshots/an6dpup33xvx.png">https://dl.dropboxusercontent.com/u/7022167/Screenshots/an6dpup33xvx.png</A>&gt;&gt;&gt;
+</I>&gt;<i>
+</I>&gt;<i>                               We have two clustered brokers, both running
+</I>&gt;<i>                      RabbitMQ 3.1.1 on Erlang
+</I>&gt;<i>                               R14B-04.1. There are typically around 200
+</I>&gt;<i>         queues,
+</I>&gt;<i>                      about 20 of
+</I>&gt;<i>                               which are
+</I>&gt;<i>                               mirrored. There are generally about 200
+</I>&gt;<i>         consumers.
+</I>&gt;<i>                      Messages are
+</I>&gt;<i>                               rarely
+</I>&gt;<i>                               queued and most queues typically sit idle.
+</I>&gt;<i>
+</I>&gt;<i>                               I'll be happy to provide any further
+</I>&gt;<i>         diagnostic
+</I>&gt;<i>                      information.
+</I>&gt;<i>
+</I>&gt;<i>                               Thanks!
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>           _____________________________________________________
+</I>&gt;<i>                               rabbitmq-discuss mailing list
+</I>&gt;<i>                               <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.__rabbi____tmq.com</A>
+</I>&gt;<i>         &lt;<A HREF="http://rabbi__tmq.com">http://rabbi__tmq.com</A>&gt;
+</I>&gt;<i>                      &lt;<A HREF="http://rabbitmq.com">http://rabbitmq.com</A>&gt;
+</I>&gt;<i>                               &lt;mailto:rabbitmq-discuss@
+</I>&gt;<i>         &lt;mailto:rabbitmq-discuss@&gt;__lis__ts.rabbitmq.com
+</I>&gt;<i>         &lt;<A HREF="http://lists.rabbitmq.com">http://lists.rabbitmq.com</A>&gt;
+</I>&gt;<i>                      &lt;mailto:<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at __lists.rabbitmq.com</A>
+</I>&gt;<i>         &lt;mailto:<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>&gt;&gt;&gt;
+</I>&gt;<i>         <A HREF="https://lists.rabbitmq.com/______cgi-bin/mailman/listinfo/______rabbitmq-discuss">https://lists.rabbitmq.com/______cgi-bin/mailman/listinfo/______rabbitmq-discuss</A>
+</I>&gt;<i>         &lt;<A HREF="https://lists.rabbitmq.com/____cgi-bin/mailman/listinfo/____rabbitmq-discuss">https://lists.rabbitmq.com/____cgi-bin/mailman/listinfo/____rabbitmq-discuss</A>&gt;
+</I>&gt;<i>
+</I>&gt;<i>         &lt;<A HREF="https://lists.rabbitmq.com/____cgi-bin/mailman/listinfo/____rabbitmq-discuss">https://lists.rabbitmq.com/____cgi-bin/mailman/listinfo/____rabbitmq-discuss</A>
+</I>&gt;<i>         &lt;<A HREF="https://lists.rabbitmq.com/__cgi-bin/mailman/listinfo/__rabbitmq-discuss">https://lists.rabbitmq.com/__cgi-bin/mailman/listinfo/__rabbitmq-discuss</A>&gt;&gt;
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>         &lt;<A HREF="https://lists.rabbitmq.com/____cgi-bin/mailman/listinfo/____rabbitmq-discuss">https://lists.rabbitmq.com/____cgi-bin/mailman/listinfo/____rabbitmq-discuss</A>
+</I>&gt;<i>         &lt;<A HREF="https://lists.rabbitmq.com/__cgi-bin/mailman/listinfo/__rabbitmq-discuss">https://lists.rabbitmq.com/__cgi-bin/mailman/listinfo/__rabbitmq-discuss</A>&gt;
+</I>&gt;<i>
+</I>&gt;<i>         &lt;<A HREF="https://lists.rabbitmq.com/__cgi-bin/mailman/listinfo/__rabbitmq-discuss">https://lists.rabbitmq.com/__cgi-bin/mailman/listinfo/__rabbitmq-discuss</A>
+</I>&gt;<i>         &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>&gt;&gt;&gt;
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>                           --
+</I>&gt;<i>                           Simon MacMullen
+</I>&gt;<i>                           RabbitMQ, Pivotal
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>                  --
+</I>&gt;<i>                  Simon MacMullen
+</I>&gt;<i>                  RabbitMQ, Pivotal
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>     --
+</I>&gt;<i>     Simon MacMullen
+</I>&gt;<i>     RabbitMQ, Pivotal
+</I>&gt;<i>
+</I>&gt;<i>
+</I>
+
+-- 
+Simon MacMullen
+RabbitMQ, Pivotal
+</PRE>
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="027948.html">[rabbitmq-discuss] Possible memory leak in the management plugin
+</A></li>
+	<LI>Next message: <A HREF="027956.html">[rabbitmq-discuss] |Spam| Re: Possible memory leak in the management plugin
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#27949">[ date ]</a>
+              <a href="thread.html#27949">[ thread ]</a>
+              <a href="subject.html#27949">[ subject ]</a>
+              <a href="author.html#27949">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

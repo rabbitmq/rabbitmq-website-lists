@@ -1,0 +1,131 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] [BUG] Erlang RabbitMQ client requires installed	server code
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20%5BBUG%5D%20Erlang%20RabbitMQ%20client%20requires%20installed%0A%09server%20code&In-Reply-To=">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001356.html">
+   <LINK REL="Next"  HREF="001359.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] [BUG] Erlang RabbitMQ client requires installed	server code</H1>
+    <B>Edwin Fine</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20%5BBUG%5D%20Erlang%20RabbitMQ%20client%20requires%20installed%0A%09server%20code&In-Reply-To="
+       TITLE="[rabbitmq-discuss] [BUG] Erlang RabbitMQ client requires installed	server code">rabbitmq-discuss_efine at usa.net
+       </A><BR>
+    <I>Sun Sep  7 07:56:01 BST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001356.html">[rabbitmq-discuss] fsync on OSX
+</A></li>
+        <LI>Next message: <A HREF="001359.html">[rabbitmq-discuss] [BUG] Erlang RabbitMQ client requires	installed server code
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1358">[ date ]</a>
+              <a href="thread.html#1358">[ thread ]</a>
+              <a href="subject.html#1358">[ subject ]</a>
+              <a href="author.html#1358">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>I had a surprise when trying to use the Erlang client on a node on which
+RabbitMQ Server was not installed.
+
+=CRASH REPORT==== 7-Sep-2008::02:41:39 ===
+  crasher:
+    pid: &lt;0.165.0&gt;
+    registered_name: []
+    exception exit: {undef,
+*                        [{rabbit_framing_channel,start_link,
+*                             [#Fun&lt;amqp_network_driver.0.106693221&gt;,
+                              [&lt;0.165.0&gt;]]},
+                         {amqp_network_driver,handshake,1},
+
+A network client should not require server code to be installed on the same
+node. This is certainly true of other clients I have used.
+
+On further investigation, I found a number of direct calls and references to
+an installed server:
+
+amqp_channel.erl:-include_lib(&quot;rabbitmq_server/include/rabbit_framing.hrl&quot;).
+amqp_channel.erl:    rabbit_amqqueue:notify_sent(Q, ChPid),
+amqp_connection.erl:-include_lib(&quot;rabbitmq_server/include/rabbit_framing.hrl&quot;).
+amqp_consumer.erl:-include_lib(&quot;rabbitmq_server/include/rabbit_framing.hrl&quot;).
+amqp_network_driver.erl:-include_lib(&quot;rabbitmq_server/include/rabbit_framing.hrl&quot;).
+amqp_network_driver.erl:            FramingPid =
+rabbit_framing_channel:start_link(fun(X) -&gt; X end, [Parent]),
+amqp_network_driver.erl:    rabbit_writer:shutdown(WriterPid).
+amqp_network_driver.erl:    rabbit_writer:send_command(Writer, Close),
+amqp_network_driver.erl:    rabbit_writer:shutdown(Writer),
+amqp_network_driver.erl:do(Writer, Method) -&gt;
+rabbit_writer:send_command(Writer, Method).
+amqp_network_driver.erl:do(Writer, Method, Content) -&gt;
+rabbit_writer:send_command(Writer, Method, Content).
+amqp_network_driver.erl:    rabbit_framing_channel:process(ChPid, Frame).
+amqp_network_driver.erl:           response =
+rabbit_binary_generator:generate_table(LoginTable),
+amqp_network_driver.erl:    rabbit_writer:start(Sock, Channel,
+?FRAME_MIN_SIZE).
+amqp_network_driver.erl:            rabbit_heartbeat:start_heartbeat(Sock,
+Heartbeat),
+amqp_network_driver.erl:    FramingPid =
+rabbit_framing_channel:start_link(fun(X) -&gt; link(X), X end, [ChannelPid]),
+amqp_network_driver.erl:    case rabbit_reader:analyze_frame(Type, Payload)
+of
+amqp_network_driver.erl:            rabbit_misc:die(frame_error);
+amqp_network_driver.erl:            rabbit_misc:die(frame_error);
+amqp_rpc_client.erl:-include_lib(&quot;rabbitmq_server/include/rabbit_framing.hrl&quot;).
+amqp_rpc_client.erl:               content_type = ContentType} =
+rabbit_framing:decode_properties(ClassId, PropertiesBin),
+amqp_rpc_handler.erl:-include_lib(&quot;rabbitmq_server/include/rabbit_framing.hrl&quot;).
+amqp_rpc_handler.erl:    = rabbit_framing:decode_properties(ClassId,
+PropertiesBin),
+amqp_rpc_util.erl:-include_lib(&quot;rabbitmq_server/include/rabbit_framing.hrl&quot;).
+amqp_util.erl:-include_lib(&quot;rabbitmq_server/include/rabbit_framing.hrl&quot;).
+
+I left out the direct driver modules because by definition they need to be
+on the same node.
+
+I respectfully suggest that the above RabbitMQ server modules, and their
+dependencies, be bundled with the Erlang client. Ideally, I would think it
+would be best perhaps to put them a separate Erlang library application
+(maybe &quot;rabbitmq_common&quot;) that is used both by the server and the Erlang
+client.
+
+In addition to that, the include_lib(&quot;rabbitmq_server/include/xxx.hrl&quot;)
+statements prevent one from even compiling the client unless the server is
+installed and this should be changed to use the common library app. I was
+forced to copy the include files and make a dummy rabbitmq_server
+application to be able to compile the client on a different node to the
+server.
+
+Regards,
+Edwin Fine
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: <A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20080907/2948d2d4/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20080907/2948d2d4/attachment.htm</A> 
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001356.html">[rabbitmq-discuss] fsync on OSX
+</A></li>
+	<LI>Next message: <A HREF="001359.html">[rabbitmq-discuss] [BUG] Erlang RabbitMQ client requires	installed server code
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1358">[ date ]</a>
+              <a href="thread.html#1358">[ thread ]</a>
+              <a href="subject.html#1358">[ subject ]</a>
+              <a href="author.html#1358">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

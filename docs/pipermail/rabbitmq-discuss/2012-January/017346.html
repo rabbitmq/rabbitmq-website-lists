@@ -1,0 +1,186 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] rabbitmq-c API improvements for multiple	channels
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20rabbitmq-c%20API%20improvements%20for%20multiple%0A%09channels&In-Reply-To=%3CCACOPnvfx14ctnj2j%2BaE00icET7VugteBN6Vw5EgikROJMHh0_Q%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="017343.html">
+   <LINK REL="Next"  HREF="017386.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] rabbitmq-c API improvements for multiple	channels</H1>
+    <B>Alexis Richardson</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20rabbitmq-c%20API%20improvements%20for%20multiple%0A%09channels&In-Reply-To=%3CCACOPnvfx14ctnj2j%2BaE00icET7VugteBN6Vw5EgikROJMHh0_Q%40mail.gmail.com%3E"
+       TITLE="[rabbitmq-discuss] rabbitmq-c API improvements for multiple	channels">alexis at rabbitmq.com
+       </A><BR>
+    <I>Thu Jan 12 16:39:06 GMT 2012</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="017343.html">[rabbitmq-discuss] Consumers from slave queues on different nodes and duplicate messages
+</A></li>
+        <LI>Next message: <A HREF="017386.html">[rabbitmq-discuss] rabbitmq-c API improvements for multiple	channels
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#17346">[ date ]</a>
+              <a href="thread.html#17346">[ thread ]</a>
+              <a href="subject.html#17346">[ subject ]</a>
+              <a href="author.html#17346">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Alan
+
+It appears that you stunned everyone into silence ;-)
+
+How are you getting on with this?
+
+alexis
+
+
+On Wed, Dec 14, 2011 at 8:15 PM, Alan Antonuk &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">alan.antonuk at gmail.com</A>&gt; wrote:
+&gt;<i> I've been working on a c++ wrapper around rabbitmq-c that presents a
+</I>&gt;<i> &quot;humane&quot; API to the programmer heavily inspired by the Puka project.
+</I>&gt;<i> (see:&#160;<A HREF="https://github.com/alanxz/SimpleAmqpClient">https://github.com/alanxz/SimpleAmqpClient</A>).
+</I>&gt;<i>
+</I>&gt;<i> In developing this library I've run across several limitations of the
+</I>&gt;<i> rabbitmq-c when working with multiple channels, the biggest issue being:
+</I>&gt;<i>
+</I>&gt;<i> - There is no way to wait for a list of methods on a channel.
+</I>&gt;<i> There is amqp_simple_wait_method() - however this suffers from some serious
+</I>&gt;<i> drawbacks:
+</I>&gt;<i> + you can only specify one method to listen for
+</I>&gt;<i> + it calls abort() if a different method, or a method on a different channel
+</I>&gt;<i> is received
+</I>&gt;<i> A use case for this might be: doing a basic.publish, and you want to want to
+</I>&gt;<i> wait for a basic.ack or a basic.return on a channel with confirms enabled
+</I>&gt;<i>
+</I>&gt;<i> The way I got around this in SimpleAmqpClient was to only use
+</I>&gt;<i> amqp_simple_wait_frame() and maintain queues of amqp_frame_t for each
+</I>&gt;<i> channel that I have open.
+</I>&gt;<i>
+</I>&gt;<i> However, this comes with one serious drawback: memory management. Each
+</I>&gt;<i> decoded frame is allocated in a connection-wide amqp_pool_t. &#160;Because of
+</I>&gt;<i> this - it is impossible to recycle the pool and release memory unless you
+</I>&gt;<i> have dealt with all of your pending amqp_frame_t's. &#160;This becomes a problem
+</I>&gt;<i> in&#160;pathological&#160;cases where you have two consumers sending simultaneously,
+</I>&gt;<i> you can get in the situation that even though the client program eventually
+</I>&gt;<i> deals with every consumed message, memory never gets released, because there
+</I>&gt;<i> is always at least one frame queued up.
+</I>&gt;<i>
+</I>&gt;<i> The above demonstrates the second biggest issue with the rabbitmq-c API:
+</I>&gt;<i> memory management when dealing with multiple channels. &#160;There is no way to
+</I>&gt;<i> separate out memory allocation on, for example, a per-channel basis (with
+</I>&gt;<i> the library client keeping track of the memory pools used for example).
+</I>&gt;<i>
+</I>&gt;<i> Before I go on I'd like to mention one feature that I find useful with the
+</I>&gt;<i> current API: it is possible to use something like select() before calling
+</I>&gt;<i> amqp_simple_wait_frame() to setup a timeout while waiting for a consumer,
+</I>&gt;<i> which is useful when developing single-threaded RPC apps.
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> So now the interesting part: how could the API be improved?
+</I>&gt;<i>
+</I>&gt;<i> Some thoughts I've had dealing with the memory management:
+</I>&gt;<i> 1. Create a amqp_simple_wait_frame() variant that as one of the parameters
+</I>&gt;<i> provides a callback to allocate memory, either something like a malloc()
+</I>&gt;<i> call, which the client would then be responsible for freeing, or perhaps
+</I>&gt;<i> something like get_amqp_pool(amqp_frame_t) which allows the client to return
+</I>&gt;<i> a memory pool which rabbitmq-c would use to allocate memory for that frame.
+</I>&gt;<i> &#160;The amqp_frame_t would have to have some minimal amount of information
+</I>&gt;<i> filled in - such as frame type and channel to be useful.
+</I>&gt;<i>
+</I>&gt;<i> 2. amqp_channel_t becomes a struct containing both the the channel_id and a
+</I>&gt;<i> amqp_pool_t. &#160;The amqp_pool would be used by the library to allocate frames
+</I>&gt;<i> received on that channel. &#160;The client would then be responsible for calling
+</I>&gt;<i> amqp_pool_recycle at an appropriate point.
+</I>&gt;<i>
+</I>&gt;<i> Some thoughts on improving the API to deal with multiple channels:
+</I>&gt;<i> 1. Add the following to the API:
+</I>&gt;<i> amqp_simple_wait_frame_on_channel - wait for a frame on a specified channel
+</I>&gt;<i> amqp_simple_wait_methods - wait for multiple methods on a specified channel.
+</I>&gt;<i> Don't abort() if the wrong method, or channel is received, instead queue up
+</I>&gt;<i> the frame as is done in amqp_simple_rpc
+</I>&gt;<i> amqp_frames_enqueued_for_channel to add feature parity with
+</I>&gt;<i> amqp_frames_enqueued
+</I>&gt;<i> I started to code this up at one point but abandoned it as it didn't support
+</I>&gt;<i> the interesting property of being able to use select() to specify a timeout
+</I>&gt;<i> when calling amqp_simple_wait_frame_on_channel. &#160;At least not without adding
+</I>&gt;<i> timeout to the rabbitmq-c api, which didn't fit with how the current
+</I>&gt;<i> rabbitmq-c api. Here's the implementation I came up with before I abandoned
+</I>&gt;<i> it. I can't guarantee is completely free of
+</I>&gt;<i> bugs.&#160;<A HREF="https://github.com/alanxz/rabbitmq-c/commits/simple_wait_frame/">https://github.com/alanxz/rabbitmq-c/commits/simple_wait_frame/</A>
+</I>&gt;<i>
+</I>&gt;<i> 2. Continue to duck the issue and allow clients to write their own code to
+</I>&gt;<i> deal with multiple channels (fixing the memory management issue using one of
+</I>&gt;<i> the above techniques)
+</I>&gt;<i>
+</I>&gt;<i> 3. Something I haven't thought of yet.
+</I>&gt;<i>
+</I>&gt;<i> So anyone have any thoughts on all of this?
+</I>&gt;<i>
+</I>&gt;<i> -Alan
+</I>&gt;<i>
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>&gt;<i>
+</I></PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="017343.html">[rabbitmq-discuss] Consumers from slave queues on different nodes and duplicate messages
+</A></li>
+	<LI>Next message: <A HREF="017386.html">[rabbitmq-discuss] rabbitmq-c API improvements for multiple	channels
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#17346">[ date ]</a>
+              <a href="thread.html#17346">[ thread ]</a>
+              <a href="subject.html#17346">[ subject ]</a>
+              <a href="author.html#17346">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

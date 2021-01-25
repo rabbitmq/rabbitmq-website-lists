@@ -1,0 +1,253 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] erlang client API: transactions
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20erlang%20client%20API%3A%20transactions&In-Reply-To=D80A5FE3-1B0F-442C-9027-A232954EE774%40gmail.com">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001580.html">
+   <LINK REL="Next"  HREF="001583.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] erlang client API: transactions</H1>
+    <B>Edwin Fine</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20erlang%20client%20API%3A%20transactions&In-Reply-To=D80A5FE3-1B0F-442C-9027-A232954EE774%40gmail.com"
+       TITLE="[rabbitmq-discuss] erlang client API: transactions">rabbitmq-discuss_efine at usa.net
+       </A><BR>
+    <I>Tue Sep 23 05:49:25 BST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001580.html">[rabbitmq-discuss] erlang client API: transactions
+</A></li>
+        <LI>Next message: <A HREF="001583.html">[rabbitmq-discuss] erlang client API: transactions
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1581">[ date ]</a>
+              <a href="thread.html#1581">[ thread ]</a>
+              <a href="subject.html#1581">[ subject ]</a>
+              <a href="author.html#1581">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>I believe this is coming from the Erlang client, in
+amqp_channel:rpc_bottom_half/2. I can't tell you why your program is doing
+this, only where the error message originates. It seems to be happening in
+response to receiving a tx.select_ok, AFAICS.
+
+If you look at the code for rpc_bottom_half (reproduced at the end of this
+email for convenience), the line
+
+{{value, {From,_}}, NewRequestQueue} = queue:out(RequestQueue)
+
+will create the error message you are seeing if RequestQueue is empty. This
+can clearly be seen in the shell:
+
+1&gt; EmptyQ = queue:new().
+{[],[]}
+2&gt; {{value, {From,_}}, NewRequestQueue} = queue:out(EmptyQ).
+** exception error: no match of right hand side value *{empty,{[],[]}}*
+
+I don't know if this is a bug or one of those &quot;can't happen&quot; things that
+just didn't give a nice error message. I suspect the latter, because the
+code just cannot continue without the value of &quot;From&quot; to send a reply to.
+Why should the function have been called with a reply if the reply queue is
+empty? Something's wrong somewhere.
+
+In addition, maybe I am too tired to see straight, but this looks really
+suspect:
+
+    catch case queue:head(NewRequestQueue) of
+        empty -&gt;
+            ok;
+        {NewFrom,Method} -&gt;
+            Do2(Writer,Method)
+    end,
+
+This is because queue:head/1 exits when it is empty and does not return
+'empty', so the catch will return an EXIT:
+
+1&gt; catch queue:head(queue:new()).
+{'EXIT',{empty,[{queue,head,[{[],[]}]},
+                {erl_eval,do_apply,5},
+                {erl_eval,expr,5},
+                {shell,exprs,6},
+                {shell,eval_exprs,6},
+                {shell,eval_loop,3}]}}
+
+I think this should be
+
+    catch case queue:head(NewRequestQueue) of
+        {'EXIT', {empty,_}} -&gt;
+            ok;
+        {NewFrom,Method} -&gt;
+            Do2(Writer,Method)
+    end,
+
+Maybe an empty queue is one of those things that should never happen, but
+like I said, I am really tired...
+
+
+*Code reproduced from amqp_channel.erl*
+
+rpc_bottom_half(Reply, State = #channel_state{writer_pid = Writer,
+                                              rpc_requests = RequestQueue,
+                                              do2 = Do2}) -&gt;
+    *{{value, {From,_}}, NewRequestQueue} = queue:out(RequestQueue),*
+    gen_server:reply(From, Reply),
+    catch case queue:head(NewRequestQueue) of
+        empty -&gt;
+            ok;
+        {NewFrom,Method} -&gt;
+            Do2(Writer,Method)
+    end,
+    NewState = State#channel_state{rpc_requests = NewRequestQueue},
+    {noreply, NewState}.
+
+
+On Mon, Sep 22, 2008 at 10:24 PM, Valentino Volonghi &lt;<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">dialtone at gmail.com</A>&gt;wrote:
+
+&gt;<i> -----BEGIN PGP SIGNED MESSAGE-----
+</I>&gt;<i> Hash: SHA1
+</I>&gt;<i>
+</I>&gt;<i> so I'm trying to add support for transactions to my simple forwarding
+</I>&gt;<i> application, I started by
+</I>&gt;<i> implementing the 'commit every 500 messages' in the following way:
+</I>&gt;<i>
+</I>&gt;<i> handle_info(#'tx.select_ok'{}, State) -&gt;
+</I>&gt;<i>     {noreply, State};
+</I>&gt;<i>
+</I>&gt;<i> handle_info(#'tx.commit_ok'{}, State) -&gt;
+</I>&gt;<i>     {noreply, State};
+</I>&gt;<i>
+</I>&gt;<i> handle_info({#'basic.deliver'{routing_key = RoutingKey,
+</I>&gt;<i>                               delivery_tag = DeliveryTag},
+</I>&gt;<i>              #content{payload_fragments_rev = [Payload]}},
+</I>&gt;<i>             State = #shovel_state{local = LocalBroker,
+</I>&gt;<i>                                   remote = RemoteBroker,
+</I>&gt;<i>                                   exchange = Exchange,
+</I>&gt;<i>                                   sent = Sent,
+</I>&gt;<i>                                   ack = Acks}) -&gt;
+</I>&gt;<i>     deliver(State, RoutingKey, DeliveryTag, Payload, LocalBroker,
+</I>&gt;<i> RemoteBroker, Exchange, Sent, Acks).
+</I>&gt;<i>
+</I>&gt;<i> deliver(State, RoutingKey, DeliveryTag, Payload, _LocalBroker,
+</I>&gt;<i> RemoteBroker, Exchange, 0, []) -&gt;
+</I>&gt;<i>     amqp:tx_select(RemoteBroker),
+</I>&gt;<i>     amqp:send_message(RemoteBroker, RoutingKey, Payload, Exchange),
+</I>&gt;<i>     NewState = State#shovel_state{sent=1, ack=[DeliveryTag]},
+</I>&gt;<i>     {noreply, NewState};
+</I>&gt;<i>
+</I>&gt;<i> deliver(State, RoutingKey, DeliveryTag, Payload, LocalBroker,
+</I>&gt;<i> RemoteBroker, Exchange, 499, Acks) -&gt;
+</I>&gt;<i>     amqp:send_message(RemoteBroker, RoutingKey, Payload, Exchange),
+</I>&gt;<i>     amqp:tx_commit(RemoteBroker),
+</I>&gt;<i>     lists:foreach(fun(X) -&gt; amqp:ack(LocalBroker, X) end,
+</I>&gt;<i> [DeliveryTag|Acks]),
+</I>&gt;<i>     NewState = State#shovel_state{sent=0, ack=[]},
+</I>&gt;<i>     {noreply, NewState};
+</I>&gt;<i>
+</I>&gt;<i> deliver(State, RoutingKey, DeliveryTag, Payload, _LocalBroker,
+</I>&gt;<i> RemoteBroker, Exchange, Sent, Acks) -&gt;
+</I>&gt;<i>     amqp:tx_select(RemoteBroker),
+</I>&gt;<i>     amqp:send_message(RemoteBroker, RoutingKey, Payload, Exchange),
+</I>&gt;<i>     NewState = State#shovel_state{sent=Sent+1, ack=[DeliveryTag|Acks]},
+</I>&gt;<i>     {noreply, NewState}.
+</I>&gt;<i>
+</I>&gt;<i> and I implemented ack and tx_commit/tx_select like this:
+</I>&gt;<i>
+</I>&gt;<i> ack({_Connection, Channel, _Ticket}, DeliveryTag) -&gt;
+</I>&gt;<i>     BasicAck = #'basic.ack'{delivery_tag = DeliveryTag, multiple =
+</I>&gt;<i> false},
+</I>&gt;<i>     ok = amqp_channel:cast(Channel, BasicAck).
+</I>&gt;<i>
+</I>&gt;<i> tx_select({_Connection, Channel, _Ticket}) -&gt;
+</I>&gt;<i>     ok = amqp_channel:cast(Channel, #'tx.select'{}).
+</I>&gt;<i>
+</I>&gt;<i> tx_commit({_Connection, Channel, _Ticket}) -&gt;
+</I>&gt;<i>     ok = amqp_channel:cast(Channel, #'tx.commit'{}).
+</I>&gt;<i>
+</I>&gt;<i> Unfortunately when I try to run this code, during the forwarding I get
+</I>&gt;<i> the following exception:
+</I>&gt;<i>
+</I>&gt;<i> =ERROR REPORT==== 22-Sep-2008::19:23:11 ===
+</I>&gt;<i> ** Generic server &lt;0.150.0&gt; terminating
+</I>&gt;<i> ** Last message in was {method,{'tx.select_ok'},none}
+</I>&gt;<i> ** When Server state == {channel_state,1,&lt;0.146.0&gt;,&lt;0.148.0&gt;,&lt;0.151.0&gt;,
+</I>&gt;<i>                             #Fun&lt;amqp_network_driver.do.2&gt;,
+</I>&gt;<i>                             #Fun&lt;amqp_network_driver.do.3&gt;,
+</I>&gt;<i>                             #Fun&lt;amqp_network_driver.close_channel.1&gt;,
+</I>&gt;<i>                             {[],[]},
+</I>&gt;<i>                             {[],[]},
+</I>&gt;<i>                             {dict,0,16,16,8,80,48,
+</I>&gt;<i>                                 {[],[],[],[],[],[],[],[],[],[],[],[],
+</I>&gt;<i> [],[],[],
+</I>&gt;<i>                                  []},
+</I>&gt;<i>                                 {{[],[],[],[],[],[],[],[],[],[],[],[],
+</I>&gt;<i> [],[],
+</I>&gt;<i>                                   [],[]}}},
+</I>&gt;<i>                             false,undefined,
+</I>&gt;<i>                             {dict,0,16,16,8,80,48,
+</I>&gt;<i>                                 {[],[],[],[],[],[],[],[],[],[],[],[],
+</I>&gt;<i> [],[],[],
+</I>&gt;<i>                                  []},
+</I>&gt;<i>                                 {{[],[],[],[],[],[],[],[],[],[],[],[],
+</I>&gt;<i> [],[],
+</I>&gt;<i>                                   [],[]}}}}
+</I>&gt;<i> ** Reason for termination ==
+</I>&gt;<i> ** {{badmatch,{empty,{[],[]}}},
+</I>&gt;<i>     [{amqp_channel,rpc_bottom_half,2},
+</I>&gt;<i>      {gen_server,handle_msg,5},
+</I>&gt;<i>      {proc_lib,init_p,5}]}
+</I>&gt;<i>
+</I>&gt;<i> Which clearly means that I badly matched somewhere... my best guess is
+</I>&gt;<i> the tx_select/tx_commit
+</I>&gt;<i> functions but then how should I fix them? (sorry for this newb
+</I>&gt;<i> question).
+</I>&gt;<i>
+</I>&gt;<i> - --
+</I>&gt;<i> Valentino Volonghi aka Dialtone
+</I>&gt;<i> Now running MacOS X 10.5
+</I>&gt;<i> Home Page: <A HREF="http://www.twisted.it">http://www.twisted.it</A>
+</I>&gt;<i> <A HREF="http://www.adroll.com">http://www.adroll.com</A>
+</I>&gt;<i>
+</I>&gt;<i> -----BEGIN PGP SIGNATURE-----
+</I>&gt;<i> Version: GnuPG v1.4.9 (Darwin)
+</I>&gt;<i>
+</I>&gt;<i> iEYEARECAAYFAkjYU3sACgkQ9Llz28widGUvqACZAaF5i6y0RCeq6S515PPERjsy
+</I>&gt;<i> 09kAoLHg1ohSFpGpDd2SGCe6I2s6Vqw6
+</I>&gt;<i> =lGsw
+</I>&gt;<i> -----END PGP SIGNATURE-----
+</I>&gt;<i>
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;<i> <A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;<i> <A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: <A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20080923/a38ac88e/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20080923/a38ac88e/attachment.htm</A> 
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001580.html">[rabbitmq-discuss] erlang client API: transactions
+</A></li>
+	<LI>Next message: <A HREF="001583.html">[rabbitmq-discuss] erlang client API: transactions
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1581">[ date ]</a>
+              <a href="thread.html#1581">[ thread ]</a>
+              <a href="subject.html#1581">[ subject ]</a>
+              <a href="author.html#1581">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

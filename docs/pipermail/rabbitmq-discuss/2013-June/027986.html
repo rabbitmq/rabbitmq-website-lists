@@ -1,0 +1,123 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] rabbitmq-c how many channels I need?
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20rabbitmq-c%20how%20many%20channels%20I%20need%3F&In-Reply-To=%3CCAAt2poL%2BAS79gLQVCMeSxUowsZEx6twKy5JQ2YWoBc9KKhF1hw%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="027971.html">
+   <LINK REL="Next"  HREF="027939.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] rabbitmq-c how many channels I need?</H1>
+    <B>Alan Antonuk</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20rabbitmq-c%20how%20many%20channels%20I%20need%3F&In-Reply-To=%3CCAAt2poL%2BAS79gLQVCMeSxUowsZEx6twKy5JQ2YWoBc9KKhF1hw%40mail.gmail.com%3E"
+       TITLE="[rabbitmq-discuss] rabbitmq-c how many channels I need?">alan.antonuk at gmail.com
+       </A><BR>
+    <I>Wed Jun 19 18:43:11 BST 2013</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="027971.html">[rabbitmq-discuss] rabbitmq-c how many channels I need?
+</A></li>
+        <LI>Next message: <A HREF="027939.html">[rabbitmq-discuss] rabbitmq-c how many channels I need?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#27986">[ date ]</a>
+              <a href="thread.html#27986">[ thread ]</a>
+              <a href="subject.html#27986">[ subject ]</a>
+              <a href="author.html#27986">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>rabbitmq-c uses a connection-wide memory pool that is recycled when you
+call amqp_maybe_release_buffers(). When you call this function, some memory
+is returned to the OS, but most of the memory is marked as unused and will
+be reused by rabbitmq-c at some point in the future.
+
+A couple rules of thumb for dealing with memory when using rabbitmq-c:
+
+1. Anytime you call amqp_maybe_release_buffers(), any pointer returned from
+rabbitmq-c before that call becomes invalid. Any use will lead to undefined
+behavior.
+
+2. For RPC-style methods (amqp_queue_declare, amqp_exchange_declare,
+amqp_basic_consume, anything that returns an amqp_*_ok_t *). You should
+call amqp_maybe_release_buffers() immediately after you've finishing using
+whatever that method returns: e.g.,:
+
+amqp_queue_purge_ok_t *purge = amqp_queue_purge(connection, channel,
+amqp_cstring_bytes(&quot;myqueue&quot;);
+/* You should check to make sure purge != NULL, as that indicates failure */
+int messages_purged = purge-&gt;message_count;
+amqp_maybe_release_buffers(connection); /* NOTE: at this point, the purge
+object is no longer valid */
+
+3. When consuming messages you should call amqp_maybe_release_buffers()
+after you've finished with each amqp_frame_t returned from
+amqp_simple_wait_frame().
+
+I cannot get any more specific than that without more information from you
+(as Tim noted above).
+
+Hope that helps
+-Alan
+
+
+
+On Wed, Jun 19, 2013 at 4:25 AM, Tim Watson &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">tim at rabbitmq.com</A>&gt; wrote:
+
+&gt;<i> On 19 Jun 2013, at 11:38, 3k4b251 wrote:
+</I>&gt;<i> &gt; thank  you!    like  you say,  i  not  very  skillful  at  rabbitmq-c.
+</I>&gt;<i>   I
+</I>&gt;<i> &gt; test  it  ,  I  found  that  if  I  use  the function
+</I>&gt;<i> &gt; amqp_maybe_release_buffers()  after  amqp_queue_declare(),  the memory
+</I>&gt;<i>  stop
+</I>&gt;<i> &gt; grow up .
+</I>&gt;<i> &gt; but the function  amqp_basic_consume()  still  have high use  of
+</I>&gt;<i>  memory..?
+</I>&gt;<i> &gt;
+</I>&gt;<i>
+</I>&gt;<i> Probably because it's (a) allocating data to manage the consumer/channel,
+</I>&gt;<i> (b) allocating buffers to handle the incoming data and (c) bringing data in
+</I>&gt;<i> from the kernel (via syscalls such as recv and so on) to user space so as
+</I>&gt;<i> to present it to your application. What exactly were you expecting to see
+</I>&gt;<i> once your application started consuming data from the queues? Of course
+</I>&gt;<i> it's going to use memory!? Are you actually seeing memory use that is
+</I>&gt;<i> unexpected here? Is that because it is (a) higher than you would expect to
+</I>&gt;<i> see, or (b) not getting released when you think it should? One of those two
+</I>&gt;<i> (latter) things might indicate a problem (either in your code or in some
+</I>&gt;<i> library you might be calling) but generally speaking &quot;doing stuff&quot; requires
+</I>&gt;<i> memory, so saying &quot;still have high use of memory&quot; isn't much to go on.
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20130619/1450fb98/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20130619/1450fb98/attachment.htm</A>&gt;
+</PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="027971.html">[rabbitmq-discuss] rabbitmq-c how many channels I need?
+</A></li>
+	<LI>Next message: <A HREF="027939.html">[rabbitmq-discuss] rabbitmq-c how many channels I need?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#27986">[ date ]</a>
+              <a href="thread.html#27986">[ thread ]</a>
+              <a href="subject.html#27986">[ subject ]</a>
+              <a href="author.html#27986">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

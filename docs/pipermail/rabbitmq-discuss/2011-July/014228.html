@@ -1,0 +1,167 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Pika: Error when doing a stop_consuming() from a	timeout callback
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Pika%3A%20Error%20when%20doing%20a%20stop_consuming%28%29%20from%20a%0A%09timeout%20callback&In-Reply-To=%3C4E31E694.7090304%40gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="014227.html">
+   <LINK REL="Next"  HREF="014229.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Pika: Error when doing a stop_consuming() from a	timeout callback</H1>
+    <B>Christian Haintz</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Pika%3A%20Error%20when%20doing%20a%20stop_consuming%28%29%20from%20a%0A%09timeout%20callback&In-Reply-To=%3C4E31E694.7090304%40gmail.com%3E"
+       TITLE="[rabbitmq-discuss] Pika: Error when doing a stop_consuming() from a	timeout callback">christian.haintz at gmail.com
+       </A><BR>
+    <I>Thu Jul 28 23:45:40 BST 2011</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="014227.html">[rabbitmq-discuss] How to communicate with a CGI endpoint	expecting an XML post
+</A></li>
+        <LI>Next message: <A HREF="014229.html">[rabbitmq-discuss] Pika: Error when doing a stop_consuming() from a timeout callback
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#14228">[ date ]</a>
+              <a href="thread.html#14228">[ thread ]</a>
+              <a href="subject.html#14228">[ subject ]</a>
+              <a href="author.html#14228">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi,
+
+I want to stop the consuming loop of a BlockingConnection after some 
+timeout. I used the following code. Producer is not running because I
+want to simulate the timeout. Current pika version is used from github.
+
+--------8&lt;--------- snip ----------8&lt;-----------
+import pika
+connection = pika.BlockingConnection(pika.ConnectionParameters(
+                                 host='localhost'))
+
+channel = connection.channel()
+
+result = channel.queue_declare(exclusive=True)
+callback_queue = result.method.queue
+
+def on_response(self, ch, method, props, body):
+    #do some processing
+    channel.stop_consuming()
+
+# normaly i do some publish here but that's not relevant
+# to reproduce the error
+
+channel.basic_consume(on_response, no_ack=True,
+    queue=callback_queue)
+
+def panic():
+    channel.stop_consuming()
+
+connection.add_timeout(1, panic)
+channel.start_consuming()
+
+--------8&lt;------- snip end --------8&lt;-----------
+
+But I get the following error:
+
+--------8&lt;--------- snip ----------8&lt;-----------
+$ python pika_test.py
+/Users/christian/devel/pika/pika/callback.py:69: UserWarning: 
+CallbackManager.add: Duplicate callback found for &quot;1:Basic.CancelOk&quot;
+   (self.__class__.__name__, prefix, key))
+Traceback (most recent call last):
+   File &quot;pika_test.py&quot;, line 21, in &lt;module&gt;
+     channel.start_consuming()
+   File 
+&quot;/Users/christian/devel/pika/pika/adapters/blocking_connection.py&quot;, line 
+307, in start_consuming
+     self.transport.connection.process_data_events()
+   File 
+&quot;/Users/christian/devel/pika/pika/adapters/blocking_connection.py&quot;, line 
+104, in process_data_events
+     self.process_timeouts()
+   File 
+&quot;/Users/christian/devel/pika/pika/adapters/blocking_connection.py&quot;, line 
+164, in process_timeouts
+     self._timeouts[timeout_id]['handler']()
+   File &quot;pika_test.py&quot;, line 18, in panic
+     channel.stop_consuming()
+   File 
+&quot;/Users/christian/devel/pika/pika/adapters/blocking_connection.py&quot;, line 
+318, in stop_consuming
+     self.basic_cancel(consumer_tag)
+   File &quot;/Users/christian/devel/pika/pika/channel.py&quot;, line 333, in 
+basic_cancel
+     self._on_cancel_ok, [spec.Basic.CancelOk])
+   File 
+&quot;/Users/christian/devel/pika/pika/adapters/blocking_connection.py&quot;, line 
+220, in rpc
+     self.send_method(method, None, wait)
+   File 
+&quot;/Users/christian/devel/pika/pika/adapters/blocking_connection.py&quot;, line 
+249, in send_method
+     self.connection.process_data_events()
+   File 
+&quot;/Users/christian/devel/pika/pika/adapters/blocking_connection.py&quot;, line 
+104, in process_data_events
+     self.process_timeouts()
+   File 
+&quot;/Users/christian/devel/pika/pika/adapters/blocking_connection.py&quot;, line 
+164, in process_timeouts
+     self._timeouts[timeout_id]['handler']()
+   File &quot;pika_test.py&quot;, line 18, in panic
+     channel.stop_consuming()
+   File 
+&quot;/Users/christian/devel/pika/pika/adapters/blocking_connection.py&quot;, line 
+318, in stop_consuming
+     self.basic_cancel(consumer_tag)
+   File &quot;/Users/christian/devel/pika/pika/channel.py&quot;, line 333, in 
+basic_cancel
+     self._on_cancel_ok, [spec.Basic.CancelOk])
+   File 
+&quot;/Users/christian/devel/pika/pika/adapters/blocking_connection.py&quot;, line 
+209, in rpc
+     self._on_rpc_complete)
+TypeError: 'NoneType' object is not iterable
+
+
+What I am doing wrong? Are the timeout callbacks not capable of stopping 
+the consumer?
+
+
+Regards,
+Christian
+</PRE>
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="014227.html">[rabbitmq-discuss] How to communicate with a CGI endpoint	expecting an XML post
+</A></li>
+	<LI>Next message: <A HREF="014229.html">[rabbitmq-discuss] Pika: Error when doing a stop_consuming() from a timeout callback
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#14228">[ date ]</a>
+              <a href="thread.html#14228">[ thread ]</a>
+              <a href="subject.html#14228">[ subject ]</a>
+              <a href="author.html#14228">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

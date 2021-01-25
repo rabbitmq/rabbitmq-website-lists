@@ -1,0 +1,130 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Erlang client RPC and dropped messages
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20Erlang%20client%20RPC%20and%20dropped%20messages&In-Reply-To=4BD5E250.9070606%40cynigram.com">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="006989.html">
+   <LINK REL="Next"  HREF="006991.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Erlang client RPC and dropped messages</H1>
+    <B>Matthew Sackman</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20Erlang%20client%20RPC%20and%20dropped%20messages&In-Reply-To=4BD5E250.9070606%40cynigram.com"
+       TITLE="[rabbitmq-discuss] Erlang client RPC and dropped messages">matthew at lshift.net
+       </A><BR>
+    <I>Mon Apr 26 20:37:55 BST 2010</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="006989.html">[rabbitmq-discuss] Erlang client RPC and dropped messages
+</A></li>
+        <LI>Next message: <A HREF="006991.html">[rabbitmq-discuss] Erlang client RPC and dropped messages
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#6990">[ date ]</a>
+              <a href="thread.html#6990">[ thread ]</a>
+              <a href="subject.html#6990">[ subject ]</a>
+              <a href="author.html#6990">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi Noah,
+
+On Mon, Apr 26, 2010 at 01:58:24PM -0500, Noah Fontes wrote:
+&gt;<i> 1. The connection to the remote RabbitMQ exchange is dropped (often this
+</I>&gt;<i> is because I accidentally let way too many messages build up and the
+</I>&gt;<i> node crashes, but that's a topic for another day and I'm guessing the
+</I>&gt;<i> new persister is going to fix this issue quite nicely); however, no-one
+</I>&gt;<i> is notified of the dropped connection because as far as I can tell the
+</I>&gt;<i> checks for this are only run when data actually goes across the connection.
+</I>
+Correct, though you could set heartbeat to non-zero. That should get you
+more prompt notification.
+
+&gt;<i> 2. A message is read from the local queue and published to the remote
+</I>&gt;<i> exchange (via amqp_channel:cast/3), which appears to be successful.
+</I>
+Be aware of cast. Cast returns as soon as the message has been added to
+the writer's mailbox (and actually can be sooner...). Needless to say,
+this does not suggest the message has made it out of the socket, or even
+been looked at by the socket writer. In general, I tend to use
+amqp_channel:call, not cast, for almost everything as it avoids millions
+of messages backing up in the mailbox of the writer process.
+
+&gt;<i> Relevant comments from rabbit_writer.erl are included here:
+</I>&gt;<i> %% So instead we lift the code from prim_inet:send/2, which is what
+</I>&gt;<i> %% gen_tcp:send/2 calls, do the first half here and then just process
+</I>&gt;<i> %% the result code in handle_message/2 as and when it arrives.
+</I>&gt;<i> %%
+</I>&gt;<i> %% This means we may end up happily sending data down a closed/broken
+</I>&gt;<i> %% socket, but that's ok since a) data in the buffers will be lost in
+</I>&gt;<i> %% any case (so qualitatively we are no worse off than if we used
+</I>&gt;<i> %% gen_tcp:send/2), and b) we do detect the changed socket status
+</I>&gt;<i> %% eventually, i.e. when we get round to handling the result code.
+</I>
+Indeed, so using call, not cast, pretty much gets you to this point, but
+obviously no further.
+
+&gt;<i> 3. After the message is &quot;written&quot; to the exchange, the connection is
+</I>&gt;<i> seen as closed, messages are sent out to listening Erlang processes, and
+</I>&gt;<i> a new connection is subsequently re-established by my code.
+</I>&gt;<i> 
+</I>&gt;<i> However, at this point the message that caused the connection drop to be
+</I>&gt;<i> noticed is permanently lost; since the connection wasn't actually active
+</I>&gt;<i> when it was published it can't possibly be rejected, and since no errors
+</I>&gt;<i> were thrown at publish-time, it appears as if the message was sent
+</I>&gt;<i> successfully. In our code, this results in ~50% data loss when a node
+</I>&gt;<i> unexpectedly goes down.
+</I>
+Right. What you're doing is fine, but with your approach you clearly
+need to hold on to the most recent message you received in case the
+connection drops and you then need to resend it. Furthermore, as you're
+using cast, you could have millions of messages queued up with the
+writer process mailbox which all would be lost.
+
+However, you're not acking. So, on connection drop to the remote, you
+could also connection drop to the local. Then, the local broker will
+requeue everything that's not been acked, and when you reconnect, you'll
+find it all there. Now at that point, any ordering guarantees you had go
+out the window, but that may not be a concern. Assuming you're using
+basic.consume, you could set qos to prefetch of 1, which would then mean
+that at most one message is buffered in the client without it being
+acked, significantly limiting your exposure.
+
+Finally, if you want to be really sure, use transactions to the
+destination - that way you know you have to hang on to everything you've
+published up until you get the commit_ok back, and then you are
+guaranteed that it's been received.
+
+And in an obvious plug, our shovel is capable of dealing with these
+issues. ;)
+
+Matthew
+
+</PRE>
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="006989.html">[rabbitmq-discuss] Erlang client RPC and dropped messages
+</A></li>
+	<LI>Next message: <A HREF="006991.html">[rabbitmq-discuss] Erlang client RPC and dropped messages
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#6990">[ date ]</a>
+              <a href="thread.html#6990">[ thread ]</a>
+              <a href="subject.html#6990">[ subject ]</a>
+              <a href="author.html#6990">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

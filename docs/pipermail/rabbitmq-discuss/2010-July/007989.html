@@ -1,0 +1,319 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] RabbitMQ 1.7.0 close the cnx when consumer don't ack deliveries during 30s
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20RabbitMQ%201.7.0%20close%20the%20cnx%20when%20consumer%0A%20don%27t%20ack%20deliveries%20during%2030s&In-Reply-To=%3C4C3F1CCF.1020409%40ubikod.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="007968.html">
+   <LINK REL="Next"  HREF="007990.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] RabbitMQ 1.7.0 close the cnx when consumer don't ack deliveries during 30s</H1>
+    <B>Vincent Barat</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20RabbitMQ%201.7.0%20close%20the%20cnx%20when%20consumer%0A%20don%27t%20ack%20deliveries%20during%2030s&In-Reply-To=%3C4C3F1CCF.1020409%40ubikod.com%3E"
+       TITLE="[rabbitmq-discuss] RabbitMQ 1.7.0 close the cnx when consumer don't ack deliveries during 30s">vbarat at ubikod.com
+       </A><BR>
+    <I>Thu Jul 15 15:35:59 BST 2010</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="007968.html">[rabbitmq-discuss] RabbitMQ 1.7.0 close the cnx when consumer don't ack deliveries during 30s
+</A></li>
+        <LI>Next message: <A HREF="007990.html">[rabbitmq-discuss] RabbitMQ 1.7.0 close the cnx when consumer don't ack deliveries during 30s
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#7989">[ date ]</a>
+              <a href="thread.html#7989">[ thread ]</a>
+              <a href="subject.html#7989">[ subject ]</a>
+              <a href="author.html#7989">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>  Hi Simon,
+
+I got my fix: here is what I do:
+
+1- I use basicQos() to be sure that the server will not send &quot;too 
+many&quot; messages (actually, I have checked that basicQos() does not 
+offers a guarantee on the number of un-acknoledged messages sent, 
+since I actually receive much more than the parameter I give, but it 
+seems at least to limit the amount of messages, maybe there is a bug 
+here ?).
+2- I use an unlimited LinkedBlockingQueue to buffer my messages and 
+to be sure that handleDelivery will never block
+3- then, I use another thread to read this queue and write my 
+message to the database
+
+It works perfectly.
+
+Here is the code:
+
+public abstract class BufferedQueueConsumer extends QueueConsumer
+{
+   private static final Log LOG = 
+LogFactory.getLog(BufferedQueueConsumer.class);
+
+   /** Maximum time during which the messages will be buffered 
+before triggering a delivery */
+   private int pace = 1000;
+
+   /** Maximum number of messages being buffered before triggering a 
+delivered */
+   private int capacity = 1000;
+
+   /** Thread used to consume buffered messages */
+   private final Thread consumerThread;
+
+   /**
+    * The message buffer. A queue is used to store the buffered 
+messages and to synchronize the
+    * message producer and consumer. This queue must not have a 
+maximum capacity, otherwise it could
+    * block the producer in handleDelivery() and then brake the AMQP 
+connection. Instead, we rely on
+    * AMQP's QOS parameter which allow to configure the server to 
+send not more than a given amount
+    * of unacknowledged deliveries. Tests have shown that this 
+parameter is not a guarantee (we can
+    * receive more unacknowledged messages than expected) but it has 
+a clear effect preventing memory
+    * overflows.
+    */
+   private final BlockingQueue&lt;Delivery&gt; deliveryQueue = new 
+LinkedBlockingQueue&lt;Delivery&gt;();
+
+   public BufferedQueueConsumer(final String queueName, String 
+exchange, String routingKey,
+     String mode, boolean durable)
+   {
+     /* Create the parent queue consumer */
+     super(queueName, exchange, routingKey, mode, durable);
+
+     /* Create the thread consuming delivered messages */
+     consumerThread = new Thread(queueName + &quot;'s consumer&quot;)
+     {
+       @Override
+       public void run()
+       {
+         LOG.info(&quot;Thread &quot; + this.getName() + &quot; started&quot;);
+
+         /* Create a delivery list used to extract deliveries from 
+the delivery queue */
+         final List&lt;Delivery&gt; deliveryList = new ArrayList&lt;Delivery&gt;();
+         final List&lt;Delivery&gt; readOnlyDeliveryList = 
+Collections.unmodifiableList(deliveryList);
+
+         /* Initialize last delivery time */
+         long lastDeliveryTime = System.currentTimeMillis();
+
+         while (true)
+         {
+           long currentTime = System.currentTimeMillis();
+
+           /*
+            * If we have polled enough messages from the delivery 
+queue, or we have polled the
+            * delivery queue long enough
+            */
+           if (deliveryList.size() == capacity
+             || ((currentTime &gt;= lastDeliveryTime + pace) &amp;&amp; 
+!deliveryList.isEmpty()))
+           {
+             /* Ask subclass to handle all buffered deliveries */
+             handleBufferedDeliveries(readOnlyDeliveryList);
+
+             /* Acknowledge all buffered deliveries */
+             ackDeliveries(readOnlyDeliveryList);
+
+             /* Forget all buffered deliveries */
+             deliveryList.clear();
+
+             /* Reset last delivery time */
+             lastDeliveryTime = System.currentTimeMillis();
+           }
+
+           /*
+            * If we need to poll more messages from the delivery 
+queue, or we haven't polled the
+            * delivery queue long enough
+            */
+           else
+           {
+             try
+             {
+               /*
+                * If the delivery list is empty, we need to wait 
+forever for one message before being
+                * able to deliver something
+                */
+               if (deliveryList.isEmpty())
+                 deliveryList.add(deliveryQueue.take());
+
+               /*
+                * If the delivery list is not empty, we only need to 
+wait for the time remaining to
+                * poll
+                */
+               else
+               {
+                 Delivery delivery = 
+deliveryQueue.poll(lastDeliveryTime + pace - currentTime,
+                   TimeUnit.MILLISECONDS);
+                 if (delivery != null)
+                   deliveryList.add(delivery);
+               }
+             }
+             catch (InterruptedException ie)
+             {
+               LOG.warn(&quot;Thread &quot; + this.getName() + &quot; for &quot; + 
+queueName + &quot; interrupted&quot;);
+               return;
+             }
+           }
+         }
+       }
+     };
+     consumerThread.setDaemon(true);
+     consumerThread.start();
+   }
+
+   @Override
+   protected void onNewChannel(Channel channel) throws IOException
+   {
+     super.onNewChannel(channel);
+
+     /*
+      * Configure the channel to send not more than a given amount 
+of unacknowledged messages. This
+      * avoid at the same time to buffer too many messages (which 
+could exhaust memory) and to block
+      * in handleDelivery() (which could brake the connection).
+      */
+     channel.basicQos(capacity);
+   }
+
+   @Override
+   public void handleDelivery(String consumerTag, Envelope envelope, 
+BasicProperties properties,
+     byte[] body)
+   {
+     try
+     {
+       /* Store the delivery in the message buffer */
+       deliveryQueue.put(new Delivery(envelope, properties, body));
+     }
+     catch (InterruptedException ie)
+     {
+       /* Due to program being exited, do nothing */
+     }
+   }
+
+   /**
+    * Override this method to be notified of buffered deliveries. 
+Once this method has run, messages
+    * will be acknowledged.
+    * @param stack unmodifiable list of deliveries.
+    */
+   public abstract void handleBufferedDeliveries(List&lt;Delivery&gt; stack);
+}
+
+
+Le 14/07/10 18:53, Simon MacMullen a &#233;crit :
+&gt;<i> Hi Vincent. Yes, I think you could do that, although you have to 
+</I>&gt;<i> think about what to do when there aren't 1000 messages to deliver 
+</I>&gt;<i> - would you just wait indefinitely?
+</I>&gt;<i>
+</I>&gt;<i> It does sound like you'd be building something like a fixed-length 
+</I>&gt;<i> QueueingConsumer though - I don't really see what that would gain 
+</I>&gt;<i> you.
+</I>&gt;<i>
+</I>&gt;<i> Cheers, Simon
+</I>&gt;<i>
+</I>&gt;<i> On 14/07/10 17:38, Vincent Barat wrote:
+</I>&gt;&gt;<i> Concerning this issue, I've read about the basicQos() call.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Do you think that I can use this call to force the server to send 
+</I>&gt;&gt;<i> me a
+</I>&gt;&gt;<i> maximum of, say, 1000 messages that I could store in an array in
+</I>&gt;&gt;<i> handleDelivery() (without blocking), and, once I've counted 1000
+</I>&gt;&gt;<i> messages exactly, I trigger another thread to store all messages and
+</I>&gt;&gt;<i> then ack all messages ?
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Le 14/07/10 11:30, Simon MacMullen a &#233;crit :
+</I>&gt;&gt;&gt;<i> On 13/07/10 16:00, Vincent Barat wrote:
+</I>&gt;&gt;&gt;<i> &lt;snip&gt;
+</I>&gt;&gt;&gt;&gt;<i> But from time to time, the database blocks during 30s to 
+</I>&gt;&gt;&gt;&gt;<i> 1minute and
+</I>&gt;&gt;&gt;&gt;<i> thus I don't acknowledge during the same time.
+</I>&gt;&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;&gt;<i> It seems that the RabbitMQ server closes the connection. Is 
+</I>&gt;&gt;&gt;&gt;<i> there a
+</I>&gt;&gt;&gt;&gt;<i> timeout (or a setting) I can use to fix this issue ?
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i> Hi Vincent. Not acking for 30s certainly should not close the
+</I>&gt;&gt;&gt;<i> connection. When the server closes a connection due to client 
+</I>&gt;&gt;&gt;<i> error it
+</I>&gt;&gt;&gt;<i> sends an error message; you should see this as an IOException in 
+</I>&gt;&gt;&gt;<i> the
+</I>&gt;&gt;&gt;<i> Java client. Check the ShutdownSignalException inside the 
+</I>&gt;&gt;&gt;<i> IOException
+</I>&gt;&gt;&gt;<i> to get the error code / message. Alternatively you could look in 
+</I>&gt;&gt;&gt;<i> the
+</I>&gt;&gt;&gt;<i> server logs, sometimes there's more detail there.
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i> One way this could be happening is:
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i> * You have heartbeating turned on (I think some of the client 
+</I>&gt;&gt;&gt;<i> version
+</I>&gt;&gt;&gt;<i> have this turned on by default). Heartbeating makes the server
+</I>&gt;&gt;&gt;<i> periodically check the client is still alive and responding.
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i> * You block the connection main loop, say by implementing your own
+</I>&gt;&gt;&gt;<i> Consumer rather than using QueueingConsumer, and doing something 
+</I>&gt;&gt;&gt;<i> slow
+</I>&gt;&gt;&gt;<i> / expensive in Consumer.handleDelivery().
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i> Does this sound plausible? If not I would look for error 
+</I>&gt;&gt;&gt;<i> messages as
+</I>&gt;&gt;&gt;<i> above.
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i> Cheers, Simon
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;<i> _______________________________________________
+</I>&gt;&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>&gt;<i>
+</I>&gt;<i>
+</I></PRE>
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="007968.html">[rabbitmq-discuss] RabbitMQ 1.7.0 close the cnx when consumer don't ack deliveries during 30s
+</A></li>
+	<LI>Next message: <A HREF="007990.html">[rabbitmq-discuss] RabbitMQ 1.7.0 close the cnx when consumer don't ack deliveries during 30s
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#7989">[ date ]</a>
+              <a href="thread.html#7989">[ thread ]</a>
+              <a href="subject.html#7989">[ subject ]</a>
+              <a href="author.html#7989">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

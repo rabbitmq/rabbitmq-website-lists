@@ -1,0 +1,201 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Having some issues with RabbitMQ
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Having%20some%20issues%20with%20RabbitMQ&In-Reply-To=%3C4905999B-B266-4350-B431-C329CBBFE62A%40mozilla.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="008025.html">
+   <LINK REL="Next"  HREF="008028.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Having some issues with RabbitMQ</H1>
+    <B>Christian Legnitto</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Having%20some%20issues%20with%20RabbitMQ&In-Reply-To=%3C4905999B-B266-4350-B431-C329CBBFE62A%40mozilla.com%3E"
+       TITLE="[rabbitmq-discuss] Having some issues with RabbitMQ">clegnitto at mozilla.com
+       </A><BR>
+    <I>Sun Jul 18 01:31:45 BST 2010</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="008025.html">[rabbitmq-discuss] Having some issues with RabbitMQ
+</A></li>
+        <LI>Next message: <A HREF="008028.html">[rabbitmq-discuss] Having some issues with RabbitMQ
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#8026">[ date ]</a>
+              <a href="thread.html#8026">[ thread ]</a>
+              <a href="subject.html#8026">[ subject ]</a>
+              <a href="author.html#8026">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Thanks Matthew, comments inline.
+
+On Jul 17, 2010, at 4:14 PM, Matthew Sackman wrote:
+
+&gt;<i> Hi Christian,
+</I>&gt;<i> 
+</I>&gt;<i> On Sat, Jul 17, 2010 at 02:54:11PM -0700, Christian Legnitto wrote:
+</I>&gt;&gt;<i> <A HREF="http://bit.ly/9P3IEX">http://bit.ly/9P3IEX</A>
+</I>&gt;<i> 
+</I>&gt;<i> I replied on your blog with (mostly) the following, but it's easier to
+</I>&gt;<i> keep the discussion on the mailing list.
+</I>&gt;<i> 
+</I>&gt;<i> The new persister branch is regularly merged into from the current
+</I>&gt;<i> default branch. Whilst it is correct to say it is currently based off
+</I>&gt;<i> the 1.8 release, that&#8217;s only true in the sense of the above. The new
+</I>&gt;<i> persister stores messages in a completely different format from the old,
+</I>&gt;<i> and there is currently no tool to allow upgrading from a released
+</I>&gt;<i> version of Rabbit to the new persister without losing persistent
+</I>&gt;<i> messages.
+</I>&gt;<i> 
+</I>&gt;<i> The issue you ran into when going 1.7 to 1.8 is subtly different. Whilst
+</I>&gt;<i> both use the old persister, both the on-disk format of the messages when
+</I>&gt;<i> they are written to disk, and a database schema changed, again,
+</I>&gt;<i> resulting in no state-maintaining upgrade path. To date we have never
+</I>&gt;<i> produced a tool which can do upgrades maintaining state when database
+</I>&gt;<i> schema or on-disk formats have changed.
+</I>
+Right, I understand this. I eventually made sure to delete the entire /var/db/rabbitmq (?) directory when changing versions...I didn't care about the messages in there anyway. I'm saying even after clearing out the data it didn't seem to be using the new persister (or, the broker behavior looked the same).
+
+
+&gt;<i> You talk about users creating queues. I think that what you want is for
+</I>&gt;<i> all users to use queues which have server-generated names, thus you
+</I>&gt;<i> guarantee they are private, and you want to declare them &#8220;exclusive&#8221;,
+</I>&gt;<i> which means that when the connection that created the queue disappears,
+</I>&gt;<i> the queue itself (and any bindings to the queue) also automatically get
+</I>&gt;<i> deleted.
+</I>&gt;<i> 
+</I>&gt;<i> I quote this text from
+</I>&gt;<i> <A HREF="http://www.rabbitmq.com/admin-guide.html#access-control:">http://www.rabbitmq.com/admin-guide.html#access-control:</A>
+</I>&gt;<i> 
+</I>&gt;<i> &#8220;Some AMQP operations can create resources with server-generated names.
+</I>&gt;<i> Every user has configure, write and read permissions for such resources.
+</I>&gt;<i> However, the names are strong and not discoverable as part of the
+</I>&gt;<i> protocol, only through management functionality. Therefore these
+</I>&gt;<i> resources are in effect private to the user unless they choose to
+</I>&gt;<i> dilvuge their names to other users.&#8221;
+</I>&gt;<i> 
+</I>&gt;<i> Thus I think that if you force users to create server-named queues, you
+</I>&gt;<i> don&#8217;t need to grant any write privileges to your public user. It&#8217;ll need
+</I>&gt;<i> read access to the exchange to create the binding, and it should
+</I>&gt;<i> automatically have write access to create the binding to the private
+</I>&gt;<i> queues. If this doesn&#8217;t work please let us know.
+</I>
+
+I saw that and I'm not sure that is what I want. There will be users creating queues with scripts running locally on laptops and such. With your suggestion I believe this would happen:
+
+	1. User has a local script &quot;foo.py&quot; running on a laptop, which connects (&quot;connection1&quot;), gets a queue with a server-defined name (call it &quot;queue1&quot;) and reads messages
+	2. User goes to a meeting and the laptop sleeps, causing RabbitMQ to close connection1
+	3. User comes back, foo.py is running but has thrown an exception (or perhaps is listening on a dead connection, not sure what happens here)
+	4. User restarts foo.py, getting a new connection (&quot;connection2&quot;) to a new server-generated queue (&quot;queue2&quot;)
+	5. All messages sent between the closing of connection1 and creation of connection2 never make it into queue2, so foo.py possibly missed a bunch of messages
+
+If I am mistaken, please correct me..this is all new :-)
+
+What I want:
+
+	1. User has a local script &quot;foo.py&quot; running on a laptop, which connects (&quot;connection1&quot;), gets a queue with a a script-defined unique name (call it &quot;queue1&quot;) and reads messages
+	2. User goes to a meeting and the laptop sleeps, causing RabbitMQ to close connection1
+	3. User comes back, foo.py is running but has thrown an exception (or perhaps is listening on a dead connection, not sure what happens here)
+	4. User restarts foo.py, getting a new connection (&quot;connection2&quot;) and connecting to the existing queue1, which has been queueing messages while connection1 has been closed
+	5. foo.py can choose to empty queue1 before processing (if it is the sort of script that doesn't maintain state) or can choose to process the &quot;old&quot; messages
+
+So, if the server takes care of creating the queue, there is no way for the client to tell it to reconnect when it comes back (and no queue will be there anyway as the server has cleared it). Creating a named queue takes write permission, correct? If so that means my public user could send (possibly nefarious) messages in for others to consume, correct? Is this use-case a non-starter with the current permissions system? Like I said, this appeared to work with 1.7 with read-only access for the public user.
+
+
+&gt;<i> The 1.8 semantic changes concern what happens when you *re*declare a
+</I>&gt;<i> queue. Previously, if the queue already existed and you redeclare it,
+</I>&gt;<i> but with different attributes, it would still come back with an OK
+</I>&gt;<i> result. This is misleading because it could lead the user to think that
+</I>&gt;<i> a queue had been created with the specified attributes when in fact it
+</I>&gt;<i> has not. Thus now, you must ensure you redeclare with the same
+</I>&gt;<i> attributes as created the queue otherwise the redeclaration will fail
+</I>&gt;<i> and close the channel. Full details can be found in the lower half of
+</I>&gt;<i> <A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-announce/2010-June/000025.html">http://lists.rabbitmq.com/pipermail/rabbitmq-announce/2010-June/000025.html</A>
+</I>
+Ok, I was aware of this because I had hit it in testing :-). I guess before it would silently just use the previous/first declaration and now it returns an error? This is fine, as my usecase is there are no changes between connection1 and connection2 above (of course they could change the attributes and name it something else if needed)
+
+&gt;<i> 
+</I>&gt;<i> I am very curious about you managing to get the new persister to crash.
+</I>&gt;<i> Could you provide the rabbit logs (or the end of the logs) which should
+</I>&gt;<i> show some sort of stack trace? The new persister just *should not*
+</I>&gt;<i> crash.
+</I>
+It doesn't actually crash (bad choice of words on my part). The whole server is hung from the standpoint of any client I can use (python mainly). The BQL client won't even connect or give me a prompt at that point, it just hangs. amqp-utils (ruby, but may use the same lib as python) hangs and doesn't let me do anything. I end up stopping the server, clearing the data directory, and restarting it (which clearly wouldn't work in production). FWIW I got the same behavior with the old persister, which is why I thought I perhaps wasn't turning the new one on even though I am using the branch.
+
+
+&gt;<i> One thing that might be happening is that Rabbit is raising flow
+</I>&gt;<i> control, to request that publishers stop sending further messages to
+</I>&gt;<i> Rabbit &#8211; even with the new persister this can happen sometimes to allow
+</I>&gt;<i> disks to catch up, but this tends to only be necessary at high data
+</I>&gt;<i> rates. The client must respond with a flow_ok message to the broker to
+</I>&gt;<i> confirm it understands the flow control, and it must then not send any
+</I>&gt;<i> further messages &#8211; this is usually handled by the AMQP client library as
+</I>&gt;<i> it just makes any subsequent publishes block &#8211; until it receives a
+</I>&gt;<i> further flow control message from the broker, informing it it can
+</I>&gt;<i> resume. Now I notice you&#8217;re using a python client, and they have
+</I>&gt;<i> historically not supported flow control, which can lead to Rabbit
+</I>&gt;<i> forcibly disconnecting clients that do not respond appropriately to the
+</I>&gt;<i> flow control messages. This may crash a badly written client, but it
+</I>&gt;<i> should not crash the broker itself.
+</I>
+Yeah, I saw that flow control is generally not supported by the python libs (though I see <A HREF="http://gist.github.com/399282">http://gist.github.com/399282</A>), but I'm not sure I would have hit it with ~30 msgs per second going to 10 queues.
+The fact that the BQL plugin stopped working was suspect. I'm not sure how that's written though, but I assumed it used the erlang client and would allow me to clear queues and get everything unblocked. So even though it isn't a crash, the behavior is the same....I can't read anything, publish anything, or clear queues to unblock, via carrot (python), amqp-utils (ruby), and the BQL plugin (erlang I guess). Perhaps all the libs I am using to interact with the broker barf with flow control?
+
+I also notice the status plugin says &quot;memory (used/available) = 1498MB / 810MB&quot; with the new persister...is that expected? I thought that it would always stay under the max and just flush to disk. Is my VM too wimpy?
+
+
+&gt;<i> You have a very interesting use case, and there is absolutely nothing
+</I>&gt;<i> about it that shouldn&#8217;t work perfectly well with RabbitMQ.
+</I>
+Whew, that's good to hear. There may be some administration-type stuff that moves us off Rabbit, but I am enjoying working with it on the prototype system in the meantime and would love to get it solid for us.
+
+Thanks again for the quick and detailed reply!
+
+Christian
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="008025.html">[rabbitmq-discuss] Having some issues with RabbitMQ
+</A></li>
+	<LI>Next message: <A HREF="008028.html">[rabbitmq-discuss] Having some issues with RabbitMQ
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#8026">[ date ]</a>
+              <a href="thread.html#8026">[ thread ]</a>
+              <a href="subject.html#8026">[ subject ]</a>
+              <a href="author.html#8026">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,129 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Growing Memory Use and Queues
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Growing%20Memory%20Use%20and%20Queues&In-Reply-To=%3C9c01f9bb-548d-4153-8bb0-0962ebcc2553%40googlegroups.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="026518.html">
+   <LINK REL="Next"  HREF="026515.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Growing Memory Use and Queues</H1>
+    <B>Ilya Volodarsky</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Growing%20Memory%20Use%20and%20Queues&In-Reply-To=%3C9c01f9bb-548d-4153-8bb0-0962ebcc2553%40googlegroups.com%3E"
+       TITLE="[rabbitmq-discuss] Growing Memory Use and Queues">ilya at segment.io
+       </A><BR>
+    <I>Wed Apr 17 20:18:45 BST 2013</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="026518.html">[rabbitmq-discuss] Growing Memory Use and Queues
+</A></li>
+        <LI>Next message: <A HREF="026515.html">[rabbitmq-discuss] Handling server connection failures
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#26530">[ date ]</a>
+              <a href="thread.html#26530">[ thread ]</a>
+              <a href="subject.html#26530">[ subject ]</a>
+              <a href="author.html#26530">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Looking more through the queues, it looks like the queue memory sum adds up 
+based on the most active queues. 
+
+The more the queues grow in size, the more memory they take up - which 
+makes sense. The problem is that erlang isn't properly reclaiming that 
+memory once it is no longer used. I checked out the memory consumption for 
+all the queues.
+
+The top culprits (sorted by memory).
+
+25152048
+25151848
+21038056
+21038016
+21038016
+19373624
+19373584
+19373584
+
+None of these queues have any queued messages at all really, though most of 
+them have had queued messages at one time or another in the past. 
+
+The funny thing is, after running the command a second time, many of those 
+queues had dropped back to normal levels, or significantly decreased. In 
+particular, one went from 24mb to 600K. It seems like some of them are at 
+least *trying* to garbage collect.
+
+I'm also seeing queues that have been heavily used in the past, but haven't 
+had any data going through them for months. One is at 12.8 MB and another 
+at 6.3 MB. This seems to indicate that garbage collection isnt happening 
+for now-inactive queues over long periods of time.
+
+It seems like a memory leak or bug in garbage collection. Looking at the 
+changelog for the versions of RMQ I don't see anything super relevant that 
+would fix by updating to 3.0.4.
+
+Having fewer queues will probably help things, seems to me like a deeper 
+problem with rabbitmq though?
+
+On Tuesday, April 16, 2013 12:53:06 PM UTC-4, Ilya Volodarsky wrote:
+&gt;<i>
+</I>&gt;<i> We're having some strange memory problems in our rabbit that looks like 
+</I>&gt;<i> it's attributed to our queues. We're running Rabbit 3.0.1 in production, 
+</I>&gt;<i> here's the management plugin overview: <A HREF="http://cl.ly/image/0z25241k320Q">http://cl.ly/image/0z25241k320Q</A>
+</I>&gt;<i>
+</I>&gt;<i> As you can see, we have almost no messages queued, but the server is using 
+</I>&gt;<i> 5.7GB of active memory. Here's the memory breakdown of the same node: 
+</I>&gt;<i> <A HREF="http://cl.ly/image/03381l2M3v2p">http://cl.ly/image/03381l2M3v2p</A>
+</I>&gt;<i>
+</I>&gt;<i> The broker claims to be using 4.8 GB to store the 4454 queues. That's 
+</I>&gt;<i> strange because most of the queues claim to be using 14kb - 23kb, which 
+</I>&gt;<i> AFAIK, is the in the correct range for an idle queue. An average of 20kb 
+</I>&gt;<i> per queue * 4500 queues = 90 MB, not 4800 MB (53 times bigger). 
+</I>&gt;<i>
+</I>&gt;<i> Here's the JSON description of a queue from the /queues call:
+</I>&gt;<i>
+</I>&gt;<i> {&quot;memory&quot;:14624,&quot;idle_since&quot;:&quot;2013-04-15 
+</I>&gt;<i> 22:45:20&quot;,&quot;policy&quot;:&quot;&quot;,&quot;exclusive_consumer_tag&quot;:&quot;&quot;,&quot;messages_ready&quot;:0,&quot;messages_unacknowledged&quot;:0,&quot;messages&quot;:0,&quot;consumers&quot;:4,&quot;active_consumers&quot;:4,&quot;backing_queue_status&quot;:{&quot;q1&quot;:0,&quot;q2&quot;:0,&quot;delta&quot;:[&quot;delta&quot;,&quot;undefined&quot;,0,&quot;undefined&quot;],&quot;q3&quot;:0,&quot;q4&quot;:0,&quot;len&quot;:0,&quot;pending_acks&quot;:0,&quot;target_ram_count&quot;:0,&quot;ram_msg_count&quot;:0,&quot;ram_ack_count&quot;:0,&quot;next_seq_id&quot;:0,&quot;persistent_count&quot;:0,&quot;avg_ingress_rate&quot;:0.0,&quot;avg_egress_rate&quot;:0.0,&quot;avg_ack_ingress_rate&quot;:0.0,&quot;avg_ack_egress_rate&quot;:0.0},&quot;messages_details&quot;:{&quot;rate&quot;:0,&quot;interval&quot;:90165823981,&quot;last_event&quot;:1366065920939},&quot;messages_ready_details&quot;:{&quot;rate&quot;:0,&quot;interval&quot;:90165823981,&quot;last_event&quot;:1366065920939},&quot;messages_unacknowledged_details&quot;:{&quot;rate&quot;:0,&quot;interval&quot;:90165823981,&quot;last_event&quot;:1366065920939},&quot;name&quot;:&quot;Ingestion.1899vw88el&quot;,&quot;vhost&quot;:&quot;/segment&quot;,&quot;durable&quot;:true,&quot;auto_delete&quot;:false,&quot;arguments&quot;:{},&quot;node&quot;:&quot;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at rabbit2</A>&quot;}
+</I>&gt;<i>
+</I>&gt;<i> A few things to note: we have 4 servers subscribing to every queue, and 
+</I>&gt;<i> because of the RMQ client (node-amqp) we're using, it creates a channel per 
+</I>&gt;<i> subscription. I realize that's not ideal and we'll be fixing the client to 
+</I>&gt;<i> make multiple subscriptions per channel, but either way, the broker reports 
+</I>&gt;<i> only 350 MB of the memory use coming from the connections vs. 4.8 GB for 
+</I>&gt;<i> queues. 
+</I>&gt;<i>
+</I>&gt;<i> The broker has also been up for 76 days without downtime, so maybe there's 
+</I>&gt;<i> some kind of memory leak? We're seeing the memory go up over time. 
+</I>&gt;<i>
+</I>&gt;<i> Thanks!
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20130417/40ef0c05/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20130417/40ef0c05/attachment.htm</A>&gt;
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="026518.html">[rabbitmq-discuss] Growing Memory Use and Queues
+</A></li>
+	<LI>Next message: <A HREF="026515.html">[rabbitmq-discuss] Handling server connection failures
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#26530">[ date ]</a>
+              <a href="thread.html#26530">[ thread ]</a>
+              <a href="subject.html#26530">[ subject ]</a>
+              <a href="author.html#26530">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

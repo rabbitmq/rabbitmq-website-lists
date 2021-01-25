@@ -1,0 +1,121 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Plugin startup behavior issue
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Plugin%20startup%20behavior%20issue&In-Reply-To=%3C53A079BB.6090209%40rabbitmq.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="036672.html">
+   <LINK REL="Next"  HREF="036688.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Plugin startup behavior issue</H1>
+    <B>Simon MacMullen</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Plugin%20startup%20behavior%20issue&In-Reply-To=%3C53A079BB.6090209%40rabbitmq.com%3E"
+       TITLE="[rabbitmq-discuss] Plugin startup behavior issue">simon at rabbitmq.com
+       </A><BR>
+    <I>Tue Jun 17 18:24:11 BST 2014</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="036672.html">[rabbitmq-discuss] Plugin startup behavior issue
+</A></li>
+        <LI>Next message: <A HREF="036688.html">[rabbitmq-discuss] Plugin startup behavior issue
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#36678">[ date ]</a>
+              <a href="thread.html#36678">[ thread ]</a>
+              <a href="subject.html#36678">[ subject ]</a>
+              <a href="author.html#36678">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>On 17/06/2014 3:29PM, Gavin M. Roy wrote:
+&gt;<i> As a first step I commented out (then removed) all logging from the plugin:
+</I>&gt;<i> Unfortunately I am still getting the same error. Any other ideas?
+</I>
+Ah.
+
+I have replicated the problem now, and it's weirder (and a bit more 
+awkward) than I initially thought.
+
+The problem is actually that your pgsql_listen_supervisor starts a 
+mirrored supervisor. This then writes its state to Mnesia before the 
+empty_db_check happens. The empty_db_check will only create the default 
+vhost etc if all tables are empty. Since the mirrored_supervisor table 
+is not, we have no vhost and the logger explodes on startup (but it's 
+not really anything to do with the logger, that's just the first thing 
+to hit the problem).
+
+So I wondered about working round this by setting 
+pgsql_listen_supervisor to require empty_db_check. That works fine... as 
+long as the management plugin isn't enabled. If it is, then 
+load_definitions wants empty_db_check after recovery, which is after 
+pgsql_listen_exchange and we have a cyclic dependency.
+
+Probably the right solution is for the empty_db_check to only check for 
+absent vhosts and exchanges. I'll file a bug for that.
+
+But how can you work around this? I don't think you can tweak the boot 
+steps required by your supervisor, but I think:
+
+diff --git a/src/pgsql_listen_sup.erl b/src/pgsql_listen_sup.erl
+index ea6a11f..fc293b0 100644
+--- a/src/pgsql_listen_sup.erl
++++ b/src/pgsql_listen_sup.erl
+@@ -25,6 +25,7 @@
+  -include_lib(&quot;rabbit_common/include/rabbit.hrl&quot;).
+
+  start_link() -&gt;
++    rabbit:maybe_insert_default_data(),
+     mirrored_supervisor:start_link(
+       {local, ?MODULE}, ?MODULE,
+       fun rabbit_misc:execute_mnesia_transaction/1,
+
+is a reasonable workaround.
+
+Cheers, Simon
+
+-- 
+Simon MacMullen
+RabbitMQ, Pivotal
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="036672.html">[rabbitmq-discuss] Plugin startup behavior issue
+</A></li>
+	<LI>Next message: <A HREF="036688.html">[rabbitmq-discuss] Plugin startup behavior issue
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#36678">[ date ]</a>
+              <a href="thread.html#36678">[ thread ]</a>
+              <a href="subject.html#36678">[ subject ]</a>
+              <a href="author.html#36678">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

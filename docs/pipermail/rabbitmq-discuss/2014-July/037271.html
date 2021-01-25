@@ -1,0 +1,175 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Confirmation IDs
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Confirmation%20IDs&In-Reply-To=%3C53D62522.4070202%40fsn.hu%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="037269.html">
+   <LINK REL="Next"  HREF="037272.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Confirmation IDs</H1>
+    <B>Nagy, Attila</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Confirmation%20IDs&In-Reply-To=%3C53D62522.4070202%40fsn.hu%3E"
+       TITLE="[rabbitmq-discuss] Confirmation IDs">bra at fsn.hu
+       </A><BR>
+    <I>Mon Jul 28 11:25:38 BST 2014</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="037269.html">[rabbitmq-discuss] Confirmation IDs
+</A></li>
+        <LI>Next message: <A HREF="037272.html">[rabbitmq-discuss] Loss of durable queues on HA sync
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#37271">[ date ]</a>
+              <a href="thread.html#37271">[ thread ]</a>
+              <a href="subject.html#37271">[ subject ]</a>
+              <a href="author.html#37271">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>On 07/27/14 21:30, Michael Klishin wrote:
+&gt;&gt;<i> Nope, from the record's identifier. I have an incoming task queue
+</I>&gt;&gt;<i> (for
+</I>&gt;&gt;<i> example a file which is appended with records, or a database which
+</I>&gt;&gt;<i> has
+</I>&gt;&gt;<i> rows), from which I can have a unique identifier which is always
+</I>&gt;&gt;<i> available and can directly point to the record.
+</I>&gt;&gt;<i> So counting (because publish doesn't give it back) the sent messages
+</I>&gt;&gt;<i> (and resetting the counter on reconnects) and maintaining
+</I>&gt;&gt;<i> counter-&gt;original message pointers are unnecessary indirections
+</I>&gt;&gt;<i> to
+</I>&gt;&gt;<i> achieve this functionality.
+</I>&gt;<i> Coming up with a good identifier for
+</I>&gt;<i> an arbitrary message is much harder and there's no consensus on what's the best
+</I>&gt;<i> way to do this.
+</I>&gt;<i> Especially if you try to come up with a solution for multiple protocols.
+</I>I see three approaches:
+1. let the server and the client -independently- count the messages and 
+use that (the current solution for AMQP in RabbitMQ)
+2. let the server count (or otherwise mark them with a unique ID) the 
+messages and return it to the client, so it will know about that
+3. let the client specify one
+
+I think the first has many problems, it's not flexible, the client has 
+to maintain translation tables and has to count exactly the same way as 
+the server.
+This way the counter must be implemented in the lowest level (in the 
+AMQP library, because it's the only one which knows about the connection 
+state, which can reset the counter) and higher levels need to sync with 
+that, otherwise they won't be able to tell which messages have been 
+confirmed.
+How do other libraries work in this regard?
+
+Pika's publisher example for example is both wrong (it will die on 
+reconnects due to the counter resetting) and ugly. :)
+<A HREF="http://pika.readthedocs.org/en/latest/examples/asynchronous_publisher_example.html">http://pika.readthedocs.org/en/latest/examples/asynchronous_publisher_example.html</A>
+
+I've just made a quick peek into the java client, so I may be wrong. I 
+guess it has these problems too, the counter can be queried 
+independently of the publishing, therefore it can't be used in multi 
+threaded environments (well, at least you have to open one channel per 
+thread, or put a lock on the client so there won't be a race condition 
+between querying the counter and sending the message).
+
+&gt;&gt;<i> But STOMP is not really an option if you want to do serious things
+</I>&gt;&gt;<i> in
+</I>&gt;&gt;<i> RabbitMQ. :)
+</I>&gt;<i> I can't see why not.
+</I>I've tried all STOMP brokers and finally stick with RabbitMQ, because it 
+was the best in many ways. But as in most of the other brokers, STOMP 
+offers a limited control on what the broker does in the background, 
+which is unsuitable for a lot of use cases.
+For example, for me serious means exact access control. And because 
+STOMP does abritrary bindings and declares, the clients can't have 
+strict policies, they will have always more power than it's needed with 
+AMQP.
+&gt;<i>
+</I>&gt;&gt;<i> Isn't it possible to add additional info in the ACK frame without
+</I>&gt;&gt;<i> breaking current clients?
+</I>&gt;&gt;<i> Or making it only appear when publish has a given pattern? (like
+</I>&gt;&gt;<i> with STOMP)
+</I>&gt;<i> For AMQP 0-9-1 clients, it is not. STOMP header values can be of arbitrary length and many
+</I>&gt;<i> headers are optional. AMQP 0-9-1 methods have a fixed (mandatory) attributes
+</I>&gt;<i> and only *some* have optional ones (&quot;extra arguments&quot;, as an attribute table).
+</I>&gt;<i> Unfortunately, basic.ack is not one of the latter group.
+</I>&gt;<i>
+</I>OK, then could you please consider the following?
+With basic.publish setting a custom header replaces the message's 
+confirm sequence number with the header's value (with type 
+compatibility, so this will be a limitation, only 64(?) bit unsigned 
+ints could be used) and will basic.ack with that.
+
+I mean this would be a normal publish (if confirms are turned on, it 
+will have the current counter as the sequence number):
+
+         properties  =  pika.BasicProperties(app_id='example-publisher',
+                                           headers={'key':'value'})
+
+         self._channel.basic_publish(self.EXCHANGE,  self.ROUTING_KEY,
+                                     message,
+                                     properties)
+         self._message_number  +=  1
+
+
+And this will have 123456 as its sequence number:
+
+         properties  =  pika.BasicProperties(app_id='example-publisher',
+                                           headers={'key':'value', 'X-RabbitMQ-confirm-seq':123456})
+
+         self._channel.basic_publish(self.EXCHANGE,  self.ROUTING_KEY,
+                                     message,
+                                     properties)
+
+The consequences are to be borne by the client.
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="037269.html">[rabbitmq-discuss] Confirmation IDs
+</A></li>
+	<LI>Next message: <A HREF="037272.html">[rabbitmq-discuss] Loss of durable queues on HA sync
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#37271">[ date ]</a>
+              <a href="thread.html#37271">[ thread ]</a>
+              <a href="subject.html#37271">[ subject ]</a>
+              <a href="author.html#37271">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

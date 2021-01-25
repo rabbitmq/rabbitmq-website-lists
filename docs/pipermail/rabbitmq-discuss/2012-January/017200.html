@@ -1,0 +1,209 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] EventMachine EM::Iterator being blocked with	rabbitmq rbc
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20EventMachine%20EM%3A%3AIterator%20being%20blocked%20with%0A%09rabbitmq%20rbc&In-Reply-To=%3CCAEBV8YQtZ2RnxoYCFsZAroeeerZ%2BHO0qu6z6vaOH_NjEPL33Aw%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="017203.html">
+   <LINK REL="Next"  HREF="017201.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] EventMachine EM::Iterator being blocked with	rabbitmq rbc</H1>
+    <B>Paul Cowan</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20EventMachine%20EM%3A%3AIterator%20being%20blocked%20with%0A%09rabbitmq%20rbc&In-Reply-To=%3CCAEBV8YQtZ2RnxoYCFsZAroeeerZ%2BHO0qu6z6vaOH_NjEPL33Aw%40mail.gmail.com%3E"
+       TITLE="[rabbitmq-discuss] EventMachine EM::Iterator being blocked with	rabbitmq rbc">dagda1 at scotalt.net
+       </A><BR>
+    <I>Fri Jan  6 07:30:31 GMT 2012</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="017203.html">[rabbitmq-discuss] Irregular service failure
+</A></li>
+        <LI>Next message: <A HREF="017201.html">[rabbitmq-discuss] EventMachine EM::Iterator being blocked with	rabbitmq rbc
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#17200">[ date ]</a>
+              <a href="thread.html#17200">[ thread ]</a>
+              <a href="subject.html#17200">[ subject ]</a>
+              <a href="author.html#17200">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>I am trying to set up RabbitMQ rpc. I want one queue to listen, and when it
+receives a message I want it to reply to an anonymous queue that is
+specified via the reply_to header with multiple messages.
+
+I have the following thor task creates a queue and then uses EM:Iterator to
+send a number of messages back to the queue specified with the replyt_to
+routing key:
+
+desc &quot;start_consumer&quot;, &quot;start the test consumer&quot;
+def start_consumer
+  conf = {
+    :host =&gt; &quot;localhost&quot;,
+    :user =&gt; &quot;guest&quot;,
+    :password =&gt; &quot;guest&quot;,
+    :vhost =&gt; &quot;/&quot;,
+    :logging =&gt; true,
+    :port =&gt; 5672
+  }
+
+  # n = 1
+
+  AMQP.start(conf) do |connection|
+
+    channel = AMQP::Channel.new(connection)
+
+    requests_queue = channel.queue(&quot;one&quot;)
+    requests_queue.purge
+
+    Signal.trap(&quot;INT&quot;) do
+      connection.close do
+        EM.stop{exit}
+      end
+    end
+
+    channel.prefetch(1)
+
+    requests_queue.subscribe(:ack =&gt; true) do |header, body|
+      url_search = MultiJson.decode(body)
+
+      EM::Iterator.new(0..5).each do |n, iter|
+        lead = get_lead(n, (n == 5))
+
+        puts &quot;about to publish #{n} message is_last = #{lead.is_last}
+at #{Time.now}&quot;
+
+        AMQP::Exchange.default.publish(
+                                        MultiJson.encode(lead),
+                                        :immediate =&gt; true,
+                                        :routing_key =&gt; header.reply_to,
+                                        :correlation_id =&gt; header.correlation_id
+                                      )
+
+        iter.next
+      end
+    end
+
+    puts &quot; [x] Awaiting RPC requests&quot;
+  end
+end
+
+The code beloow sends a message to the queue specified above and also
+creates a queue that will be used to listen for the messages sent by the
+EM::Iterator code. This queue's name is the routing key for the first
+queues reply_to header.
+
+def publish(urlSearch, routing_key)
+  EM.run do
+    corr_id = rand(10_000_000).to_s
+
+    requests ||= Hash.new
+
+    connection = AMQP.connect(:host =&gt; &quot;localhost&quot;)
+
+    callback_queue = AMQP::Channel.new(connection).queue(&quot;&quot;,
+:<i>exclusive =&gt; false)
+</I>
+    callback_queue.subscribe do |header, body|
+      lead = safe_json_decode(body)
+
+      puts &quot;company = #{lead[&quot;company&quot;]} is_last = #{lead[&quot;is_last&quot;]}
+received at #{Time.now}&quot;
+
+      if lead[&quot;is_last&quot;]
+        puts &quot;in exit&quot;
+        connection.close do
+          EM.stop{exit}
+        end
+      end
+    end
+
+    callback_queue.append_callback(:declare) do
+      AMQP::Exchange.default.publish(MultiJson.encode(urlSearch),
+:<i>routing_key =&gt; routing_key, :reply_to =&gt; callback_queue.name,
+</I>:<i>correlation_id =&gt; corr_id)
+</I>    end
+
+    puts &quot;initial message sent&quot;
+  end
+end
+
+The above code works as I want with one annoying exception. Something is
+blocking the EM::Iterator code from being executed asynchronously. It is
+only after the EM::Iterator code has completed that the messages are sent.
+I want the messages to be sent asynchronously and handled by the anonymous
+queue after each iteration. At the moment, it is only after the
+EM::Iterator code has completed its last iteration that all the messages
+are sent.
+
+Can anyone see what I am doing wrong or suggest a different approach? I
+tried EM::defer and had the same behaviour.
+
+Thanks
+
+Paul
+Cheers
+
+Paul Cowan
+
+Cutting-Edge Solutions (Scotland)
+
+<A HREF="http://thesoftwaresimpleton.com/">http://thesoftwaresimpleton.com/</A>
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20120106/6e726c86/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20120106/6e726c86/attachment.htm</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="017203.html">[rabbitmq-discuss] Irregular service failure
+</A></li>
+	<LI>Next message: <A HREF="017201.html">[rabbitmq-discuss] EventMachine EM::Iterator being blocked with	rabbitmq rbc
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#17200">[ date ]</a>
+              <a href="thread.html#17200">[ thread ]</a>
+              <a href="subject.html#17200">[ subject ]</a>
+              <a href="author.html#17200">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

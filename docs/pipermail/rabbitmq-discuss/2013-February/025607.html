@@ -1,0 +1,248 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Very slow get (dequeue) on node B if shovel on node A is configured with {ack_mode, on_confirm}
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Very%20slow%20get%20%28dequeue%29%20on%20node%20B%20if%20shovel%0A%20on%20node%20A%20is%20configured%20with%20%7Back_mode%2C%20on_confirm%7D&In-Reply-To=%3C512643E5.8050809%40rabbitmq.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="025605.html">
+   <LINK REL="Next"  HREF="025613.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Very slow get (dequeue) on node B if shovel on node A is configured with {ack_mode, on_confirm}</H1>
+    <B>Simon MacMullen</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Very%20slow%20get%20%28dequeue%29%20on%20node%20B%20if%20shovel%0A%20on%20node%20A%20is%20configured%20with%20%7Back_mode%2C%20on_confirm%7D&In-Reply-To=%3C512643E5.8050809%40rabbitmq.com%3E"
+       TITLE="[rabbitmq-discuss] Very slow get (dequeue) on node B if shovel on node A is configured with {ack_mode, on_confirm}">simon at rabbitmq.com
+       </A><BR>
+    <I>Thu Feb 21 15:57:25 GMT 2013</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="025605.html">[rabbitmq-discuss] Very slow get (dequeue) on node B if shovel on node A is configured with {ack_mode, on_confirm}
+</A></li>
+        <LI>Next message: <A HREF="025613.html">[rabbitmq-discuss] [SOLVED] Very slow get (dequeue) on node B if shovel on node A is configured with {ack_mode, on_confirm}
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#25607">[ date ]</a>
+              <a href="thread.html#25607">[ thread ]</a>
+              <a href="subject.html#25607">[ subject ]</a>
+              <a href="author.html#25607">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi. If the shovel is on node A then {ack_mode, on_publish} is not 
+particularly safe - if the network connection goes down then you will 
+lose messages that were on the wire.
+
+If the shovel were to be running on node B then {ack_mode, on_publish} 
+would be safer, as it would tolerate network failures (but not a crash 
+at node B).
+
+on_confirm would still be better. Of course, since you're consuming in 
+autoack mode in the php script you can lose messages there anyway...
+
+You didn't say which version of RabbitMQ you were running. The script 
+seems perfectly reasonable (I assume that you are not doing anything 
+AMQPish in the part elided by &quot;/* do stuff here, count messages, run mps 
+stats etc... */&quot;).
+
+So it's a bit of a puzzle. If confirms + persistence are so much slower 
+than persistence alone, then I wonder if somehow you have a machine that 
+fsyncs very slowly, since that's the primary difference in what node B 
+will be doing.
+
+Cheers, Simon
+
+
+On 21/02/13 15:10, bratner bratner wrote:
+&gt;<i> Hi!
+</I>&gt;<i>
+</I>&gt;<i> Sorry for the long delay. I did some more tests and found a way to speed
+</I>&gt;<i> things up.
+</I>&gt;<i> After changing {ack_mode, on_confirm} to {ack_mode, on_publish} things
+</I>&gt;<i> started to work well.
+</I>&gt;<i> Which means that the speed of reading the messages from the queue NodeB
+</I>&gt;<i> was the speed they
+</I>&gt;<i> were published to the queue on NodeA.
+</I>&gt;<i>
+</I>&gt;<i> Before this change (when 'on_confirm' was set) messages where piling up
+</I>&gt;<i> in the queue on NodeB.
+</I>&gt;<i> So if i published 100 messages per sec into a queue on nodeA, the queue
+</I>&gt;<i> on nodeB would receive all of those and the queue on nodeA would be
+</I>&gt;<i> empty (as it should). But the PHP script on nodeB (below) would read
+</I>&gt;<i> something like 3-8 messages per sec and the rest (92-97 messages per
+</I>&gt;<i> sec) would keep piling up in the queue on nodeB.
+</I>&gt;<i> That is until i completely stopped writing new messages to the queue on
+</I>&gt;<i> nodeA. Then this script will read messages like crazy until the queue on
+</I>&gt;<i> nodeB was completely empty.
+</I>&gt;<i>
+</I>&gt;<i> So I left with a couple of questions. What is causing the write and the
+</I>&gt;<i> read to be so uneven with 'on_confirm' given that there no real
+</I>&gt;<i> resources problem? Is this a bug or a feature?
+</I>&gt;<i> How much reliability do I lose if i use 'on_publish' ? Is there a chance
+</I>&gt;<i> messages can just disappear with 'on_publish' ?
+</I>&gt;<i>
+</I>&gt;<i> Here is the outline of my php test reader, very simple:
+</I>&gt;<i>
+</I>&gt;<i> &lt;?php
+</I>&gt;<i> $connection = new AMQPConnection();
+</I>&gt;<i> $connection-&gt;setLogin(&quot;&lt;login_nodeb&gt;&quot;);
+</I>&gt;<i> $connection-&gt;setPassword(&quot;&lt;password_nodeb&quot;);
+</I>&gt;<i> $connection-&gt;setVhost(&quot;vhostB&quot;);
+</I>&gt;<i> $connection-&gt;connect();
+</I>&gt;<i>
+</I>&gt;<i> if (!$connection-&gt;isConnected()) {
+</I>&gt;<i>      die('Not connected :('. PHP_EOL);
+</I>&gt;<i> }
+</I>&gt;<i> $channel    = new AMQPChannel($connection);
+</I>&gt;<i> $queue      = new AMQPQueue($channel);
+</I>&gt;<i> $queue-&gt;setName('queueB');
+</I>&gt;<i>
+</I>&gt;<i> while(true) {
+</I>&gt;<i>          while($queue-&gt;get(AMQP_AUTOACK)) {
+</I>&gt;<i>             /* do stuff here, count messages, run mps stats etc... */
+</I>&gt;<i>          }
+</I>&gt;<i>          /* sleep some not to eat the whole cpu */
+</I>&gt;<i>          sleep(1);
+</I>&gt;<i> }
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> Thanks,
+</I>&gt;<i> Boris
+</I>&gt;<i>
+</I>&gt;<i> On Wed, Feb 13, 2013 at 5:52 PM, Simon MacMullen &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">simon at rabbitmq.com</A>
+</I>&gt;<i> &lt;mailto:<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">simon at rabbitmq.com</A>&gt;&gt; wrote:
+</I>&gt;<i>
+</I>&gt;<i>     That sounds very wrong.
+</I>&gt;<i>
+</I>&gt;<i>     Which version of RabbitMQ are you using? Can you post (a cut down
+</I>&gt;<i>     version of) your PHP script somewhere? (I have no familiarity with
+</I>&gt;<i>     the PHP client but I'd like to see what it's doing...)
+</I>&gt;<i>
+</I>&gt;<i>     Cheers, Simon
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>     On 13/02/13 14:33, bratner bratner wrote:
+</I>&gt;<i>
+</I>&gt;<i>         Hi!
+</I>&gt;<i>
+</I>&gt;<i>         My setup includes a rabbitmq-c application that publishes
+</I>&gt;<i>         messages on
+</I>&gt;<i>         node A.
+</I>&gt;<i>         The publishing rate is about 200mps, each message can be up to 10Kb.
+</I>&gt;<i>
+</I>&gt;<i>         Shovel (node A) is configured to move them to node B.
+</I>&gt;<i>         On node B i'm dequeuing the messages with a PHP test script with
+</I>&gt;<i>         $queue-&gt;get(AMQP_AUTOACK).
+</I>&gt;<i>         If i keep the publishing rate at 200mps then i can see that the
+</I>&gt;<i>         queue on
+</I>&gt;<i>         node A is empty and the Q on node B is
+</I>&gt;<i>         filling up. The read-rate of my test script is really low.
+</I>&gt;<i>
+</I>&gt;<i>         If i stop the publishing, 3-5 seconds later, my test script starts
+</I>&gt;<i>         reading like crazy until the queue on node B is empty.
+</I>&gt;<i>
+</I>&gt;<i>         Even If I slow down the publishing rate to 5mps , same is
+</I>&gt;<i>         happening ,
+</I>&gt;<i>         messages are piling up on node B until i dial down the pressure.
+</I>&gt;<i>
+</I>&gt;<i>         This problem disappears if I set ack_mode to on_publish or
+</I>&gt;<i>         no_ack. In
+</I>&gt;<i>         this case the reader script reads with the publishing speed.
+</I>&gt;<i>
+</I>&gt;<i>         My configuration :
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>         [
+</I>&gt;<i>         {rabbit, [
+</I>&gt;<i>         {log_levels, [{connection, error}]}
+</I>&gt;<i>         ]},
+</I>&gt;<i>         {rabbitmq_shovel,
+</I>&gt;<i>         [ {shovels, [ {messagemover, [
+</I>&gt;<i>         {sources, [
+</I>&gt;<i>         {broker, &quot;<A HREF="amqp://usera:pass@localhost/__vhosta">amqp://usera:pass@localhost/__vhosta</A>
+</I>&gt;<i>         &lt;<A HREF="amqp://cdrposter:4VkI6MKH@__localhost/sipout">amqp://cdrposter:4VkI6MKH@__localhost/sipout</A>&gt;&quot;},
+</I>&gt;<i>
+</I>&gt;<i>         {declarations, [
+</I>&gt;<i>         {'exchange.declare',[{__exchange, &lt;&lt;&quot;my-fanout&quot;&gt;&gt;},{type,
+</I>&gt;<i>         &lt;&lt;&quot;fanout&quot;&gt;&gt;},durable]},
+</I>&gt;<i>         {'queue.declare',[{queue,&lt;&lt;&quot;__messages&quot;&gt;&gt;},durable]},
+</I>&gt;<i>         {'queue.bind',[{exchange, &lt;&lt;&quot;my-fanout&quot;&gt;&gt;},{queue, &lt;&lt;&quot;messages&quot;&gt;&gt;}]}
+</I>&gt;<i>         ]}
+</I>&gt;<i>         ]},
+</I>&gt;<i>         {destinations, [
+</I>&gt;<i>         {brokers, [ &quot;<A HREF="amqp://userb:pass@nodeB/__vhostb">amqp://userb:pass@nodeB/__vhostb</A>
+</I>&gt;<i>         &lt;<A HREF="amqp://cdr_manager:Ci2XOb3b@__10.200.10.218/cdrs">amqp://cdr_manager:Ci2XOb3b@__10.200.10.218/cdrs</A>
+</I>&gt;<i>         &lt;<A HREF="http://cdr_manager:Ci2XOb3b@10.200.10.218/cdrs">http://cdr_manager:Ci2XOb3b@10.200.10.218/cdrs</A>&gt;&gt;&quot; ]},
+</I>&gt;<i>
+</I>&gt;<i>         {declarations, [
+</I>&gt;<i>         {'exchange.declare',[{__exchange, &lt;&lt;&quot;my-fanout&quot;&gt;&gt;},{type,
+</I>&gt;<i>         &lt;&lt;&quot;fanout&quot;&gt;&gt;},durable]},
+</I>&gt;<i>         {'queue.declare',[{queue,&lt;&lt;&quot;__messages&quot;&gt;&gt;},durable]},
+</I>&gt;<i>         {'queue.bind',[{exchange, &lt;&lt;&quot;my-fanout&quot;&gt;&gt;},{queue, &lt;&lt;&quot;messages&quot;&gt;&gt;}]}
+</I>&gt;<i>         ]}
+</I>&gt;<i>         ]},
+</I>&gt;<i>         {queue, &lt;&lt;&quot;messages&quot;&gt;&gt;},
+</I>&gt;<i>         {prefetch_count, 200},
+</I>&gt;<i>         {ack_mode, on_confirm},
+</I>&gt;<i>         {publish_properties, [{delivery_mode, 2}]},
+</I>&gt;<i>         {reconnect_delay, 5}
+</I>&gt;<i>         ]}
+</I>&gt;<i>         ]}
+</I>&gt;<i>         ]}
+</I>&gt;<i>         ].
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>         Thank you,
+</I>&gt;<i>         Boris.
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>         _________________________________________________
+</I>&gt;<i>         rabbitmq-discuss mailing list
+</I>&gt;<i>         <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.__rabbitmq.com</A>
+</I>&gt;<i>         &lt;mailto:<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>&gt;
+</I>&gt;<i>         <A HREF="https://lists.rabbitmq.com/__cgi-bin/mailman/listinfo/__rabbitmq-discuss">https://lists.rabbitmq.com/__cgi-bin/mailman/listinfo/__rabbitmq-discuss</A>
+</I>&gt;<i>         &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>&gt;
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>     --
+</I>&gt;<i>     Simon MacMullen
+</I>&gt;<i>     RabbitMQ, VMware
+</I>&gt;<i>
+</I>&gt;<i>
+</I>
+
+-- 
+Simon MacMullen
+RabbitMQ, VMware
+</PRE>
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="025605.html">[rabbitmq-discuss] Very slow get (dequeue) on node B if shovel on node A is configured with {ack_mode, on_confirm}
+</A></li>
+	<LI>Next message: <A HREF="025613.html">[rabbitmq-discuss] [SOLVED] Very slow get (dequeue) on node B if shovel on node A is configured with {ack_mode, on_confirm}
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#25607">[ date ]</a>
+              <a href="thread.html#25607">[ thread ]</a>
+              <a href="subject.html#25607">[ subject ]</a>
+              <a href="author.html#25607">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

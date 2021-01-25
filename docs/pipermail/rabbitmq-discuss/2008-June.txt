@@ -1,0 +1,4226 @@
+From chime at mu.dk  Sun Jun  1 09:54:45 2008
+From: chime at mu.dk (Michael Arnoldus)
+Date: Sun, 1 Jun 2008 10:54:45 +0200
+Subject: [rabbitmq-discuss] Unknown message in the SASL log
+References: <A6DB73A3-017C-47C1-987E-A464194653C4@wiinz.com>
+Message-ID: <2F797367-93DC-48E4-B259-F146761F86E6@mu.dk>
+
+Hi,
+
+Does anybody have any idea about what this means?
+
+> ==> /var/log/wiinz/rabbit-sasl.log <==
+>     Supervisor: {local,rabbit_tcp_client_sup}
+>     Context:    child_terminated
+>     Reason:     {badmatch,{error,enotconn}}
+>     Offender:   [{pid,<0.30410.1>},
+>                  {name,tcp_client},
+>                  {mfa,{rabbit_reader,start_link,[]}},
+>                  {restart_type,temporary},
+>                  {shutdown,brutal_kill},
+>                  {child_type,worker}]
+
+regards,
+
+Michael
+-------------- next part --------------
+A non-text attachment was scrubbed...
+Name: smime.p7s
+Type: application/pkcs7-signature
+Size: 1912 bytes
+Desc: not available
+Url : http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20080601/6916e040/attachment.bin 
+
+From matthias at lshift.net  Sun Jun  1 10:25:59 2008
+From: matthias at lshift.net (Matthias Radestock)
+Date: Sun, 01 Jun 2008 10:25:59 +0100
+Subject: [rabbitmq-discuss] Unknown message in the SASL log
+In-Reply-To: <2F797367-93DC-48E4-B259-F146761F86E6@mu.dk>
+References: <A6DB73A3-017C-47C1-987E-A464194653C4@wiinz.com>
+	<2F797367-93DC-48E4-B259-F146761F86E6@mu.dk>
+Message-ID: <48426B27.4030503@lshift.net>
+
+Michael,
+
+Michael Arnoldus wrote:
+> Does anybody have any idea about what this means?
+> 
+>> ==> /var/log/wiinz/rabbit-sasl.log <==
+>>     Supervisor: {local,rabbit_tcp_client_sup}
+>>     Context:    child_terminated
+>>     Reason:     {badmatch,{error,enotconn}}
+>>     Offender:   [{pid,<0.30410.1>},
+>>                  {name,tcp_client},
+>>                  {mfa,{rabbit_reader,start_link,[]}},
+>>                  {restart_type,temporary},
+>>                  {shutdown,brutal_kill},
+>>                  {child_type,worker}]
+
+The most likely cause is that the socket got closed by the client 
+(without following the AMQP shutdown protocol first) or a network 
+disconnect forced it to close.
+
+Usually this gets reported with a more obvious error message in the 
+rabbit.log, and results in a graceful exit of the reader process, but it 
+looks like we missed some cases. I have filed a bug to catch these.
+
+
+Matthias.
+
+
+
+From tonyg at lshift.net  Sun Jun  1 11:05:58 2008
+From: tonyg at lshift.net (Tony Garnock-Jones)
+Date: Sun, 01 Jun 2008 11:05:58 +0100
+Subject: [rabbitmq-discuss] Durable queues for STOMP broker
+In-Reply-To: <EC24AD2C-7F4C-4B63-8C0A-E5687F237BA3@soundcloud.com>
+References: <EC24AD2C-7F4C-4B63-8C0A-E5687F237BA3@soundcloud.com>
+Message-ID: <48427486.9000408@lshift.net>
+
+Hi Sean,
+
+Sean Treadway wrote:
+> Attached are 2 patches from my findings on how to expose some of the 
+> method parameters as STOMP headers.  They include the following changes:
+
+Thanks very much for these. They look good. I'll apply them.
+
+>  * expose 'passive', 'durable', 'auto-delete', 'exclusive' parameters of 
+> the AMQP 'queue.declare' method as STOMP headers in SUBSCRIBE
+
+Hmm, naming and interoperability. While we're still in "experimental" 
+status we can use any names we like, of course, but I'd be interested to 
+compare and contrast the names we choose for things like this with the 
+names other STOMP-supporting brokers use for similar features.
+
+Does anyone on the list have any comments around this area?
+
+On a related note, what do you think about trying to more generally 
+expose more of the AMQP functionality over STOMP? We could look at ways 
+of using the AMQP protocol definition to autogenerate the necessary 
+marshalling code, just as we do for other transport and protocol bindings.
+
+> I also found a bug in message persistence over server restarts in 
+> rabbitmq-1.3.0.
+
+Well spotted. As you mention, this doesn't affect the core broker, or 
+any AMQP-speaking clients; it's limited to other transports. Your patch 
+will no doubt make life easier for future other-transport writers :-)
+
+> Big thanks to you all at LShift for building this beautiful code.
+
+You're welcome! I take it you're using Ruby to interact with the broker 
+- have you tried any of the available Ruby AMQP clients out there? Can 
+you share with us what kind of thing you're doing with RabbitMQ?
+
+> Points I am unsure about are - the role 
+> of the 'passive' parameter to queue.declare,
+
+"passive" essentially checks that the queue exists without creating it. 
+If it doesn't exist, an error is signalled. I'll check to make sure the 
+behaviour of the STOMP adapter in this case is sensible.
+
+> whether or not to expose 
+> the 'nowait' parameter,
+
+Probably best not. Well, not until we run into a case where it's needed, 
+anyway - it's a bit of a nasty hack to work around the lack of 
+pipelining in AMQP.
+
+> whether or not to try and match ActiveMQ's STOMP 
+> header names or stick with the AMQP naming,
+
+This is a great question. I'd love to hear your thoughts on the subject, 
+not being familiar myself with any other broker-specific options and 
+headers.
+
+> interoperability of the 
+> properties patch for brokers such as HTTP and regression of the 
+> properties patch against AMQP messages with binary properties.
+
+It seems safe to me, since less information is discarded after your 
+patch than before.
+
+> Also, 
+> the STOMP spec gives no insight for queue deletion when a durable queue 
+> is no longer needed.  Any ideas for that one?
+
+Good point. I think we're probably pretty free to implement extensions 
+of our own in this area - how about a "DELETE" command? This touches on 
+my question above of how best to expose more of AMQP.
+
+Thanks again for the contribution,
+   Tony
+
+
+
+
+From glahiru at gmail.com  Sun Jun  1 16:11:59 2008
+From: glahiru at gmail.com (lahiru gunathilake)
+Date: Sun, 1 Jun 2008 20:41:59 +0530
+Subject: [rabbitmq-discuss] Problem running rabbit broker
+Message-ID: <72b4c7110806010811i1fb29cbw5b780a78329bd89d@mail.gmail.com>
+
+hi devs,
+
+I downloaded tarball of rabbit server and follow the installation guide.
+I've created a directory for MNESIA_BASE in /var/lib/rabbitmq/mnesia/ and
+left other default.
+But once I try to start the broker it gives me this error, and as a new user
+to RabbitMQ I have no idea about what Mnesia database is. In the
+installation guide it tells like this
+Defaults to /var/lib/rabbitmq/mnesia. Set this to the directory where Mnesia
+database files should be placed.
+
+But there's no instruction of placing database files in to that location. Do
+we need that to start the erlang broker ?
+
+can any body help me to start the broker and start playing with RabbitMQ.
+
+Thanks in advance
+
+Regards
+lahiru
+
+-- 
+East or West
+Mahindians are the
+Best... !
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20080601/3e34d12e/attachment.htm 
+
+From rabbitmq-discuss_efine at usa.net  Sun Jun  1 16:30:30 2008
+From: rabbitmq-discuss_efine at usa.net (Edwin Fine)
+Date: Sun, 1 Jun 2008 11:30:30 -0400
+Subject: [rabbitmq-discuss] Problem running rabbit broker
+In-Reply-To: <6c2563b20806010829u5270f4c7w27ae6e6027be576c@mail.gmail.com>
+References: <72b4c7110806010811i1fb29cbw5b780a78329bd89d@mail.gmail.com>
+	<6c2563b20806010829u5270f4c7w27ae6e6027be576c@mail.gmail.com>
+Message-ID: <6c2563b20806010830t469b0e30x6f157e38b439b802@mail.gmail.com>
+
+RabbitMQ will create the database files itself; you don't need to do
+anything besides ensure the directory is there with the appropriate
+privileges (i.e. it is writable for the process that starts RabbitMQ). More
+specifically, ensure that /var/lib/rabbitmq and all its subdirectories are
+writable by the process that starts RabbitMQ.
+
+However, you need to post more information to get effective help. Saying you
+got "this error" without posting the error message itself is not going to
+yield useful responses from the mailing list.
+
+Information you should post includes:
+
+   - How did you start the broker (exact command line)?
+   - Which operating system and version of Erlang are you using?
+   - What is in the rabbit logs (on Linux, /var/log/rabbitmq/rabbit.log and
+   rabbit-sasl.log)?
+   - Did you faithfully follow every step of the RabbitMQ installation
+   procedure?
+
+Take a look at http://www.catb.org/~esr/faqs/smart-questions.html<http://www.catb.org/%7Eesr/faqs/smart-questions.html>for
+more ideas.
+
+
+On Sun, Jun 1, 2008 at 11:11 AM, lahiru gunathilake <glahiru at gmail.com>
+wrote:
+
+> hi devs,
+>
+> I downloaded tarball of rabbit server and follow the installation guide.
+> I've created a directory for MNESIA_BASE in /var/lib/rabbitmq/mnesia/ and
+> left other default.
+> But once I try to start the broker it gives me this error, and as a new
+> user to RabbitMQ I have no idea about what Mnesia database is. In the
+> installation guide it tells like this
+> Defaults to /var/lib/rabbitmq/mnesia. Set this to the directory where
+> Mnesia database files should be placed.
+>
+> But there's no instruction of placing database files in to that location.
+> Do we need that to start the erlang broker ?
+>
+> can any body help me to start the broker and start playing with RabbitMQ.
+>
+> Thanks in advance
+>
+> Regards
+> lahiru
+>
+> --
+> East or West
+> Mahindians are the
+> Best... !
+> _______________________________________________
+> rabbitmq-discuss mailing list
+> rabbitmq-discuss at lists.rabbitmq.com
+> http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss
+>
+>
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20080601/5b14fec5/attachment.htm 
+
+From rabbitmq-discuss_efine at usa.net  Sun Jun  1 16:56:46 2008
+From: rabbitmq-discuss_efine at usa.net (Edwin Fine)
+Date: Sun, 1 Jun 2008 11:56:46 -0400
+Subject: [rabbitmq-discuss] Problem running rabbit broker
+In-Reply-To: <72b4c7110806010843p70f187f5xba6f911809b53888@mail.gmail.com>
+References: <72b4c7110806010811i1fb29cbw5b780a78329bd89d@mail.gmail.com>
+	<6c2563b20806010829u5270f4c7w27ae6e6027be576c@mail.gmail.com>
+	<72b4c7110806010843p70f187f5xba6f911809b53888@mail.gmail.com>
+Message-ID: <6c2563b20806010856u768ca188v7965af8b4ede0215@mail.gmail.com>
+
+Well, I think the error is pretty clear. You didn't ensure the
+/var/lib/rabbitmq directory and its subdirectories are writable by whichever
+user actually ran the rabbit broker:
+
+/rabbitmq-server: 47: *cannot create
+/var/log/rabbitmq/rabbit.log**.bak: Permission
+denied*
+{"init terminating in do_boot",{{nocatch,{error, *
+{cannot_log_to_file,"/var/log/rabbitmq/rabbit.log",eacces}*
+}},[{init,start_it,1},{init,start_em,1}]}}
+
+When you create directories as root, ensure that you set their mode
+appropriately so they are usable by non-root users. What I did to avoid this
+issue is as follows:
+
+   - Created a user rabbitmq, in a group rabbitmq
+   - Made all related directories to be owned by this user/group, and rwx by
+   the user/group
+   - Gave myself membership of the rabbitmq group
+
+e.g.
+
+# chown rabbitmq:rabbitmq /var/log/rabbitmq
+# chown rabbitmq:rabbitmq /var/lib/rabbitmq
+# chmod -R ug+rwx /var/log/rabbitmq
+# chmod -R ug+rwx /var/lib/rabbitmq
+# usermod -G rabbitmq iahiru
+
+
+On Sun, Jun 1, 2008 at 11:43 AM, lahiru gunathilake <glahiru at gmail.com>
+wrote:
+
+> hi Edwin,
+>
+> I'm sorry I forgot to paste the error :-(
+>
+> On Sun, Jun 1, 2008 at 8:59 PM, Edwin Fine <emofine at gmail.com> wrote:
+>
+>> RabbitMQ will create the database files itself; you don't need to do
+>> anything besides ensure the directory is there with the appropriate
+>> privileges (i.e. it is writable for the process that starts RabbitMQ). More
+>> specifically, ensure that /var/lib/rabbitmq and all its subdirectories are
+>> writable by the process that starts RabbitMQ.
+>>
+>> However, you need to post more information to get effective help. Saying
+>> you got "this error" without posting the error message itself is not going
+>> to yield useful responses from the mailing list.
+>>
+>> Information you should post includes:Erlang (ASYNC_THREADS) (BEAM)
+>> emulator version 5.5.5
+>>
+>>
+>>    - How did you start the broker (exact command line)? by running the
+>>    script in sbin/rabbitmq-server
+>>    - Which operating system and version of Erlang are you using? I'm
+>>    using Ubunut 8.04  and Erlang (ASYNC_THREADS) (BEAM) emulator version 5.5.5
+>>
+>>    - What is in the rabbit logs (on Linux, /var/log/rabbitmq/rabbit.log
+>>    and rabbit-sasl.log)?
+>>
+>>  First I got this error
+> ===================================================================
+>  ./rabbitmq-server: 47: cannot create /var/log/rabbitmq/rabbit.log.bak:
+> Permission denied
+> {"init terminating in
+> do_boot",{{nocatch,{error,{cannot_log_to_file,"/var/log/rabbitmq/rabbit.log",eacces}}},[{init,start_it,1},{init,start_em,1}]}}
+> init terminating in do_boot ()
+>
+>
+>
+> Then I created a directory in /var/log/rabbitmq/ and ran the script as a
+> super user and then this error came
+> ==================================================================
+> {"init terminating in
+> do_boot",{undef,[{mnesia,system_info,[directory]},{rabbit_mnesia,ensure_mnesia_dir,0},{rabbit,start,0},{init,start_it,1},{init,start_em,1}]}}
+>
+> Crash dump was written to: erl_crash.dump
+> init terminating in do_boot ()
+> ==================================================================
+>  And I checked the log file and there were three logs but empty logs no
+> error messages at all.
+>
+>>
+>>
+>>    - Did you faithfully follow every step of the RabbitMQ installation
+>>    procedure? yes I think so :-)
+>>
+>>
+> Thanks
+> Lahiru
+>
+>> Take a look at http://www.catb.org/~esr/faqs/smart-questions.html<http://www.catb.org/%7Eesr/faqs/smart-questions.html>for more ideas.
+>>
+>>
+>> On Sun, Jun 1, 2008 at 11:11 AM, lahiru gunathilake <glahiru at gmail.com>
+>> wrote:
+>>
+>>> hi devs,
+>>>
+>>> I downloaded tarball of rabbit server and follow the installation guide.
+>>> I've created a directory for MNESIA_BASE in /var/lib/rabbitmq/mnesia/ and
+>>> left other default.
+>>> But once I try to start the broker it gives me this error, and as a new
+>>> user to RabbitMQ I have no idea about what Mnesia database is. In the
+>>> installation guide it tells like this
+>>> Defaults to /var/lib/rabbitmq/mnesia. Set this to the directory where
+>>> Mnesia database files should be placed.
+>>>
+>>> But there's no instruction of placing database files in to that location.
+>>> Do we need that to start the erlang broker ?
+>>>
+>>> can any body help me to start the broker and start playing with RabbitMQ.
+>>>
+>>> Thanks in advance
+>>>
+>>> Regards
+>>> lahiru
+>>>
+>>> --
+>>> East or West
+>>> Mahindians are the
+>>> Best... !
+>>> _______________________________________________
+>>> rabbitmq-discuss mailing list
+>>> rabbitmq-discuss at lists.rabbitmq.com
+>>> http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss
+>>>
+>>>
+>>
+>
+>
+> --
+> East or West
+> Mahindians are the
+> Best... !
+>
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20080601/76959043/attachment.htm 
+
+From mark.peleus at gmail.com  Sun Jun  1 16:59:48 2008
+From: mark.peleus at gmail.com (mark peleus)
+Date: Sun, 1 Jun 2008 18:59:48 +0300
+Subject: [rabbitmq-discuss] AMPQ vs XMPP and RabbitMQ vs ejabberd
+Message-ID: <599dd3e0806010859n273e2bbdxb518afdd8a1eeec2@mail.gmail.com>
+
+Hi,
+
+Can anyone please explain the differences between AMPQ and XMPP.
+Are both addressing the same problems?
+
+What are the differences between RabbitMQ and ejabberd?
+Both are written in erlang.
+Is the only difference is the protocol they support or are there more
+differences in quality, extensibility, license...?
+
+Thanks
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20080601/160358a0/attachment.htm 
+
+From rabbitmq-discuss_efine at usa.net  Sun Jun  1 17:12:47 2008
+From: rabbitmq-discuss_efine at usa.net (Edwin Fine)
+Date: Sun, 1 Jun 2008 12:12:47 -0400
+Subject: [rabbitmq-discuss] Problem running rabbit broker
+In-Reply-To: <6c2563b20806010856u768ca188v7965af8b4ede0215@mail.gmail.com>
+References: <72b4c7110806010811i1fb29cbw5b780a78329bd89d@mail.gmail.com>
+	<6c2563b20806010829u5270f4c7w27ae6e6027be576c@mail.gmail.com>
+	<72b4c7110806010843p70f187f5xba6f911809b53888@mail.gmail.com>
+	<6c2563b20806010856u768ca188v7965af8b4ede0215@mail.gmail.com>
+Message-ID: <6c2563b20806010912p76605ab6o714185a9acfb60e3@mail.gmail.com>
+
+Ah - a typo. What I should have written is
+
+# chown *-R *rabbitmq:rabbitmq /var/log/rabbitmq
+# chown *-R* rabbitmq:rabbitmq /var/lib/rabbitmq
+
+Another clue (which I missed on the first reading of your reply) is:
+
+{"init terminating in do_boot",{undef,[{mnesia ,system_info,[directory]},{*
+rabbit_mnesia,ensure_mnesia_dir,0*
+},{rabbit,start,0},{init,start_it,1},{init,start_em,1}]}}
+
+Looks as if the Mnesia directory was either not created or was created with
+the wrong ownership/permissions.
+If all else fails, my recommendations in your case are to rm -rf
+/var/lib/rabbitmq, re-create it with the proper permissions as mentioned in
+my previous email, ensure any other Rabbit directories have the right
+permissions,  and start the broker again.
+
+On Sun, Jun 1, 2008 at 11:56 AM, Edwin Fine <rabbitmq-discuss_efine at usa.net>
+wrote:
+
+> Well, I think the error is pretty clear. You didn't ensure the
+> /var/lib/rabbitmq directory and its subdirectories are writable by whichever
+> user actually ran the rabbit broker:
+>
+> /rabbitmq-server: 47: *cannot create /var/log/rabbitmq/rabbit.log**.bak: Permission
+> denied*
+> {"init terminating in do_boot",{{nocatch,{error, *
+> {cannot_log_to_file,"/var/log/rabbitmq/rabbit.log",eacces}*
+> }},[{init,start_it,1},{init,start_em,1}]}}
+>
+> When you create directories as root, ensure that you set their mode
+> appropriately so they are usable by non-root users. What I did to avoid this
+> issue is as follows:
+>
+>    - Created a user rabbitmq, in a group rabbitmq
+>    - Made all related directories to be owned by this user/group, and rwx
+>    by the user/group
+>    - Gave myself membership of the rabbitmq group
+>
+> e.g.
+>
+> # chown rabbitmq:rabbitmq /var/log/rabbitmq
+> # chown rabbitmq:rabbitmq /var/lib/rabbitmq
+> # chmod -R ug+rwx /var/log/rabbitmq
+> # chmod -R ug+rwx /var/lib/rabbitmq
+> # usermod -G rabbitmq iahiru
+>
+>
+>
+> On Sun, Jun 1, 2008 at 11:43 AM, lahiru gunathilake <glahiru at gmail.com>
+> wrote:
+>
+>> hi Edwin,
+>>
+>> I'm sorry I forgot to paste the error :-(
+>>
+>> On Sun, Jun 1, 2008 at 8:59 PM, Edwin Fine <emofine at gmail.com> wrote:
+>>
+>>> RabbitMQ will create the database files itself; you don't need to do
+>>> anything besides ensure the directory is there with the appropriate
+>>> privileges (i.e. it is writable for the process that starts RabbitMQ). More
+>>> specifically, ensure that /var/lib/rabbitmq and all its subdirectories are
+>>> writable by the process that starts RabbitMQ.
+>>>
+>>> However, you need to post more information to get effective help. Saying
+>>> you got "this error" without posting the error message itself is not going
+>>> to yield useful responses from the mailing list.
+>>>
+>>> Information you should post includes:Erlang (ASYNC_THREADS) (BEAM)
+>>> emulator version 5.5.5
+>>>
+>>>
+>>>    - How did you start the broker (exact command line)? by running the
+>>>    script in sbin/rabbitmq-server
+>>>    - Which operating system and version of Erlang are you using? I'm
+>>>    using Ubunut 8.04  and Erlang (ASYNC_THREADS) (BEAM) emulator version 5.5.5
+>>>
+>>>    - What is in the rabbit logs (on Linux, /var/log/rabbitmq/rabbit.log
+>>>    and rabbit-sasl.log)?
+>>>
+>>>  First I got this error
+>> ===================================================================
+>>  ./rabbitmq-server: 47: cannot create /var/log/rabbitmq/rabbit.log.bak:
+>> Permission denied
+>> {"init terminating in
+>> do_boot",{{nocatch,{error,{cannot_log_to_file,"/var/log/rabbitmq/rabbit.log",eacces}}},[{init,start_it,1},{init,start_em,1}]}}
+>> init terminating in do_boot ()
+>>
+>>
+>>
+>> Then I created a directory in /var/log/rabbitmq/ and ran the script as a
+>> super user and then this error came
+>> ==================================================================
+>> {"init terminating in
+>> do_boot",{undef,[{mnesia,system_info,[directory]},{rabbit_mnesia,ensure_mnesia_dir,0},{rabbit,start,0},{init,start_it,1},{init,start_em,1}]}}
+>>
+>> Crash dump was written to: erl_crash.dump
+>> init terminating in do_boot ()
+>> ==================================================================
+>>  And I checked the log file and there were three logs but empty logs no
+>> error messages at all.
+>>
+>>>
+>>>
+>>>    - Did you faithfully follow every step of the RabbitMQ installation
+>>>    procedure? yes I think so :-)
+>>>
+>>>
+>> Thanks
+>> Lahiru
+>>
+>>> Take a look at http://www.catb.org/~esr/faqs/smart-questions.html<http://www.catb.org/%7Eesr/faqs/smart-questions.html>for more ideas.
+>>>
+>>>
+>>> On Sun, Jun 1, 2008 at 11:11 AM, lahiru gunathilake <glahiru at gmail.com>
+>>> wrote:
+>>>
+>>>> hi devs,
+>>>>
+>>>> I downloaded tarball of rabbit server and follow the installation guide.
+>>>> I've created a directory for MNESIA_BASE in /var/lib/rabbitmq/mnesia/ and
+>>>> left other default.
+>>>> But once I try to start the broker it gives me this error, and as a new
+>>>> user to RabbitMQ I have no idea about what Mnesia database is. In the
+>>>> installation guide it tells like this
+>>>> Defaults to /var/lib/rabbitmq/mnesia. Set this to the directory where
+>>>> Mnesia database files should be placed.
+>>>>
+>>>> But there's no instruction of placing database files in to that
+>>>> location. Do we need that to start the erlang broker ?
+>>>>
+>>>> can any body help me to start the broker and start playing with
+>>>> RabbitMQ.
+>>>>
+>>>> Thanks in advance
+>>>>
+>>>> Regards
+>>>> lahiru
+>>>>
+>>>> --
+>>>> East or West
+>>>> Mahindians are the
+>>>> Best... !
+>>>> _______________________________________________
+>>>> rabbitmq-discuss mailing list
+>>>> rabbitmq-discuss at lists.rabbitmq.com
+>>>> http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss
+>>>>
+>>>>
+>>>
+>>
+>>
+>> --
+>> East or West
+>> Mahindians are the
+>> Best... !
+>>
+>
+>
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20080601/978526be/attachment.htm 
+
+From rabbitmq-discuss_efine at usa.net  Sun Jun  1 17:14:27 2008
+From: rabbitmq-discuss_efine at usa.net (Edwin Fine)
+Date: Sun, 1 Jun 2008 12:14:27 -0400
+Subject: [rabbitmq-discuss] Problem running rabbit broker
+In-Reply-To: <6c2563b20806010913y382006f9h42de19e08c88de42@mail.gmail.com>
+References: <72b4c7110806010811i1fb29cbw5b780a78329bd89d@mail.gmail.com>
+	<6c2563b20806010829u5270f4c7w27ae6e6027be576c@mail.gmail.com>
+	<72b4c7110806010843p70f187f5xba6f911809b53888@mail.gmail.com>
+	<6c2563b20806010856u768ca188v7965af8b4ede0215@mail.gmail.com>
+	<72b4c7110806010912p3f48d74dsc2e6d857159f8dcc@mail.gmail.com>
+	<6c2563b20806010913y382006f9h42de19e08c88de42@mail.gmail.com>
+Message-ID: <6c2563b20806010914o2891cfd4tdae0cd73a4d6b923@mail.gmail.com>
+
+Please see my last email.
+
+
+On Sun, Jun 1, 2008 at 12:12 PM, lahiru gunathilake <glahiru at gmail.com>
+wrote:
+
+> hi Edwin,
+>
+> On Sun, Jun 1, 2008 at 9:26 PM, Edwin Fine <rabbitmq-discuss_efine at usa.net>
+> wrote:
+>
+>> Well, I think the error is pretty clear. You didn't ensure the
+>> /var/lib/rabbitmq directory and its subdirectories are writable by whichever
+>> user actually ran the rabbit broker:
+>>
+>> /rabbitmq-server: 47: *cannot create /var/log/rabbitmq/rabbit.log**.bak: Permission
+>> denied*
+>> {"init terminating in do_boot",{{nocatch,{error, *
+>> {cannot_log_to_file,"/var/log/rabbitmq/rabbit.log",eacces}*
+>> }},[{init,start_it,1},{init,start_em,1}]}}
+>>
+> but why it give a core dump when I run it as a super user :-(
+>
+> lahiru
+>
+>>
+>> When you create directories as root, ensure that you set their mode
+>> appropriately so they are usable by non-root users. What I did to avoid this
+>> issue is as follows:
+>>
+>>    - Created a user rabbitmq, in a group rabbitmq
+>>    - Made all related directories to be owned by this user/group, and rwx
+>>    by the user/group
+>>    - Gave myself membership of the rabbitmq group
+>>
+>> e.g.
+>>
+>> # chown rabbitmq:rabbitmq /var/log/rabbitmq
+>> # chown rabbitmq:rabbitmq /var/lib/rabbitmq
+>> # chmod -R ug+rwx /var/log/rabbitmq
+>> # chmod -R ug+rwx /var/lib/rabbitmq
+>> # usermod -G rabbitmq iahiru
+>>
+>>
+>>
+>> On Sun, Jun 1, 2008 at 11:43 AM, lahiru gunathilake <glahiru at gmail.com>
+>> wrote:
+>>
+>>> hi Edwin,
+>>>
+>>> I'm sorry I forgot to paste the error :-(
+>>>
+>>> On Sun, Jun 1, 2008 at 8:59 PM, Edwin Fine <emofine at gmail.com> wrote:
+>>>
+>>>> RabbitMQ will create the database files itself; you don't need to do
+>>>> anything besides ensure the directory is there with the appropriate
+>>>> privileges (i.e. it is writable for the process that starts RabbitMQ). More
+>>>> specifically, ensure that /var/lib/rabbitmq and all its subdirectories are
+>>>> writable by the process that starts RabbitMQ.
+>>>>
+>>>> However, you need to post more information to get effective help. Saying
+>>>> you got "this error" without posting the error message itself is not going
+>>>> to yield useful responses from the mailing list.
+>>>>
+>>>> Information you should post includes:Erlang (ASYNC_THREADS) (BEAM)
+>>>> emulator version 5.5.5
+>>>>
+>>>>
+>>>>    - How did you start the broker (exact command line)? by running the
+>>>>    script in sbin/rabbitmq-server
+>>>>    - Which operating system and version of Erlang are you using? I'm
+>>>>    using Ubunut 8.04  and Erlang (ASYNC_THREADS) (BEAM) emulator version 5.5.5
+>>>>
+>>>>    - What is in the rabbit logs (on Linux, /var/log/rabbitmq/rabbit.log
+>>>>    and rabbit-sasl.log)?
+>>>>
+>>>>  First I got this error
+>>> ===================================================================
+>>>  ./rabbitmq-server: 47: cannot create /var/log/rabbitmq/rabbit.log.bak:
+>>> Permission denied
+>>> {"init terminating in
+>>> do_boot",{{nocatch,{error,{cannot_log_to_file,"/var/log/rabbitmq/rabbit.log",eacces}}},[{init,start_it,1},{init,start_em,1}]}}
+>>> init terminating in do_boot ()
+>>>
+>>>
+>>>
+>>> Then I created a directory in /var/log/rabbitmq/ and ran the script as a
+>>> super user and then this error came
+>>> ==================================================================
+>>> {"init terminating in
+>>> do_boot",{undef,[{mnesia,system_info,[directory]},{rabbit_mnesia,ensure_mnesia_dir,0},{rabbit,start,0},{init,start_it,1},{init,start_em,1}]}}
+>>>
+>>> Crash dump was written to: erl_crash.dump
+>>> init terminating in do_boot ()
+>>> ==================================================================
+>>>  And I checked the log file and there were three logs but empty logs no
+>>> error messages at all.
+>>>
+>>>>
+>>>>
+>>>>    - Did you faithfully follow every step of the RabbitMQ installation
+>>>>    procedure? yes I think so :-)
+>>>>
+>>>>
+>>> Thanks
+>>> Lahiru
+>>>
+>>>> Take a look at http://www.catb.org/~esr/faqs/smart-questions.html<http://www.catb.org/%7Eesr/faqs/smart-questions.html>for more ideas.
+>>>>
+>>>>
+>>>> On Sun, Jun 1, 2008 at 11:11 AM, lahiru gunathilake <glahiru at gmail.com>
+>>>> wrote:
+>>>>
+>>>>> hi devs,
+>>>>>
+>>>>> I downloaded tarball of rabbit server and follow the installation
+>>>>> guide. I've created a directory for MNESIA_BASE in /var/lib/rabbitmq/mnesia/
+>>>>> and left other default.
+>>>>> But once I try to start the broker it gives me this error, and as a new
+>>>>> user to RabbitMQ I have no idea about what Mnesia database is. In the
+>>>>> installation guide it tells like this
+>>>>> Defaults to /var/lib/rabbitmq/mnesia. Set this to the directory where
+>>>>> Mnesia database files should be placed.
+>>>>>
+>>>>> But there's no instruction of placing database files in to that
+>>>>> location. Do we need that to start the erlang broker ?
+>>>>>
+>>>>> can any body help me to start the broker and start playing with
+>>>>> RabbitMQ.
+>>>>>
+>>>>> Thanks in advance
+>>>>>
+>>>>> Regards
+>>>>> lahiru
+>>>>>
+>>>>> --
+>>>>> East or West
+>>>>> Mahindians are the
+>>>>> Best... !
+>>>>> _______________________________________________
+>>>>> rabbitmq-discuss mailing list
+>>>>> rabbitmq-discuss at lists.rabbitmq.com
+>>>>> http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss
+>>>>>
+>>>>>
+>>>>
+>>>
+>>>
+>>> --
+>>> East or West
+>>> Mahindians are the
+>>> Best... !
+>>>
+>>
+>>
+>
+>
+> --
+> East or West
+> Mahindians are the
+> Best... !
+>
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20080601/906490fc/attachment.htm 
+
+From alexis.richardson at cohesiveft.com  Sun Jun  1 17:17:50 2008
+From: alexis.richardson at cohesiveft.com (Alexis Richardson)
+Date: Sun, 1 Jun 2008 17:17:50 +0100
+Subject: [rabbitmq-discuss] AMPQ vs XMPP and RabbitMQ vs ejabberd
+In-Reply-To: <599dd3e0806010859n273e2bbdxb518afdd8a1eeec2@mail.gmail.com>
+References: <599dd3e0806010859n273e2bbdxb518afdd8a1eeec2@mail.gmail.com>
+Message-ID: <167204d20806010917r7c081e14wa57b7297a77893e4@mail.gmail.com>
+
+Mark
+
+This excellent blog post by Steve Jenson goes some way to addressing
+your question.
+
+http://saladwithsteve.com/2007/08/future-is-messaging.html
+
+AMQP is aimed at Business Messaging which means delivery semantics can
+be much more specific ("at least once", "exactly once", "publish to
+these subscribers only", "persist", "be durable").  This means that,
+as Steve points out, the notion of 'presence' is replaced by the more
+general notion of a subscription.  AMQP's model has routing exchanges
+and queues which can be composed into pretty much any messaging
+scenario.  Finally, AMQP is a binary protocol whereas XMPP is XML.
+
+All these characteristics make AMQP more fundamental in some sense.
+Really, it complements XMPP which is good at Instant Messaging.  The
+great thing about this is that large Instant Messaging infrastructures
+exist and are used by lots of people.  AMQP will be very good for
+cases where human-human messaging is only a part of the solution - for
+example business integration and reactive event monitoring.
+
+In terms of license and quality differences between ejabberd and
+RabbitMQ - well they are both open source.  RabbitMQ is MPL 1.1 and
+(iirc) ejabberd is GPL.  I think that because AMQP is more general and
+comprehensive than XMPP, it is arguably more 'extensible', and hence
+so is RabbitMQ, but you may find it easier to locate XMPP tools as it
+has been around for longer.  RabbitMQ is a high quality implementation
+whose users often report happiness with its stability.  That said,
+ejabberd has been around even longer and its scalability and
+manageability, is why we chose erlang for RabbitMQ :-)
+
+If you wish to choose between ejabberd or RabbitMQ, then ask yourself
+if you are solving an XMPP type of problem or an AMQP type of problem.
+ Many solutions could quite happily use both.  For example:
+http://blog.folknology.com/2008/05/31/reactored-my-packet-based-future-finally-emerges/
+
+Cheers,
+
+alexis
+
+
+
+
+On Sun, Jun 1, 2008 at 4:59 PM, mark peleus <mark.peleus at gmail.com> wrote:
+> Hi,
+>
+> Can anyone please explain the differences between AMPQ and XMPP.
+> Are both addressing the same problems?
+>
+> What are the differences between RabbitMQ and ejabberd?
+> Both are written in erlang.
+> Is the only difference is the protocol they support or are there more
+> differences in quality, extensibility, license...?
+>
+> Thanks
+>
+> _______________________________________________
+> rabbitmq-discuss mailing list
+> rabbitmq-discuss at lists.rabbitmq.com
+> http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss
+>
+>
+
+
+
+-- 
+Alexis Richardson
++44 20 7617 7339 (UK)
++44 77 9865 2911 (cell)
++1 650 206 2517 (US)
+
+
+
+From mark.peleus at gmail.com  Sun Jun  1 17:33:04 2008
+From: mark.peleus at gmail.com (mark peleus)
+Date: Sun, 1 Jun 2008 19:33:04 +0300
+Subject: [rabbitmq-discuss] AMPQ vs XMPP and RabbitMQ vs ejabberd
+In-Reply-To: <167204d20806010917r7c081e14wa57b7297a77893e4@mail.gmail.com>
+References: <599dd3e0806010859n273e2bbdxb518afdd8a1eeec2@mail.gmail.com>
+	<167204d20806010917r7c081e14wa57b7297a77893e4@mail.gmail.com>
+Message-ID: <599dd3e0806010933u315391f4vf5379de2159f8ee3@mail.gmail.com>
+
+Alexis
+Thank you for your detailed answer.
+
+Isn't pubsub implementation in ejabberd + a custom client can address:
+
+
+> AMQP is aimed at Business Messaging which means delivery semantics can
+> be much more specific ("at least once", "exactly once", "publish to
+> these subscribers only", "persist", "be durable")
+
+
+Does binary streams have any other advantage over xml other then smaller
+size?
+
+Is AMQP suitable for streaming video and audio?
+
+Can AMQP has something like http-bind (BOSH) implemented, letting web
+clients interact with the server.
+
+I've read the post about Reactor but didn't understand much.
+Any news about that?
+
+Mark
+
+
+
+
+
+On Sun, Jun 1, 2008 at 7:17 PM, Alexis Richardson <
+alexis.richardson at cohesiveft.com> wrote:
+
+> Mark
+>
+> This excellent blog post by Steve Jenson goes some way to addressing
+> your question.
+>
+> http://saladwithsteve.com/2007/08/future-is-messaging.html
+>
+> AMQP is aimed at Business Messaging which means delivery semantics can
+> be much more specific ("at least once", "exactly once", "publish to
+> these subscribers only", "persist", "be durable").  This means that,
+> as Steve points out, the notion of 'presence' is replaced by the more
+> general notion of a subscription.  AMQP's model has routing exchanges
+> and queues which can be composed into pretty much any messaging
+> scenario.  Finally, AMQP is a binary protocol whereas XMPP is XML.
+>
+> All these characteristics make AMQP more fundamental in some sense.
+> Really, it complements XMPP which is good at Instant Messaging.  The
+> great thing about this is that large Instant Messaging infrastructures
+> exist and are used by lots of people.  AMQP will be very good for
+> cases where human-human messaging is only a part of the solution - for
+> example business integration and reactive event monitoring.
+>
+> In terms of license and quality differences between ejabberd and
+> RabbitMQ - well they are both open source.  RabbitMQ is MPL 1.1 and
+> (iirc) ejabberd is GPL.  I think that because AMQP is more general and
+> comprehensive than XMPP, it is arguably more 'extensible', and hence
+> so is RabbitMQ, but you may find it easier to locate XMPP tools as it
+> has been around for longer.  RabbitMQ is a high quality implementation
+> whose users often report happiness with its stability.  That said,
+> ejabberd has been around even longer and its scalability and
+> manageability, is why we chose erlang for RabbitMQ :-)
+>
+> If you wish to choose between ejabberd or RabbitMQ, then ask yourself
+> if you are solving an XMPP type of problem or an AMQP type of problem.
+>  Many solutions could quite happily use both.  For example:
+>
+> http://blog.folknology.com/2008/05/31/reactored-my-packet-based-future-finally-emerges/
+>
+> Cheers,
+>
+> alexis
+>
+>
+>
+>
+> On Sun, Jun 1, 2008 at 4:59 PM, mark peleus <mark.peleus at gmail.com> wrote:
+> > Hi,
+> >
+> > Can anyone please explain the differences between AMPQ and XMPP.
+> > Are both addressing the same problems?
+> >
+> > What are the differences between RabbitMQ and ejabberd?
+> > Both are written in erlang.
+> > Is the only difference is the protocol they support or are there more
+> > differences in quality, extensibility, license...?
+> >
+> > Thanks
+> >
+> > _______________________________________________
+> > rabbitmq-discuss mailing list
+> > rabbitmq-discuss at lists.rabbitmq.com
+> > http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss
+> >
+> >
+>
+>
+>
+> --
+> Alexis Richardson
+> +44 20 7617 7339 (UK)
+> +44 77 9865 2911 (cell)
+> +1 650 206 2517 (US)
+>
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20080601/f689a0e2/attachment.htm 
+
+From alexis.richardson at cohesiveft.com  Sun Jun  1 17:48:27 2008
+From: alexis.richardson at cohesiveft.com (Alexis Richardson)
+Date: Sun, 1 Jun 2008 17:48:27 +0100
+Subject: [rabbitmq-discuss] AMPQ vs XMPP and RabbitMQ vs ejabberd
+In-Reply-To: <599dd3e0806010933u315391f4vf5379de2159f8ee3@mail.gmail.com>
+References: <599dd3e0806010859n273e2bbdxb518afdd8a1eeec2@mail.gmail.com>
+	<167204d20806010917r7c081e14wa57b7297a77893e4@mail.gmail.com>
+	<599dd3e0806010933u315391f4vf5379de2159f8ee3@mail.gmail.com>
+Message-ID: <167204d20806010948s1d9c3d67sa49a7f4bf00752d1@mail.gmail.com>
+
+Mark
+
+On Sun, Jun 1, 2008 at 5:33 PM, mark peleus <mark.peleus at gmail.com> wrote:
+> Alexis
+> Thank you for your detailed answer.
+
+Thank you for your interesting and timely question.
+
+
+> Isn't pubsub implementation in ejabberd + a custom client can address:
+
+Um, yes up to a point.  You *could* do pub-sub over many types of
+intermediary tech.   For example Twitter does a form of pubsub in a
+way that appears to critically involve a database tier.  The
+consquences of that decision are currently a debating point in the
+community...
+
+XMPP was not designed to do pubsub, it was designed to broadcast IMs
+and presence.  This is why the XEP extensions have been proposed.
+Those are new, and implemented in afaik one ejabberd implementation.
+For all I know they are implemented really well - to be clear: I
+*don't know*.
+
+That said, a useful question to ask is - for which pubsub scenarios,
+possibly involving ordering, queues, delivery guarantees, and
+availability or reliability guarantees, is AMQP a better tool than
+XMPP+XEP?
+
+
+>> AMQP is aimed at Business Messaging which means delivery semantics can
+>> be much more specific ("at least once", "exactly once", "publish to
+>> these subscribers only", "persist", "be durable")
+
+BTW implementing these semantics in a system that scales and is stable
+and manageable, is really not trivial :-)
+
+
+> Does binary streams have any other advantage over xml other then smaller
+> size?
+
+Parsing speed, and embeddability, are similar benefits of binary over XML.
+
+The notion of a *stream* is orthogonal and brings with it the notion
+of conversational durability.  There are some similarities between
+AMQP and SCTP, and bittorrent, in this regard.
+
+
+> Is AMQP suitable for streaming video and audio?
+
+Yes we have a demo on the RabbitMQ site.
+
+But to get carrier grade video streaming you'd want AMQP with smaller headers.
+
+
+> Can AMQP has something like http-bind (BOSH) implemented, letting web
+> clients interact with the server.
+
+There is a RabbitMQ client for HTTP and "AJAX" style coding.
+
+We would like more natural HTTP bindings - would you like to help?
+
+
+> I've read the post about Reactor but didn't understand much.
+> Any news about that?
+
+Well, I have cc'd the author...
+
+Cheers,
+
+alexis
+
+
+> Mark
+>
+>
+>
+>
+> On Sun, Jun 1, 2008 at 7:17 PM, Alexis Richardson
+> <alexis.richardson at cohesiveft.com> wrote:
+>>
+>> Mark
+>>
+>> This excellent blog post by Steve Jenson goes some way to addressing
+>> your question.
+>>
+>> http://saladwithsteve.com/2007/08/future-is-messaging.html
+>>
+>> AMQP is aimed at Business Messaging which means delivery semantics can
+>> be much more specific ("at least once", "exactly once", "publish to
+>> these subscribers only", "persist", "be durable").  This means that,
+>> as Steve points out, the notion of 'presence' is replaced by the more
+>> general notion of a subscription.  AMQP's model has routing exchanges
+>> and queues which can be composed into pretty much any messaging
+>> scenario.  Finally, AMQP is a binary protocol whereas XMPP is XML.
+>>
+>> All these characteristics make AMQP more fundamental in some sense.
+>> Really, it complements XMPP which is good at Instant Messaging.  The
+>> great thing about this is that large Instant Messaging infrastructures
+>> exist and are used by lots of people.  AMQP will be very good for
+>> cases where human-human messaging is only a part of the solution - for
+>> example business integration and reactive event monitoring.
+>>
+>> In terms of license and quality differences between ejabberd and
+>> RabbitMQ - well they are both open source.  RabbitMQ is MPL 1.1 and
+>> (iirc) ejabberd is GPL.  I think that because AMQP is more general and
+>> comprehensive than XMPP, it is arguably more 'extensible', and hence
+>> so is RabbitMQ, but you may find it easier to locate XMPP tools as it
+>> has been around for longer.  RabbitMQ is a high quality implementation
+>> whose users often report happiness with its stability.  That said,
+>> ejabberd has been around even longer and its scalability and
+>> manageability, is why we chose erlang for RabbitMQ :-)
+>>
+>> If you wish to choose between ejabberd or RabbitMQ, then ask yourself
+>> if you are solving an XMPP type of problem or an AMQP type of problem.
+>>  Many solutions could quite happily use both.  For example:
+>>
+>> http://blog.folknology.com/2008/05/31/reactored-my-packet-based-future-finally-emerges/
+>>
+>> Cheers,
+>>
+>> alexis
+>>
+>>
+>>
+>>
+>> On Sun, Jun 1, 2008 at 4:59 PM, mark peleus <mark.peleus at gmail.com> wrote:
+>> > Hi,
+>> >
+>> > Can anyone please explain the differences between AMPQ and XMPP.
+>> > Are both addressing the same problems?
+>> >
+>> > What are the differences between RabbitMQ and ejabberd?
+>> > Both are written in erlang.
+>> > Is the only difference is the protocol they support or are there more
+>> > differences in quality, extensibility, license...?
+>> >
+>> > Thanks
+>> >
+>> > _______________________________________________
+>> > rabbitmq-discuss mailing list
+>> > rabbitmq-discuss at lists.rabbitmq.com
+>> > http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss
+>> >
+>> >
+>>
+>>
+>>
+>> --
+>> Alexis Richardson
+>> +44 20 7617 7339 (UK)
+>> +44 77 9865 2911 (cell)
+>> +1 650 206 2517 (US)
+>
+>
+
+
+
+-- 
+Alexis Richardson
++44 20 7617 7339 (UK)
++44 77 9865 2911 (cell)
++1 650 206 2517 (US)
+
+
+
+From tonyg at lshift.net  Sun Jun  1 22:28:01 2008
+From: tonyg at lshift.net (Tony Garnock-Jones)
+Date: Sun, 01 Jun 2008 22:28:01 +0100
+Subject: [rabbitmq-discuss] Durable queues for STOMP broker
+In-Reply-To: <48427486.9000408@lshift.net>
+References: <EC24AD2C-7F4C-4B63-8C0A-E5687F237BA3@soundcloud.com>
+	<48427486.9000408@lshift.net>
+Message-ID: <48431461.3020707@lshift.net>
+
+Hi again Sean,
+
+Tony Garnock-Jones wrote:
+> Thanks very much for these. They look good. I'll apply them.
+
+The changes to the core broker will appear as part of the next broker 
+release. You'll probably have to maintain your patch manually until then.
+
+The changes to the STOMP adapter have been applied and are currently 
+live on http://hg.opensource.lshift.net/rabbitmq-stomp/.
+
+> "passive" essentially checks that the queue exists without creating it. 
+> If it doesn't exist, an error is signalled. I'll check to make sure the 
+> behaviour of the STOMP adapter in this case is sensible.
+
+I ran a couple of tests to make sure that this was working properly, and 
+sure enough there were some problems, which I've now fixed as part of 
+http://hg.opensource.lshift.net/rabbitmq-stomp/rev/19b67fadda0d.
+
+By the way, is it just me, or does the Ruby STOMP adapter get very 
+confused when the socket closes underneath it? I see fairly consistent 
+behaviour of 100% CPU usage, with the Ruby program just spinning, if the 
+socket's closed by the server for whatever reason. Odd!
+
+Please let me know how the new tip works for you, if you try it out, Sean!
+
+Thanks,
+   Tony
+
+
+
+
+From tonyg at lshift.net  Sun Jun  1 22:32:54 2008
+From: tonyg at lshift.net (Tony Garnock-Jones)
+Date: Sun, 01 Jun 2008 22:32:54 +0100
+Subject: [rabbitmq-discuss] Problem running rabbit broker
+In-Reply-To: <6c2563b20806010912p76605ab6o714185a9acfb60e3@mail.gmail.com>
+References: <72b4c7110806010811i1fb29cbw5b780a78329bd89d@mail.gmail.com>	<6c2563b20806010829u5270f4c7w27ae6e6027be576c@mail.gmail.com>	<72b4c7110806010843p70f187f5xba6f911809b53888@mail.gmail.com>	<6c2563b20806010856u768ca188v7965af8b4ede0215@mail.gmail.com>
+	<6c2563b20806010912p76605ab6o714185a9acfb60e3@mail.gmail.com>
+Message-ID: <48431586.5090808@lshift.net>
+
+Hi,
+
+> {"init terminating in do_boot",{undef,[{mnesia 
+> ,system_info,[directory]},{*rabbit_mnesia,ensure_mnesia_dir,0*},{rabbit,start,0},{init,start_it,1},{init,start_em,1}]}}
+
+This often indicates that mnesia isn't installed. (It's complaining that 
+it can't find the function mnesia:system_info/1.)
+
+Some operating systems have mnesia in an optional erlang package that's 
+not installed as part of the base erlang system - for instance, Ubuntu 
+is rumoured to need you to "apt-get install erlang", rather than simple 
+erlang-base, in order to get things to work. (This isn't something I've 
+experienced personally, so I could have the details wrong!)
+
+(I'm not sure if this is a bug in our Debian package dependencies or 
+not. Any reports from the field?)
+
+Regards,
+   Tony
+
+
+
+
+From matthias at lshift.net  Mon Jun  2 07:41:47 2008
+From: matthias at lshift.net (Matthias Radestock)
+Date: Mon, 02 Jun 2008 07:41:47 +0100
+Subject: [rabbitmq-discuss] Problem running rabbit broker
+In-Reply-To: <48431586.5090808@lshift.net>
+References: <72b4c7110806010811i1fb29cbw5b780a78329bd89d@mail.gmail.com>	<6c2563b20806010829u5270f4c7w27ae6e6027be576c@mail.gmail.com>	<72b4c7110806010843p70f187f5xba6f911809b53888@mail.gmail.com>	<6c2563b20806010856u768ca188v7965af8b4ede0215@mail.gmail.com>	<6c2563b20806010912p76605ab6o714185a9acfb60e3@mail.gmail.com>
+	<48431586.5090808@lshift.net>
+Message-ID: <4843962B.6050009@lshift.net>
+
+Tony Garnock-Jones wrote:
+> Some operating systems have mnesia in an optional erlang package that's 
+> not installed as part of the base erlang system - for instance, Ubuntu 
+> is rumoured to need you to "apt-get install erlang", rather than simple 
+> erlang-base, in order to get things to work. (This isn't something I've 
+> experienced personally, so I could have the details wrong!)
+
+The Erlang debian packages have mnesia and all the other otp modules in 
+the 'erlang-nox' package. That module depends on 'erlang-base', which 
+contains the vm.
+
+> (I'm not sure if this is a bug in our Debian package dependencies or 
+> not. Any reports from the field?)
+
+The rabbitmq-server debian packages depends on 'erlang-nox', so mnesia 
+should definitely be dragged in as a dependency if users install the 
+RabbitMQ .debs.
+
+However, I believe Lahiru installed the generic unix packages rather 
+than the .debs, otherwise he would not have had to set up paths and 
+permissions; the .debs take care of all that.
+
+
+Matthias.
+
+
+
+From tonyg at lshift.net  Mon Jun  2 11:06:06 2008
+From: tonyg at lshift.net (Tony Garnock-Jones)
+Date: Mon, 02 Jun 2008 11:06:06 +0100
+Subject: [rabbitmq-discuss] Problem running rabbit broker
+In-Reply-To: <72b4c7110806012125t573d6cb1ge5101619cb57869a@mail.gmail.com>
+References: <72b4c7110806010811i1fb29cbw5b780a78329bd89d@mail.gmail.com>	
+	<6c2563b20806010829u5270f4c7w27ae6e6027be576c@mail.gmail.com>	
+	<72b4c7110806010843p70f187f5xba6f911809b53888@mail.gmail.com>	
+	<6c2563b20806010856u768ca188v7965af8b4ede0215@mail.gmail.com>	
+	<6c2563b20806010912p76605ab6o714185a9acfb60e3@mail.gmail.com>	
+	<48431586.5090808@lshift.net>
+	<72b4c7110806012125t573d6cb1ge5101619cb57869a@mail.gmail.com>
+Message-ID: <4843C60E.9000801@lshift.net>
+
+Hi Lahiru,
+
+What was the exact command you used to install Erlang? If you haven't 
+already, please try "apt-get install erlang-nox".
+
+What is the output of the command
+
+file /usr/lib/erlang/lib/*/ebin/mnesia.beam /usr/lib/erlang
+
+?
+
+My output is:
+
+/usr/lib/erlang/lib/mnesia-4.3.5/ebin/mnesia.beam: data
+/usr/lib/erlang:                                   directory
+
+
+Another alternative is to delete the partial installation you have, and 
+to use our debian repository (instructions here: 
+http://www.rabbitmq.com/debian.html) to automatically install rabbitmq 
+with "apt-get install rabbitmq-server".
+
+
+Tony
+
+
+lahiru gunathilake wrote:
+> Hi Tony,
+> 
+> 
+> On Mon, Jun 2, 2008 at 3:02 AM, Tony Garnock-Jones <tonyg at lshift.net 
+> <mailto:tonyg at lshift.net>> wrote:
+> 
+>     Hi,
+> 
+> 
+>         {"init terminating in do_boot",{undef,[{mnesia
+>         ,system_info,[directory]},{*rabbit_mnesia,ensure_mnesia_dir,0*},{rabbit,start,0},{init,start_it,1},{init,start_em,1}]}}
+> 
+> 
+>     This often indicates that mnesia isn't installed. (It's complaining
+>     that it can't find the function mnesia:system_info/1.)
+> 
+> I didn't install any thing called mnesia and I have installed erlang 
+> using apt.
+> 
+> Any thoughts :-(
+> 
+> lahiru
+> 
+> 
+> 
+>     Some operating systems have mnesia in an optional erlang package
+>     that's not installed as part of the base erlang system - for
+>     instance, Ubuntu is rumoured to need you to "apt-get install
+>     erlang", rather than simple erlang-base, in order to get things to
+>     work. (This isn't something I've experienced personally, so I could
+>     have the details wrong!)
+> 
+>     (I'm not sure if this is a bug in our Debian package dependencies or
+>     not. Any reports from the field?)
+> 
+>     Regards,
+>      Tony
+> 
+> 
+> 
+> 
+> -- 
+> East or West
+> Mahindians are the
+> Best... !
+
+
+
+From sean at soundcloud.com  Mon Jun  2 12:17:48 2008
+From: sean at soundcloud.com (Sean Treadway)
+Date: Mon, 2 Jun 2008 13:17:48 +0200
+Subject: [rabbitmq-discuss] Durable queues for STOMP broker
+In-Reply-To: <48427486.9000408@lshift.net>
+References: <EC24AD2C-7F4C-4B63-8C0A-E5687F237BA3@soundcloud.com>
+	<48427486.9000408@lshift.net>
+Message-ID: <F6F3ED9C-0CE2-4C0A-8EC9-4C6D691C4C9F@soundcloud.com>
+
+Hi Tony,
+
+Thanks for applying the patch!  I see you caught that commented line  
+in the ruby receiver example - thanks.
+
+On Jun 1, 2008, at 12: 05, Tony Garnock-Jones wrote:
+
+>> * expose 'passive', 'durable', 'auto-delete', 'exclusive'  
+>> parameters of the AMQP 'queue.declare' method as STOMP headers in  
+>> SUBSCRIBE
+>
+> Hmm, naming and interoperability. While we're still in  
+> "experimental" status we can use any names we like, of course, but  
+> I'd be interested to compare and contrast the names we choose for  
+> things like this with the names other STOMP-supporting brokers use  
+> for similar features.
+>
+> Does anyone on the list have any comments around this area?
+>
+> On a related note, what do you think about trying to more generally  
+> expose more of the AMQP functionality over STOMP? We could look at  
+> ways of using the AMQP protocol definition to autogenerate the  
+> necessary marshalling code, just as we do for other transport and  
+> protocol bindings.
+
+I chose the AMQP naming for this patch because I used the AMQP  
+documentation to learn/understanding the intended behavior of queue  
+declaration.  I took a quick trip over to ActiveMQ's documentation  
+pages and saw that they had similar configuration with their own/ 
+different naming but I consciously thought "This is not ActiveMQ, this  
+is RabbitMQ.  I want to know that to leverage RabbitMQ features".   
+STOMP looked like it was MQ agnostic and extensible while keeping the  
+core headers well defined (ack=client, message_id, etc...), but my  
+application was not MQ agnostic.  Plus I saw some of the ActiveMQ  
+headers weren't available or necessary in RabbitMQ.
+
+Keeping the AMQP naming is the best way to piggy back on the AMQP  
+documentation.  For those that need simple, transient queues, the  
+existing STOMP documentation would be sufficient.
+
+>> Big thanks to you all at LShift for building this beautiful code.
+>
+> You're welcome! I take it you're using Ruby to interact with the  
+> broker - have you tried any of the available Ruby AMQP clients out  
+> there? Can you share with us what kind of thing you're doing with  
+> RabbitMQ?
+
+We're using RabbitMQ as a job dispatcher for our media transcoder  
+machines and for our 1-many notification broadcasts (upload a track,  
+your fans are notified).
+
+We chose RabbitMQ because after reading Joe's book on Erlang, OTP  
+quickly became the best choice for meeting the requirements of fail- 
+tolerance and scalability.  Pure throughput wasn't an issue for us.
+
+I've been keeping an eye on RabbitMQ for about a year, and have to  
+admit that the language tone and 'heaviness' around AMQP kept me from  
+adopting it in a previous project.  The tone of rabbitmq.com was much  
+more accessible, so I had faith that this was an open source project  
+with dedicated maintainers so I put it on top of my list of MQ  
+candidates when I needed the reliability and could invest in this part  
+of our infrastructure.
+
+I remember reading somewhere long ago that ruby AMQP lib was  
+incomplete and not very stable.  The ruby source seemed complicated  
+and did much more than what we needed.  AMQP solves a lot of problems,  
+most of which I am unfamiliar with.
+
+When the STOMP broker was released I thought "great! STOMP looks just  
+like HTTP".  I grabbed the ruby lib, understood it, and thought that  
+if anything went wrong, I could fix it.  With RSS and XMPP experience,  
+it was easy for me to see how the publish-subscribe model we needed  
+was implemented in STOMP.
+
+If we need anything more complicated like setting up custom exchanges  
+or finer control over routing, we'll probably switch to AMQP.
+
+>> whether or not to try and match ActiveMQ's STOMP header names or  
+>> stick with the AMQP naming,
+>
+> This is a great question. I'd love to hear your thoughts on the  
+> subject, not being familiar myself with any other broker-specific  
+> options and headers.
+
+I only have experience with RabbitMQ, so I'm fine with exposing AMQP  
+rather than try to come to some agreement over the extension names of  
+standard STOMP headers.  Since I'm new around here, don't really know  
+the relationship between the RabbitMQ and ActiveMQ communities.  If  
+we're all in this together and have good communication, it may be  
+worth the effort to harmonize on the naming.  "What does consisting  
+naming across broker vendors give the consumers of our MQ" may be the  
+right question to ask.
+
+>> Also, the STOMP spec gives no insight for queue deletion when a  
+>> durable queue is no longer needed.  Any ideas for that one?
+>
+> Good point. I think we're probably pretty free to implement  
+> extensions of our own in this area - how about a "DELETE" command?  
+> This touches on my question above of how best to expose more of AMQP.
+
+Here, I would stick with the verbs defined in STOMP and extend the  
+verbs with headers.  One possibility is to use UNSUBSCRIBE messages to  
+change the queue properties before sending the 'basic.cancel' method.   
+Another possibility is to change queue properties on a SUBSCRIBE  
+message. Neither seem nice to me.  Third option is to do nothing, and  
+delete the queues outside of the STOMP protocol (we're fine with that  
+as we have a fixed number of persistent queues).
+
+How are auto-delete=false queues removed with AMQP?
+
+On Jun 1, 2008, at 23: 28, Tony Garnock-Jones wrote:
+> By the way, is it just me, or does the Ruby STOMP adapter get very  
+> confused when the socket closes underneath it? I see fairly  
+> consistent behaviour of 100% CPU usage, with the Ruby program just  
+> spinning, if the socket's closed by the server for whatever reason.  
+> Odd!
+
+This was in the example's receive loop and not in the library itself,  
+the 'nil' message on socket closure was just being ignored.  Here's a  
+receive loop that actually terminates :).  It could also be applied to  
+cb-receiver.rb:
+
+while msg = conn.receive
+   puts msg.body
+end
+
+-Sean
+
+
+
+From avinash_dhumane at persistent.co.in  Thu Jun  5 11:30:21 2008
+From: avinash_dhumane at persistent.co.in (Avinash Dhumane)
+Date: Thu, 5 Jun 2008 16:00:21 +0530
+Subject: [rabbitmq-discuss] How many queues can RabbitMQ support?
+Message-ID: <005801c8c6f7$290def60$2346a8c0@persistent.co.in>
+
+I refer to AMQP Specification version 0-8, section 1.3.6 (Scales of
+Deployment).
+
+I have a query on RabbitMQ's ability to create a very large number of
+queues.
+
+How many queues will RabbitMQ be able to support in a "Regional Mission
+Critical Application" deployment environment? 
+
+And, how many in "Global Mission Critical Application" deployment
+environment?
+
+
+
+DISCLAIMER
+==========
+This e-mail may contain privileged and confidential information which is the property of Persistent Systems Ltd. It is intended only for the use of the individual or entity to which it is addressed. If you are not the intended recipient, you are not authorized to read, retain, copy, print, distribute or use this message. If you have received this communication in error, please notify the sender and delete all copies of this message. Persistent Systems Ltd. does not accept any liability for virus infected mails.
+
+
+
+From chime at mu.dk  Mon Jun  9 12:31:36 2008
+From: chime at mu.dk (Michael Arnoldus)
+Date: Mon, 9 Jun 2008 13:31:36 +0200
+Subject: [rabbitmq-discuss] New interesting error message
+Message-ID: <784F1902-EBC0-4CE9-A532-A66DDBC80C76@mu.dk>
+
+Hi,
+
+Anybody seen this before?
+
+=ERROR REPORT==== 7-Jun-2008::09:49:12 ===
+Error in process <0.4199.17> on node 'rabbit at staging' with exit value:  
+{badarg,[{erlang,port_command,[#Port<0.48712>,[[<<7 bytes>>,<<77  
+bytes>>,<<1 byte>>],[<<7 bytes>>,<<14 bytes>>,<<1 byte>>],[<<7  
+bytes>>,<<125536 bytes>>,<<1 byte>>]]]}, 
+{rabbit_writer,internal_send_command_async,5}, 
+{rabbit_writer,handle_message,2},{rabbit_writer,mainloop,1}]}
+
+or know what it means?
+
+Michael
+-------------- next part --------------
+A non-text attachment was scrubbed...
+Name: smime.p7s
+Type: application/pkcs7-signature
+Size: 1912 bytes
+Desc: not available
+Url : http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20080609/233507a8/attachment.bin 
+
+From matthias at lshift.net  Mon Jun  9 16:04:17 2008
+From: matthias at lshift.net (Matthias Radestock)
+Date: Mon, 09 Jun 2008 16:04:17 +0100
+Subject: [rabbitmq-discuss] New interesting error message
+In-Reply-To: <784F1902-EBC0-4CE9-A532-A66DDBC80C76@mu.dk>
+References: <784F1902-EBC0-4CE9-A532-A66DDBC80C76@mu.dk>
+Message-ID: <484D4671.5040609@lshift.net>
+
+Michael,
+
+Michael Arnoldus wrote:
+> =ERROR REPORT==== 7-Jun-2008::09:49:12 ===
+> Error in process <0.4199.17> on node 'rabbit at staging' with exit value: 
+> {badarg,[{erlang,port_command,[#Port<0.48712>,[[<<7 bytes>>,<<77 
+> bytes>>,<<1 byte>>],[<<7 bytes>>,<<14 bytes>>,<<1 byte>>],[<<7 
+> bytes>>,<<125536 bytes>>,<<1 
+> byte>>]]]},{rabbit_writer,internal_send_command_async,5},{rabbit_writer,handle_message,2},{rabbit_writer,mainloop,1}]} 
+
+This indicates a failure to send data down a socket to a client. The 
+most likely cause is that the client dropped the connection w/o 
+following the AMQP shutdown protocol, or there was some network disruption.
+
+We may want to report this slightly differently. Will think about it.
+
+
+Matthias.
+
+
+
+From chime at mu.dk  Mon Jun  9 16:14:51 2008
+From: chime at mu.dk (Michael Arnoldus)
+Date: Mon, 9 Jun 2008 17:14:51 +0200
+Subject: [rabbitmq-discuss] New interesting error message
+In-Reply-To: <484D4671.5040609@lshift.net>
+References: <784F1902-EBC0-4CE9-A532-A66DDBC80C76@mu.dk>
+	<484D4671.5040609@lshift.net>
+Message-ID: <EC872270-A3C1-4D52-9E5D-0ACC936807BC@mu.dk>
+
+Matthias,
+
+Thanks!
+
+Michael
+
+On Jun 9, 2008, at 17:04 , Matthias Radestock wrote:
+
+> Michael,
+>
+> Michael Arnoldus wrote:
+>> =ERROR REPORT==== 7-Jun-2008::09:49:12 ===
+>> Error in process <0.4199.17> on node 'rabbit at staging' with exit  
+>> value: {badarg,[{erlang,port_command,[#Port<0.48712>,[[<<7  
+>> bytes>>,<<77 bytes>>,<<1 byte>>],[<<7 bytes>>,<<14 bytes>>,<<1  
+>> byte>>],[<<7 bytes>>,<<125536 bytes>>,<<1 byte>>]]]}, 
+>> {rabbit_writer,internal_send_command_async,5}, 
+>> {rabbit_writer,handle_message,2},{rabbit_writer,mainloop,1}]}
+>
+> This indicates a failure to send data down a socket to a client. The  
+> most likely cause is that the client dropped the connection w/o  
+> following the AMQP shutdown protocol, or there was some network  
+> disruption.
+>
+> We may want to report this slightly differently. Will think about it.
+>
+>
+> Matthias.
+
+-------------- next part --------------
+A non-text attachment was scrubbed...
+Name: smime.p7s
+Type: application/pkcs7-signature
+Size: 1912 bytes
+Desc: not available
+Url : http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20080609/6bba4d3b/attachment.bin 
+
+From 0x6e6562 at gmail.com  Mon Jun  9 16:57:37 2008
+From: 0x6e6562 at gmail.com (Ben Hood)
+Date: Mon, 9 Jun 2008 16:57:37 +0100
+Subject: [rabbitmq-discuss] How many queues can RabbitMQ support?
+In-Reply-To: <005801c8c6f7$290def60$2346a8c0@persistent.co.in>
+References: <005801c8c6f7$290def60$2346a8c0@persistent.co.in>
+Message-ID: <D7CB0C1D-0EE3-4AFC-9837-56C2DA7DCD80@gmail.com>
+
+Avinash,
+
+Sorry for the delay in answering your query.
+
+On 5 Jun 2008, at 11:30, Avinash Dhumane wrote:
+
+> I have a query on RabbitMQ's ability to create a very large number of
+> queues.
+>
+> How many queues will RabbitMQ be able to support in a "Regional  
+> Mission
+> Critical Application" deployment environment?
+
+Current experiments indicate that you can conservatively budget with  
+4K per queue, so on a machine with 4GB of memory, you can run about  
+1000000 queues.
+
+HTH,
+
+Ben
+
+
+
+From sky at crucially.net  Thu Jun 12 16:40:27 2008
+From: sky at crucially.net (Artur Bergman)
+Date: Thu, 12 Jun 2008 16:40:27 +0100
+Subject: [rabbitmq-discuss] Patch to support amq.topic in STOMP adaptor
+Message-ID: <93BE96F3-690F-4A62-A9F4-DA02E47970EE@crucially.net>
+
+Hi,
+
+This lets you put in exchange to a subscribe and thus start listening  
+to an amq.topic
+
+Also, the arguments field to the queue.bind is a bit cargo culted  
+(this is my first piece of erlang code ever :).
+
+Sorry of the tab/space level is wrong!
+
+Cheers
+Artur
+
+
+
+
+--- rabbit_stomp.erl.bak        2008-06-11 09:42:29.000000000 +0000
++++ rabbit_stomp.erl    2008-06-11 11:41:54.000000000 +0000
+@@ -468,6 +468,7 @@
+                                   list_to_binary("Q_" ++ QueueStr)
+                           end,
+             Queue = list_to_binary(QueueStr),
++
+             {ok, send_method(#'basic.consume'{ticket = Ticket,
+                                               queue = Queue,
+                                               consumer_tag =  
+ConsumerTag,
+@@ -475,6 +476,32 @@
+                                               no_ack = (AckMode ==  
+auto),
+                                               exclusive = false,
+                                               nowait = true},
++               case stomp_frame:header(Frame, "exchange") of
++                       {ok, ExchangeStr } ->
++                           Exchange = list_to_binary(ExchangeStr),
++                               RoutingKey = list_to_binary 
+(stomp_frame:header(Frame, "routing_key","")),
++                               send_method(#'queue.bind'{ticket =  
+Ticket,
++                                                         queue  =  
+Queue,
++                                                         exchange =  
+Exchange,
++                                                         routing_key  
+= RoutingKey,
++                                                         nowait = true,
++                                                         arguments =
++                                                            
+make_string_table(fun user_header_key/1,
++                                                                        
+       Headers)
++                                                       },
++
++                                               send_method 
+(#'queue.declare'{ticket = Ticket,
++                                                                        
+      queue = Queue,
++                                                                        
+      passive = stomp_frame:boolean_header(Frame, "passive", false),
++                                                                        
+      durable = stomp_frame:boolean_header(Frame, "durable", false),
++                                                                        
+      exclusive = stomp_frame:boolean_header(Frame, "exclusive", false),
++                                                                        
+      auto_delete = stomp_frame:boolean_header(Frame, "auto-delete",  
+true),
++                                                                        
+      nowait = true,
++                                                                        
+       arguments =
++                                                                        
+         make_string_table(fun user_header_key/1,
++                                                                        
+                   Headers)},
++                                        State));
++                       not_found ->
+                              send_method(#'queue.declare'{ticket =  
+Ticket,
+                                                           queue =  
+Queue,
+                                                           passive =  
+stomp_frame:boolean_header(Frame, "passive", false),
+@@ -485,7 +512,9 @@
+                                                           arguments =
+                                                              
+make_string_table(fun user_header_key/1,
+                                                                         
+        Headers)},
+-                                        State))};
++                                        State)
++               end
++               )};
+         not_found ->
+             {ok, send_error("Missing destination",
+                             "SUBSCRIBE must include a 'destination'  
+header\n",
+
+
+
+
+From filippo.pacini at gmail.com  Fri Jun 13 21:01:34 2008
+From: filippo.pacini at gmail.com (Filippo Pacini)
+Date: Fri, 13 Jun 2008 22:01:34 +0200
+Subject: [rabbitmq-discuss] erlang client and http binding
+Message-ID: <4852D21E.4030104@gmail.com>
+
+Hi all,
+I'd like to test the erlang client and http binding, but I can't get them.
+On the download page:
+http://www.rabbitmq.com/download.html
+
+the snapshots and ViewMTN links are broken and running monotone I get 
+this error:
+$ mtn pull -d ~/monotone.db dev.rabbitmq.com com.rabbitmq.http
+mtn: doing anonymous pull; use -kKEYNAME if you need authentication
+mtn: connecting to dev.rabbitmq.com
+mtn: network error: failed to connect: Connection refused
+
+Thanks for your help,
+filippo
+
+
+
+From alexis.richardson at cohesiveft.com  Fri Jun 13 21:06:59 2008
+From: alexis.richardson at cohesiveft.com (Alexis Richardson)
+Date: Fri, 13 Jun 2008 21:06:59 +0100
+Subject: [rabbitmq-discuss] erlang client and http binding
+In-Reply-To: <4852D21E.4030104@gmail.com>
+References: <4852D21E.4030104@gmail.com>
+Message-ID: <167204d20806131306v2e37ddcclcf03b795f0939759@mail.gmail.com>
+
+Filippo
+
+We have been making some changes to the repos which may have affected this.
+
+
+One of the development team should be able to help you soon.  Please bear
+with us as it is Friday night ;-)
+
+alexis
+
+
+
+
+On Fri, Jun 13, 2008 at 9:01 PM, Filippo Pacini <filippo.pacini at gmail.com>
+wrote:
+
+> Hi all,
+> I'd like to test the erlang client and http binding, but I can't get them.
+> On the download page:
+> http://www.rabbitmq.com/download.html
+>
+> the snapshots and ViewMTN links are broken and running monotone I get
+> this error:
+> $ mtn pull -d ~/monotone.db dev.rabbitmq.com com.rabbitmq.http
+> mtn: doing anonymous pull; use -kKEYNAME if you need authentication
+> mtn: connecting to dev.rabbitmq.com
+> mtn: network error: failed to connect: Connection refused
+>
+> Thanks for your help,
+> filippo
+>
+> _______________________________________________
+> rabbitmq-discuss mailing list
+> rabbitmq-discuss at lists.rabbitmq.com
+> http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss
+>
+
+
+
+-- 
+Alexis Richardson
++44 20 7617 7339 (UK)
++44 77 9865 2911 (cell)
++1 650 206 2517 (US)
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20080613/1432d7cb/attachment.htm 
+
+From 0x6e6562 at gmail.com  Fri Jun 13 22:55:25 2008
+From: 0x6e6562 at gmail.com (Ben Hood)
+Date: Fri, 13 Jun 2008 22:55:25 +0100
+Subject: [rabbitmq-discuss] erlang client and http binding
+In-Reply-To: <4852D21E.4030104@gmail.com>
+References: <4852D21E.4030104@gmail.com>
+Message-ID: <269388e30806131455v68397bc0nead01eae89d0f9fc@mail.gmail.com>
+
+Hi Filippo,
+
+On Fri, Jun 13, 2008 at 9:01 PM, Filippo Pacini
+<filippo.pacini at gmail.com> wrote:
+> Hi all,
+> I'd like to test the erlang client and http binding, but I can't get them.
+
+We've been upgrading our infrastructure so some services haven't been
+migrated yet.
+
+However, to get you going quickly I've attached the current version of
+the Erlang client.
+
+Unfortunately I don't have a local copy of the http binding, so
+somebody else may be able to help over the weekend.
+
+HTH,
+
+Ben
+-------------- next part --------------
+A non-text attachment was scrubbed...
+Name: amqp_erlang.7z
+Type: application/octet-stream
+Size: 20124 bytes
+Desc: not available
+Url : http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20080613/adfad190/attachment.obj 
+
+From 0x6e6562 at gmail.com  Fri Jun 13 23:16:14 2008
+From: 0x6e6562 at gmail.com (Ben Hood)
+Date: Fri, 13 Jun 2008 23:16:14 +0100
+Subject: [rabbitmq-discuss] erlang client and http binding
+In-Reply-To: <269388e30806131455v68397bc0nead01eae89d0f9fc@mail.gmail.com>
+References: <4852D21E.4030104@gmail.com>
+	<269388e30806131455v68397bc0nead01eae89d0f9fc@mail.gmail.com>
+Message-ID: <269388e30806131516t342617b2w1e2f450d9728fe93@mail.gmail.com>
+
+Hi Filippo,
+
+On Fri, Jun 13, 2008 at 10:55 PM, Ben Hood <0x6e6562 at gmail.com> wrote:
+> Unfortunately I don't have a local copy of the http binding, so
+> somebody else may be able to help over the weekend.
+
+You can use the hg repo at http://hg.opensource.lshift.net/ to get the
+http binding.
+
+HTH,
+
+Ben
+
+
+
+From tonyg at lshift.net  Mon Jun 16 16:49:11 2008
+From: tonyg at lshift.net (Tony Garnock-Jones)
+Date: Mon, 16 Jun 2008 16:49:11 +0100
+Subject: [rabbitmq-discuss] Patch to support amq.topic in STOMP adaptor
+In-Reply-To: <93BE96F3-690F-4A62-A9F4-DA02E47970EE@crucially.net>
+References: <93BE96F3-690F-4A62-A9F4-DA02E47970EE@crucially.net>
+Message-ID: <48568B77.4030707@lshift.net>
+
+Hi Artur,
+
+Thanks for the patch! It's a useful feature.
+
+I've applied something that captures the essence of your enhancement, 
+with a few minor differences:
+
+  - I've made the threading of State more visible
+
+  - I've changed the headers used to feed the "arguments" for
+    both queue.declare and queue.bind to "X-Q-"prefixed and
+    "X-B-"prefixed, respectively, rather than simply "X-"prefixed.
+
+The change is present in Mercurial on both 'default' and 
+'rabbitmq_v1_3_0_branch' branches. Let me know if it works for you.
+
+
+I have one question for you and the group at large - the new code 
+supports *exactly one* binding between an exchange and the 
+destination-queue. AMQP supports zero or more. How should we expose this 
+as STOMP headers?
+
+We could have multiple "bind" headers, containing "exchange,routingkey" 
+or similar; the problem then is what happens when an exchange name 
+contains a comma (or other delimiter).
+
+If we're going to have to solve the escaping-of-delimiters problem 
+anyway - and it looks like we are, if we want this multiple-bind feature 
+- then we may as well have *two* kinds of delimiter, for a single "bind" 
+header of the form
+
+  bind: exchange1,routingkeypattern1;exchange2,routingkeypattern2;...
+
+Yuck. Any thoughts?
+
+(Backslash-escaping? Gross, but viable?)
+
+
+Regards,
+   Tony
+-- 
+  [][][] Tony Garnock-Jones     | Mob: +44 (0)7905 974 211
+    [][] LShift Ltd             | Tel: +44 (0)20 7729 7060
+  []  [] http://www.lshift.net/ | Email: tonyg at lshift.net
+
+
+
+From foreverqihe at gmail.com  Tue Jun 17 04:50:50 2008
+From: foreverqihe at gmail.com (Michael Qi)
+Date: Tue, 17 Jun 2008 11:50:50 +0800
+Subject: [rabbitmq-discuss] Is there an erlang client?
+Message-ID: <e659bded0806162050u6c00b69v1f08cbefb6b3210c@mail.gmail.com>
+
+Hi,
+
+ I am new to RabbitMQ and want to write a program in erlang with it.
+Could you give a erlang client and example?
+
+Thank you.
+
+ Regards
+
+ QiHe
+
+
+
+From 0x6e6562 at gmail.com  Tue Jun 17 08:24:12 2008
+From: 0x6e6562 at gmail.com (Ben Hood)
+Date: Tue, 17 Jun 2008 08:24:12 +0100
+Subject: [rabbitmq-discuss] Is there an erlang client?
+In-Reply-To: <e659bded0806162050u6c00b69v1f08cbefb6b3210c@mail.gmail.com>
+References: <e659bded0806162050u6c00b69v1f08cbefb6b3210c@mail.gmail.com>
+Message-ID: <269388e30806170024m2d9a3201m4c87ba50325d0854@mail.gmail.com>
+
+Michael,
+
+There is, but because of a changeover in our server infrastructure,
+the repo has been offline for a few days. However, it's quite small,
+so I'll send you a copy of the client that works with the current
+server.
+
+In that package you will can look at the unit tests to see example
+usage (look at the direct_client_test or the network_client_test
+modules).
+
+Here is an article introducing it:
+http://hopper.squarespace.com/blog/2008/1/12/introducing-the-erlang-amqp-client.html
+
+HTH,
+
+Ben
+
+
+
+On Tue, Jun 17, 2008 at 4:50 AM, Michael Qi <foreverqihe at gmail.com> wrote:
+> Hi,
+>
+>  I am new to RabbitMQ and want to write a program in erlang with it.
+> Could you give a erlang client and example?
+>
+> Thank you.
+>
+>  Regards
+>
+>  QiHe
+>
+> _______________________________________________
+> rabbitmq-discuss mailing list
+> rabbitmq-discuss at lists.rabbitmq.com
+> http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss
+>
+-------------- next part --------------
+A non-text attachment was scrubbed...
+Name: amqp_erlang.7z
+Type: application/octet-stream
+Size: 20124 bytes
+Desc: not available
+Url : http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20080617/88538878/attachment.obj 
+
+From foreverqihe at gmail.com  Tue Jun 17 10:38:33 2008
+From: foreverqihe at gmail.com (Michael Qi)
+Date: Tue, 17 Jun 2008 17:38:33 +0800
+Subject: [rabbitmq-discuss] Is there an erlang client?
+In-Reply-To: <269388e30806170024m2d9a3201m4c87ba50325d0854@mail.gmail.com>
+References: <e659bded0806162050u6c00b69v1f08cbefb6b3210c@mail.gmail.com>
+	<269388e30806170024m2d9a3201m4c87ba50325d0854@mail.gmail.com>
+Message-ID: <e659bded0806170238k5f1619b6ycb26c2517d0239bd@mail.gmail.com>
+
+Thank you! I will try it.
+
+
+On Tue, Jun 17, 2008 at 3:24 PM, Ben Hood <0x6e6562 at gmail.com> wrote:
+> Michael,
+>
+> There is, but because of a changeover in our server infrastructure,
+> the repo has been offline for a few days. However, it's quite small,
+> so I'll send you a copy of the client that works with the current
+> server.
+>
+> In that package you will can look at the unit tests to see example
+> usage (look at the direct_client_test or the network_client_test
+> modules).
+>
+> Here is an article introducing it:
+> http://hopper.squarespace.com/blog/2008/1/12/introducing-the-erlang-amqp-client.html
+>
+> HTH,
+>
+> Ben
+>
+>
+>
+> On Tue, Jun 17, 2008 at 4:50 AM, Michael Qi <foreverqihe at gmail.com> wrote:
+>> Hi,
+>>
+>>  I am new to RabbitMQ and want to write a program in erlang with it.
+>> Could you give a erlang client and example?
+>>
+>> Thank you.
+>>
+>>  Regards
+>>
+>>  QiHe
+>>
+>> _______________________________________________
+>> rabbitmq-discuss mailing list
+>> rabbitmq-discuss at lists.rabbitmq.com
+>> http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss
+>>
+>
+
+
+
+From David.Corcoran at edftrading.com  Tue Jun 17 17:47:32 2008
+From: David.Corcoran at edftrading.com (David.Corcoran at edftrading.com)
+Date: Tue, 17 Jun 2008 17:47:32 +0100
+Subject: [rabbitmq-discuss] rabbitmq selector
+Message-ID: <OF40096B56.201B4B93-ON8025746B.005BEC75-8025746B.005C3DCD@Edftrading.com>
+
+
+Hi,
+
+Is there a way to have message selectors such as JMS(1) has in rabbitmq? I
+can use multiple queues but selectors would be easier and more intuitive.
+
+Thanks,
+
+Dave
+
+1.
+http://publib.boulder.ibm.com/infocenter/wmbhelp/v6r0m0/index.jsp?topic=/com.ibm.etools.mft.doc/ac24876_.htm
+
+
+*********************************************************************
+This communication contains confidential information, some or all of which may be privileged. It is for the intended recipient only and others must not disclose, distribute, copy, print or rely on this communication. If an addressing or transmission error has misdirected this communication, please notify the sender by replying to this e-mail and then delete the e-mail. E-mail sent to EDF Trading may be monitored by the company. Thank you. 
+EDF Trading Limited
+80 Victoria Street, 3rd Floor, Cardinal Place, London, SW1E 5JL
+A Company registered in England No. 4255974. 
+Switchboard: 020 7061 4000
+EDF Trading Markets Limited is a member of the EDF Trading Limited Group and is authorised and regulated by the Financial Services Authority.
+VAT number: GB 735 5479 07
+*********************************************************************
+
+
+
+From 0x6e6562 at gmail.com  Tue Jun 17 18:37:17 2008
+From: 0x6e6562 at gmail.com (Ben Hood)
+Date: Tue, 17 Jun 2008 18:37:17 +0100
+Subject: [rabbitmq-discuss] rabbitmq selector
+In-Reply-To: <OF40096B56.201B4B93-ON8025746B.005BEC75-8025746B.005C3DCD@Edftrading.com>
+References: <OF40096B56.201B4B93-ON8025746B.005BEC75-8025746B.005C3DCD@Edftrading.com>
+Message-ID: <269388e30806171037t23b5b729s22b597bd9ff58f40@mail.gmail.com>
+
+David,
+
+No there isn't.
+
+But we are currently investigating how to put some form of selectors
+into an upcoming version of Rabbit.
+
+The issues are that the headers exchange in the AMQP is not as
+functionally rich as JMS selectors and that whilst they are documented
+in the specification, there is some room for interpretation about how
+comparisons are executed. Also, we'd like to achieve some kind of
+interoperability with QPid, rather than just doing our own thing.
+
+So basically we need to be clear about what functionality we are going
+to implement, what this looks like from a client's perspective and how
+this will be implemented in the broker.
+
+Despite the fact that work has already started on this, I would say
+that this is a mid-term goal of Rabbit, because there are a number of
+higher-priority issues to get done first.
+
+HTH,
+
+Ben
+
+On Tue, Jun 17, 2008 at 5:47 PM,  <David.Corcoran at edftrading.com> wrote:
+>
+> Hi,
+>
+> Is there a way to have message selectors such as JMS(1) has in rabbitmq? I
+> can use multiple queues but selectors would be easier and more intuitive.
+>
+> Thanks,
+>
+> Dave
+>
+> 1.
+> http://publib.boulder.ibm.com/infocenter/wmbhelp/v6r0m0/index.jsp?topic=/com.ibm.etools.mft.doc/ac24876_.htm
+>
+>
+> *********************************************************************
+> This communication contains confidential information, some or all of which may be privileged. It is for the intended recipient only and others must not disclose, distribute, copy, print or rely on this communication. If an addressing or transmission error has misdirected this communication, please notify the sender by replying to this e-mail and then delete the e-mail. E-mail sent to EDF Trading may be monitored by the company. Thank you.
+> EDF Trading Limited
+> 80 Victoria Street, 3rd Floor, Cardinal Place, London, SW1E 5JL
+> A Company registered in England No. 4255974.
+> Switchboard: 020 7061 4000
+> EDF Trading Markets Limited is a member of the EDF Trading Limited Group and is authorised and regulated by the Financial Services Authority.
+> VAT number: GB 735 5479 07
+> *********************************************************************
+>
+> _______________________________________________
+> rabbitmq-discuss mailing list
+> rabbitmq-discuss at lists.rabbitmq.com
+> http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss
+>
+
+
+
+From rabbitmq-discuss_efine at usa.net  Wed Jun 18 00:19:51 2008
+From: rabbitmq-discuss_efine at usa.net (Edwin Fine)
+Date: Tue, 17 Jun 2008 19:19:51 -0400
+Subject: [rabbitmq-discuss] Suggestion: add start/4 to amqp_connection in
+	Erlang client
+Message-ID: <6c2563b20806171619j64c7e46bua672469b661214e3@mail.gmail.com>
+
+There's no way to start a connection on a given vhost in the current version
+of the Erlang client. amqp_connection only has start/2 and start/3
+functions.
+
+I propose adding start/4 to amqp_connection by modifying it as follows:
+
+%% Starts a networked conection to a remote AMQP server.
+start(User, Password, Host) ->
+    start(User, Password, Host, <<"/">>).
+
+start(User, Password, Host, Vhost) when is_binary(Vhost) ->
+    Handshake = fun amqp_network_driver:handshake/1,
+    InitialState = #connection_state{username = User,
+                                     password = Password,
+                                     serverhost = Host,
+                                     vhostpath = Vhost},
+    {ok, Pid} = gen_server:start_link(?MODULE, [InitialState, Handshake],
+[]),
+    {Pid, network}.
+
+This does work, as I have been using the modified code for some months now.
+
+Any takers?
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20080617/9ed67318/attachment.htm 
+
+From rabbitmq-discuss_efine at usa.net  Wed Jun 18 00:21:49 2008
+From: rabbitmq-discuss_efine at usa.net (Edwin Fine)
+Date: Tue, 17 Jun 2008 19:21:49 -0400
+Subject: [rabbitmq-discuss] Dialyzer errors in RabbitMQ Erlang client
+Message-ID: <6c2563b20806171621r6538862bnb5546157a27766f3@mail.gmail.com>
+
+In running Dialyzer on my code, these warnings came up for the Erlang
+RabbitMQ Client (rabbitmq-erlang-client-200803131204.tar.gz). This seems to
+be the latest version of the client.
+
+amqp_connection.erl:114: The call
+erlang:exit('channel_already_registered',ChannelNumber::any()) will fail
+since it differs in argument position 1 from the success typing arguments:
+(pid() | port(),any())
+test_util.erl:237: The call
+erlang:exit('should_not_receive_any_more_messages',Msg::any()) will fail
+since it differs in argument position 1 from the success typing arguments:
+(pid() | port(),any())
+
+These warnings look to be justified because exit/2 is defined as
+
+exit(Pid, Reason) -> true
+
+Types:
+
+Pid = pid()
+Reason = term()
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20080617/4b7fd678/attachment.htm 
+
+From 0x6e6562 at gmail.com  Wed Jun 18 07:11:36 2008
+From: 0x6e6562 at gmail.com (Ben Hood)
+Date: Wed, 18 Jun 2008 07:11:36 +0100
+Subject: [rabbitmq-discuss] Dialyzer errors in RabbitMQ Erlang client
+In-Reply-To: <6c2563b20806171621r6538862bnb5546157a27766f3@mail.gmail.com>
+References: <6c2563b20806171621r6538862bnb5546157a27766f3@mail.gmail.com>
+Message-ID: <269388e30806172311i4ee43faie0f1e96ca08141f0@mail.gmail.com>
+
+Edwin,
+
+On Wed, Jun 18, 2008 at 12:21 AM, Edwin Fine
+<rabbitmq-discuss_efine at usa.net> wrote:
+> amqp_connection.erl:114: The call
+> erlang:exit('channel_already_registered',ChannelNumber::any()) will fail
+> since it differs in argument position 1 from the success typing arguments:
+> (pid() | port(),any())
+> test_util.erl:237: The call
+> erlang:exit('should_not_receive_any_more_messages',Msg::any()) will fail
+> since it differs in argument position 1 from the success typing arguments:
+> (pid() | port(),any())
+
+This is a bug. I'll apply a fix and let you know when the new Erlang
+client repo is available (see previous post).
+
+Thanks for the input,
+
+Ben
+
+
+
+From 0x6e6562 at gmail.com  Wed Jun 18 07:12:11 2008
+From: 0x6e6562 at gmail.com (Ben Hood)
+Date: Wed, 18 Jun 2008 07:12:11 +0100
+Subject: [rabbitmq-discuss] Suggestion: add start/4 to amqp_connection
+	in Erlang client
+In-Reply-To: <269388e30806172210n2a98df7drc60ff54fdc2301b9@mail.gmail.com>
+References: <6c2563b20806171619j64c7e46bua672469b661214e3@mail.gmail.com>
+	<269388e30806172210n2a98df7drc60ff54fdc2301b9@mail.gmail.com>
+Message-ID: <269388e30806172312h5c81badam92060eface10e4fe@mail.gmail.com>
+
+Edwin,
+
+On Wed, Jun 18, 2008 at 12:19 AM, Edwin Fine
+<rabbitmq-discuss_efine at usa.net> wrote:
+> There's no way to start a connection on a given vhost in the current version
+> of the Erlang client. amqp_connection only has start/2 and start/3
+> functions.
+>
+> I propose adding start/4 to amqp_connection by modifying it as follows:
+>
+> %% Starts a networked conection to a remote AMQP server.
+> start(User, Password, Host) ->
+>     start(User, Password, Host, <<"/">>).
+>
+> start(User, Password, Host, Vhost) when is_binary(Vhost) ->
+>     Handshake = fun amqp_network_driver:handshake/1,
+>     InitialState = #connection_state{username = User,
+>                                      password = Password,
+>                                      serverhost = Host,
+>                                      vhostpath = Vhost},
+>     {ok, Pid} = gen_server:start_link(?MODULE, [InitialState, Handshake],
+> []),
+>     {Pid, network}.
+>
+> This does work, as I have been using the modified code for some months now.
+>
+> Any takers?
+
+
+I've already applied this patch as part of a previous discussion on
+the list, so it's in the latest version of the Erlang client. The
+Erlang client has been migrated from monotone to hg, we are just
+waiting on some infrastructure changes to go through to make the
+Erlang client public again. Let me know if you want me to send you a
+zipped image of the latest version for the meantime.
+
+HTH,
+
+Ben
+
+
+
+From David.Corcoran at edftrading.com  Wed Jun 18 15:23:24 2008
+From: David.Corcoran at edftrading.com (David.Corcoran at edftrading.com)
+Date: Wed, 18 Jun 2008 15:23:24 +0100
+Subject: [rabbitmq-discuss] rabbitmq dying
+Message-ID: <OF40096B56.201B4B93-ON8025746B.005BEC75-8025746C.004F0C11@Edftrading.com>
+
+
+Hi,
+
+Recently rabbitmq has been dying on us and I think I've found the problem.
+What usually happens is that the clients timeout and disconnect (they have
+a 3 second heartbeat) and reconnecting doesn't work. We get a
+"java.net.ConnectException: Connection refused" exception. The 'beam' task
+is also currently using 6% CPU and about 2GB of RAM.
+
+The errors look like:
+Mnesia(rabbit at vsdlbblue01): ** WARNING ** Mnesia is overloaded: {dump_log,
+
+time_threshold}
+
+Mnesia(rabbit at vsdlbblue01): ** WARNING ** Mnesia is overloaded: {mnesia_tm,
+
+message_queue_len,
+
+[705,850]}
+
+error on TCP connection from 10.80.12.26:47327
+{timeout,{frame_payload,3,1,29421}}
+
+etc.
+
+It looks like we might be leaving messages lying around? If I'm correct is
+there a way of seeing the queues and which have lots of messages? I've
+attached the last few hours of the log file in case that helps.
+
+Thanks,
+
+Dave
+
+(See attached file: rabbit.zip)
+
+*********************************************************************
+This communication contains confidential information, some or all of which may be privileged. It is for the intended recipient only and others must not disclose, distribute, copy, print or rely on this communication. If an addressing or transmission error has misdirected this communication, please notify the sender by replying to this e-mail and then delete the e-mail. E-mail sent to EDF Trading may be monitored by the company. Thank you. 
+EDF Trading Limited
+80 Victoria Street, 3rd Floor, Cardinal Place, London, SW1E 5JL
+A Company registered in England No. 4255974. 
+Switchboard: 020 7061 4000
+EDF Trading Markets Limited is a member of the EDF Trading Limited Group and is authorised and regulated by the Financial Services Authority.
+VAT number: GB 735 5479 07
+*********************************************************************
+-------------- next part --------------
+A non-text attachment was scrubbed...
+Name: rabbit.zip
+Type: application/zip
+Size: 26396 bytes
+Desc: not available
+Url : http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20080618/ef590fd8/attachment.zip 
+
+From 0x6e6562 at gmail.com  Wed Jun 18 15:49:12 2008
+From: 0x6e6562 at gmail.com (Ben Hood)
+Date: Wed, 18 Jun 2008 15:49:12 +0100
+Subject: [rabbitmq-discuss] rabbitmq dying
+In-Reply-To: <269388e30806180748l159cea2en7b0df89c702fb389@mail.gmail.com>
+References: <OF40096B56.201B4B93-ON8025746B.005BEC75-8025746C.004F0C11@Edftrading.com>
+	<269388e30806180748l159cea2en7b0df89c702fb389@mail.gmail.com>
+Message-ID: <269388e30806180749i25299b49sb87cca73f777333b@mail.gmail.com>
+
+Dave,
+
+I've had a quick look at the log file, and it seems that your clients
+are dying, which in turn is badly handled in the broker.
+
+This error
+
+Error in process <0.7321.2> on node 'rabbit at vsdlbblue01' with exit
+value: {badarg,[{erlang,port_command,[#Port<0.27825>,[<<7 bytes>>,<<36
+bytes>>,<<1 byte>>]]},{rabbit_writer,internal_send_command_async,3},{rabbit_writer,handle_message,2},{rabbit_writer,mainloop,1}]}
+
+
+suggests that the opposing peer is no longer there and causes a follow
+on error message:
+
+Error in process <0.30205.1> on node 'rabbit at vsdlbblue01' with exit
+value: {{badmatch,{error,[{exit,{timeout,{gen_server,call,[<0.30206.1>,{notify_down,<0.30204.1>}]}}}]}},[{rabbit_channel,terminate,2},{buffering_proxy,mainloop,4}]}
+
+which is a symptom of the first error not being handled correctly.
+
+There is a bug for this already and will be fixed very soon, please
+let us know what the urgency on this is, because we could get a patch
+out quicker if necessary.
+
+This is not the complete answer though, which we'll look into, but I
+just wanted to give some feedback as soon as possible.
+
+A few questions to help us diagnose this:
+
+- What version of Rabbit are you using?
+- Does the Rabbit process actually die or just the TCP listener?
+
+Thanks,
+
+Ben
+
+On Wed, Jun 18, 2008 at 3:23 PM,  <David.Corcoran at edftrading.com> wrote:
+>
+> Hi,
+>
+> Recently rabbitmq has been dying on us and I think I've found the problem.
+> What usually happens is that the clients timeout and disconnect (they have
+> a 3 second heartbeat) and reconnecting doesn't work. We get a
+> "java.net.ConnectException: Connection refused" exception. The 'beam' task
+> is also currently using 6% CPU and about 2GB of RAM.
+>
+> The errors look like:
+> Mnesia(rabbit at vsdlbblue01): ** WARNING ** Mnesia is overloaded: {dump_log,
+>
+> time_threshold}
+>
+> Mnesia(rabbit at vsdlbblue01): ** WARNING ** Mnesia is overloaded: {mnesia_tm,
+>
+> message_queue_len,
+>
+> [705,850]}
+>
+> error on TCP connection from 10.80.12.26:47327
+> {timeout,{frame_payload,3,1,29421}}
+>
+> etc.
+>
+> It looks like we might be leaving messages lying around? If I'm correct is
+> there a way of seeing the queues and which have lots of messages? I've
+> attached the last few hours of the log file in case that helps.
+>
+> Thanks,
+>
+> Dave
+>
+> (See attached file: rabbit.zip)
+>
+> *********************************************************************
+> This communication contains confidential information, some or all of which may be privileged. It is for the intended recipient only and others must not disclose, distribute, copy, print or rely on this communication. If an addressing or transmission error has misdirected this communication, please notify the sender by replying to this e-mail and then delete the e-mail. E-mail sent to EDF Trading may be monitored by the company. Thank you.
+> EDF Trading Limited
+> 80 Victoria Street, 3rd Floor, Cardinal Place, London, SW1E 5JL
+> A Company registered in England No. 4255974.
+> Switchboard: 020 7061 4000
+> EDF Trading Markets Limited is a member of the EDF Trading Limited Group and is authorised and regulated by the Financial Services Authority.
+> VAT number: GB 735 5479 07
+> *********************************************************************
+> _______________________________________________
+> rabbitmq-discuss mailing list
+> rabbitmq-discuss at lists.rabbitmq.com
+> http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss
+>
+>
+
+
+
+From 0x6e6562 at gmail.com  Wed Jun 18 15:59:26 2008
+From: 0x6e6562 at gmail.com (Ben Hood)
+Date: Wed, 18 Jun 2008 15:59:26 +0100
+Subject: [rabbitmq-discuss] rabbitmq dying
+In-Reply-To: <269388e30806180749i25299b49sb87cca73f777333b@mail.gmail.com>
+References: <OF40096B56.201B4B93-ON8025746B.005BEC75-8025746C.004F0C11@Edftrading.com>
+	<269388e30806180748l159cea2en7b0df89c702fb389@mail.gmail.com>
+	<269388e30806180749i25299b49sb87cca73f777333b@mail.gmail.com>
+Message-ID: <269388e30806180759k567af6daj4d662316a78c005e@mail.gmail.com>
+
+Dave,
+
+On Wed, Jun 18, 2008 at 3:49 PM, Ben Hood <0x6e6562 at gmail.com> wrote:
+> I've had a quick look at the log file, and it seems that your clients
+> are dying, which in turn is badly handled in the broker.
+> A few questions to help us diagnose this:
+
+I almost forgot to ask if you can reproduce the problem?
+
+Do you have a test case that recreates this issue that you could send us?
+
+If not, can you describe what you were doing, how many clients you had
+sending and receiving to and from how many (and what type of)
+exchanges and queues, please?
+
+Thx,
+
+Ben
+
+
+
+From David.Corcoran at edftrading.com  Wed Jun 18 16:23:20 2008
+From: David.Corcoran at edftrading.com (David.Corcoran at edftrading.com)
+Date: Wed, 18 Jun 2008 16:23:20 +0100
+Subject: [rabbitmq-discuss] rabbitmq dying
+In-Reply-To: <269388e30806180749i25299b49sb87cca73f777333b@mail.gmail.com>
+Message-ID: <OFD0038DEC.48BA1C93-ON8025746C.00518A86-8025746C.00548863@Edftrading.com>
+
+Hi Ben,
+
+Thanks for the quick response. If you have a patch it would be great
+because we're going live with rabbitmq in a few weeks. Unfortunately this
+problem never showed up during my early tests and is only showing up now
+that we're hitting it quite heavily in our dev environment.
+
+Some of our code can produce 50,000 messages in a few minutes and it can
+take half an hour to process them. During that time I guess other processes
+could also be producing large amounts of messages. Each message can be up
+to a few KB in size so it can be quite a bit of data.
+
+I can't give you a simple test case now but I might be able to put one
+together. RabbitMQ only dies about every week so it's hard to reproduce.
+They way our code works is that a server sends up to 50,000 jobs (messages)
+to a job queue. There are 40 consumers that read the jobs and process them
+and send the results back to a temporary reply queue. So, no exchanges and
+just 1 queue. If several people are using the same instance of RabbitMq,
+which might happen, there might be a few queues but no more than 8 or so.
+
+You're right about the clients, when we restart them we do it through a
+kill -9 so they don't disconnect gracefully. It may seem strange but the
+clients are stateless and lightweight and we've always killed them through
+a kill -9.
+
+The RabbitMQ process doesn't actually die. I'm nearly positive about that.
+I checked before I did a restart and 'beam' was using lots of RAM and a
+little CPU but nothing could connect.
+
+Versions:
+RabbitMQ 1.3.0-1
+Ubuntu 8.04 amd64 with 4GB RAM
+Erlang 1:11.b.5dfsg-11
+OpenJDK 1.6.0_06-b02 64-bit
+
+Thanks,
+
+Dave
+
+
+
+                                                                           
+             "Ben Hood"                                                    
+             <0x6e6562 at gmail.c                                             
+             om>                                                        To 
+             Sent by:                  rabbitmq-discuss at lists.rabbitmq.com 
+             rabbitmq-discuss-                                          cc 
+             bounces at lists.rab                                             
+             bitmq.com                                             Subject 
+                                       Re: [rabbitmq-discuss] rabbitmq     
+                                       dying                               
+             18/06/2008 15:49                                              
+                                                                           
+                                                                           
+                                                                           
+                                                                           
+                                                                           
+
+
+
+
+
+Dave,
+
+I've had a quick look at the log file, and it seems that your clients
+are dying, which in turn is badly handled in the broker.
+
+This error
+
+Error in process <0.7321.2> on node 'rabbit at vsdlbblue01' with exit
+value: {badarg,[{erlang,port_command,[#Port<0.27825>,[<<7 bytes>>,<<36
+bytes>>,<<1
+byte>>]]},{rabbit_writer,internal_send_command_async,3},{rabbit_writer,handle_message,2},{rabbit_writer,mainloop,1}]}
+
+
+
+suggests that the opposing peer is no longer there and causes a follow
+on error message:
+
+Error in process <0.30205.1> on node 'rabbit at vsdlbblue01' with exit
+value:
+{{badmatch,{error,[{exit,{timeout,{gen_server,call,[<0.30206.1>,{notify_down,<0.30204.1>}]}}}]}},[{rabbit_channel,terminate,2},{buffering_proxy,mainloop,4}]}
+
+
+which is a symptom of the first error not being handled correctly.
+
+There is a bug for this already and will be fixed very soon, please
+let us know what the urgency on this is, because we could get a patch
+out quicker if necessary.
+
+This is not the complete answer though, which we'll look into, but I
+just wanted to give some feedback as soon as possible.
+
+A few questions to help us diagnose this:
+
+- What version of Rabbit are you using?
+- Does the Rabbit process actually die or just the TCP listener?
+
+Thanks,
+
+Ben
+
+On Wed, Jun 18, 2008 at 3:23 PM,  <David.Corcoran at edftrading.com> wrote:
+>
+> Hi,
+>
+> Recently rabbitmq has been dying on us and I think I've found the
+problem.
+> What usually happens is that the clients timeout and disconnect (they
+have
+> a 3 second heartbeat) and reconnecting doesn't work. We get a
+> "java.net.ConnectException: Connection refused" exception. The 'beam'
+task
+> is also currently using 6% CPU and about 2GB of RAM.
+>
+> The errors look like:
+> Mnesia(rabbit at vsdlbblue01): ** WARNING ** Mnesia is overloaded:
+{dump_log,
+>
+> time_threshold}
+>
+> Mnesia(rabbit at vsdlbblue01): ** WARNING ** Mnesia is overloaded:
+{mnesia_tm,
+>
+> message_queue_len,
+>
+> [705,850]}
+>
+> error on TCP connection from 10.80.12.26:47327
+> {timeout,{frame_payload,3,1,29421}}
+>
+> etc.
+>
+> It looks like we might be leaving messages lying around? If I'm correct
+is
+> there a way of seeing the queues and which have lots of messages? I've
+> attached the last few hours of the log file in case that helps.
+>
+> Thanks,
+>
+> Dave
+>
+> (See attached file: rabbit.zip)
+>
+> *********************************************************************
+> This communication contains confidential information, some or all of
+which may be privileged. It is for the intended recipient only and others
+must not disclose, distribute, copy, print or rely on this communication.
+If an addressing or transmission error has misdirected this communication,
+please notify the sender by replying to this e-mail and then delete the
+e-mail. E-mail sent to EDF Trading may be monitored by the company. Thank
+you.
+> EDF Trading Limited
+> 80 Victoria Street, 3rd Floor, Cardinal Place, London, SW1E 5JL
+> A Company registered in England No. 4255974.
+> Switchboard: 020 7061 4000
+> EDF Trading Markets Limited is a member of the EDF Trading Limited Group
+and is authorised and regulated by the Financial Services Authority.
+> VAT number: GB 735 5479 07
+> *********************************************************************
+> _______________________________________________
+> rabbitmq-discuss mailing list
+> rabbitmq-discuss at lists.rabbitmq.com
+> http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss
+>
+>
+
+_______________________________________________
+rabbitmq-discuss mailing list
+rabbitmq-discuss at lists.rabbitmq.com
+http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss
+
+
+
+*********************************************************************
+This communication contains confidential information, some or all of which may be privileged. It is for the intended recipient only and others must not disclose, distribute, copy, print or rely on this communication. If an addressing or transmission error has misdirected this communication, please notify the sender by replying to this e-mail and then delete the e-mail. E-mail sent to EDF Trading may be monitored by the company. Thank you. 
+EDF Trading Limited
+80 Victoria Street, 3rd Floor, Cardinal Place, London, SW1E 5JL
+A Company registered in England No. 4255974. 
+Switchboard: 020 7061 4000
+EDF Trading Markets Limited is a member of the EDF Trading Limited Group and is authorised and regulated by the Financial Services Authority.
+VAT number: GB 735 5479 07
+*********************************************************************
+
+
+
+From 0x6e6562 at gmail.com  Wed Jun 18 16:37:49 2008
+From: 0x6e6562 at gmail.com (Ben Hood)
+Date: Wed, 18 Jun 2008 16:37:49 +0100
+Subject: [rabbitmq-discuss] rabbitmq dying
+In-Reply-To: <OFD0038DEC.48BA1C93-ON8025746C.00518A86-8025746C.00548863@Edftrading.com>
+References: <269388e30806180749i25299b49sb87cca73f777333b@mail.gmail.com>
+	<OFD0038DEC.48BA1C93-ON8025746C.00518A86-8025746C.00548863@Edftrading.com>
+Message-ID: <269388e30806180837o5a80938fwa876dff6064f825a@mail.gmail.com>
+
+Dave,
+
+On Wed, Jun 18, 2008 at 4:23 PM,  <David.Corcoran at edftrading.com> wrote:
+> The RabbitMQ process doesn't actually die. I'm nearly positive about that.
+> I checked before I did a restart and 'beam' was using lots of RAM and a
+> little CPU but nothing could connect.
+
+Can you tell me whether you can connect to the TCP socket on 5672 or
+not when this happens? I'm trying to work whether the TCP listener has
+dies or the AMQP protocol handler.
+
+Thx,
+
+Ben
+
+
+
+From David.Corcoran at edftrading.com  Wed Jun 18 16:58:13 2008
+From: David.Corcoran at edftrading.com (David.Corcoran at edftrading.com)
+Date: Wed, 18 Jun 2008 16:58:13 +0100
+Subject: [rabbitmq-discuss] rabbitmq dying
+In-Reply-To: <269388e30806180837o5a80938fwa876dff6064f825a@mail.gmail.com>
+Message-ID: <OFC89DA495.D7509DBA-ON8025746C.0057806C-8025746C.0057BA02@Edftrading.com>
+
+
+> Can you tell me whether you can connect to the TCP socket on 5672 or
+> not when this happens? I'm trying to work whether the TCP listener has
+> dies or the AMQP protocol handler.
+>
+
+Ben,
+
+Sorry, unfortunately I had to restart RabbitMQ so I can't test this. I'll
+do it next time it happens.
+
+
+*********************************************************************
+This communication contains confidential information, some or all of which may be privileged. It is for the intended recipient only and others must not disclose, distribute, copy, print or rely on this communication. If an addressing or transmission error has misdirected this communication, please notify the sender by replying to this e-mail and then delete the e-mail. E-mail sent to EDF Trading may be monitored by the company. Thank you. 
+EDF Trading Limited
+80 Victoria Street, 3rd Floor, Cardinal Place, London, SW1E 5JL
+A Company registered in England No. 4255974. 
+Switchboard: 020 7061 4000
+EDF Trading Markets Limited is a member of the EDF Trading Limited Group and is authorised and regulated by the Financial Services Authority.
+VAT number: GB 735 5479 07
+*********************************************************************
+
+
+
+From 0x6e6562 at gmail.com  Thu Jun 19 00:04:27 2008
+From: 0x6e6562 at gmail.com (Ben Hood)
+Date: Thu, 19 Jun 2008 00:04:27 +0100
+Subject: [rabbitmq-discuss] rabbitmq dying
+In-Reply-To: <OF40096B56.201B4B93-ON8025746B.005BEC75-8025746C.004F0C11@Edftrading.com>
+References: <OF40096B56.201B4B93-ON8025746B.005BEC75-8025746C.004F0C11@Edftrading.com>
+Message-ID: <269388e30806181604s2af48089k8dedfd89def26bad@mail.gmail.com>
+
+Dave,
+
+On Wed, Jun 18, 2008 at 3:23 PM,  <David.Corcoran at edftrading.com> wrote:
+> It looks like we might be leaving messages lying around? If I'm correct is
+> there a way of seeing the queues and which have lots of messages?
+
+In rabbit_amqqueue there are the functions stat/1 and stat_all/0 which
+will tell you how many messages are in the queue.
+
+HTH,
+
+Ben
+
+
+
+From 0x6e6562 at gmail.com  Thu Jun 19 00:10:36 2008
+From: 0x6e6562 at gmail.com (Ben Hood)
+Date: Thu, 19 Jun 2008 00:10:36 +0100
+Subject: [rabbitmq-discuss] rabbitmq dying
+In-Reply-To: <OFD0038DEC.48BA1C93-ON8025746C.00518A86-8025746C.00548863@Edftrading.com>
+References: <269388e30806180749i25299b49sb87cca73f777333b@mail.gmail.com>
+	<OFD0038DEC.48BA1C93-ON8025746C.00518A86-8025746C.00548863@Edftrading.com>
+Message-ID: <269388e30806181610h36bc15bbjc1ad1a5cc7e9662@mail.gmail.com>
+
+Dave,
+
+On Wed, Jun 18, 2008 at 4:23 PM,  <David.Corcoran at edftrading.com> wrote:
+> I can't give you a simple test case now but I might be able to put one
+> together. RabbitMQ only dies about every week so it's hard to reproduce.
+> They way our code works is that a server sends up to 50,000 jobs (messages)
+> to a job queue. There are 40 consumers that read the jobs and process them
+> and send the results back to a temporary reply queue. So, no exchanges and
+> just 1 queue. If several people are using the same instance of RabbitMq,
+> which might happen, there might be a few queues but no more than 8 or so.
+
+>From what you describe, this shouldn't really be an issue for Rabbit.
+50K messages should not really be a problem, so it would be good to be
+able to recreate this. I will try to write a test scenario to try to
+provoke this, but the more input I get the better in helping me
+reproduce this.
+
+>
+> You're right about the clients, when we restart them we do it through a
+> kill -9 so they don't disconnect gracefully. It may seem strange but the
+> clients are stateless and lightweight and we've always killed them through
+> a kill -9.
+
+There is a *nicer* way to shut a client down, but at the end of the
+day, the server *should* be able to handle any type of behaviour from
+a client.
+
+HTH,
+
+Ben
+
+
+
+From David.Corcoran at edftrading.com  Thu Jun 19 09:06:16 2008
+From: David.Corcoran at edftrading.com (David.Corcoran at edftrading.com)
+Date: Thu, 19 Jun 2008 09:06:16 +0100
+Subject: [rabbitmq-discuss] rabbitmq dying
+In-Reply-To: <269388e30806181610h36bc15bbjc1ad1a5cc7e9662@mail.gmail.com>
+Message-ID: <OFADE7E2FD.57054F75-ON8025746D.002B2DF5-8025746D.002C84DF@Edftrading.com>
+
+
+
+"Ben Hood" <0x6e6562 at gmail.com> wrote on 19/06/2008 00:10:36:
+
+> Dave,
+>
+> From what you describe, this shouldn't really be an issue for Rabbit.
+> 50K messages should not really be a problem, so it would be good to be
+> able to recreate this. I will try to write a test scenario to try to
+> provoke this, but the more input I get the better in helping me
+> reproduce this.
+
+Morning Ben,
+
+I'll try to reproduce it with a small test myself. The message "Mnesia is
+overloaded" seems to hit sometimes when the message queue length is only
+200,000 or so. Is this normal? Or perhaps the better questions is when does
+Mnesia become overloaded? Does it need more disk or maybe more memory? Btw,
+our queues are 'non-durable'.
+
+> There is a *nicer* way to shut a client down, but at the end of the
+> day, the server *should* be able to handle any type of behaviour from
+> a client.
+
+Yeah, we could be polite to our clients and let them shutdown nicely but
+because they're stateless we've always done it this way. If the patch isn't
+available in time I can have a look into it.
+
+Thanks,
+
+Dave
+
+
+*********************************************************************
+This communication contains confidential information, some or all of which may be privileged. It is for the intended recipient only and others must not disclose, distribute, copy, print or rely on this communication. If an addressing or transmission error has misdirected this communication, please notify the sender by replying to this e-mail and then delete the e-mail. E-mail sent to EDF Trading may be monitored by the company. Thank you. 
+EDF Trading Limited
+80 Victoria Street, 3rd Floor, Cardinal Place, London, SW1E 5JL
+A Company registered in England No. 4255974. 
+Switchboard: 020 7061 4000
+EDF Trading Markets Limited is a member of the EDF Trading Limited Group and is authorised and regulated by the Financial Services Authority.
+VAT number: GB 735 5479 07
+*********************************************************************
+
+
+
+From David.Corcoran at edftrading.com  Thu Jun 19 09:12:39 2008
+From: David.Corcoran at edftrading.com (David.Corcoran at edftrading.com)
+Date: Thu, 19 Jun 2008 09:12:39 +0100
+Subject: [rabbitmq-discuss] rabbitmq dying
+In-Reply-To: <269388e30806181604s2af48089k8dedfd89def26bad@mail.gmail.com>
+Message-ID: <OF5FD44978.23AD6CD1-ON8025746D.002C9362-8025746D.002D1A89@Edftrading.com>
+
+
+
+rabbitmq-discuss-bounces at lists.rabbitmq.com wrote on 19/06/2008 00:04:27:
+
+> In rabbit_amqqueue there are the functions stat/1 and stat_all/0 which
+> will tell you how many messages are in the queue.
+>
+
+Hey Ben,
+
+That looks perfect. Unfortunately I'm not sure how to connect to Rabbit to
+run those commands. I had a look at the mailing lists and found some
+commands that aren't working for me. Perhaps you can help?
+
+dave at vsdlbblue01:~$ erl -sname temp -remsh rabbit at localhost
+Erlang (BEAM) emulator version 5.5.2 [source] [async-threads:0] [hipe]
+[kernel-poll:false]
+
+{error_logger,{{2008,6,19},{8,49,47}},"~s~n",["Error in process <0.29.0> on
+node 'temp at vsdlbblue01' with exit value:
+{badarg,[{erlang,list_to_existing_atom,[\"rabbit at vsdlbblue01\"]},{dist_util,recv_challenge,1},{dist_util,handshake_we_started,1}]}\n"]}
+*** ERROR: Shell process terminated! (^G to start new job) ***
+
+=ERROR REPORT==== 19-Jun-2008::08:49:47 ===
+Error in process <0.29.0> on node 'temp at vsdlbblue01' with exit value:
+{badarg,[{erlang,list_to_existing_atom,["rabbit at vsdlbblue01"]},{dist_util,recv_challenge,1},{dist_util,handshake_we_started,1}]}
+BREAK: (a)bort (c)ontinue (p)roc info (i)nfo (l)oaded
+       (v)ersion (k)ill (D)b-tables (d)istribution
+
+
+And:
+dave at vsdlbblue01:~$ erl -sname temp -remsh rabbit at vsdlbblue01
+Erlang (BEAM) emulator version 5.5.2 [source] [async-threads:0] [hipe]
+[kernel-poll:false]
+*** ERROR: Shell process terminated! (^G to start new job) ***
+BREAK: (a)bort (c)ontinue (p)roc info (i)nfo (l)oaded
+       (v)ersion (k)ill (D)b-tables (d)istribution
+
+
+RabbitMQ is running on the machine (rhel5 i686) with the following args:
+/usr/lib/erlang/erts-5.5.2/bin/beam -W w -K true -A30 -- -root
+/usr/lib/erlang -progname erl -- -home /var/lib/rabbitmq -pa
+/usr/sbin/../ebin -noshell -noinput -s rabbit -sname rabbit -boot
+start_sasl -kernel inet_default_listen_options
+[{sndbuf,16384},{recbuf,4096}] -rabbit tcp_listeners [{"0.0.0.0", 5672}]
+-sasl errlog_type error -kernel error_logger
+{file,"/var/log/rabbitmq/rabbit.log"} -sasl sasl_error_logger
+{file,"/var/log/rabbitmq/rabbit-sasl.log"} -os_mon start_cpu_sup true
+-os_mon start_disksup false -os_mon start_memsup false -os_mon start_os_sup
+false -mnesia dir "/var/lib/rabbitmq/mnesia/rabbit" -noshell -noinput
+
+
+*********************************************************************
+This communication contains confidential information, some or all of which may be privileged. It is for the intended recipient only and others must not disclose, distribute, copy, print or rely on this communication. If an addressing or transmission error has misdirected this communication, please notify the sender by replying to this e-mail and then delete the e-mail. E-mail sent to EDF Trading may be monitored by the company. Thank you. 
+EDF Trading Limited
+80 Victoria Street, 3rd Floor, Cardinal Place, London, SW1E 5JL
+A Company registered in England No. 4255974. 
+Switchboard: 020 7061 4000
+EDF Trading Markets Limited is a member of the EDF Trading Limited Group and is authorised and regulated by the Financial Services Authority.
+VAT number: GB 735 5479 07
+*********************************************************************
+
+
+
+From 0x6e6562 at gmail.com  Thu Jun 19 09:41:14 2008
+From: 0x6e6562 at gmail.com (Ben Hood)
+Date: Thu, 19 Jun 2008 09:41:14 +0100
+Subject: [rabbitmq-discuss] rabbitmq dying
+In-Reply-To: <OF5FD44978.23AD6CD1-ON8025746D.002C9362-8025746D.002D1A89@Edftrading.com>
+References: <269388e30806181604s2af48089k8dedfd89def26bad@mail.gmail.com>
+	<OF5FD44978.23AD6CD1-ON8025746D.002C9362-8025746D.002D1A89@Edftrading.com>
+Message-ID: <269388e30806190141x37883446h56e2992f2de1f4d5@mail.gmail.com>
+
+On Thu, Jun 19, 2008 at 9:12 AM,  <David.Corcoran at edftrading.com> wrote:
+>
+> dave at vsdlbblue01:~$ erl -sname temp -remsh rabbit at localhost
+
+I wouldn't have expected this to work because I would thought that the
+name of the rabbit node is rabbit at vsdlbblue01.
+
+> RabbitMQ is running on the machine (rhel5 i686) with the following args:
+> /usr/lib/erlang/erts-5.5.2/bin/beam -W w -K true -A30 -- -root
+> /usr/lib/erlang -progname erl -- -home /var/lib/rabbitmq -pa
+> /usr/sbin/../ebin -noshell -noinput -s rabbit -sname rabbit -boot
+> start_sasl -kernel inet_default_listen_options
+> [{sndbuf,16384},{recbuf,4096}] -rabbit tcp_listeners [{"0.0.0.0", 5672}]
+> -sasl errlog_type error -kernel error_logger
+> {file,"/var/log/rabbitmq/rabbit.log"} -sasl sasl_error_logger
+> {file,"/var/log/rabbitmq/rabbit-sasl.log"} -os_mon start_cpu_sup true
+> -os_mon start_disksup false -os_mon start_memsup false -os_mon start_os_sup
+> false -mnesia dir "/var/lib/rabbitmq/mnesia/rabbit" -noshell -noinput
+
+
+Can you ping rabbit at vsdlbblue01?
+
+E.g. $erl -sname temp
+(temp at lsh-226)9> net_adm:ping('rabbit at vsdlbblue01).
+
+If the node is pingable, this will return pong, otherwise pang.
+
+HTH,
+
+Ben
+
+
+
+From 0x6e6562 at gmail.com  Thu Jun 19 09:50:10 2008
+From: 0x6e6562 at gmail.com (Ben Hood)
+Date: Thu, 19 Jun 2008 09:50:10 +0100
+Subject: [rabbitmq-discuss] rabbitmq dying
+In-Reply-To: <OFADE7E2FD.57054F75-ON8025746D.002B2DF5-8025746D.002C84DF@Edftrading.com>
+References: <269388e30806181610h36bc15bbjc1ad1a5cc7e9662@mail.gmail.com>
+	<OFADE7E2FD.57054F75-ON8025746D.002B2DF5-8025746D.002C84DF@Edftrading.com>
+Message-ID: <269388e30806190150v69c2a195w26fdbcde9144756c@mail.gmail.com>
+
+On Thu, Jun 19, 2008 at 9:06 AM,  <David.Corcoran at edftrading.com> wrote:
+> I'll try to reproduce it with a small test myself. The message "Mnesia is
+> overloaded" seems to hit sometimes when the message queue length is only
+> 200,000 or so. Is this normal? Or perhaps the better questions is when does
+> Mnesia become overloaded? Does it need more disk or maybe more memory? Btw,
+> our queues are 'non-durable'.
+
+The messages themselves are not actually stored in mnesia. Mnesia just
+maintains the existence of a queue with a unique name in a cluster.
+
+The mnesia overloaded warning may indicate that there is a lot of
+t-log activity caused by pending activities.
+
+A good diagnostic for this is mnesia:info(). If we can get the remote
+shell going, then the output of this would be good.
+
+Furthermore having a script so that we can reproduce it here would be
+good as well.
+
+I also wondering why so many messages have been backed up. Can they
+got get consumed at a fast rate?
+
+>
+>> There is a *nicer* way to shut a client down, but at the end of the
+>> day, the server *should* be able to handle any type of behaviour from
+>> a client.
+>
+> Yeah, we could be polite to our clients and let them shutdown nicely but
+> because they're stateless we've always done it this way. If the patch isn't
+> available in time I can have a look into it.
+
+The patch I was talking about neatens out the server side handling of
+clients just going AWOL, but I don't think that is going to solve your
+problem, which is what we need to get to the bottom of.
+
+Ben
+
+
+
+From 0x6e6562 at gmail.com  Thu Jun 19 10:00:16 2008
+From: 0x6e6562 at gmail.com (Ben Hood)
+Date: Thu, 19 Jun 2008 10:00:16 +0100
+Subject: [rabbitmq-discuss] rabbitmq dying
+In-Reply-To: <OFADE7E2FD.57054F75-ON8025746D.002B2DF5-8025746D.002C84DF@Edftrading.com>
+References: <269388e30806181610h36bc15bbjc1ad1a5cc7e9662@mail.gmail.com>
+	<OFADE7E2FD.57054F75-ON8025746D.002B2DF5-8025746D.002C84DF@Edftrading.com>
+Message-ID: <269388e30806190200g6dd62cc2s339d8429740f2b84@mail.gmail.com>
+
+Dave,
+
+On Thu, Jun 19, 2008 at 9:06 AM,  <David.Corcoran at edftrading.com> wrote:
+> Yeah, we could be polite to our clients and let them shutdown nicely but
+> because they're stateless we've always done it this way. If the patch isn't
+> available in time I can have a look into it.
+
+That's a fair point. Based on this there may be a few things to consider:
+
+1. Us adding a JVM shutdown hook to the java client to catch this kind
+of thing and observe the protocol shutdown procedure. This would mean
+you sending the JVM a friendlier signal than -9 :-)
+2. Even though your clients are stateless, from a performance
+perspective you may want to consider reusing the same AMQP channel
+across message sends. Setting up each channel and the associated AMQP
+handshake *may* be unnecessary overhead. It is after all a connection
+orientated protocol :-)
+
+HTH,
+
+Ben
+
+
+
+From chime at mu.dk  Thu Jun 19 10:05:54 2008
+From: chime at mu.dk (Michael Arnoldus)
+Date: Thu, 19 Jun 2008 11:05:54 +0200
+Subject: [rabbitmq-discuss] AMQP command_invalid
+Message-ID: <2962D188-4AAF-47B3-B73C-C8DA2523BD67@mu.dk>
+
+Hi,
+
+Once or twice per day one of our AMQP communicating services stops  
+responding to any AMQP communication. At the same time we consistently  
+get this message in the rabbit log:
+
+> =INFO REPORT==== 12-May-2008::18:21:54 ===
+> Exception: Channel 3, Reason {amqp,command_invalid,none}
+
+Except the channel might change.
+
+I know I've already asked about this, but I'm lost at how to get any  
+further so if anybody has any ideas about how to get more info, please  
+let me know.
+
+Regards,
+
+Michael
+
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20080619/cb69441b/attachment.htm 
+-------------- next part --------------
+A non-text attachment was scrubbed...
+Name: smime.p7s
+Type: application/pkcs7-signature
+Size: 1912 bytes
+Desc: not available
+Url : http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20080619/cb69441b/attachment.bin 
+
+From 0x6e6562 at gmail.com  Thu Jun 19 10:11:46 2008
+From: 0x6e6562 at gmail.com (Ben Hood)
+Date: Thu, 19 Jun 2008 10:11:46 +0100
+Subject: [rabbitmq-discuss] AMQP command_invalid
+In-Reply-To: <269388e30806190211p560fbdd7hac882b8f3d4049f7@mail.gmail.com>
+References: <2962D188-4AAF-47B3-B73C-C8DA2523BD67@mu.dk>
+	<269388e30806190211p560fbdd7hac882b8f3d4049f7@mail.gmail.com>
+Message-ID: <269388e30806190211j9d4a889q8fa12336f20525b2@mail.gmail.com>
+
+Michael,
+
+On Thu, Jun 19, 2008 at 10:05 AM, Michael Arnoldus <chime at mu.dk> wrote:
+> Hi,
+> Once or twice per day one of our AMQP communicating services stops
+> responding to any AMQP communication. At the same time we consistently get
+> this message in the rabbit log:
+>
+> =INFO REPORT==== 12-May-2008::18:21:54 ===
+>
+> Exception: Channel 3, Reason {amqp,command_invalid,none}
+>
+> Except the channel might change.
+> I know I've already asked about this, but I'm lost at how to get any further
+> so if anybody has any ideas about how to get more info, please let me know.
+
+Does the interpreter create a crash dump file?
+
+HTH,
+
+Ben
+
+
+
+From David.Corcoran at edftrading.com  Thu Jun 19 10:13:00 2008
+From: David.Corcoran at edftrading.com (David.Corcoran at edftrading.com)
+Date: Thu, 19 Jun 2008 10:13:00 +0100
+Subject: [rabbitmq-discuss] rabbitmq dying
+In-Reply-To: <269388e30806190141x37883446h56e2992f2de1f4d5@mail.gmail.com>
+Message-ID: <OFD1B3EE5F.6C750964-ON8025746D.0031C653-8025746D.0032A0CE@Edftrading.com>
+
+
+
+rabbitmq-discuss-bounces at lists.rabbitmq.com wrote on 19/06/2008 09:41:14:
+
+>
+> Can you ping rabbit at vsdlbblue01?
+>
+> E.g. $erl -sname temp
+> (temp at lsh-226)9> net_adm:ping('rabbit at vsdlbblue01).
+>
+
+I get a 'pang' back. However RabbitMQ is refusing connections again so that
+might not mean much. 'Beam' is still running and I can telnet into the
+server on port 5672.
+
+I can keep it down for a few more minutes if there's anything else I can
+run that might be useful?
+
+.....
+
+Bizarre as this may seem RabbitMQ is now accepting connections again. When
+it wasn't I got the error:
+java.io.IOException
+
+Caused by: com.rabbitmq.client.ShutdownSignalException (connection error;
+reason: {#method<connection.close>(reply code=541, reply
+text=INTERNAL_ERROR, class id=0, method id=0),null,""})
+       at
+com.rabbitmq.client.impl.AMQConnection.shutdown(AMQConnection.java:577)
+        at
+com.rabbitmq.client.impl.AMQConnection.handleConnectionClose(AMQConnection.java:563)
+        at
+com.rabbitmq.client.impl.AMQConnection.processControlCommand(AMQConnection.java:540)
+        at
+com.rabbitmq.client.impl.AMQConnection$1.processAsync(AMQConnection.java:78)
+        at
+com.rabbitmq.client.impl.AMQChannel.handleCompleteInboundCommand(AMQChannel.java:143)
+        at
+com.rabbitmq.client.impl.AMQChannel.handleFrame(AMQChannel.java:98)
+        at
+com.rabbitmq.client.impl.AMQConnection$MainLoop.run(AMQConnection.java:443)
+
+And everyone else using it was disconnected.
+
+Logs again:
+
+(See attached file: rabbit.zip)
+
+
+*********************************************************************
+This communication contains confidential information, some or all of which may be privileged. It is for the intended recipient only and others must not disclose, distribute, copy, print or rely on this communication. If an addressing or transmission error has misdirected this communication, please notify the sender by replying to this e-mail and then delete the e-mail. E-mail sent to EDF Trading may be monitored by the company. Thank you. 
+EDF Trading Limited
+80 Victoria Street, 3rd Floor, Cardinal Place, London, SW1E 5JL
+A Company registered in England No. 4255974. 
+Switchboard: 020 7061 4000
+EDF Trading Markets Limited is a member of the EDF Trading Limited Group and is authorised and regulated by the Financial Services Authority.
+VAT number: GB 735 5479 07
+*********************************************************************
+-------------- next part --------------
+A non-text attachment was scrubbed...
+Name: rabbit.zip
+Type: application/zip
+Size: 15349 bytes
+Desc: not available
+Url : http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20080619/5e9ac4b6/attachment.zip 
+
+From 0x6e6562 at gmail.com  Thu Jun 19 10:15:31 2008
+From: 0x6e6562 at gmail.com (Ben Hood)
+Date: Thu, 19 Jun 2008 10:15:31 +0100
+Subject: [rabbitmq-discuss] AMQP command_invalid
+In-Reply-To: <2962D188-4AAF-47B3-B73C-C8DA2523BD67@mu.dk>
+References: <2962D188-4AAF-47B3-B73C-C8DA2523BD67@mu.dk>
+Message-ID: <269388e30806190215x4bfb0fd1nf4b3f519769d4c43@mail.gmail.com>
+
+On Thu, Jun 19, 2008 at 10:05 AM, Michael Arnoldus <chime at mu.dk> wrote:
+> Exception: Channel 3, Reason {amqp,command_invalid,none}
+
+BTW, what version of Rabbit are you running?
+
+
+
+From 0x6e6562 at gmail.com  Thu Jun 19 10:22:04 2008
+From: 0x6e6562 at gmail.com (Ben Hood)
+Date: Thu, 19 Jun 2008 10:22:04 +0100
+Subject: [rabbitmq-discuss] rabbitmq dying
+In-Reply-To: <OFD1B3EE5F.6C750964-ON8025746D.0031C653-8025746D.0032A0CE@Edftrading.com>
+References: <269388e30806190141x37883446h56e2992f2de1f4d5@mail.gmail.com>
+	<OFD1B3EE5F.6C750964-ON8025746D.0031C653-8025746D.0032A0CE@Edftrading.com>
+Message-ID: <269388e30806190222o12af318fhdc4058ffddab382b@mail.gmail.com>
+
+On Thu, Jun 19, 2008 at 10:13 AM,  <David.Corcoran at edftrading.com> wrote:
+>
+> I get a 'pang' back. However RabbitMQ is refusing connections again so that
+> might not mean much. 'Beam' is still running and I can telnet into the
+> server on port 5672.
+>
+> I can keep it down for a few more minutes if there's anything else I can
+> run that might be useful?
+>
+> .....
+>
+> Bizarre as this may seem RabbitMQ is now accepting connections again.
+
+You're confusing me :-) Is it accepting connections or not?
+
+Ben
+
+
+
+From David.Corcoran at edftrading.com  Thu Jun 19 10:27:26 2008
+From: David.Corcoran at edftrading.com (David.Corcoran at edftrading.com)
+Date: Thu, 19 Jun 2008 10:27:26 +0100
+Subject: [rabbitmq-discuss] rabbitmq dying
+In-Reply-To: <269388e30806190222o12af318fhdc4058ffddab382b@mail.gmail.com>
+Message-ID: <OFE21CE5E4.54160AAB-ON8025746D.00338964-8025746D.0033F319@Edftrading.com>
+
+
+
+"Ben Hood" <0x6e6562 at gmail.com> wrote on 19/06/2008 10:22:04:
+>
+> You're confusing me :-) Is it accepting connections or not?
+>
+
+Sorry, I'm confused myself. What happened is that one of the other
+developers here said the all his clients had disconnected from rabbitmq.
+The error on his screen was about no heartbeat for 3 seconds. I tried to
+connect with a lightweight java client that just creates and deletes a
+queue and I couldn't. It tried for a few seconds then died with
+INTERNAL_ERROR in the exception reason. So I started writing an email to
+the list. By the time I had finished the email people could connect to
+RabbitMQ again. I haven't restarted it.
+
+Does that sound normal? :)
+
+
+*********************************************************************
+This communication contains confidential information, some or all of which may be privileged. It is for the intended recipient only and others must not disclose, distribute, copy, print or rely on this communication. If an addressing or transmission error has misdirected this communication, please notify the sender by replying to this e-mail and then delete the e-mail. E-mail sent to EDF Trading may be monitored by the company. Thank you. 
+EDF Trading Limited
+80 Victoria Street, 3rd Floor, Cardinal Place, London, SW1E 5JL
+A Company registered in England No. 4255974. 
+Switchboard: 020 7061 4000
+EDF Trading Markets Limited is a member of the EDF Trading Limited Group and is authorised and regulated by the Financial Services Authority.
+VAT number: GB 735 5479 07
+*********************************************************************
+
+
+
+From 0x6e6562 at gmail.com  Thu Jun 19 10:58:02 2008
+From: 0x6e6562 at gmail.com (Ben Hood)
+Date: Thu, 19 Jun 2008 10:58:02 +0100
+Subject: [rabbitmq-discuss] rabbitmq dying
+In-Reply-To: <OFE21CE5E4.54160AAB-ON8025746D.00338964-8025746D.0033F319@Edftrading.com>
+References: <269388e30806190222o12af318fhdc4058ffddab382b@mail.gmail.com>
+	<OFE21CE5E4.54160AAB-ON8025746D.00338964-8025746D.0033F319@Edftrading.com>
+Message-ID: <269388e30806190258m2d813ce2m412083105d0ca753@mail.gmail.com>
+
+David,
+
+On Thu, Jun 19, 2008 at 10:27 AM,  <David.Corcoran at edftrading.com> wrote:
+> Sorry, I'm confused myself. What happened is that one of the other
+> developers here said the all his clients had disconnected from rabbitmq.
+> The error on his screen was about no heartbeat for 3 seconds. I tried to
+> connect with a lightweight java client that just creates and deletes a
+> queue and I couldn't. It tried for a few seconds then died with
+> INTERNAL_ERROR in the exception reason. So I started writing an email to
+> the list. By the time I had finished the email people could connect to
+> RabbitMQ again. I haven't restarted it.
+
+Can I assume now that you can use the lightweight client to perform
+the queue creation/delete?
+
+Can I also ask some questions about how the Java client is running:
+
+- What is the network connection to the broker like?
+- Have you tried setting a higher heartbeat in the client (the default
+is 3 seconds)?
+- What OS are the clients running (this is a long shot because it
+shouldn't matter, but we do know of a *bug* in the .NET Socket API in
+this regard)?
+
+> Does that sound normal? :)
+
+Depends what *normal* is :-)
+
+Ben
+
+
+
+From David.Corcoran at edftrading.com  Thu Jun 19 11:06:43 2008
+From: David.Corcoran at edftrading.com (David.Corcoran at edftrading.com)
+Date: Thu, 19 Jun 2008 11:06:43 +0100
+Subject: [rabbitmq-discuss] rabbitmq dying
+In-Reply-To: <269388e30806190258m2d813ce2m412083105d0ca753@mail.gmail.com>
+Message-ID: <OF7C430660.CF218949-ON8025746D.003716E3-8025746D.00378BB9@Edftrading.com>
+
+
+
+"Ben Hood" <0x6e6562 at gmail.com> wrote on 19/06/2008 10:58:02:
+
+> David,
+>
+>
+> Can I assume now that you can use the lightweight client to perform
+> the queue creation/delete?
+
+Yes. And actually everyone was able to reconnect after waiting a minute or
+two.
+
+However the error is happening again though. The exception is
+ShutdownSignalException.  And now my lightweight client can't connect
+again. It may start working again in a few minutes like last time.
+
+>
+> Can I also ask some questions about how the Java client is running:
+>
+> - What is the network connection to the broker like?
+Gigabit LAN.
+
+> - Have you tried setting a higher heartbeat in the client (the default
+> is 3 seconds)?
+No, but I can't connect at all at the moment.
+
+> - What OS are the clients running (this is a long shot because it
+> shouldn't matter, but we do know of a *bug* in the .NET Socket API in
+> this regard)?
+Ubuntu 64 and Rhel5 running on java OpenJDK 6.
+
+> Depends what *normal* is :-)
+:)
+
+
+*********************************************************************
+This communication contains confidential information, some or all of which may be privileged. It is for the intended recipient only and others must not disclose, distribute, copy, print or rely on this communication. If an addressing or transmission error has misdirected this communication, please notify the sender by replying to this e-mail and then delete the e-mail. E-mail sent to EDF Trading may be monitored by the company. Thank you. 
+EDF Trading Limited
+80 Victoria Street, 3rd Floor, Cardinal Place, London, SW1E 5JL
+A Company registered in England No. 4255974. 
+Switchboard: 020 7061 4000
+EDF Trading Markets Limited is a member of the EDF Trading Limited Group and is authorised and regulated by the Financial Services Authority.
+VAT number: GB 735 5479 07
+*********************************************************************
+
+
+
+From David.Corcoran at edftrading.com  Thu Jun 19 11:23:22 2008
+From: David.Corcoran at edftrading.com (David.Corcoran at edftrading.com)
+Date: Thu, 19 Jun 2008 11:23:22 +0100
+Subject: [rabbitmq-discuss] rabbitmq dying
+In-Reply-To: <OF7C430660.CF218949-ON8025746D.003716E3-8025746D.00378BB9@Edftrading.com>
+Message-ID: <OFB8F3F383.9B3B05E3-ON8025746D.00389F32-8025746D.003911EF@Edftrading.com>
+
+RabbitMQ eventually crashed.
+
+The following line is the last log entry (from startup.err):
+eheap_alloc: Cannot allocate 1271244 bytes of memory (of type "heap").
+
+/usr/sbin/rabbitmq-server: line 74: 32733 Aborted                 erl -pa
+$(dirname $0)/../ebin ${START_RABBIT} -sname ${NODENAME} -boot start_sasl
++W w ${ERL_ARGS} -rabbit tcp_listeners '[{"'${NODE_IP_ADDRESS}'",
+'${NODE_PORT}'}]' -sasl errlog_type error -kernel error_logger
+'{file,"'${LOGS}'"}' -sasl sasl_error_logger '{file,"'${SASL_LOGS}'"}'
+-os_mon start_cpu_sup true -os_mon start_disksup false -os_mon start_memsup
+false -os_mon start_os_sup false -mnesia dir "\"${MNESIA_DIR}\""
+${CLUSTER_CONFIG} ${RABBIT_ARGS} "$@"
+
+So I guess it finally ran out of memory.
+
+rabbitmq-discuss-bounces at lists.rabbitmq.com wrote on 19/06/2008 11:06:43:
+
+>
+>
+> "Ben Hood" <0x6e6562 at gmail.com> wrote on 19/06/2008 10:58:02:
+>
+> > David,
+> >
+> >
+> > Can I assume now that you can use the lightweight client to perform
+> > the queue creation/delete?
+>
+> Yes. And actually everyone was able to reconnect after waiting a minute
+or
+> two.
+>
+> However the error is happening again though. The exception is
+> ShutdownSignalException.  And now my lightweight client can't connect
+> again. It may start working again in a few minutes like last time.
+>
+> >
+> > Can I also ask some questions about how the Java client is running:
+> >
+> > - What is the network connection to the broker like?
+> Gigabit LAN.
+>
+> > - Have you tried setting a higher heartbeat in the client (the default
+> > is 3 seconds)?
+> No, but I can't connect at all at the moment.
+>
+> > - What OS are the clients running (this is a long shot because it
+> > shouldn't matter, but we do know of a *bug* in the .NET Socket API in
+> > this regard)?
+> Ubuntu 64 and Rhel5 running on java OpenJDK 6.
+>
+> > Depends what *normal* is :-)
+> :)
+>
+>
+> *********************************************************************
+> This communication contains confidential information, some or all of
+> which may be privileged. It is for the intended recipient only and
+> others must not disclose, distribute, copy, print or rely on this
+> communication. If an addressing or transmission error has
+> misdirected this communication, please notify the sender by replying
+> to this e-mail and then delete the e-mail. E-mail sent to EDF
+> Trading may be monitored by the company. Thank you.
+> EDF Trading Limited
+> 80 Victoria Street, 3rd Floor, Cardinal Place, London, SW1E 5JL
+> A Company registered in England No. 4255974.
+> Switchboard: 020 7061 4000
+> EDF Trading Markets Limited is a member of the EDF Trading Limited
+> Group and is authorised and regulated by the Financial Services
+Authority.
+> VAT number: GB 735 5479 07
+> *********************************************************************
+>
+> _______________________________________________
+> rabbitmq-discuss mailing list
+> rabbitmq-discuss at lists.rabbitmq.com
+> http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss
+
+
+*********************************************************************
+This communication contains confidential information, some or all of which may be privileged. It is for the intended recipient only and others must not disclose, distribute, copy, print or rely on this communication. If an addressing or transmission error has misdirected this communication, please notify the sender by replying to this e-mail and then delete the e-mail. E-mail sent to EDF Trading may be monitored by the company. Thank you. 
+EDF Trading Limited
+80 Victoria Street, 3rd Floor, Cardinal Place, London, SW1E 5JL
+A Company registered in England No. 4255974. 
+Switchboard: 020 7061 4000
+EDF Trading Markets Limited is a member of the EDF Trading Limited Group and is authorised and regulated by the Financial Services Authority.
+VAT number: GB 735 5479 07
+*********************************************************************
+
+
+
+From holger at wizards.de  Thu Jun 19 13:12:52 2008
+From: holger at wizards.de (=?ISO-8859-1?Q?Holger_Hoffst=E4tte?=)
+Date: Thu, 19 Jun 2008 14:12:52 +0200
+Subject: [rabbitmq-discuss] rabbitmq dying
+In-Reply-To: <OF7C430660.CF218949-ON8025746D.003716E3-8025746D.00378BB9@Edftrading.com>
+References: <OF7C430660.CF218949-ON8025746D.003716E3-8025746D.00378BB9@Edftrading.com>
+Message-ID: <485A4D44.2060900@wizards.de>
+
+David.Corcoran at edftrading.com wrote:
+>> Can I assume now that you can use the lightweight client to perform
+>> the queue creation/delete?
+> 
+> Yes. And actually everyone was able to reconnect after waiting a minute or
+> two.
+
+Maybe something related to SO_LINGER (which sould be off by default but 
+*is* platform-specific) or a too high value of net.ipv4.tcp_fin_timeout? 
+These (or a combination, coupled with delayed finalizatoin by a GC) could 
+lead to all sorts of other pile-up/timeout effects..just guessing.
+
+Holger
+
+
+
+From chime at mu.dk  Thu Jun 19 14:01:23 2008
+From: chime at mu.dk (Michael Arnoldus)
+Date: Thu, 19 Jun 2008 15:01:23 +0200
+Subject: [rabbitmq-discuss] AMQP command_invalid
+In-Reply-To: <269388e30806190211j9d4a889q8fa12336f20525b2@mail.gmail.com>
+References: <2962D188-4AAF-47B3-B73C-C8DA2523BD67@mu.dk>
+	<269388e30806190211p560fbdd7hac882b8f3d4049f7@mail.gmail.com>
+	<269388e30806190211j9d4a889q8fa12336f20525b2@mail.gmail.com>
+Message-ID: <5FDE9E6D-A97D-49E1-A2AC-835EB03E4D41@mu.dk>
+
+No crash dump. We're running 1.3.0.
+
+Michael
+
+On Jun 19, 2008, at 11:11 , Ben Hood wrote:
+
+> Michael,
+>
+> On Thu, Jun 19, 2008 at 10:05 AM, Michael Arnoldus <chime at mu.dk>  
+> wrote:
+>> Hi,
+>> Once or twice per day one of our AMQP communicating services stops
+>> responding to any AMQP communication. At the same time we  
+>> consistently get
+>> this message in the rabbit log:
+>>
+>> =INFO REPORT==== 12-May-2008::18:21:54 ===
+>>
+>> Exception: Channel 3, Reason {amqp,command_invalid,none}
+>>
+>> Except the channel might change.
+>> I know I've already asked about this, but I'm lost at how to get  
+>> any further
+>> so if anybody has any ideas about how to get more info, please let  
+>> me know.
+>
+> Does the interpreter create a crash dump file?
+>
+> HTH,
+>
+> Ben
+>
+> _______________________________________________
+> rabbitmq-discuss mailing list
+> rabbitmq-discuss at lists.rabbitmq.com
+> http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss
+
+-------------- next part --------------
+A non-text attachment was scrubbed...
+Name: smime.p7s
+Type: application/pkcs7-signature
+Size: 1912 bytes
+Desc: not available
+Url : http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20080619/3c4480b9/attachment.bin 
+
+From 0x6e6562 at gmail.com  Sat Jun 21 18:07:38 2008
+From: 0x6e6562 at gmail.com (Ben Hood)
+Date: Sat, 21 Jun 2008 18:07:38 +0100
+Subject: [rabbitmq-discuss] How to build your own AMQP client
+Message-ID: <269388e30806211007q77078cdfp605b37bdd08e3d09@mail.gmail.com>
+
+Hi all,
+
+For anybody interested in writing a client for AMQP in language XXX,
+I've written an article about the design considerations you might want
+to think about and how they could apply to a particular target
+langauge.
+
+The article is here:
+http://hopper.squarespace.com/blog/2008/6/21/build-your-own-amqp-client.html
+
+HTH,
+
+Ben
+
+
+
+From 0x6e6562 at gmail.com  Sun Jun 22 21:19:33 2008
+From: 0x6e6562 at gmail.com (Ben Hood)
+Date: Sun, 22 Jun 2008 21:19:33 +0100
+Subject: [rabbitmq-discuss] AMQP Relay
+Message-ID: <269388e30806221319r7515c3aft3c3e556c8340e392@mail.gmail.com>
+
+Hi all,
+
+For anybody interested in a solution to relay AMQP messages between
+brokers, I have written the following article:
+
+http://hopper.squarespace.com/blog/2008/6/22/introducing-shovel-an-amqp-relay.html
+
+HTH,
+
+Ben
+
+
+
+From 0x6e6562 at gmail.com  Mon Jun 23 11:38:31 2008
+From: 0x6e6562 at gmail.com (Ben Hood)
+Date: Mon, 23 Jun 2008 11:38:31 +0100
+Subject: [rabbitmq-discuss] Dialyzer errors in RabbitMQ Erlang client
+In-Reply-To: <269388e30806172311i4ee43faie0f1e96ca08141f0@mail.gmail.com>
+References: <6c2563b20806171621r6538862bnb5546157a27766f3@mail.gmail.com>
+	<269388e30806172311i4ee43faie0f1e96ca08141f0@mail.gmail.com>
+Message-ID: <269388e30806230338q15e03ff1k1a5d6d1979097619@mail.gmail.com>
+
+Edwin,
+
+On Wed, Jun 18, 2008 at 7:11 AM, Ben Hood <0x6e6562 at gmail.com> wrote:
+> This is a bug. I'll apply a fix and let you know when the new Erlang
+> client repo is available (see previous post).
+
+I have fixed this and the Erlang client hg repo is now available at
+http://hg.opensource.lshift.net/rabbitmq-erlang-client/
+
+Also, you will find start/4 in the amqp_connection module in the
+latest revision.
+
+HTH,
+
+Ben
+
+
+
+From David.Corcoran at edftrading.com  Mon Jun 23 16:30:48 2008
+From: David.Corcoran at edftrading.com (David.Corcoran at edftrading.com)
+Date: Mon, 23 Jun 2008 16:30:48 +0100
+Subject: [rabbitmq-discuss] RabbitMQ odd behaviour
+Message-ID: <OF670FA479.9B0ED6A8-ON80257471.005417A3-80257471.005537A9@Edftrading.com>
+
+
+Hi,
+
+I've been seeing some odd slow downs in RabbitMQ and I think it's also
+possible to see them with unmodified ProducerMain and ConsumerMain. My
+producers managed to publish about 18k messages/second but my consumers
+only managed to read at about 1k messages/second. To replicate this run
+ProducerMain and ConsumerMain at the same time and you get a good rate of
+about 17K messages/second. But if you run ProducerMain until it finishes
+(it gets 18K/second) and then run ConsumerMain, ConsumerMain only gets
+about 1K messages/second.
+
+Is this normal or is there something odd going on?
+
+Thanks,
+
+Dave
+
+java clients
+RabbitMQ 1.3.0-1
+Ubuntu 8.04 amd64 with 4GB RAM
+Erlang 1:11.b.5dfsg-11
+OpenJDK 1.6.0_06-b02 64-bit
+
+
+*********************************************************************
+This communication contains confidential information, some or all of which may be privileged. It is for the intended recipient only and others must not disclose, distribute, copy, print or rely on this communication. If an addressing or transmission error has misdirected this communication, please notify the sender by replying to this e-mail and then delete the e-mail. E-mail sent to EDF Trading may be monitored by the company. Thank you. 
+EDF Trading Limited
+80 Victoria Street, 3rd Floor, Cardinal Place, London, SW1E 5JL
+A Company registered in England No. 4255974. 
+Switchboard: 020 7061 4000
+EDF Trading Markets Limited is a member of the EDF Trading Limited Group and is authorised and regulated by the Financial Services Authority.
+VAT number: GB 735 5479 07
+*********************************************************************
+
+
+
+From 0x6e6562 at gmail.com  Mon Jun 23 23:57:51 2008
+From: 0x6e6562 at gmail.com (Ben Hood)
+Date: Mon, 23 Jun 2008 23:57:51 +0100
+Subject: [rabbitmq-discuss] RabbitMQ odd behaviour
+In-Reply-To: <OF670FA479.9B0ED6A8-ON80257471.005417A3-80257471.005537A9@Edftrading.com>
+References: <OF670FA479.9B0ED6A8-ON80257471.005417A3-80257471.005537A9@Edftrading.com>
+Message-ID: <269388e30806231557h10d54c1cv3b94094a8abe698c@mail.gmail.com>
+
+Dave,
+
+On Mon, Jun 23, 2008 at 4:30 PM,  <David.Corcoran at edftrading.com> wrote:
+> I've been seeing some odd slow downs in RabbitMQ and I think it's also
+> possible to see them with unmodified ProducerMain and ConsumerMain. My
+> producers managed to publish about 18k messages/second but my consumers
+> only managed to read at about 1k messages/second. To replicate this run
+> ProducerMain and ConsumerMain at the same time and you get a good rate of
+> about 17K messages/second. But if you run ProducerMain until it finishes
+> (it gets 18K/second) and then run ConsumerMain, ConsumerMain only gets
+> about 1K messages/second.
+>
+> Is this normal or is there something odd going on?
+
+No I don't think this is normal. Using a the Apple 1.5.0.13 JDK on OSX
+10.5.3 with Erlang R12B-3 on the same machine, I get 10K in and 25K
+out when running them one after another. When I run them concurrently,
+I get an even 7.5K in and out. I can have a look to see what
+difference it makes on a Linux machine tomorrow, but unfortunately I
+don't have an answer today. Can you maybe give some more details about
+how you are running the tests?
+
+> java clients
+> RabbitMQ 1.3.0-1
+> Ubuntu 8.04 amd64 with 4GB RAM
+> Erlang 1:11.b.5dfsg-11
+> OpenJDK 1.6.0_06-b02 64-bit
+
+Just out of interest's sake, and I don't think this is causal, but
+does it make any difference if you use R12B-3 instead of R11B-5? You
+don't necessarily need root access to install this, if you set the
+prefix-dir to be somewhere in your own user's directory when building
+Erlang. Any questions, just ask.
+
+HTH,
+
+Ben
+
+
+
+From 0x6e6562 at gmail.com  Tue Jun 24 00:02:03 2008
+From: 0x6e6562 at gmail.com (Ben Hood)
+Date: Tue, 24 Jun 2008 00:02:03 +0100
+Subject: [rabbitmq-discuss] rabbitmq dying
+In-Reply-To: <OFB8F3F383.9B3B05E3-ON8025746D.00389F32-8025746D.003911EF@Edftrading.com>
+References: <OF7C430660.CF218949-ON8025746D.003716E3-8025746D.00378BB9@Edftrading.com>
+	<OFB8F3F383.9B3B05E3-ON8025746D.00389F32-8025746D.003911EF@Edftrading.com>
+Message-ID: <269388e30806231602n4ab38e34j9d6a2b181fac0827@mail.gmail.com>
+
+Dave,
+
+On Thu, Jun 19, 2008 at 11:23 AM,  <David.Corcoran at edftrading.com> wrote:
+> RabbitMQ eventually crashed.
+>
+> The following line is the last log entry (from startup.err):
+> eheap_alloc: Cannot allocate 1271244 bytes of memory (of type "heap").
+>
+> /usr/sbin/rabbitmq-server: line 74: 32733 Aborted                 erl -pa
+> $(dirname $0)/../ebin ${START_RABBIT} -sname ${NODENAME} -boot start_sasl
+> +W w ${ERL_ARGS} -rabbit tcp_listeners '[{"'${NODE_IP_ADDRESS}'",
+> '${NODE_PORT}'}]' -sasl errlog_type error -kernel error_logger
+> '{file,"'${LOGS}'"}' -sasl sasl_error_logger '{file,"'${SASL_LOGS}'"}'
+> -os_mon start_cpu_sup true -os_mon start_disksup false -os_mon start_memsup
+> false -os_mon start_os_sup false -mnesia dir "\"${MNESIA_DIR}\""
+> ${CLUSTER_CONFIG} ${RABBIT_ARGS} "$@"
+>
+
+Subsequent to the suggestions I made via IM, have you managed to
+progress this at all?
+
+Thx,
+
+Ben
+
+
+
+From David.Corcoran at edftrading.com  Tue Jun 24 10:49:40 2008
+From: David.Corcoran at edftrading.com (David.Corcoran at edftrading.com)
+Date: Tue, 24 Jun 2008 10:49:40 +0100
+Subject: [rabbitmq-discuss] RabbitMQ odd behaviour
+In-Reply-To: <269388e30806231557h10d54c1cv3b94094a8abe698c@mail.gmail.com>
+Message-ID: <OFA54D413F.14A16B8B-ON80257472.00352166-80257472.0035FC88@Edftrading.com>
+
+
+
+
+>
+> Just out of interest's sake, and I don't think this is causal, but
+> does it make any difference if you use R12B-3 instead of R11B-5?
+
+Hey Ben,
+
+I installed R12B-3. I haven't changed anything else and now it runs
+perfectly fast. If I stop rabbitmq and restart with the previous version it
+goes very slow again.
+
+Now if I run both producer and consumer at the same time I get ~18K
+messages/s each. If I run producer then consumer I get 27K messages/s for
+the producer and 44K messages/s for the consumer. Which is pretty
+impressive.
+
+Thanks for the help,
+
+Dave
+
+
+*********************************************************************
+This communication contains confidential information, some or all of which may be privileged. It is for the intended recipient only and others must not disclose, distribute, copy, print or rely on this communication. If an addressing or transmission error has misdirected this communication, please notify the sender by replying to this e-mail and then delete the e-mail. E-mail sent to EDF Trading may be monitored by the company. Thank you. 
+EDF Trading Limited
+80 Victoria Street, 3rd Floor, Cardinal Place, London, SW1E 5JL
+A Company registered in England No. 4255974. 
+Switchboard: 020 7061 4000
+EDF Trading Markets Limited is a member of the EDF Trading Limited Group and is authorised and regulated by the Financial Services Authority.
+VAT number: GB 735 5479 07
+*********************************************************************
+
+
+
+From David.Corcoran at edftrading.com  Tue Jun 24 10:58:09 2008
+From: David.Corcoran at edftrading.com (David.Corcoran at edftrading.com)
+Date: Tue, 24 Jun 2008 10:58:09 +0100
+Subject: [rabbitmq-discuss] rabbitmq dying
+In-Reply-To: <269388e30806231602n4ab38e34j9d6a2b181fac0827@mail.gmail.com>
+Message-ID: <OFC26C8ECA.113975CB-ON80257472.0036066C-80257472.0036C342@Edftrading.com>
+
+
+
+"Ben Hood" <0x6e6562 at gmail.com> wrote on 24/06/2008 00:02:03:
+
+> Subsequent to the suggestions I made via IM, have you managed to
+> progress this at all?
+>
+
+Hey Ben,
+
+Unfortunately we're still able to crash it quite regularly. I changed the
+message handlers to use only a single reply queue and now it's more stable
+but not perfect. The only thing that still looks suspicious is that the
+producers are sometimes run in threads. We only have one connection, which
+is apparently thread safe (from the javadocs), and we create a channel for
+each thread but maybe this is causing problems? We're going to make them
+single threaded and keep testing.
+
+I'm also going to upgrade everywhere to erlang 12b-3 to see if that helps.
+I'll also apply the connection disconnect patch whenever it's available.
+We're disconnecting nicely most of the time now but if you're debugging
+then stopping the debugger causes a forced disconnect which causes an error
+in the rabbitmq logs.
+
+Thanks,
+
+Dave
+
+
+*********************************************************************
+This communication contains confidential information, some or all of which may be privileged. It is for the intended recipient only and others must not disclose, distribute, copy, print or rely on this communication. If an addressing or transmission error has misdirected this communication, please notify the sender by replying to this e-mail and then delete the e-mail. E-mail sent to EDF Trading may be monitored by the company. Thank you. 
+EDF Trading Limited
+80 Victoria Street, 3rd Floor, Cardinal Place, London, SW1E 5JL
+A Company registered in England No. 4255974. 
+Switchboard: 020 7061 4000
+EDF Trading Markets Limited is a member of the EDF Trading Limited Group and is authorised and regulated by the Financial Services Authority.
+VAT number: GB 735 5479 07
+*********************************************************************
+
+
+
+From 0x6e6562 at gmail.com  Tue Jun 24 12:18:27 2008
+From: 0x6e6562 at gmail.com (Ben Hood)
+Date: Tue, 24 Jun 2008 12:18:27 +0100
+Subject: [rabbitmq-discuss] rabbitmq dying
+In-Reply-To: <269388e30806240418x784691cdh5095f312de98e156@mail.gmail.com>
+References: <269388e30806231602n4ab38e34j9d6a2b181fac0827@mail.gmail.com>
+	<OFC26C8ECA.113975CB-ON80257472.0036066C-80257472.0036C342@Edftrading.com>
+	<269388e30806240418x784691cdh5095f312de98e156@mail.gmail.com>
+Message-ID: <269388e30806240418v1474b45g61b8873593ed3a2e@mail.gmail.com>
+
+Dave,
+
+On Tue, Jun 24, 2008 at 10:58 AM,  <David.Corcoran at edftrading.com> wrote:
+> Unfortunately we're still able to crash it quite regularly.
+
+When you say you are able to crash it regularly, are you saying the
+rabbit process dies?
+
+> I changed the
+> message handlers to use only a single reply queue and now it's more stable
+> but not perfect.
+
+Have you noticed any difference in performance by doing that?
+
+> The only thing that still looks suspicious is that the
+> producers are sometimes run in threads. We only have one connection, which
+> is apparently thread safe (from the javadocs), and we create a channel for
+> each thread but maybe this is causing problems? We're going to make them
+> single threaded and keep testing.
+
+You need to make sure you correctly differentiating between
+connections and channels.
+
+The connection and channel manager are threadsafe, but each actual
+channel should not be shared between threads.
+
+In the AMQP model, the channel is the smallest unit of parallelism.
+
+Hence on the client side, you should use one channel per application thread.
+
+> I'm also going to upgrade everywhere to erlang 12b-3 to see if that helps.
+
+I think you'll definitely get milage out of this, apart from having
+many other bug fixes that have been made since 11b-5 was released.
+
+> I'll also apply the connection disconnect patch whenever it's available.
+
+I don't think that's going to change much for you, it'll just make the
+log files look nicer :-)
+
+> We're disconnecting nicely most of the time now but if you're debugging
+> then stopping the debugger causes a forced disconnect which causes an error
+> in the rabbitmq logs.
+
+I wouldn't worry too much about that, although it is unsightly.
+I am more concerned about the symptoms you were describing last week
+about Rabbit becoming unavailable for some periods.
+
+
+HTH,
+
+Ben
+
+
+
+From 0x6e6562 at gmail.com  Fri Jun 27 00:37:39 2008
+From: 0x6e6562 at gmail.com (Ben Hood)
+Date: Fri, 27 Jun 2008 00:37:39 +0100
+Subject: [rabbitmq-discuss] Hg Repo
+In-Reply-To: <e1c05edd0806261317v32d73e0k3efd59b68248a70@mail.gmail.com>
+References: <269388e30806260313o7c19d3bam552c44198a88ea82@mail.gmail.com>
+	<e1c05edd0806261317v32d73e0k3efd59b68248a70@mail.gmail.com>
+Message-ID: <269388e30806261637l357ff0cem24e0a73bd23b67fe@mail.gmail.com>
+
+Aman,
+
+On Thu, Jun 26, 2008 at 9:17 PM, Aman Gupta <themastermind1 at gmail.com> wrote:
+> Thanks Ben. Are there plans to integrate the stomp adapter soon?
+
+The Stomp adapter will most likely exist as a plugin to the Rabbit
+infrastructure as opposed to making it part of the Rabbit core.
+
+This is due on the whole to the modularity that we would like to
+preserve, i.e. the Stomp adapter it is quite easy to use as it is and
+it there is little gain in bringing it into a monolithic set of
+features that we need to maintain. As it is, the users of the Stomp
+*seem* to be quite happy with the status quo, so unless somebody has a
+differing opinion, it will remain in it's current state as an external
+module.
+
+> Or to make
+> the 1_3_0 branch the default branch on the repo?
+
+The default branch has gone far beyond the 1.3.0 branch. 1.3.0 was
+released a while ago, and since then, much development has gone on. If
+I were you, I would only concentrate on the current default branch.
+
+HTH,
+
+Ben
+
+
+
+From 0x6e6562 at gmail.com  Fri Jun 27 00:41:44 2008
+From: 0x6e6562 at gmail.com (Ben Hood)
+Date: Fri, 27 Jun 2008 00:41:44 +0100
+Subject: [rabbitmq-discuss] Hg Repo
+In-Reply-To: <e1c05edd0806261317v32d73e0k3efd59b68248a70@mail.gmail.com>
+References: <269388e30806260313o7c19d3bam552c44198a88ea82@mail.gmail.com>
+	<e1c05edd0806261317v32d73e0k3efd59b68248a70@mail.gmail.com>
+Message-ID: <269388e30806261641g11c8e18es48e2794b31d46f65@mail.gmail.com>
+
+Aman,
+
+On Thu, Jun 26, 2008 at 9:17 PM, Aman Gupta <themastermind1 at gmail.com> wrote:
+> Thanks Ben. Are there plans to integrate the stomp adapter soon? Or to make
+>> I've attached an archived copy of our hg repo for the main server,
+>> which is the latest snapshot.
+>> When this comes on line, a notification will go out to the mailing
+>> list, so it might be a good idea to subscribe to that.
+
+Just FYI: It is also a good idea to cc the rabbit mailing list into
+your correspondence to keep everybody in the loop and to get feedback
+from other members of the community.
+
+HTH,
+
+Ben
+
+
+
+From 0x6e6562 at gmail.com  Fri Jun 27 06:38:04 2008
+From: 0x6e6562 at gmail.com (Ben Hood)
+Date: Fri, 27 Jun 2008 06:38:04 +0100
+Subject: [rabbitmq-discuss] Hg Repo
+In-Reply-To: <e1c05edd0806261643s6e3bb6a1vf7df5d5971cbd689@mail.gmail.com>
+References: <269388e30806260313o7c19d3bam552c44198a88ea82@mail.gmail.com>
+	<e1c05edd0806261317v32d73e0k3efd59b68248a70@mail.gmail.com>
+	<269388e30806261637l357ff0cem24e0a73bd23b67fe@mail.gmail.com>
+	<e1c05edd0806261643s6e3bb6a1vf7df5d5971cbd689@mail.gmail.com>
+Message-ID: <269388e30806262238h8d2bc43l7d895fdb333ab5ff@mail.gmail.com>
+
+Aman,
+
+On Fri, Jun 27, 2008 at 12:43 AM, Aman Gupta <themastermind1 at gmail.com> wrote:
+>> > Or to make
+>> > the 1_3_0 branch the default branch on the repo?
+>>
+>> The default branch has gone far beyond the 1.3.0 branch. 1.3.0 was
+>> released a while ago, and since then, much development has gone on. If
+>> I were you, I would only concentrate on the current default branch.
+>
+> Are you talking about the rabbitmq repo or the rabbitmq-stomp repo? I did a
+> hg clone rabbitmq-stomp and had a little problem getting it going because
+> the default branch does not work with the latest rabbitmq release (hg udpate
+> -C 1_3_0_branch fixed it).
+
+Sorry, I didn't realize you were talking about the stomp adapter when
+you mentioned this branch issue.
+
+Although I can't answer this question,  Tony will be able to, hence
+I'm forwarding this to the list (which is a good idea in general :-)
+
+Ben
+
+
+
+From 0x6e6562 at gmail.com  Fri Jun 27 11:37:26 2008
+From: 0x6e6562 at gmail.com (Ben Hood)
+Date: Fri, 27 Jun 2008 11:37:26 +0100
+Subject: [rabbitmq-discuss] RabbitMQ as a Windows Service
+In-Reply-To: <29598b610806270116h52f52770v3ccdce31de5d6ffd@mail.gmail.com>
+References: <29598b610806270116h52f52770v3ccdce31de5d6ffd@mail.gmail.com>
+Message-ID: <269388e30806270337s73fd7b13xdcfa14146d55ac7@mail.gmail.com>
+
+Paul,
+
+On Fri, Jun 27, 2008 at 9:16 AM, Paul Jones <pauljones23 at gmail.com> wrote:
+> So I'm considering ignoring
+> my selector style requirement and porting to RabbitMQ today.
+
+As I said, the selector stuff is still on the cards, I've already
+started work on it, but it's not going to happen in the short term
+unfortunately due to
+
+a) issues surrounding compatibility with the spec and other implementations;
+b) the effect adding this functionality will have on general scalability.
+
+However, if there was some contribution, it may go quicker ;-)
+
+>
+> I've trying to get Rabbit to run as a service use erlsrv, but haven't been
+> having much luck. I can get erlsrv to install it, and Rabbit starts, but I
+> think its hanging. The log looks like:
+>
+> =INFO REPORT==== 27-Jun-2008::09:12:22 ===
+>     application: mnesia
+>     exited: stopped
+>     type: temporary
+>
+> =INFO REPORT==== 27-Jun-2008::09:12:23 ===
+> Added vhost <<"/">>
+>
+> =INFO REPORT==== 27-Jun-2008::09:12:23 ===
+> Created user <<"guest">>
+>
+> =INFO REPORT==== 27-Jun-2008::09:12:23 ===
+> Rolling persister log to
+> "d:/Installers/rabbitmq_server-1.3.0/db/rabbit-mnesia/rabbit_persister.LOG.previous"
+>
+> =INFO REPORT==== 27-Jun-2008::09:12:23 ===
+> started TCP listener on 0.0.0.0:5672
+>
+> You wouldn't happen to know of anyone that can help? Erlsrv apparently isn't
+> a topic very hotly discussed around the 'net...
+
+Can you run rabbit straight out of the shell?
+
+$ erl -mnesia dir SOME_DIR -boot start_sasl -s rabbit
+
+>
+> I'm fairly sure that the mnesia database stopping isn't a good thing, but I
+> have not the faintest idea why it stops...
+
+Probably not. I would start by deleting the directory that contains
+the mnesia files, start again and see if you can reproduce this.
+
+BTW, I'm cc'ing the list, somebody else may have tried this as well.
+
+HTH,
+
+Ben
+
+
+
+From 0x6e6562 at gmail.com  Fri Jun 27 11:38:36 2008
+From: 0x6e6562 at gmail.com (Ben Hood)
+Date: Fri, 27 Jun 2008 11:38:36 +0100
+Subject: [rabbitmq-discuss] RabbitMQ as a Windows Service
+In-Reply-To: <29598b610806270137k2e76f258qb11f64094adcf25f@mail.gmail.com>
+References: <29598b610806270116h52f52770v3ccdce31de5d6ffd@mail.gmail.com>
+	<29598b610806270137k2e76f258qb11f64094adcf25f@mail.gmail.com>
+Message-ID: <269388e30806270338te88e23tb8cb7904579fb1cd@mail.gmail.com>
+
+Paul,
+
+On Fri, Jun 27, 2008 at 9:37 AM, Paul Jones <pauljones23 at gmail.com> wrote:
+> Actually, scratch that - I finally managed to fluke getting it to go - I
+> think I just had some parameters a bit messed up...
+
+Sorry, I didn't see that you had already solved the problem and had
+already mailed me.
+
+Ben
+
+
+
+From 0x6e6562 at gmail.com  Fri Jun 27 14:37:21 2008
+From: 0x6e6562 at gmail.com (Ben Hood)
+Date: Fri, 27 Jun 2008 14:37:21 +0100
+Subject: [rabbitmq-discuss] rabbitmq dying
+In-Reply-To: <OFC26C8ECA.113975CB-ON80257472.0036066C-80257472.0036C342@Edftrading.com>
+References: <269388e30806231602n4ab38e34j9d6a2b181fac0827@mail.gmail.com>
+	<OFC26C8ECA.113975CB-ON80257472.0036066C-80257472.0036C342@Edftrading.com>
+Message-ID: <269388e30806270637le875d4am95ab7415c0f07775@mail.gmail.com>
+
+Dave,
+
+On Tue, Jun 24, 2008 at 10:58 AM,  <David.Corcoran at edftrading.com> wrote:
+> I'm also going to upgrade everywhere to erlang 12b-3 to see if that helps.
+> I'll also apply the connection disconnect patch whenever it's available.
+> We're disconnecting nicely most of the time now but if you're debugging
+> then stopping the debugger causes a forced disconnect which causes an error
+> in the rabbitmq logs.
+
+Just FYI:
+
+The patch is currently available on a branch (we do all of our dev
+work on a per-branch basis before we QA a piece of work and merge it
+back into the trunk), awaiting QA for merging.
+
+I can export this if and when you need it, you may however wish to
+defer this to a later point, if it is not so critical.
+
+HTH,
+
+Ben
+
+
+
+From rabbitmq-discuss_efine at usa.net  Sun Jun 29 00:18:49 2008
+From: rabbitmq-discuss_efine at usa.net (Edwin Fine)
+Date: Sat, 28 Jun 2008 19:18:49 -0400
+Subject: [rabbitmq-discuss] Queue Info question
+Message-ID: <6c2563b20806281618o22190ecep8c8e2d0ad81f9a71@mail.gmail.com>
+
+Hi all,
+
+I read a thread (Queue Info) quite a while ago in which a user had problems
+using the -remsh option on Windows:
+
+erl -sname temp -remsh rabbit at myhost
+(rabbit at myhost1>rabbit_amqqueue:stat_all().
+
+I wondered if it might be easier simply to use an erlang rpc call to do the
+same thing.
+
+As long as you use the identical erlang.cookie file (or use -setcookie on
+the command line) that was used to start the rabbitmq daemon, you can call
+any exported MFA in the context of the daemon using Erlang rpc.
+
+Example:
+$ cat ~/.erlang.cookie
+BGPCXKVWOUBNYKCYMHBF
+$ erl -sname test    # or erl -sname test -setcookie KGNBMYPYKVUOXCHBCBFW
+(test at myhost)1> rpc:call('rabbit at myhost', rabbit_amqqueue, stat_all, []).
+
+Is there any special reason, other than it's easier just to type
+rabbit_amqqueue:stat_all(), why one would want to use erl -sname temp -remsh
+rabbit at myhost? Just curious.
+
+Regards,
+Edwin Fine
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20080628/931ff3d9/attachment.htm 
+
+From matthias at lshift.net  Sun Jun 29 08:23:23 2008
+From: matthias at lshift.net (Matthias Radestock)
+Date: Sun, 29 Jun 2008 08:23:23 +0100
+Subject: [rabbitmq-discuss] Queue Info question
+In-Reply-To: <6c2563b20806281618o22190ecep8c8e2d0ad81f9a71@mail.gmail.com>
+References: <6c2563b20806281618o22190ecep8c8e2d0ad81f9a71@mail.gmail.com>
+Message-ID: <4867386B.503@lshift.net>
+
+Edwin,
+
+Edwin Fine wrote:
+> I read a thread (Queue Info) quite a while ago in which a user had 
+> problems using the -remsh option on Windows:
+> 
+> erl -sname temp -remsh rabbit at myhost
+> (rabbit at myhost1>rabbit_amqqueue:stat_all().
+> 
+> I wondered if it might be easier simply to use an erlang rpc call to do 
+> the same thing.
+> 
+> As long as you use the identical erlang.cookie file (or use -setcookie 
+> on the command line) that was used to start the rabbitmq daemon, you can 
+> call any exported MFA in the context of the daemon using Erlang rpc.
+
+That is all true but not really easier than remsh - if one can get rpc 
+to work then remsh should work too.
+
+> Is there any special reason, other than it's easier just to type 
+> rabbit_amqqueue:stat_all(), why one would want to use erl -sname temp 
+> -remsh rabbit at myhost? Just curious.
+
+Convenience is the only reason. rpc is reasonably concise when calling a 
+single function, but once one starts composing functions the expressions 
+quickly become unwieldy.
+
+
+Matthias.
+
+
+

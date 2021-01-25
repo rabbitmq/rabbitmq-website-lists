@@ -1,0 +1,153 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Basic.Acks terribly slow
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Basic.Acks%20terribly%20slow&In-Reply-To=%3CCAEJg2GDZDDHh1kcBV--z9qHu3uoy1RF8kFmiA5v74ROi464erA%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="035874.html">
+   <LINK REL="Next"  HREF="035879.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Basic.Acks terribly slow</H1>
+    <B>Arun Rao</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Basic.Acks%20terribly%20slow&In-Reply-To=%3CCAEJg2GDZDDHh1kcBV--z9qHu3uoy1RF8kFmiA5v74ROi464erA%40mail.gmail.com%3E"
+       TITLE="[rabbitmq-discuss] Basic.Acks terribly slow">arunrao.seattle at gmail.com
+       </A><BR>
+    <I>Fri May  9 14:03:59 BST 2014</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="035874.html">[rabbitmq-discuss] Basic.Acks terribly slow
+</A></li>
+        <LI>Next message: <A HREF="035879.html">[rabbitmq-discuss] Basic.Acks terribly slow
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#35877">[ date ]</a>
+              <a href="thread.html#35877">[ thread ]</a>
+              <a href="subject.html#35877">[ subject ]</a>
+              <a href="author.html#35877">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Thanks Simon.
+
+The messages are non-persistent but the queues are mirrored to exactly one
+other node on a 4-node cluster. I was thinking if I created an exchange for
+each routing key, rather than use one exchange and then route by routing
+key, would that help? (I am not trying work around anything but I wanted to
+know if I am overloading one Exchange when I could create multiple
+exchanges. I understand that Exchanges are always HA'ed (even when not
+specified) in a cluster. Does that mean that routing and acknowledging to
+the messages happens out of just one node on a 4-node cluster? How about
+Heartbeats? I am not saying this is a bottleneck but I am trying to
+understand the functionality.)
+
+One other key thing I missed to mention: (
+<A HREF="http://www.rabbitmq.com/releases/rabbitmq-dotnet-client/v3.3.1/rabbitmq-dotnet-client-3.3.1-user-guide.pdf">http://www.rabbitmq.com/releases/rabbitmq-dotnet-client/v3.3.1/rabbitmq-dotnet-client-3.3.1-user-guide.pdf</A>
+)
+
+*There are two styles of interaction available to ModelBase:*
+*&#8226; synchronous, RPC-style interaction, e.g. ExchangeDeclare, BasicGet and
+BasicConsume.*
+*&#8226; asynchronous, event-style interaction, e.g. BasicAck, BasicPublish.*
+
+Is it true that .NET client library considers BasicPublish and BasicAck as
+Events (on a tcp connection), meaning it is not holding up any resources?
+
+(BTW, I am not a developer but I Admin RabbitMQ clusters in production.)
+The other take away is to allow publish multiple messages and let .NET
+client library keep track of the delivery-tag counts from the server.
+
+Thanks!
+
+
+On Fri, May 9, 2014 at 3:45 AM, Simon MacMullen &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">simon at rabbitmq.com</A>&gt; wrote:
+
+&gt;<i> On 09/05/14 02:19, Arun Rao wrote:
+</I>&gt;<i>
+</I>&gt;&gt;<i> Hi guys -
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Producers (.NET clients) are publishing messages to RabbitMQ cluster at
+</I>&gt;&gt;<i> a rate of 800 to 900 messages/sec. At this rate, RabbitMQ response times
+</I>&gt;&gt;<i> to Ack producers goes significantly higher. It takes longer than 500ms
+</I>&gt;&gt;<i> to ack with a delivery-tag, per channel. (Total Connections: 3000+ at
+</I>&gt;&gt;<i> all times.)
+</I>&gt;&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> Fundamentally latency is likely to go up when you push the server harder;
+</I>&gt;<i> when any given piece of work needs to be done the component that needs to
+</I>&gt;<i> do it is doing something else that's unlikely to be avoidable.
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>  Objective: Reduce RabbitMQ server response time to less than 100ms when
+</I>&gt;&gt;<i> acknowledging messages on each channel. (Please see we are reusing
+</I>&gt;&gt;<i> connections.)
+</I>&gt;&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> You don't say whether the messages are persistent but I would guess from
+</I>&gt;<i> the performance numbers you give that they are. In that case you could
+</I>&gt;<i> lower latency by moving to an SSD.
+</I>&gt;<i>
+</I>&gt;<i> But really, if it's a problem that publish confirms are taking 500ms to
+</I>&gt;<i> come back then you might have the wrong expectations; RabbitMQ tries to
+</I>&gt;<i> optimise for throughput rather than latency when deciding when to send
+</I>&gt;<i> confirms.
+</I>&gt;<i>
+</I>&gt;<i> Is each producer waiting for each confirm to come back before publishing
+</I>&gt;<i> the next message? If so I suggest not doing that; allow publishers to have
+</I>&gt;<i> multiple outstanding messages and handle confirms as they come in. If you
+</I>&gt;<i> are already doing that, why is waiting 500ms a big deal?
+</I>&gt;<i>
+</I>&gt;<i> Cheers, Simon
+</I>&gt;<i>
+</I>&gt;<i> --
+</I>&gt;<i> Simon MacMullen
+</I>&gt;<i> RabbitMQ, Pivotal
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20140509/27c3ec6e/attachment.html">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20140509/27c3ec6e/attachment.html</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="035874.html">[rabbitmq-discuss] Basic.Acks terribly slow
+</A></li>
+	<LI>Next message: <A HREF="035879.html">[rabbitmq-discuss] Basic.Acks terribly slow
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#35877">[ date ]</a>
+              <a href="thread.html#35877">[ thread ]</a>
+              <a href="subject.html#35877">[ subject ]</a>
+              <a href="author.html#35877">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

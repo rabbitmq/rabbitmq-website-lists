@@ -1,0 +1,198 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] How to configure
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20How%20to%20configure&In-Reply-To=%3C4F3E4F04.4040500%40rabbitmq.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="018155.html">
+   <LINK REL="Next"  HREF="018156.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] How to configure</H1>
+    <B>Simon MacMullen</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20How%20to%20configure&In-Reply-To=%3C4F3E4F04.4040500%40rabbitmq.com%3E"
+       TITLE="[rabbitmq-discuss] How to configure">simon at rabbitmq.com
+       </A><BR>
+    <I>Fri Feb 17 12:58:44 GMT 2012</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="018155.html">[rabbitmq-discuss] How to configure
+</A></li>
+        <LI>Next message: <A HREF="018156.html">[rabbitmq-discuss] Huge memory Consumption in RabbitMQ client
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#18229">[ date ]</a>
+              <a href="thread.html#18229">[ thread ]</a>
+              <a href="subject.html#18229">[ subject ]</a>
+              <a href="author.html#18229">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>This is a slightly unusual thing to want to do I think.
+
+I don't think this is a shovel question specifically, it's more of a 
+routing question.
+
+Normally if messages get sent to an arbitrary number of consumers, then 
+if the number of consumers drops to zero then the messages just don't 
+get routed - clearly no-one's interested. And if each message must go to 
+exactly one consumer then you use a shared queue.
+
+It sounds like you want each message to get sent to n consumers, except 
+when n=0, when the messages should be buffered until someone is 
+interested again.
+
+The simplest way to do this is probably to use the alternate-exchange 
+feature. Declare your &quot;public&quot; exchange with an alternate-exchange of 
+(say) &quot;alternate&quot;. Then declare &quot;alternate&quot; as a fanout exchange with 
+and bind a durable queue to it. Then consumers can consume from this 
+queue (to pick up any messages that were published while no-one was 
+listening) and their own queue (to make sure that if there are multiple 
+consumers they each get a copy of appropriate messages).
+
+Does this make sense?
+
+Cheers, Simon
+
+On 15/02/12 14:47, MELIQUE Denis (MORPHO) wrote:
+&gt;<i> Hi every body.
+</I>&gt;<i>
+</I>&gt;<i> I&#8217;m quite new with RabbitMQ, so sorry if my question is stupid.
+</I>&gt;<i>
+</I>&gt;<i> I&#8217;am currently setting a Shovel configuration to forward messages from
+</I>&gt;<i> one broker to another,
+</I>&gt;<i>
+</I>&gt;<i> to have a two sites Active/Semi-Active configuration. Incoming messages
+</I>&gt;<i> must be processed by both sites.
+</I>&gt;<i>
+</I>&gt;<i> I have set a very small testing configuration with 2 hosts.
+</I>&gt;<i>
+</I>&gt;<i> &#8216;Active host&#8217; is running RabbitMQ 2.7.1 on Windows, as &#8216;Semi-Active&#8217; is
+</I>&gt;<i> running RabbitMQ 2.6.1 on RedHat6.
+</I>&gt;<i>
+</I>&gt;<i> The test configuration is as following:
+</I>&gt;<i>
+</I>&gt;<i> - messages are posted by clients to a direct Exchange named &#8216;public&#8217;
+</I>&gt;<i>
+</I>&gt;<i> - consumers bind to transient queues to the &#8216;public&#8217; exchange, with a
+</I>&gt;<i> specific key
+</I>&gt;<i>
+</I>&gt;<i> Each consumer read a message and stores it on disk.
+</I>&gt;<i>
+</I>&gt;<i> - obviously I don&#8217;t want to lost any message
+</I>&gt;<i>
+</I>&gt;<i> My Shovel configuration has: (see attached rabbitmq.config files)
+</I>&gt;<i>
+</I>&gt;<i> 1-On the Active side:
+</I>&gt;<i>
+</I>&gt;<i> - a persistent queue bound to &#8216;public&#8217; exchange with all possible keys.
+</I>&gt;<i> So every incoming message is read by the Shovel plug-In (that&#8217;s OK)
+</I>&gt;<i>
+</I>&gt;<i> - a Shovel declaration to forward messages to the distant exchange
+</I>&gt;<i> declared for the
+</I>&gt;<i>
+</I>&gt;<i> 2-On the Semi-Active side:
+</I>&gt;<i>
+</I>&gt;<i> - a topic exchange to which Shovel forwards messages (that&#8217;s also OK)
+</I>&gt;<i>
+</I>&gt;<i> - a persistent queue bound to this topic exchange
+</I>&gt;<i>
+</I>&gt;<i> - a Shovel declaration to forward messages into the local &#8216;public&#8217; Exchange.
+</I>&gt;<i>
+</I>&gt;<i> Everything is fine and messages are going from Active side to
+</I>&gt;<i> Semi-Active one.
+</I>&gt;<i>
+</I>&gt;<i> Except when consumers are not running on the Semi-Active side.
+</I>&gt;<i>
+</I>&gt;<i> In that case, messages are sent to &#8216;public&#8217; Exchange and are lost
+</I>&gt;<i> because nobody is bound to.
+</I>&gt;<i>
+</I>&gt;<i> despite the setting : ack_mode, on_confirm
+</I>&gt;<i>
+</I>&gt;<i> Nb: if the &#8216;Semi-Active side&#8217; is not started at all, it&#8217;s OK messages
+</I>&gt;<i> are kept in the persistent queue
+</I>&gt;<i>
+</I>&gt;<i> On the Active side.
+</I>&gt;<i>
+</I>&gt;<i> I&#8217;am looking for a way of configuring Shovel plug-in to keep messages in
+</I>&gt;<i> persistent queue until
+</I>&gt;<i>
+</I>&gt;<i> a consumer can process them.
+</I>&gt;<i>
+</I>&gt;<i> I thing I am probably wrong with my configuration, but I can&#8217;t figure
+</I>&gt;<i> where ??
+</I>&gt;<i>
+</I>&gt;<i> Thank&#8217;s a lot.
+</I>&gt;<i>
+</I>&gt;<i> Denis
+</I>&gt;<i>
+</I>&gt;<i> #
+</I>&gt;<i> &quot; Ce courriel et les documents qui lui sont joints peuvent contenir des informations confidentielles ou ayant un caract&#232;re priv&#233;. S'ils ne vous sont pas destin&#233;s, nous vous signalons qu'il est strictement interdit de les divulguer, de les reproduire ou d'en utiliser de quelque mani&#232;re que ce soit le contenu. Si ce message vous a &#233;t&#233; transmis par erreur, merci d'en informer l'exp&#233;diteur et de supprimer imm&#233;diatement de votre syst&#232;me informatique ce courriel ainsi que tous les documents qui y sont attach&#233;s.&quot;
+</I>&gt;<i> ******
+</I>&gt;<i> &quot; This e-mail and any attached documents may contain confidential or proprietary information. If you are not the intended recipient, you are notified that any dissemination, copying of this e-mail and any attachments thereto or use of their contents by any means whatsoever is strictly prohibited. If you have received this e-mail in error, please advise the sender immediately and delete this e-mail and all attached documents from your computer system.&quot;
+</I>&gt;<i> #
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>
+
+-- 
+Simon MacMullen
+RabbitMQ, VMware
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="018155.html">[rabbitmq-discuss] How to configure
+</A></li>
+	<LI>Next message: <A HREF="018156.html">[rabbitmq-discuss] Huge memory Consumption in RabbitMQ client
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#18229">[ date ]</a>
+              <a href="thread.html#18229">[ thread ]</a>
+              <a href="subject.html#18229">[ subject ]</a>
+              <a href="author.html#18229">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

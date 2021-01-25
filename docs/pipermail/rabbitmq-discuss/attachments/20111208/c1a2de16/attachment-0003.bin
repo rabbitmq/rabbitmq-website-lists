@@ -1,0 +1,87 @@
+#!/usr/bin/env perl
+use 5.10.1; # tested on 5.14.1
+use strict;
+use warnings;
+use Net::STOMP::Client 1.2; # tested on 1.2 and 1.3
+
+my $stomp = Net::STOMP::Client->new(
+    host => 'acute',
+    port => 61613,
+    version => '1.1',
+);
+
+$stomp->connect(
+    host => '/',
+    login => 'guest',
+    passcode => 'guest',
+);
+
+
+$stomp->message_callback(sub {
+    my ($broker, $frame) = @_;
+    state $already_unsubbed = 0;
+
+    given ($frame->headers->{'x-method'}) {
+        when ('foo') {
+            say "received foo";
+
+            # Switch between these two lines to make the issue appear
+            # or disappear:
+
+            # this one causes processing error:
+            $broker->ack(frame => $frame);
+
+            # This one doesn't:
+            # $broker->ack(frame => $frame) unless $already_unsubbed;
+
+            $stomp->unsubscribe(id => 'test1') unless $already_unsubbed;
+            $already_unsubbed++;
+
+        }
+        when ('bar') {
+            say "received bar";
+        }
+    }
+
+});
+
+
+$stomp->subscribe(
+    destination => '/queue/test1',
+    id => 'test1',
+    ack => 'client',
+    # playing with this changes number of foo's received, but
+    # doesn't alter the eventual Processing Error
+    'prefetch-count' => 5,
+);
+
+# Note that if you remove this subscription, the script still fails with
+# Processing Error, however the /queue/test2 and T_test2 strings don't show
+# up in the error message in rabbit's log..
+$stomp->subscribe(
+    destination => '/queue/test2',
+    id => 'test2',
+    ack => 'auto',
+    'prefetch-count' => 1,
+);
+
+send_to_queue('test1', 'foo');
+send_to_queue('test1', 'foo');
+send_to_queue('test2', 'bar');
+send_to_queue('test1', 'foo');
+
+while(1) {
+    $stomp->wait_for_frames( timeout => 60 );
+    warn "looping back for more frames..\n"
+}
+
+
+sub send_to_queue {
+    my ($q, $method) = @_;
+    $stomp->send(
+        destination => "/queue/$q",
+        body => 'test',
+        'x-method' => $method,
+    );
+}
+

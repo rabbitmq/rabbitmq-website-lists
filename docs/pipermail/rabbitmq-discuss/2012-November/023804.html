@@ -1,0 +1,190 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Creating an auth plugin (Kerberos)
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Creating%20an%20auth%20plugin%20%28Kerberos%29&In-Reply-To=%3C50A229F6.1040407%40rabbitmq.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="023813.html">
+   <LINK REL="Next"  HREF="023812.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Creating an auth plugin (Kerberos)</H1>
+    <B>Simon MacMullen</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Creating%20an%20auth%20plugin%20%28Kerberos%29&In-Reply-To=%3C50A229F6.1040407%40rabbitmq.com%3E"
+       TITLE="[rabbitmq-discuss] Creating an auth plugin (Kerberos)">simon at rabbitmq.com
+       </A><BR>
+    <I>Tue Nov 13 11:07:34 GMT 2012</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="023813.html">[rabbitmq-discuss] Creating an auth plugin (Kerberos)
+</A></li>
+        <LI>Next message: <A HREF="023812.html">[rabbitmq-discuss] Creating an auth plugin (Kerberos)
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#23804">[ date ]</a>
+              <a href="thread.html#23804">[ thread ]</a>
+              <a href="subject.html#23804">[ subject ]</a>
+              <a href="author.html#23804">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>To expand on what Emile said...
+
+On 12/11/12 11:44, Simon Lundstr&#246;m wrote:
+&gt;<i> I'm trying, first time doing something serious in Erlang, to create an
+</I>&gt;<i> Kerberos authentication plugin for RabbitMQ
+</I>
+Cool!
+
+&gt;<i> and this have raised a couple of questions.
+</I>&gt;<i>
+</I>&gt;<i> I've looked at the other authentication plugins available and tried to
+</I>&gt;<i> solve these questions but I haven't succeeded.
+</I>&gt;<i>
+</I>&gt;<i> 1, Since Kerberos is an authentication protocol, not authorization, how
+</I>&gt;<i> can I implement my plugin just to do authN?
+</I>&gt;<i> Should I look at SASL EXTERNAL? That looked very SSL client authN specific.
+</I>
+There are two extension points within RabbitMQ here.
+
+The EXTERNAL plugin is an example of how to implement a SASL mechanism 
+(rabbit_auth_mechanism behaviour), i.e. control the exchange of 
+information on the wire within AMQP, leading to authN. By default &quot;the 
+exchange of information ion the wire&quot; means &quot;send username and 
+password&quot;, but it doesn't have to.
+
+The rabbit_auth_backend behaviour then does two thing:
+
+* Determines how to do authN for a user when we've already decided how 
+to do the wire level stuff (e.g. look up in internal DB, make an LDAP 
+query).
+
+* Determines how to do authZ once we have a #user{} record.
+
+- in other words it's a &quot;user database&quot;.
+
+Note that all the existing rabbit_auth_mechanism implementations call 
+into rabbit_access_control:check_user_pass_login/2 or similar - that's 
+the entry point to go and find out which rabbit_auth_backends are 
+configured and go and query them for authentication.
+
+I suspect to do Kerberos you will need both behaviours - from a quick 
+google I *think* you need to control the wire level protocol with 
+rabbit_auth_mechanism, and then create a #user{} based on that.
+
+&gt;<i> 1.2, If I use `-behaviour(rabbit_auth_backend).` I must implement
+</I>&gt;<i> check_vhost_access and check_resource_access. What is the appropriate
+</I>&gt;<i> way to handle this?
+</I>&gt;<i> * Don't use `-behaviour(rabbit_auth_backend).`?
+</I>&gt;<i> * Implement check_vhost_access and check_resource_access but just have
+</I>&gt;<i> them call rabbit_access_control:check_vhost_access?
+</I>&gt;<i> Later we are planning on implementing an authZ *only* plugin for
+</I>&gt;<i> RabbitMQ, will this break if we want to have a plugin which only
+</I>&gt;<i> implements check_vhost_access and check_resource_access?
+</I>
+Well, how do you want it to work? At the moment rabbit_auth_backend ties 
+together authN and authZ, because if a backend is the authority that 
+says that a user exists, it is likely to the be the only thing which can 
+sensibly decide what that user is allowed to do.
+
+You *could* decouple these by having one rabbit_auth_backend which 
+implements check_user_login/2 and returns a #user{} with its 
+auth_backend field set to a different rabbit_auth_backend that would 
+then do authZ. We could add more support for that in RabbitMQ, but I'm 
+not sure how your use case works.
+
+&gt;<i> 2, I have started to create my code and the idea is to use open_port to open an
+</I>&gt;<i> external binary to do the actual Kerberos &quot;talk&quot;. As a start I've made my to
+</I>&gt;<i> check the exit status of /bin/true. See
+</I>&gt;<i> &lt;<A HREF="https://github.com/simmel/rabbitmq-auth-backend-kerberos">https://github.com/simmel/rabbitmq-auth-backend-kerberos</A>&gt;. The code compiles,
+</I>&gt;<i> heh, and RabbitMQ starts and &quot;accepts&quot; the connection but some how it fails
+</I>&gt;<i> anyway.
+</I>
+I ran your code. Check the SASL log (confusingly that's nothing to do 
+with the SASL protocol, it's Erlang's &quot;System Application Support 
+Libraries&quot;. In RabbitMQ terms it's the &quot;log of things which crashed&quot;. 
+You should see:
+
+=CRASH REPORT==== 13-Nov-2012::11:04:03 ===
+   crasher:
+     initial call: rabbit_reader:init/4
+     pid: &lt;0.334.0&gt;
+     registered_name: []
+     exception exit: {unexpected_message,{'EXIT',#Port&lt;0.25776&gt;,normal}}
+       in function  rabbit_reader:handle_other/3 (src/rabbit_reader.erl, 
+line 363)
+       in call from rabbit_reader:start_connection/7 
+(src/rabbit_reader.erl, line 238)
+
+i.e. you got a message saying the port had closed. Your plugin 
+(executing in the reader process) did not handle this message, and the 
+reader process is designed to crash when it receives a message it didn't 
+expect.
+
+So make sure to receive that message in your plugin...
+
+Cheers, Simon
+
+-- 
+Simon MacMullen
+RabbitMQ, VMware
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="023813.html">[rabbitmq-discuss] Creating an auth plugin (Kerberos)
+</A></li>
+	<LI>Next message: <A HREF="023812.html">[rabbitmq-discuss] Creating an auth plugin (Kerberos)
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#23804">[ date ]</a>
+              <a href="thread.html#23804">[ thread ]</a>
+              <a href="subject.html#23804">[ subject ]</a>
+              <a href="author.html#23804">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

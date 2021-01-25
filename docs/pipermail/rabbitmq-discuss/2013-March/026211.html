@@ -1,0 +1,208 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [PATCH] Fix race-condition of asynchronously closed channels
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5BPATCH%5D%20Fix%20race-condition%20of%20asynchronously%20closed%20channels&In-Reply-To=%3Cmailman.2.1364366201.3387.rabbitmq-discuss%40lists.rabbitmq.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="026250.html">
+   <LINK REL="Next"  HREF="026210.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[PATCH] Fix race-condition of asynchronously closed channels</H1>
+    <B>Victor Boivie</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5BPATCH%5D%20Fix%20race-condition%20of%20asynchronously%20closed%20channels&In-Reply-To=%3Cmailman.2.1364366201.3387.rabbitmq-discuss%40lists.rabbitmq.com%3E"
+       TITLE="[PATCH] Fix race-condition of asynchronously closed channels">victor at boivie.com
+       </A><BR>
+    <I>Wed Mar 27 06:22:04 GMT 2013</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="026250.html">[rabbitmq-discuss] How to implement consumer's sequential work	correctly?
+</A></li>
+        <LI>Next message: <A HREF="026210.html">[rabbitmq-discuss] java-client: Reproducable &quot;COMMAND_INVALID -	second 'channel.open' seen&quot;
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#26211">[ date ]</a>
+              <a href="thread.html#26211">[ thread ]</a>
+              <a href="subject.html#26211">[ subject ]</a>
+              <a href="author.html#26211">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>When a channel is closed from the server side due to errors we
+have to send CloseOk before we can make it available for allocation
+again. If not, we risk handing it out to a client which will open it
+when it's not yet fully closed, which results in a
+&quot;COMMAND_INVALID - second 'channel.open' seen&quot;.
+
+diff --git a/src/com/rabbitmq/client/impl/ChannelN.java
+b/src/com/rabbitmq/client/impl/ChannelN.java
+index 18e4f6a..9fe11c3 100644
+--- a/src/com/rabbitmq/client/impl/ChannelN.java
++++ b/src/com/rabbitmq/client/impl/ChannelN.java
+@@ -471,7 +471,6 @@ public class ChannelN extends AMQChannel implements
+com.rabbitmq.client.Channel
+     }
+
+     private void asyncShutdown(Command command) throws IOException {
+-        releaseChannel();
+         ShutdownSignalException signal = new ShutdownSignalException(false,
+                                                                      false,
+
+command,
+@@ -484,6 +483,7 @@ public class ChannelN extends AMQChannel implements
+com.rabbitmq.client.Channel
+                 notifyOutstandingRpc(signal);
+             }
+         }
++        releaseChannel();
+         notifyListeners();
+     }
+
+--e89a8f923cfe1fa0d404d8e21fb8
+Content-Type: text/html; charset=ISO-8859-1
+Content-Transfer-Encoding: quoted-printable
+
+&lt;div dir=3D&quot;ltr&quot;&gt;I have been having some problems with the java-rabbitmq-cl=
+ient when stress testing it. I frequently get &amp;quot;COMMAND_INVALID - secon=
+d &amp;#39;channel.open&amp;#39; seen&amp;quot;, which eventually closes the connection=
+ (not just the channel).&lt;div&gt;
+&lt;br&gt;&lt;/div&gt;&lt;div style&gt;It seems that there is a race condition when channels =
+are closed asynchronously (due to errors), and created in other threads. Th=
+e channel that is closed (by the server) doesn&amp;#39;t seem to be fully close=
+d before another thread can try to open a channel with the same number.&lt;/di=
+v&gt;
+&lt;div style&gt;&lt;br&gt;&lt;/div&gt;&lt;div style&gt;The code to reproduce it is at=A0&lt;a href=3D=
+&quot;<A HREF="https://github.com/boivie/rmq-stress-test&quot;">https://github.com/boivie/rmq-stress-test&quot;</A>&gt;<A HREF="https://github.com/boivie/rmq-s=">https://github.com/boivie/rmq-s=</A>
+tress-test&lt;/a&gt;&lt;/div&gt;&lt;div style&gt;&lt;br&gt;&lt;/div&gt;&lt;div style&gt;A possible fix is below=
+.&lt;/div&gt;
+&lt;div style&gt;&lt;br&gt;&lt;/div&gt;&lt;div style&gt;Thanks,&lt;/div&gt;&lt;div style&gt;Victor&lt;/div&gt;&lt;div st=
+yle&gt;&lt;br&gt;&lt;/div&gt;&lt;div style&gt;&lt;div&gt;From 213cf8ef15a759985bc9dd74496548236b5160f2=
+ Mon Sep 17 00:00:00 2001&lt;/div&gt;&lt;div&gt;From: Victor Boivie &amp;lt;&lt;a href=3D&quot;mail=
+to:<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">victor at boivie.com</A>&quot;&gt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">victor at boivie.com</A>&lt;/a&gt;&amp;gt;&lt;/div&gt;
+&lt;div&gt;Date: Wed, 27 Mar 2013 07:22:04 +0100&lt;/div&gt;&lt;div&gt;Subject: [PATCH] Fix r=
+ace-condition of asynchronously closed channels&lt;/div&gt;&lt;div&gt;&lt;br&gt;&lt;/div&gt;&lt;div&gt;Wh=
+en a channel is closed from the server side due to errors we&lt;/div&gt;&lt;div&gt;
+have to send CloseOk before we can make it available for allocation&lt;/div&gt;&lt;d=
+iv&gt;again. If not, we risk handing it out to a client which will open it&lt;/di=
+v&gt;&lt;div&gt;when it&amp;#39;s not yet fully closed, which results in a&lt;/div&gt;&lt;div&gt;
+&amp;quot;COMMAND_INVALID - second &amp;#39;channel.open&amp;#39; seen&amp;quot;.&lt;/div&gt;&lt;div=
+&gt;<i>&lt;br&gt;&lt;/div&gt;&lt;div&gt;diff --git a/src/com/rabbitmq/client/impl/ChannelN.java b/s=
+</I>rc/com/rabbitmq/client/impl/ChannelN.java&lt;/div&gt;&lt;div&gt;index 18e4f6a..9fe11c3 =
+100644&lt;/div&gt;
+&lt;div&gt;--- a/src/com/rabbitmq/client/impl/ChannelN.java&lt;/div&gt;&lt;div&gt;+++ b/src/c=
+om/rabbitmq/client/impl/ChannelN.java&lt;/div&gt;&lt;div&gt;@@ -471,7 +471,6 @@ public =
+class ChannelN extends AMQChannel implements com.rabbitmq.client.Channel&lt;/d=
+iv&gt;
+&lt;div&gt;=A0 =A0 =A0}&lt;/div&gt;&lt;div&gt;=A0&lt;/div&gt;&lt;div&gt;=A0 =A0 =A0private void asyncShut=
+down(Command command) throws IOException {&lt;/div&gt;&lt;div&gt;- =A0 =A0 =A0 =A0relea=
+seChannel();&lt;/div&gt;&lt;div&gt;=A0 =A0 =A0 =A0 =A0ShutdownSignalException signal =
+=3D new ShutdownSignalException(false,&lt;/div&gt;
+&lt;div&gt;=A0 =A0 =A0 =A0 =A0 =A0 =A0 =A0 =A0 =A0 =A0 =A0 =A0 =A0 =A0 =A0 =A0 =
+=A0 =A0 =A0 =A0 =A0 =A0 =A0 =A0 =A0 =A0 =A0 =A0 =A0 =A0 =A0 =A0 =A0 =A0 fal=
+se,&lt;/div&gt;&lt;div&gt;=A0 =A0 =A0 =A0 =A0 =A0 =A0 =A0 =A0 =A0 =A0 =A0 =A0 =A0 =A0 =
+=A0 =A0 =A0 =A0 =A0 =A0 =A0 =A0 =A0 =A0 =A0 =A0 =A0 =A0 =A0 =A0 =A0 =A0 =A0=
+ =A0 command,&lt;/div&gt;&lt;div&gt;@@ -484,6 +483,7 @@ public class ChannelN extends A=
+MQChannel implements com.rabbitmq.client.Channel&lt;/div&gt;
+&lt;div&gt;=A0 =A0 =A0 =A0 =A0 =A0 =A0 =A0 =A0notifyOutstandingRpc(signal);&lt;/div&gt;=
+&lt;div&gt;=A0 =A0 =A0 =A0 =A0 =A0 =A0}&lt;/div&gt;&lt;div&gt;=A0 =A0 =A0 =A0 =A0}&lt;/div&gt;&lt;div&gt;=
++ =A0 =A0 =A0 =A0releaseChannel();&lt;/div&gt;&lt;div&gt;=A0 =A0 =A0 =A0 =A0notifyListe=
+ners();&lt;/div&gt;&lt;div&gt;=A0 =A0 =A0}&lt;/div&gt;&lt;div&gt;=A0&lt;/div&gt;&lt;/div&gt;&lt;/div&gt;
+
+--e89a8f923cfe1fa0d404d8e21fb8--
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="026250.html">[rabbitmq-discuss] How to implement consumer's sequential work	correctly?
+</A></li>
+	<LI>Next message: <A HREF="026210.html">[rabbitmq-discuss] java-client: Reproducable &quot;COMMAND_INVALID -	second 'channel.open' seen&quot;
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#26211">[ date ]</a>
+              <a href="thread.html#26211">[ thread ]</a>
+              <a href="subject.html#26211">[ subject ]</a>
+              <a href="author.html#26211">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

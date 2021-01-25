@@ -1,0 +1,139 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] RabbitMQ performance tips, collected with sweat and blood
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20RabbitMQ%20performance%20tips%2C%0A%20collected%20with%20sweat%20and%20blood&In-Reply-To=%3CCANVKUrXtR1rLbeyOVYSpz_P2r7%2BxfU2%2BaLhrRNXf9xopDVJg_g%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="014544.html">
+   <LINK REL="Next"  HREF="014548.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] RabbitMQ performance tips, collected with sweat and blood</H1>
+    <B>Eugene Kirpichov</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20RabbitMQ%20performance%20tips%2C%0A%20collected%20with%20sweat%20and%20blood&In-Reply-To=%3CCANVKUrXtR1rLbeyOVYSpz_P2r7%2BxfU2%2BaLhrRNXf9xopDVJg_g%40mail.gmail.com%3E"
+       TITLE="[rabbitmq-discuss] RabbitMQ performance tips, collected with sweat and blood">ekirpichov at gmail.com
+       </A><BR>
+    <I>Mon Aug 15 15:23:41 BST 2011</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="014544.html">[rabbitmq-discuss] RabbitMQ performance tips, collected with sweat and blood
+</A></li>
+        <LI>Next message: <A HREF="014548.html">[rabbitmq-discuss] RabbitMQ performance tips, collected with sweat and blood
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#14546">[ date ]</a>
+              <a href="thread.html#14546">[ thread ]</a>
+              <a href="subject.html#14546">[ subject ]</a>
+              <a href="author.html#14546">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi Matthew,
+
+First, I clearly made a typo when saying &quot;hundred thousand&quot; - it was
+tens of thousands (~3000 -&gt; 30000).
+
+Second, I fully agree with what you said. Special measures need to be
+taken to avoid causing some consumers to starve.
+I tried doing this on application level by setting a value of qos &gt; 1,
+but having a buffer that would reject a message that the application
+didn't request within a few seconds. On my local tests that worked and
+gave large benefit without the problem of starvation; on large-scale
+tests it didn't work well - but it was clearly due to an
+implementation error of mine somewhere that I didn't have time to
+debug.
+
+On Mon, Aug 15, 2011 at 6:04 AM, Matthew Sackman &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">matthew at rabbitmq.com</A>&gt; wrote:
+&gt;<i> Hi Eugene,
+</I>&gt;<i>
+</I>&gt;<i> On Fri, Aug 12, 2011 at 08:20:15AM -0700, Eugene Kirpichov wrote:
+</I>&gt;&gt;<i> I'm surprised to hear about the negative effect; in my experiments the
+</I>&gt;&gt;<i> positive effect was very large - basically it raised a local stress
+</I>&gt;&gt;<i> test throughput from several thousand to several hundred thousand
+</I>&gt;&gt;<i> messages per second; can you please clarify?
+</I>&gt;<i>
+</I>&gt;<i> With one or a low number of consumers from the same queue, especially if
+</I>&gt;<i> those consumers are doing very little work and are able to acknowledge
+</I>&gt;<i> msgs very quickly, if you turn on basic.qos then you'll see that the
+</I>&gt;<i> loading of the consumers should be far more equal, but overall
+</I>&gt;<i> throughput will drop. This is because of the additional checks necessary
+</I>&gt;<i> that a queue has to make before trying to send a message to a queue
+</I>&gt;<i> (essentially, if the prefetch limit was per consumer, rather than per
+</I>&gt;<i> channel, life would be a lot simpler, at least from the broker's pov).
+</I>&gt;<i>
+</I>&gt;<i> If you don't use basic.qos and the consumers are still very fast and
+</I>&gt;<i> very simple then whilst you might get very unbalanced distribution of
+</I>&gt;<i> messages to consumers, the overall throughput can be quite a lot higher.
+</I>&gt;<i> Testing with consumers on the same machine as the broker should
+</I>&gt;<i> demonstrate this.
+</I>&gt;<i>
+</I>&gt;<i> But if your consumers are doing quite a lot of processing of each
+</I>&gt;<i> message and are not able to keep up with the rate of messages that the
+</I>&gt;<i> broker is sending them then it's quite possible for the broker to flood
+</I>&gt;<i> one or a few consumers with all the messages and those consumers then
+</I>&gt;<i> slowly work through their backlog whilst other consumers are left idle:
+</I>&gt;<i> thus overall throughput can drop. Not only this but the memory
+</I>&gt;<i> consumption of such consumers may well go through the roof (depending on
+</I>&gt;<i> the client library being used) as they buffer up all the messages.
+</I>&gt;<i>
+</I>&gt;<i> So by using basic.qos, you help to ensure that all consumers are kept
+</I>&gt;<i> equally busy, and you can limit the amount of buffering they each do.
+</I>&gt;<i> But nevertheless, because the broker has to do more work to achieve this
+</I>&gt;<i> balancing, the broker spends more CPU per message per consumer, and thus
+</I>&gt;<i> the broker can be seen to be somewhat slower. Indeed I've measured drops
+</I>&gt;<i> from over 17kHz to 3kHz by using a single consumer and putting basic.qos
+</I>&gt;<i> at 1. With basic.qos at some larger values (&gt; 1000), the effect is less
+</I>&gt;<i> pronounced, but it's still a performance drop for really simple and fast
+</I>&gt;<i> consumers.
+</I>&gt;<i>
+</I>&gt;<i> Matthew
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>&gt;<i>
+</I>
+
+
+-- 
+Eugene Kirpichov
+Principal Engineer, Mirantis Inc. <A HREF="http://www.mirantis.com/">http://www.mirantis.com/</A>
+Editor, <A HREF="http://fprog.ru/">http://fprog.ru/</A>
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="014544.html">[rabbitmq-discuss] RabbitMQ performance tips, collected with sweat and blood
+</A></li>
+	<LI>Next message: <A HREF="014548.html">[rabbitmq-discuss] RabbitMQ performance tips, collected with sweat and blood
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#14546">[ date ]</a>
+              <a href="thread.html#14546">[ thread ]</a>
+              <a href="subject.html#14546">[ subject ]</a>
+              <a href="author.html#14546">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

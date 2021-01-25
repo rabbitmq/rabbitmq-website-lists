@@ -1,0 +1,132 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] RabbitMQ timing out under small load
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20RabbitMQ%20timing%20out%20under%20small%20load&In-Reply-To=21315520.post%40talk.nabble.com">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002422.html">
+   <LINK REL="Next"  HREF="002425.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] RabbitMQ timing out under small load</H1>
+    <B>Alexis Richardson</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20RabbitMQ%20timing%20out%20under%20small%20load&In-Reply-To=21315520.post%40talk.nabble.com"
+       TITLE="[rabbitmq-discuss] RabbitMQ timing out under small load">alexis.richardson at cohesiveft.com
+       </A><BR>
+    <I>Tue Jan  6 18:08:28 GMT 2009</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002422.html">[rabbitmq-discuss]  RabbitMQ timing out under small load
+</A></li>
+        <LI>Next message: <A HREF="002425.html">[rabbitmq-discuss] RabbitMQ timing out under small load
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2424">[ date ]</a>
+              <a href="thread.html#2424">[ thread ]</a>
+              <a href="subject.html#2424">[ subject ]</a>
+              <a href="author.html#2424">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Can you tell us a bit more about the EC2 set up please - is there
+anything unusual about how you built and connect to your AMIs?
+
+alexis
+
+
+On Tue, Jan 6, 2009 at 5:58 PM, gfodor &lt;<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">gfodor at gmail.com</A>&gt; wrote:
+&gt;<i>
+</I>&gt;<i> We had an incident yesterday while restarting some servers where RabbitMQ
+</I>&gt;<i> began basically being dysfunctional -- we were getting connection timeouts
+</I>&gt;<i> in our log everywhere, and were not even able to perform a rabbitmqctl
+</I>&gt;<i> list_queues without it timing out 70-80% of the time.
+</I>&gt;<i>
+</I>&gt;<i> Here's our setup. We have two RabbitMQ nodes running on EC2 running Ubuntu
+</I>&gt;<i> hardy. They have four queues, all of them durable, each with &lt;1kb message
+</I>&gt;<i> sizes. Yesterday we were doing a deployment so naturally these queues filled
+</I>&gt;<i> up with backlog as the servers responsible for processing them were
+</I>&gt;<i> temporarily turned off. We ran into a snag in the deployment, so this
+</I>&gt;<i> downtime was extended, which resulted in the queues backlogging more than
+</I>&gt;<i> we've had to do in the past.
+</I>&gt;<i>
+</I>&gt;<i> At the time of the incident, both nodes were displaying the same behavior,
+</I>&gt;<i> though anecdotally it appeared that one node was slightly more responsive
+</I>&gt;<i> than the other. list_queues was timing out and our consumers (once brought
+</I>&gt;<i> back up) were throwing connection timeout errors left and right. We also
+</I>&gt;<i> noticed that the consumer threads that did not timeout would in fact have to
+</I>&gt;<i> wait 2-3 seconds on a synchronous call to get before receiving the next
+</I>&gt;<i> message from the queue. We were pushing approximately 30-60 items per second
+</I>&gt;<i> onto the 4 queues in total. At the time of the failures, the persister log
+</I>&gt;<i> was around 25mb, and I was able to see using list_queues that the queue
+</I>&gt;<i> sizes in total was approximately 50MB. RAM wise, rabbit was using
+</I>&gt;<i> approximately 30-40MB on each machine and there were intermittent CPU spikes
+</I>&gt;<i> but generally the CPU was largely idle. (Note that we initialize these
+</I>&gt;<i> queues in a manner that we are sure they are distributed over the nodes
+</I>&gt;<i> evenly, half the queues are 'owned' by node 1 and the other by node 2, so
+</I>&gt;<i> the RAM usage makes sense.) Using iostat, the disk did not seem to be under
+</I>&gt;<i> much load, and now that things are nominal it looks like the disk load is
+</I>&gt;<i> the same as when things were broken (about 30 blk/s writes.)
+</I>&gt;<i>
+</I>&gt;<i> One thing to notice obviously is this isn't a very high workload, so we are
+</I>&gt;<i> pretty perplexed why things basically died after our queue backed up for an
+</I>&gt;<i> hour. We managed to fix the problem by basically purging the two larger
+</I>&gt;<i> queues (after several attempts), and things basically snapped out of it.
+</I>&gt;<i> Fortunately for us the data on these queues didn't really need to be
+</I>&gt;<i> retained, and we were able to salvage the data on the other two queues in
+</I>&gt;<i> this case which is the real data we need durable.
+</I>&gt;<i>
+</I>&gt;<i> The rabbit.log didn't reveal anything useful, it just simply showed the
+</I>&gt;<i> regular persister log rotating messages missed in with timeout errors such
+</I>&gt;<i> as the following:
+</I>&gt;<i>
+</I>&gt;<i> =WARNING REPORT==== 6-Jan-2009::02:20:42 ===
+</I>&gt;<i> Non-AMQP exit reason '{timeout,
+</I>&gt;<i>                          {gen_server,
+</I>&gt;<i>                              call,
+</I>&gt;<i>
+</I>&gt;<i> [&lt;8656.465.0&gt;,{basic_get,&lt;0.14214.1&gt;,false}]}}'
+</I>&gt;<i>
+</I>&gt;<i> We're obviously deeply concerned by this incident, particularly since
+</I>&gt;<i> RabbitMQ was nowhere near exhausting memory or I/O capacity and simply
+</I>&gt;<i> seemed to be having internal contention issues or garbage collection issues
+</I>&gt;<i> or something going on preventing it from being able to handle our light
+</I>&gt;<i> workload once our consumers came back online. Any help you can give is
+</I>&gt;<i> greatly appreciated!
+</I>&gt;<i>
+</I>&gt;<i> --
+</I>&gt;<i> View this message in context: <A HREF="http://www.nabble.com/RabbitMQ-timing-out-under-small-load-tp21315520p21315520.html">http://www.nabble.com/RabbitMQ-timing-out-under-small-load-tp21315520p21315520.html</A>
+</I>&gt;<i> Sent from the RabbitMQ mailing list archive at Nabble.com.
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;<i> <A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;<i> <A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>&gt;<i>
+</I>
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002422.html">[rabbitmq-discuss]  RabbitMQ timing out under small load
+</A></li>
+	<LI>Next message: <A HREF="002425.html">[rabbitmq-discuss] RabbitMQ timing out under small load
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2424">[ date ]</a>
+              <a href="thread.html#2424">[ thread ]</a>
+              <a href="subject.html#2424">[ subject ]</a>
+              <a href="author.html#2424">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

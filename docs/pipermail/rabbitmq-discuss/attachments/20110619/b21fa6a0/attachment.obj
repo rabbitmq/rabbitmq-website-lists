@@ -1,0 +1,98 @@
+diff -r 13862d0d0999 src/rabbit.erl
+--- a/src/rabbit.erl	Thu Jun 16 14:32:02 2011 +0100
++++ b/src/rabbit.erl	Sun Jun 19 23:40:17 2011 +0200
+@@ -249,7 +249,7 @@
+             true = register(rabbit, self()),
+ 
+             print_banner(),
+-            [ok = run_boot_step(Step) || Step <- boot_steps()],
++            rabbit_boot_step:boot(),
+             io:format("~nbroker running~n"),
+             {ok, SupPid};
+         Error ->
+@@ -276,85 +276,6 @@
+                           {found, FoundVer}, {required, ?ERTS_MINIMUM}}}
+     end.
+ 
+-boot_error(Format, Args) ->
+-    io:format("BOOT ERROR: " ++ Format, Args),
+-    error_logger:error_msg(Format, Args),
+-    timer:sleep(1000),
+-    exit({?MODULE, failure_during_boot}).
+-
+-run_boot_step({StepName, Attributes}) ->
+-    Description = case lists:keysearch(description, 1, Attributes) of
+-                      {value, {_, D}} -> D;
+-                      false           -> StepName
+-                  end,
+-    case [MFA || {mfa, MFA} <- Attributes] of
+-        [] ->
+-            io:format("-- ~s~n", [Description]);
+-        MFAs ->
+-            io:format("starting ~-60s ...", [Description]),
+-            [try
+-                 apply(M,F,A)
+-             catch
+-                 _:Reason -> boot_error("FAILED~nReason: ~p~nStacktrace: ~p~n",
+-                                        [Reason, erlang:get_stacktrace()])
+-             end || {M,F,A} <- MFAs],
+-            io:format("done~n"),
+-            ok
+-    end.
+-
+-boot_steps() ->
+-    sort_boot_steps(rabbit_misc:all_module_attributes(rabbit_boot_step)).
+-
+-vertices(_Module, Steps) ->
+-    [{StepName, {StepName, Atts}} || {StepName, Atts} <- Steps].
+-
+-edges(_Module, Steps) ->
+-    [case Key of
+-         requires -> {StepName, OtherStep};
+-         enables  -> {OtherStep, StepName}
+-     end || {StepName, Atts} <- Steps,
+-            {Key, OtherStep} <- Atts,
+-            Key =:= requires orelse Key =:= enables].
+-
+-sort_boot_steps(UnsortedSteps) ->
+-    case rabbit_misc:build_acyclic_graph(fun vertices/2, fun edges/2,
+-                                         UnsortedSteps) of
+-        {ok, G} ->
+-            %% Use topological sort to find a consistent ordering (if
+-            %% there is one, otherwise fail).
+-            SortedSteps = lists:reverse(
+-                            [begin
+-                                 {StepName, Step} = digraph:vertex(G, StepName),
+-                                 Step
+-                             end || StepName <- digraph_utils:topsort(G)]),
+-            digraph:delete(G),
+-            %% Check that all mentioned {M,F,A} triples are exported.
+-            case [{StepName, {M,F,A}} ||
+-                     {StepName, Attributes} <- SortedSteps,
+-                     {mfa, {M,F,A}}         <- Attributes,
+-                     not erlang:function_exported(M, F, length(A))] of
+-                []               -> SortedSteps;
+-                MissingFunctions -> boot_error(
+-                                      "Boot step functions not exported: ~p~n",
+-                                      [MissingFunctions])
+-            end;
+-        {error, {vertex, duplicate, StepName}} ->
+-            boot_error("Duplicate boot step name: ~w~n", [StepName]);
+-        {error, {edge, Reason, From, To}} ->
+-            boot_error(
+-              "Could not add boot step dependency of ~w on ~w:~n~s",
+-              [To, From,
+-               case Reason of
+-                   {bad_vertex, V} ->
+-                       io_lib:format("Boot step not registered: ~w~n", [V]);
+-                   {bad_edge, [First | Rest]} ->
+-                       [io_lib:format("Cyclic dependency: ~w", [First]),
+-                        [io_lib:format(" depends on ~w", [Next]) ||
+-                            Next <- Rest],
+-                        io_lib:format(" depends on ~w~n", [First])]
+-               end])
+-    end.
+-
+ %%---------------------------------------------------------------------------
+ 
+ log_location(Type) ->

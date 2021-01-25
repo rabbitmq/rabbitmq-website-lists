@@ -1,0 +1,154 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Persister log size calculation and rolling persister log frequency?
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20Persister%20log%20size%20calculation%20and%20rolling%0A%20persister%20log%20frequency%3F&In-Reply-To=q2n173a1edc1004010953t66f0d7ebjb6d022d7b37bc5d4%40mail.gmail.com">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="006768.html">
+   <LINK REL="Next"  HREF="006801.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Persister log size calculation and rolling persister log frequency?</H1>
+    <B>Matthew Sackman</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20Persister%20log%20size%20calculation%20and%20rolling%0A%20persister%20log%20frequency%3F&In-Reply-To=q2n173a1edc1004010953t66f0d7ebjb6d022d7b37bc5d4%40mail.gmail.com"
+       TITLE="[rabbitmq-discuss] Persister log size calculation and rolling persister log frequency?">matthew at lshift.net
+       </A><BR>
+    <I>Fri Apr  2 17:30:15 BST 2010</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="006768.html">[rabbitmq-discuss] Persister log size calculation and rolling	persister log frequency?
+</A></li>
+        <LI>Next message: <A HREF="006801.html">[rabbitmq-discuss] Persister log size calculation and rolling persister log frequency?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#6780">[ date ]</a>
+              <a href="thread.html#6780">[ thread ]</a>
+              <a href="subject.html#6780">[ subject ]</a>
+              <a href="author.html#6780">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi John,
+
+On Thu, Apr 01, 2010 at 06:53:57PM +0200, John Apps wrote:
+&gt;<i> I see that the size of the log varies tremendously, as does the frequency
+</I>&gt;<i> with which it is 'rolled'.
+</I>&gt;<i> The size is presumably determined by the number of messages pending, i.e.,
+</I>&gt;<i> not yet acknowledged?
+</I>
+Oh the logic there is quite complex. It's something like &quot;it shouldn't be
+rolled too often, and we also have a minimum number of operations that
+should have to go into it before we roll, and probably we should not roll
+whilst we're really busy&quot;. The last time Matthias and I looked at that code,
+it took the two of us some hours to figure out what was going on. The new
+persister is a fair bit more predictable in this regard.
+
+&gt;<i> QueuesOverviewMessagesTransactionsParametersVhostNameConsumersMemoryCountMsg
+</I>&gt;<i> readyMsg unackCountAcks uncommitedDurableAuto deleteArguments/
+</I>&gt;<i> amq.gen-EIK8rQQfEX9IBiqLwF6h7Q==10MB22702271227falsetrue[]
+</I>
+I know some people aren't a fan of semantically significant spaces in
+programming languages, but they're generally favoured in English...
+
+&gt;<i> The log file at
+</I>&gt;<i> the above moment in time is 128KB. (I paused the producer long enough for
+</I>&gt;<i> the receiver to catch up.)
+</I>&gt;<i> 
+</I>&gt;<i> QueuesOverviewMessagesTransactionsParametersVhostNameConsumersMemoryCountMsg
+</I>&gt;<i> readyMsg unackCountAcks uncommitedDurableAuto deleteArguments/
+</I>&gt;<i> amq.gen-EIK8rQQfEX9IBiqLwF6h7Q==1105MB2493432483431000158falsetrue[]
+</I>&gt;<i> 
+</I>&gt;<i> The log file at the above moment is some 111,529KB, the rolled over log file
+</I>&gt;<i> about the same size.
+</I>&gt;<i> 
+</I>&gt;<i> What I am wondering about is
+</I>&gt;<i> 
+</I>&gt;<i>    1. when does the roll-over take place?
+</I>
+Not totally sure - it's not completely clear from the code what the goals
+were. Tony G is probably the only person who can answer this sufficiently.
+
+&gt;<i>    2. what role does the dump_log_write_threshold parameter play here? (It
+</I>&gt;<i>    is set to 1,000 in these tests)
+</I>
+That's an mnesia parameter and has nothing to do with the persister log
+that Rabbit uses.
+
+&gt;<i>    3. why is the previous version deleted before the current one is rolled
+</I>&gt;<i>    over? (GFS would appear to be the algorithm which should be used in order
+</I>&gt;<i>    not to lose anything)
+</I>
+It's not. On taking a snapshot, the data in the current file is correct.
+There may be a .previous file, which is removed if it exists. Then
+disk_log:reopen/3 is called.
+<A HREF="http://www.erlang.org/doc/man/disk_log.html#reopen-3">http://www.erlang.org/doc/man/disk_log.html#reopen-3</A>
+&quot;The reopen functions first rename the log file to File and then re-create a
+new log file.&quot;
+
+There should be no possibility of data loss during this process.
+
+&gt;<i>    4. the new version of the log file is created with a very small initial
+</I>&gt;<i>    allocation? Is there a way to influence this size?  (yes, I know, modern
+</I>&gt;<i>    file systems should be able to happily expand very fast, and I have asked
+</I>&gt;<i>    this question before. However, the time taken to 'rename' the current to
+</I>&gt;<i>    previous and create a new log causes quite significant waves on the client
+</I>&gt;<i>    side. These are noticeable even to the human eye.)
+</I>
+Renaming a file should be an instantaneous operation. Nothing other than
+meta data needs writing to do this, and depending on your filesystem, that
+may not even hit disk. We do not do any preallocation - for file systems
+that support holes, it gains nothing, and for those that don't, it's very
+expensive (HFS is a good example here). The persister files are only ever
+appended to - there is no rewriting in place. Preallocation won't help
+here.
+
+&gt;<i>    5. The severe delay is only experienced by the receiver. Here are a few
+</I>&gt;<i>    samples:
+</I>&gt;<i>    - recving rate: 507 msg/s
+</I>&gt;<i>       - recving rate: 506 msg/s
+</I>&gt;<i>       - recving rate: 475 msg/s
+</I>&gt;<i>       - recving rate: 377 msg/s
+</I>&gt;<i>       - *recving rate: 5 msg/s*
+</I>
+Yup, that's the cost of writing out the snapshot again. What you're seeing
+here is a bug that is one of the main reasons for the existance of the new
+persister, which is that with the current persister, the same data gets
+written out over and over again - If you have one long queue which is doing
+no work, and one short and fast queue, then whenever the persister decides
+to take a new snapshot, it writes out the entire contents of the long queue
+as well.
+
+The new persister is much much better in this regard (and several others
+too). In particular, messages are only rewritten on disk for GC reasons,
+and there is a finite bound on the number of times a message will be
+rewritten. In short, I'd recommend you compile, test and compare with the
+new persister branch (bug21673).
+
+Matthew
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="006768.html">[rabbitmq-discuss] Persister log size calculation and rolling	persister log frequency?
+</A></li>
+	<LI>Next message: <A HREF="006801.html">[rabbitmq-discuss] Persister log size calculation and rolling persister log frequency?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#6780">[ date ]</a>
+              <a href="thread.html#6780">[ thread ]</a>
+              <a href="subject.html#6780">[ subject ]</a>
+              <a href="author.html#6780">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

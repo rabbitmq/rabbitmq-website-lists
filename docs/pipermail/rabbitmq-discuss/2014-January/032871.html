@@ -1,0 +1,100 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Scaling single queues
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Scaling%20single%20queues&In-Reply-To=%3C3e93534f5b2b4319a2ec688b535295dc%40CO1PR07MB331.namprd07.prod.outlook.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="032865.html">
+   <LINK REL="Next"  HREF="032881.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Scaling single queues</H1>
+    <B>Michael Giagnocavo</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Scaling%20single%20queues&In-Reply-To=%3C3e93534f5b2b4319a2ec688b535295dc%40CO1PR07MB331.namprd07.prod.outlook.com%3E"
+       TITLE="[rabbitmq-discuss] Scaling single queues">mgg at giagnocavo.net
+       </A><BR>
+    <I>Mon Jan  6 04:19:36 GMT 2014</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="032865.html">[rabbitmq-discuss] messages grouped and each group differently	restricted
+</A></li>
+        <LI>Next message: <A HREF="032881.html">[rabbitmq-discuss] Scaling single queues
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#32871">[ date ]</a>
+              <a href="thread.html#32871">[ thread ]</a>
+              <a href="subject.html#32871">[ subject ]</a>
+              <a href="author.html#32871">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>I've read that queues are &quot;single threaded&quot;, and thus might be a source of bottlenecks. I'd like to know what the best way to get around that limitation is. Here's our scenario:
+
+We have 20+ producing machines running RabbitMQ. A process local to each server drops messages off, around 100/sec.
+We have a central RabbitMQ which runs the Shovel plugin and brings all those producer queues into a main fanout exchange.
+This exchange fans out to 4 (soon to be 6) separate queues (separate consumers for various processes like logging, archiving, balance updates, partner export, etc.)
+The messages are under 300 bytes, and billing records, so we use persistence, durability, and transactions.
+
+The peak rate into the central fanout is around 3000 msg/sec, but averages around 2000msg/sec for most of the day. At night it drops to under 100.
+Shoveling works just great; after a backlog, we can see it delivering 4000 msg/sec to each queue from the fanout.
+The central server has 8 cores (Xeon 5450), 16GB RAM, and a 512MB battery backed write cache. (Rabbit 3.2.2, Erlang R16B03, although this happened on 3.1.5 as well.)
+
+The problem: No matter how I consume, I can't seem to get above 2000msg/sec from any single queue. Some days, I end up with a backlog of 25M+ messages in a queue. I have a multithreaded consumer process (.NET client), with plenty of CPU and RAM free. It reads batches of messages from RabbitMQ, then does a transaction to SQL Server, then TxCommit to RabbitMQ and repeats. With 2 threads and a batch size of 200, I get 2000msg/sec. I've tried all combinations of batch size, threads, and prefetch. The result is the same: 2000msg/sec average is all it can get from RabbitMQ. Adding more consumers just means each one gets less msgs/sec. Consumers are on a gigabit LAN.
+
+Using iotop, I don't see any disk issues on the Rabbit server, and 6 of the 8 CPUs are free. The fact that setting up huge batches (I tried 500msg/tx) doesn't make any noticeable difference further convinces me it's not related to IO. There's many GB of RAM free (not even halfway to high watermark). I notice that RabbitMQ's CPU never goes much above 210% (2 out of 8 CPUs), and top indicates that 2 CPUs are usually always pegged, although the exact CPUs vary (so it'll run 0 and 1 at 100% , then a few seconds later run 3 and 4 at 200%, and so on).
+
+This leads me to believe there's some sort of CPU-related bottleneck in RabbitMQ related to high rates on a single queue, at least for transactional, persistent messages.
+
+How should I go about solving this? My current idea is to just run another &quot;central&quot; RabbitMQ server, and have it shovel from all producers, then have every consumer connect to every &quot;central&quot; machine. In fact, I could probably accomplish this just by running more shovels with different targets, but within the same RabbitMQ server. The producer servers would distribute the load to the various shovel consumers and eliminate any single bottleneck.
+
+Does that make sense? Is there an easier way? I was considering using consistent hashing, then generating a random routing key to load balance to multiple queues on the same machine. (So I'd have billing1, billing2, archive1, archive2, etc.) But I think that might conflict for our plans to add topic routing (some consumers only need a small subset of the messages).
+
+Currently we are not running in an HA cluster, using the Hypervisor capabilities to provide some disaster recovery. But we plan on turning into a proper cluster, if that makes a difference.
+
+I appreciate any assistance or reading material. I looked at federation, but it seems it's isomorphic to what we're doing with shoveling.
+
+-Michael
+
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20140106/65ec016d/attachment.html">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20140106/65ec016d/attachment.html</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="032865.html">[rabbitmq-discuss] messages grouped and each group differently	restricted
+</A></li>
+	<LI>Next message: <A HREF="032881.html">[rabbitmq-discuss] Scaling single queues
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#32871">[ date ]</a>
+              <a href="thread.html#32871">[ thread ]</a>
+              <a href="subject.html#32871">[ subject ]</a>
+              <a href="author.html#32871">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

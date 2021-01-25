@@ -1,0 +1,230 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] [Minimum Air Induction] Introducing Shovel:	An AMQP Relay
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20%5BMinimum%20Air%20Induction%5D%20Introducing%20Shovel%3A%0A%09An%20AMQP%20Relay&In-Reply-To=269388e30809201117i2006097cn9603f2a060d2e9a7%40mail.gmail.com">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001557.html">
+   <LINK REL="Next"  HREF="001561.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] [Minimum Air Induction] Introducing Shovel:	An AMQP Relay</H1>
+    <B>Valentino Volonghi</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20%5BMinimum%20Air%20Induction%5D%20Introducing%20Shovel%3A%0A%09An%20AMQP%20Relay&In-Reply-To=269388e30809201117i2006097cn9603f2a060d2e9a7%40mail.gmail.com"
+       TITLE="[rabbitmq-discuss] [Minimum Air Induction] Introducing Shovel:	An AMQP Relay">dialtone at gmail.com
+       </A><BR>
+    <I>Sat Sep 20 20:18:18 BST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001557.html">[rabbitmq-discuss] [Minimum Air Induction] Introducing Shovel:	An AMQP Relay
+</A></li>
+        <LI>Next message: <A HREF="001561.html">[rabbitmq-discuss] [Minimum Air Induction] Introducing Shovel: An AMQP Relay
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1560">[ date ]</a>
+              <a href="thread.html#1560">[ thread ]</a>
+              <a href="subject.html#1560">[ subject ]</a>
+              <a href="author.html#1560">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>-----BEGIN PGP SIGNED MESSAGE-----
+Hash: SHA1
+
+
+On Sep 20, 2008, at 11:17 AM, Ben Hood wrote:
+
+&gt;<i> What difference does it make when you do multiple publishes within  
+</I>&gt;<i> the same TX?
+</I>
+Well, a transaction each 100-500 messages is basically as fast as no  
+transaction at
+all with the difference that the connection is used in bursts rather  
+than continuously.
+But when I tried a transaction per message the end result was about  
+30-40 messages
+per second which is just too slow but tells me that I can have  
+basically up to 30-40
+transactions per second and still keep a very high throughput (that's  
+about 100 messages
+per transaction).
+
+&gt;&gt;<i> One thing that I wasn't able to understand is what does a
+</I>&gt;&gt;<i> transaction
+</I>&gt;&gt;<i> give me in rabbitmq?
+</I>&gt;<i>
+</I>&gt;<i> It provides an atomic barrier for sending messages - when you get the
+</I>&gt;<i> commit.ok back from the broker, you know that the messages you have
+</I>&gt;<i> sent have been routed to the queues that the routing key matches on.
+</I>
+Ok so I would rewrite the interaction in the following way:
+
+1. mochiweb generates messages and publishes them without transaction
+2. shovel reads up to 500 messages and starts a transaction with the  
+remote
+     node sending all of them and committing the transaction.
+3. after the transaction is commit it acks the server for multiple  
+messages.
+
+There is still the duplicates problem but this is a minor issue right  
+now IMHO,
+at least it's solvable. (It wouldn't hurt to have 2PC :P).
+
+&gt;&gt;<i> In the event of rabbitmq crashing I would like the whole thing to  
+</I>&gt;&gt;<i> crash so
+</I>&gt;&gt;<i> that
+</I>&gt;&gt;<i> I'm sure that there won't be lines generated without being also  
+</I>&gt;&gt;<i> handled.
+</I>&gt;&gt;<i> This
+</I>&gt;&gt;<i> is the embedded rabbitmq of course.
+</I>&gt;<i>
+</I>&gt;<i> IIRC you can have the OTP application do this for you, provided
+</I>&gt;<i> Mochiweb is packaged as an OTP application. Rabbit and Shovel are both
+</I>&gt;<i> OTP apps themselves.
+</I>
+Yes also mochiweb is packaged as an OTP application so I suppose this  
+won't be
+a problem at all.
+
+&gt;&gt;&gt;<i> Maybe you also want to compress stuff if you're sending it over a  
+</I>&gt;&gt;&gt;<i> WAN.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Yes, one thing that I was thinking is to just gzip the body of the  
+</I>&gt;&gt;<i> message
+</I>&gt;&gt;<i> myself before sending it, but I haven't looked into rabbitmq to see  
+</I>&gt;&gt;<i> if it
+</I>&gt;&gt;<i> already
+</I>&gt;&gt;<i> supports this feature.
+</I>&gt;<i>
+</I>&gt;<i> Not really. Rabbit treats the payload as an opaque object.
+</I>
+Ok, so gzipping the content of each message is also part of the
+plan and can be done, shouldn't be slow either although slower.
+
+&gt;<i> Rabbit will nuke it. Logging the message to disk is done by the queue
+</I>&gt;<i> process, so if nothing gets routed, nothing gets persisted.
+</I>
+Ok, so I need durable queues and will wait for the overflow on disk  
+functionality.
+
+&gt;&gt;<i> I suppose my tests weren't too accurate then now... is a persistent  
+</I>&gt;&gt;<i> message
+</I>&gt;&gt;<i> much
+</I>&gt;&gt;<i> slower than a non persistent one?
+</I>&gt;<i>
+</I>&gt;<i> Yep. Don't know what the exact factor is though.
+</I>
+Ouch... I'll try later today or tomorrow to see what this value  
+actually is without
+shovel in the middle... I also wonder which header I should use to  
+make a message
+persistent, I'll look into this I guess.
+
+&gt;&gt;<i> Because I obtained wonderful numbers from
+</I>&gt;&gt;<i> messages not explicitly marked as being persistent, like 8000  
+</I>&gt;&gt;<i> messages per
+</I>&gt;&gt;<i> second,
+</I>&gt;&gt;<i> with the bottleneck being in the saturated network, on the write  
+</I>&gt;&gt;<i> side of the
+</I>&gt;&gt;<i> connection
+</I>&gt;&gt;<i> and about 3-4K messages per second on the read side with the  
+</I>&gt;&gt;<i> bottleneck
+</I>&gt;&gt;<i> being the
+</I>&gt;&gt;<i> python client most probably. So would these numbers confirm  
+</I>&gt;&gt;<i> themselves
+</I>&gt;&gt;<i> pretty much
+</I>&gt;&gt;<i> or are they simply completely wrong?
+</I>&gt;<i>
+</I>&gt;<i> It really depends how you set things up, but those numbers do look OK.
+</I>
+They look OK in the sense that even persistent messages can reach  
+those rates?
+If so then I'm already more than happy, in the test each message was  
+about 1KB
+that should be a bit bigger than the actual ones but not too much.
+
+&gt;<i> I think that you need to work out what ingress requirements you have
+</I>&gt;<i> (this will be determined by the capacity of the http server) and what
+</I>&gt;<i> egress you need (so as to avoid stuff queuing up too much).
+</I>&gt;<i>
+</I>&gt;<i> Remember that ATM Rabbit does not implement QoS, so your egress will
+</I>&gt;<i> be bound by the slowest consumer.
+</I>
+What if I have multiple consumers on a queue? Does speed scales almost  
+linearly?
+My ingress is, on the extreme, about 1000-1500 requests per second on  
+each mochiweb
+server. Let's say that in the absolute best case we can have 8-9  
+webservers that reach
+800-1000 req/sec and all talk to something remotely. (Now... before  
+even reaching that
+point we would need a connection between the remote data center and  
+the main one
+that is wide enough for all that information, but this issue aside).  
+So basically I would
+expect the embedded RabbitMQ to be able to take about 1500-2000  
+persistent
+messages and then, network notwithstanding, transmit those with some  
+transactions
+(3-4 or maybe some more per second) to the central location that will  
+have multiple
+consumers. I can see having one central RabbitMQ per webserver (or  
+each 2 webservers
+if it can handle the load) and each central rabbitMQ would have some  
+consumers
+that basically write stuff in a database (which would be the  
+bottleneck here).
+
+&gt;&gt;<i> At least I need about 2500-3000
+</I>&gt;&gt;<i> requests per
+</I>&gt;&gt;<i> second because, given the constraint with memory bound queues, the  
+</I>&gt;&gt;<i> component
+</I>&gt;&gt;<i> should
+</I>&gt;&gt;<i> be as fast as the webserver otherwise the messages start to pile up.
+</I>&gt;<i>
+</I>&gt;<i> Sounds sensible. At some stage we will get around to landing QoS and
+</I>&gt;<i> queue overflowing.
+</I>
+
+You are really helpful, I thank you a lot!
+
+- --
+Valentino Volonghi aka Dialtone
+Now running MacOS X 10.5
+Home Page: <A HREF="http://www.twisted.it">http://www.twisted.it</A>
+<A HREF="http://www.adroll.com">http://www.adroll.com</A>
+
+-----BEGIN PGP SIGNATURE-----
+Version: GnuPG v1.4.9 (Darwin)
+
+iEYEARECAAYFAkjVTHoACgkQ9Llz28widGXaGwCgxM23RdoClHWTjijW0qW0igYD
+V68AoIffM1kltK7OKr/gfnyUUigCMvqP
+=y5TK
+-----END PGP SIGNATURE-----
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001557.html">[rabbitmq-discuss] [Minimum Air Induction] Introducing Shovel:	An AMQP Relay
+</A></li>
+	<LI>Next message: <A HREF="001561.html">[rabbitmq-discuss] [Minimum Air Induction] Introducing Shovel: An AMQP Relay
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1560">[ date ]</a>
+              <a href="thread.html#1560">[ thread ]</a>
+              <a href="subject.html#1560">[ subject ]</a>
+              <a href="author.html#1560">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

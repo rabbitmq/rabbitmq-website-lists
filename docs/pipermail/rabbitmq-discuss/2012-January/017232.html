@@ -1,0 +1,183 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Orchestration vs. Choreography
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Orchestration%20vs.%20Choreography&In-Reply-To=%3CCA%2BTk8fxXzEorpMAf5Z8EP%3DSghqtqzs8aQ6G%3DxnJPxQ3zB-9M%2BA%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="017229.html">
+   <LINK REL="Next"  HREF="017233.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Orchestration vs. Choreography</H1>
+    <B>Ciprian Dorin Craciun</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Orchestration%20vs.%20Choreography&In-Reply-To=%3CCA%2BTk8fxXzEorpMAf5Z8EP%3DSghqtqzs8aQ6G%3DxnJPxQ3zB-9M%2BA%40mail.gmail.com%3E"
+       TITLE="[rabbitmq-discuss] Orchestration vs. Choreography">ciprian.craciun at gmail.com
+       </A><BR>
+    <I>Sun Jan  8 14:02:54 GMT 2012</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="017229.html">[rabbitmq-discuss] Orchestration vs. Choreography
+</A></li>
+        <LI>Next message: <A HREF="017233.html">[rabbitmq-discuss] Orchestration vs. Choreography
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#17232">[ date ]</a>
+              <a href="thread.html#17232">[ thread ]</a>
+              <a href="subject.html#17232">[ subject ]</a>
+              <a href="author.html#17232">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>On Sat, Jan 7, 2012 at 22:38, Isaias Barroso &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">isaias.barroso at gmail.com</A>&gt; wrote:
+&gt;<i> Dear all,
+</I>&gt;<i>
+</I>&gt;<i> I'm design a process that is splitted on some tasks (one queue for each
+</I>&gt;<i> piece of process). To a sample, suppose I have a message that can treated
+</I>&gt;<i> for many steps: Retrieve Information, enrich information, Save on Database,
+</I>&gt;<i> but each step can occurs or not, so I've thought about on two approaches :
+</I>&gt;<i>
+</I>&gt;<i> 1 - Orchestration: In this case a central component will receive the message
+</I>&gt;<i> and decide for each step, after execution of each step this component will
+</I>&gt;<i> decide the next step.
+</I>&gt;<i> 2 - Choreography: In this case each step must to know the next step and send
+</I>&gt;<i> message for next queue
+</I>&gt;<i>
+</I>&gt;<i> Does anybody has some opinion about the better approach? Does anybody knows
+</I>&gt;<i> some tool/framework that works top of Rabbit that manage it (Java if
+</I>&gt;<i> possible) ?
+</I>&gt;<i>
+</I>&gt;<i> Best regards
+</I>&gt;<i> --
+</I>&gt;<i> Isa&#237;as Barroso
+</I>
+
+    I've also pondered about the same topic a while ago... (Though I
+haven't tried it in practice.) As such my options were the following:
+
+    a) (the easiest one) Go with the choreography approach, but
+instead of naming the queue of the next service (and send to a direct
+exchange), just send it to an exchange named by the next step's
+purpose (like &quot;enrich&quot;, &quot;validate&quot;, etc.). Maybe make this a topic
+exchange and put enough information in the routing key to allow
+&quot;debugging&quot; by being able to register another queue and &quot;capture&quot; the
+traffic.
+
+    b) (the &quot;declarative&quot; approach) Why not have the orchestration
+approach (in a declarative flavor) combined with choreography:
+    * let's assume that you have a task which goes through a set of
+processes (transformations or just validations, etc.) which can be
+described as decision tree (a binary tree of actions, where each node
+is a process and the two children (one for success and one for
+failure) are the next process to be executed);
+    * now you just put this decision tree inside the &quot;envelope&quot; of
+each message, send it to the root process;
+    * this process executes its logic and based on the outcome
+(success or failure), extracts one of it's subtrees, puts that in the
+new envelope and together with the new message sends it to the root of
+the new tree; (evidently at some point the new tree would be empty,
+which means it should stop sending it further;)
+    * (you could again use &quot;purpose&quot; names for exchanges instead of
+direct queues;)
+    * you could extend this to a graph (maybe containing cycles, thus
+obtaining loops), by saying that each node has two links to other
+nodes;
+    * of course yet another extension would be to allow &quot;labeled&quot; node
+links, i.e. each process outputs two things: a next-step string label,
+and the new message, and now you select from the labeled links the one
+matching the label; (maybe have something as a default link);
+
+    Thus with option b) you obtain both the advantages of choreography
+(i.e. no middle man to become a single point of failure or
+bottleneck), but also the advantages of orchestration (i.e. each
+message having it's own &quot;route&quot; through the processes). At the same
+time you keep the processors &quot;dumb&quot;, none knowing of another.
+
+    Hope this helps.
+    Ciprian.
+
+    P.S.: If you like this approach (b), you could go even further and
+instead of using a static decision tree (or graph) you could
+substitute that with an embedded language or machine which allows
+generic operations on both the old and new message to decide the next
+actions. (I could expand on this if someone is interested.)
+
+    A practical (not very elegant) Java approach:
+    * define a Java interface with a method like `public AmqpTarget
+decide (MyMessage old, MyMessage new)` (or something similar), where
+`AmqpTarget` has two fields for exchange and routing key;
+    a) if all the processes share the same code and are upgraded at
+the same time, just instantiate a serializable object implementing
+that interface and put that in the envelope instead of the decision
+tree;
+    b) if you don't have shared code or you want to keep your options opened:
+    * for each different &quot;workflow&quot; define a new public &quot;top&quot; class
+(i.e. not nested or anonymous) implementing that interface with as few
+dependencies as possible;
+    * in the envelope instead of the decision tree put the byte-code
+of this class (you can use the
+`MyWorkflowClass.class.getResourceStream(MyWorkflowClass.class.getCanonicalName())`
+and the canonical name; (be careful to use caching or you'll get
+`PermGenError` or similar;)
+    * to instantiate the class on the receiver just create a custom
+classloader which when asked for the bytecode of that known class just
+returns the bytes previously stored;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="017229.html">[rabbitmq-discuss] Orchestration vs. Choreography
+</A></li>
+	<LI>Next message: <A HREF="017233.html">[rabbitmq-discuss] Orchestration vs. Choreography
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#17232">[ date ]</a>
+              <a href="thread.html#17232">[ thread ]</a>
+              <a href="subject.html#17232">[ subject ]</a>
+              <a href="author.html#17232">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

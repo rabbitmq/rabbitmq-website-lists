@@ -1,0 +1,309 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] ShutdownSignalException second 'channel.open'
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20ShutdownSignalException%20second%20%27channel.open%27&In-Reply-To=%3CA00A77EA-EB93-45F3-9148-BCDA8C5F3C06%40rabbitmq.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="017852.html">
+   <LINK REL="Next"  HREF="017882.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] ShutdownSignalException second 'channel.open'</H1>
+    <B>Steve Powell</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20ShutdownSignalException%20second%20%27channel.open%27&In-Reply-To=%3CA00A77EA-EB93-45F3-9148-BCDA8C5F3C06%40rabbitmq.com%3E"
+       TITLE="[rabbitmq-discuss] ShutdownSignalException second 'channel.open'">steve at rabbitmq.com
+       </A><BR>
+    <I>Wed Feb  1 10:35:30 GMT 2012</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="017852.html">[rabbitmq-discuss] RabbitMQ log files rotation daily
+</A></li>
+        <LI>Next message: <A HREF="017882.html">[rabbitmq-discuss] ShutdownSignalException second 'channel.open'
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#17834">[ date ]</a>
+              <a href="thread.html#17834">[ thread ]</a>
+              <a href="subject.html#17834">[ subject ]</a>
+              <a href="author.html#17834">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Yogesh,
+
+Thanks for your explanation of your application structure, and the version you
+are running.
+
+I do not know how the second channel.open AMQP command (for the same channel)
+was sent to the broker; can you send some more diagnostics of this failure (log,
+full stack trace) so I can raise a bug. If possible, a demonstrating small
+program. Thanks.
+
+I see your difficulty. I would hope that creating 20000 queues (which are empty
+almost all of the time) would not take up too much room, so I think you should
+consider not deleting them at all. This would solve most of your problem.
+
+The x-expires attribute for queues, really ought to have a 'only-if-empty'
+option. I'll raise a bug (24722) for this, and see how difficult it would be.
+
+I do not understand what the _Return queues are for. They look as though you are
+using them as a private persistent store for each App. It would be better if you
+put this information somewhere else, but heigh-ho -- you can safely delete these
+queues since this app is in complete control of them, and the events are
+processed serially.
+
+One of the reasons, I don't do basicConsume on queues is, I am going to have
+thousands of queues. I rather thought it would be easier to have a thread pool,
+each consuming just one message from a queue in round-robin fashion.
+
+Just because you have thousands of queues doesn't mean you need to have
+thousands of Consumer instances -- it is quite ok to use the same Consumer on
+several basicConsume calls. The consumerTag is passed to every Consumer callback
+so the Consumer code can distinguish for which basicConsume it is called.
+
+By default, the Java client will allocate a pool of 5 threads for each
+connection, and dispatch Consumer callbacks onto one of those threads for you.
+So your thread pool might be unnecessary if you used basicConsume(). I'd
+consider doing that since basicGet() can be slow, and you'd have to get from
+each potential queue just to tell if there is a message for it!
+
+Steve Powell  (a happy bunny)
+----------some more definitions from the SPD----------
+vermin (v.) Treating the dachshund for roundworm.
+chinchilla (n.) Cooling device for the lower jaw.
+socialcast (n.) Someone to whom everyone is speaking but nobody likes.
+
+On 31 Jan 2012, at 13:56, Yogesh Ketkar wrote:
+
+&gt;<i> I am using RabbitMQ server version 2.7.1.
+</I>&gt;<i> Java Client Jar used is
+</I>&gt;<i> rabbitmq-java-client-bin-2.7.1/rabbitmq-client.jar
+</I>&gt;<i> 
+</I>&gt;&gt;<i> The Shutdown seems to be being called because the channel is being opened twice.
+</I>&gt;&gt;<i> The broker complains about this and closes the connection. Are you creating
+</I>&gt;&gt;<i> channels on different threads simultaneously?
+</I>&gt;<i> Yes indeed, I am creating channels on different threads.
+</I>&gt;<i> 
+</I>&gt;&gt;<i> I don't think the basicPublish will fail if the queue doesn't exist. Why would
+</I>&gt;&gt;<i> you create a new channel in this case?
+</I>&gt;<i> Yes, you are right. I will basically lose the message in this case.
+</I>&gt;<i> 
+</I>&gt;<i> Now about overall problem statement.
+</I>&gt;<i> My application has a main queue which looks like
+</I>&gt;<i> MainQueue
+</I>&gt;<i>  - App1-Event1
+</I>&gt;<i>  - App2-Event1
+</I>&gt;<i>  - App1-Event2
+</I>&gt;<i>  - App1-Event3
+</I>&gt;<i>  - App3-Event1
+</I>&gt;<i>  - App3-Event2
+</I>&gt;<i>  - App2-Event2
+</I>&gt;<i> 
+</I>&gt;<i> Basically there are going to be events from different Apps (there can
+</I>&gt;<i> be thousands of apps) and events belonging to an App must
+</I>&gt;<i> be processed sequentially. Events across different apps can and should
+</I>&gt;<i> be be processed in parallel.
+</I>&gt;<i> So I have only one consumer on MainQueue (using basicConsume) which
+</I>&gt;<i> reads events from MainQueue and just moves it to appropriate declared/
+</I>&gt;<i> redeclared queue.
+</I>&gt;<i> So this is how new queue structure would look like.
+</I>&gt;<i> 
+</I>&gt;<i> App1
+</I>&gt;<i>  - App1-Event1
+</I>&gt;<i>  - App1-Event2
+</I>&gt;<i>  - App1-Event3
+</I>&gt;<i> 
+</I>&gt;<i> App2
+</I>&gt;<i>  - App2-Event1
+</I>&gt;<i>  - App2-Event2
+</I>&gt;<i> 
+</I>&gt;<i> App3
+</I>&gt;<i>  - App3-Event1
+</I>&gt;<i>  - App3-Event2
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> Now again when Event1 is processed from Queue App1, Event2 of App1
+</I>&gt;<i> can't be processed unless processing of Event1 is complete.
+</I>&gt;<i> Processing of event involves asynchronous communication with external
+</I>&gt;<i> systems, so once Event1 is fetched (and acknowledged) from queue
+</I>&gt;<i> App1,
+</I>&gt;<i> I create another queue like
+</I>&gt;<i> App1_Return
+</I>&gt;<i>  - App1-Event1-TaskId
+</I>&gt;<i> 
+</I>&gt;<i> I need to query external system using TaskId after certain time
+</I>&gt;<i> interval, to check status of event processing of Event1. Once I get
+</I>&gt;<i> the status (either sucess or failure)
+</I>&gt;<i> I discard App1-Event1-TaskId and ready to process App1-Event2. So all
+</I>&gt;<i> _Return queues will only have one event at any point of time.
+</I>&gt;<i> 
+</I>&gt;<i> An event on an app might even occur once a day. So I don't want to
+</I>&gt;<i> keep so many queues (potentially 20000 if there are 10000 apps)
+</I>&gt;<i> hanging around.
+</I>&gt;<i> Both auto_delete and x-expires are not very useful as in both the
+</I>&gt;<i> schemes, queues get deleted even when they have messages.
+</I>&gt;<i> Ideally whenever last message from any Queue (except MainQueue) is
+</I>&gt;<i> consumed, I want to delete that queue. Of course, one has to make sure
+</I>&gt;<i> while a queue is getting deleted, there might be an event destined for
+</I>&gt;<i> that. So if one guy is doing
+</I>&gt;<i> queueDelete('somequeue', true, true) and other guy is doing
+</I>&gt;<i> queueDeclare, queueBind, basicPublish. If queueDelete gets executed
+</I>&gt;<i> after
+</I>&gt;<i> queueBind, message will be lost.
+</I>&gt;<i> 
+</I>&gt;<i> One of the reasons, I don't do basicConsume on queues is, I am going
+</I>&gt;<i> to have thousands of queues. I rather thought it would be easier to
+</I>&gt;<i> have a thread pool, each consuming just one message from a queue in
+</I>&gt;<i> round-robin fashion.
+</I>&gt;<i> 
+</I>&gt;<i> As was mentioned in some other response, I will certainly not create a
+</I>&gt;<i> new channel in every thread, but would rather try and reuse them.
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> Thanks for all the help.
+</I>&gt;<i> Regards, Yogesh
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> On Jan 31, 5:19 pm, Steve Powell &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">st... at rabbitmq.com</A>&gt; wrote:
+</I>&gt;&gt;<i> Yogesh,
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;<i> Please can you provide some information about your environment? And your
+</I>&gt;&gt;<i> application? What version of RabbitMQ (and client) are you using?
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;<i> In your stack trace the ShutdownListener you registered is apparently being
+</I>&gt;&gt;<i> called, because the Connection is being shut down. It is not clear why this
+</I>&gt;&gt;<i> exception (and its associated stack trace) appears, it seems to come from your
+</I>&gt;&gt;<i> Listener code, but perhaps that does nothing.
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;<i> The Shutdown seems to be being called because the channel is being opened twice.
+</I>&gt;&gt;<i> The broker complains about this and closes the connection. Are you creating
+</I>&gt;&gt;<i> channels on different threads simultaneously? (Looking at your app 'design' you
+</I>&gt;&gt;<i> might be.) Depending upon the version of RabbitMQ this might cause a problem.
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;<i> I'm afraid your application design is unclear:
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;&gt;<i> This is how I handle doing basicPublish and basicGet on potentially
+</I>&gt;&gt;&gt;<i> non-existent queues
+</I>&gt;&gt;&gt;<i> - publish involves 3 steps
+</I>&gt;&gt;&gt;<i>  queueDeclare
+</I>&gt;&gt;&gt;<i>  queueBind
+</I>&gt;&gt;&gt;<i>  basicPublish
+</I>&gt;&gt;&gt;<i>  If some other thread deletes the queue after either queueDeclare or
+</I>&gt;&gt;&gt;<i> queueBind, basicPublish fails and I again create a new
+</I>&gt;&gt;&gt;<i>  channel and do these operations
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;<i> I don't think the basicPublish will fail if the queue doesn't exist. Why would
+</I>&gt;&gt;<i> you create a new channel in this case?
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;<i> Please explain why you expect the queue might be deleted by some other thread.
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;&gt;<i> - if basicGet fails, I simply ignore it
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;<i> What do you mean by ignoring it? Do you poll the queue periodically? Why aren't
+</I>&gt;&gt;<i> you using basicConsume and a Consumer to get messages (which will be notified if
+</I>&gt;&gt;<i> the queue is deleted)?
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;<i> Steve Powell  (a loopy bunny)
+</I>&gt;&gt;<i> ----------some more definitions from the SPD----------
+</I>&gt;&gt;<i> vermin (v.) Treating the dachshund for roundworm.
+</I>&gt;&gt;<i> chinchilla (n.) Cooling device for the lower jaw.
+</I>&gt;&gt;<i> socialcast (n.) Someone to whom everyone is speaking but nobody likes.
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;<i> On 30 Jan 2012, at 04:33, Yogesh Ketkar wrote:
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;&gt;<i> Only operations I ever do with com.rabbitmq.client.Connection in the
+</I>&gt;&gt;&gt;<i> code are
+</I>&gt;&gt;&gt;<i>    c.addShutdownListener
+</I>&gt;&gt;&gt;<i>    c.createChannel
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;&gt;<i> What does this error signify?
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;&gt;<i> 2012-01-30 09:44:45,158 ERROR  [ConnectionShutdownHandler]
+</I>&gt;&gt;&gt;<i> ShutdownListener
+</I>&gt;&gt;&gt;<i> com.rabbitmq.client.ShutdownSignalException: connection error; reason:
+</I>&gt;&gt;&gt;<i> {#method&lt;connection.close&gt;(reply-code=503, reply-text=COMMAND_INVALID
+</I>&gt;&gt;&gt;<i> - second 'channel.open' seen, class-id=20, method-id=10), null,
+</I>&gt;&gt;&gt;<i> &quot;[<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">B at 105691e</A>&quot;}
+</I>&gt;&gt;&gt;<i>    at com.rabbitmq.client.impl.AMQConnection.shutdown(AMQConnection.java:
+</I>&gt;&gt;&gt;<i> 641)
+</I>&gt;&gt;&gt;<i>    at
+</I>&gt;&gt;&gt;<i> com.rabbitmq.client.impl.AMQConnection.handleConnectionClose(AMQConnection. java:
+</I>&gt;&gt;&gt;<i> 599)
+</I>&gt;&gt;&gt;<i>    at
+</I>&gt;&gt;&gt;<i> com.rabbitmq.client.impl.AMQConnection.processControlCommand(AMQConnection. java:
+</I>&gt;&gt;&gt;<i> 571)
+</I>&gt;&gt;&gt;<i>    at com.rabbitmq.client.impl.AMQConnection
+</I>&gt;&gt;&gt;<i> $1.processAsync(AMQConnection.java:88)
+</I>&gt;&gt;&gt;<i>    at
+</I>&gt;&gt;&gt;<i> com.rabbitmq.client.impl.AMQChannel.handleCompleteInboundCommand(AMQChannel .java:
+</I>&gt;&gt;&gt;<i> 144)
+</I>&gt;&gt;&gt;<i>    at com.rabbitmq.client.impl.AMQChannel.handleFrame(AMQChannel.java:
+</I>&gt;&gt;&gt;<i> 91)
+</I>&gt;&gt;&gt;<i>    at com.rabbitmq.client.impl.AMQConnection
+</I>&gt;&gt;&gt;<i> $MainLoop.run(AMQConnection.java:500)
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;&gt;<i> Some additional info.
+</I>&gt;&gt;&gt;<i> I create and close thousands of channels in the code. But at any point
+</I>&gt;&gt;&gt;<i> of time there are not more than 20/21 channels open.
+</I>&gt;&gt;&gt;<i> This is how I handle doing basicPublish and basicGet on potentially
+</I>&gt;&gt;&gt;<i> non-existent queues
+</I>&gt;&gt;&gt;<i> - publish involves 3 steps
+</I>&gt;&gt;&gt;<i>  queueDeclare
+</I>&gt;&gt;&gt;<i>  queueBind
+</I>&gt;&gt;&gt;<i>  basicPublish
+</I>&gt;&gt;&gt;<i>  If some other thread deletes the queue after either queueDeclare or
+</I>&gt;&gt;&gt;<i> queueBind, basicPublish fails and I again create a new
+</I>&gt;&gt;&gt;<i>  channel and do these operations
+</I>&gt;&gt;&gt;<i> - if basicGet fails, I simply ignore it
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;&gt;<i> regards, Yogesh
+</I>&gt;&gt;&gt;<i> _______________________________________________
+</I>&gt;&gt;&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;&gt;&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-disc... at lists.rabbitmq.com</A>
+</I>&gt;&gt;&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;<i> _______________________________________________
+</I>&gt;&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-disc... at lists.rabbitmq.comhttps</A>://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>
+</PRE>
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="017852.html">[rabbitmq-discuss] RabbitMQ log files rotation daily
+</A></li>
+	<LI>Next message: <A HREF="017882.html">[rabbitmq-discuss] ShutdownSignalException second 'channel.open'
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#17834">[ date ]</a>
+              <a href="thread.html#17834">[ thread ]</a>
+              <a href="subject.html#17834">[ subject ]</a>
+              <a href="author.html#17834">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

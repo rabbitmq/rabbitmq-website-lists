@@ -1,0 +1,162 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] pika raise NotImplementedError
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20pika%20raise%20NotImplementedError&In-Reply-To=%3CCAE%2B5KB3Xo%2Bo%2Bs_YXMTkhjhswPrLJAagroBB3NYGf-rn1p5uaOg%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="016771.html">
+   <LINK REL="Next"  HREF="016758.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] pika raise NotImplementedError</H1>
+    <B>gabriel adgeg</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20pika%20raise%20NotImplementedError&In-Reply-To=%3CCAE%2B5KB3Xo%2Bo%2Bs_YXMTkhjhswPrLJAagroBB3NYGf-rn1p5uaOg%40mail.gmail.com%3E"
+       TITLE="[rabbitmq-discuss] pika raise NotImplementedError">gabrieladgeg at gmail.com
+       </A><BR>
+    <I>Tue Dec  6 14:25:06 GMT 2011</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="016771.html">[rabbitmq-discuss] Interpreting &quot;Processing Error&quot; log message
+</A></li>
+        <LI>Next message: <A HREF="016758.html">[rabbitmq-discuss] pika raise NotImplementedError
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#16757">[ date ]</a>
+              <a href="thread.html#16757">[ thread ]</a>
+              <a href="subject.html#16757">[ subject ]</a>
+              <a href="author.html#16757">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hello,
+
+I am working an a Python program that receives XML-RPC calls from Java
+clients, and then create AMQP queues for each client.
+To create channel, exchanges and queues, we use pika and SelectConnection.
+
+So I first create and start a SelectConnection, then I create a channel. On
+the reception of the on_open_callback of the channel, I try to declare a
+queue.
+The problem is that about 10% of time, a weird error occurs on the
+declaration of the queue :
+
+File &quot;/usr/lib/python2.6/multiprocessing/process.py&quot;, line 232, in
+_bootstrap
+    self.run()
+  File &quot;/usr/lib/python2.6/multiprocessing/process.py&quot;, line 88, in run
+    self._target(*self._args, **self._kwargs)
+  File
+&quot;/home/adgeg/Sources/svn/TOTEM/Sandbox/TSP-MARGE-Communication/RabbitMQ/RabbitMQTOTEMLibrary/Python/net/totem/gamelogic/creategamelogicserver.py&quot;,
+line 42, in createGameLogicServer
+    state.connection.ioloop.start()
+  File
+&quot;/home/adgeg/local/bin/pika-0.9.5/pika/adapters/select_connection.py&quot;, line
+124, in start
+    self.poller.start()
+  File
+&quot;/home/adgeg/local/bin/pika-0.9.5/pika/adapters/select_connection.py&quot;, line
+374, in start
+    self.poll()
+  File
+&quot;/home/adgeg/local/bin/pika-0.9.5/pika/adapters/select_connection.py&quot;, line
+388, in poll
+    self._handler(events[0][0], events[0][1])
+  File &quot;/home/adgeg/local/bin/pika-0.9.5/pika/adapters/base_connection.py&quot;,
+line 134, in _handle_events
+    self._handle_read()
+  File &quot;/home/adgeg/local/bin/pika-0.9.5/pika/adapters/base_connection.py&quot;,
+line 162, in _handle_read
+    self._on_data_available(data)
+  File &quot;/home/adgeg/local/bin/pika-0.9.5/pika/connection.py&quot;, line 599, in
+_on_data_available
+    self._channels[frame.channel_number].transport.deliver(frame)
+  File &quot;/home/adgeg/local/bin/pika-0.9.5/pika/channel.py&quot;, line 64, in
+deliver
+    self.frame_dispatcher.process(frame)
+  File &quot;/home/adgeg/local/bin/pika-0.9.5/pika/frame.py&quot;, line 202, in
+process
+    self._handler(frame)
+  File &quot;/home/adgeg/local/bin/pika-0.9.5/pika/frame.py&quot;, line 220, in
+_handle_method_frame
+    raise NotImplementedError(frame.method.__class__)
+NotImplementedError: &lt;class 'pika.spec.DeclareOk'&gt;
+
+We have already sent you a mail 6 months ago, and someone tell us to change
+the pika source code to have a better understanding of this error, and here
+is the result :
+ File &quot;/home/adgeg/local/bin/pika-0.9.5/pika/frame.py&quot;, line 220, in
+_handle_method_frame
+    raise NotImplementedError(frame.method.__class__)
+NotImplementedError: &lt;Method(['frame_type=1', 'channel_number=1',
+&quot;method=&lt;Queue.DeclareOk(['queue=michel', 'message_count=0',
+'consumer_count=0'])&gt;&quot;])&gt;
+
+I have looked to our source code, and I found that we were using the same
+channel in two different threads.
+So I create a new channel (with its own SelectConnection) for the second
+thread... but the error is still raised.
+Curiously, I have found a way to highly reduce appearance frequency of the
+error: I accidentally add a call to a system command on the Python source
+code on the on_open_callback, just before declaring the queue (rabbitmqctl
+list_user_permissions, to check that I have the required permissions to
+declare a queue).
+
+And now, it seems that we arrived to an appearance frequency of 3 times on
+2000 tries.
+So I suppose that without this additional little time period,
+the on_open_callback is triggered, but the channel seems not able to
+declare a queue.
+Do you know some related issues of this kind on SelectConnections?
+
+Thanks a lot,
+
+Gabriel Adgeg
+
+PS : I am using RabbitMQ 2.7.0, Erlang R13B03, Python 2.6.5, pika 0.9.5,
+on Ubuntu 10.04.3 LTS. The error also occurs with Erlang R14B04, Python
+2.7.2, on Windows XP and Windows 7. And it was already there when we were
+using RabbitMQ 2.5.1.
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20111206/2099c7db/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20111206/2099c7db/attachment.htm</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="016771.html">[rabbitmq-discuss] Interpreting &quot;Processing Error&quot; log message
+</A></li>
+	<LI>Next message: <A HREF="016758.html">[rabbitmq-discuss] pika raise NotImplementedError
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#16757">[ date ]</a>
+              <a href="thread.html#16757">[ thread ]</a>
+              <a href="subject.html#16757">[ subject ]</a>
+              <a href="author.html#16757">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

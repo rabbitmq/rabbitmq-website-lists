@@ -1,0 +1,115 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Python AMQPLib causes exception when trying	to declare queue with X-Expires
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Python%20AMQPLib%20causes%20exception%20when%20trying%0A%09to%20declare%20queue%20with%20X-Expires&In-Reply-To=%3CAANLkTimTfh37uE%2BPq3WVzw3K%2BmSTyCg%2BSDgY6f%2BQkMj_%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="008642.html">
+   <LINK REL="Next"  HREF="008654.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Python AMQPLib causes exception when trying	to declare queue with X-Expires</H1>
+    <B>Stephen Day</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Python%20AMQPLib%20causes%20exception%20when%20trying%0A%09to%20declare%20queue%20with%20X-Expires&In-Reply-To=%3CAANLkTimTfh37uE%2BPq3WVzw3K%2BmSTyCg%2BSDgY6f%2BQkMj_%40mail.gmail.com%3E"
+       TITLE="[rabbitmq-discuss] Python AMQPLib causes exception when trying	to declare queue with X-Expires">stevvooe at gmail.com
+       </A><BR>
+    <I>Sun Aug 29 09:57:12 BST 2010</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="008642.html">[rabbitmq-discuss] Python AMQPLib causes exception when trying to	declare queue with X-Expires
+</A></li>
+        <LI>Next message: <A HREF="008654.html">[rabbitmq-discuss] Python AMQPLib causes exception when trying	to declare queue with X-Expires
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#8643">[ date ]</a>
+              <a href="thread.html#8643">[ thread ]</a>
+              <a href="subject.html#8643">[ subject ]</a>
+              <a href="author.html#8643">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Small correction:
+
+x-expires granularity is in milliseconds, so changing to a 4 byte
+integer will limit the expiry range to 24 days, which doesn't provide
+as much headroom.
+
+On Sun, Aug 29, 2010 at 1:50 AM, Stephen Day &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">stevvooe at gmail.com</A>&gt; wrote:
+&gt;<i> Here is the traceback showing the exception as thrown by amqplib, with
+</I>&gt;<i> the channel exception code:
+</I>&gt;<i>
+</I>&gt;&gt;&gt;&gt;<i> ch.queue_declare('bdirect', arguments={&quot;x-expires&quot;: 600})
+</I>&gt;<i> Traceback (most recent call last):
+</I>&gt;<i> &#160;File &quot;&lt;stdin&gt;&quot;, line 1, in &lt;module&gt;
+</I>&gt;<i> &#160;File &quot;/usr/lib/pymodules/python2.6/amqplib/client_0_8/channel.py&quot;,
+</I>&gt;<i> line 1294, in queue_declare
+</I>&gt;<i> &#160; &#160;(50, 11), &#160; &#160;# Channel.queue_declare_ok
+</I>&gt;<i> &#160;File &quot;/usr/lib/pymodules/python2.6/amqplib/client_0_8/abstract_channel.py&quot;,
+</I>&gt;<i> line 105, in wait
+</I>&gt;<i> &#160; &#160;return amqp_method(self, args)
+</I>&gt;<i> &#160;File &quot;/usr/lib/pymodules/python2.6/amqplib/client_0_8/channel.py&quot;,
+</I>&gt;<i> line 273, in _close
+</I>&gt;<i> &#160; &#160;(class_id, method_id))
+</I>&gt;<i> amqplib.client_0_8.exceptions.AMQPChannelException: (406,
+</I>&gt;<i> u&quot;PRECONDITION_FAILED - invalid arg 'x-expires' for queue 'bdirect' in
+</I>&gt;<i> vhost '/': expires_not_of_type_long&quot;, (50, 10),
+</I>&gt;<i> 'Channel.queue_declare')
+</I>&gt;<i>
+</I>&gt;<i> In the library code, it looks like it properly packs the integer, but
+</I>&gt;<i> 0-8 doesn't support the desired integer type:
+</I>&gt;<i>
+</I>&gt;<i> amqplib/client_0_8/serialization.py
+</I>&gt;<i>
+</I>&gt;<i> 372 &#160; &#160; &#160; &#160; &#160; &#160; elif isinstance(v, (int, long)):
+</I>&gt;<i> 373 &#160; &#160; &#160; &#160; &#160; &#160; &#160; &#160; table_data.write('I')
+</I>&gt;<i> 374 &#160; &#160; &#160; &#160; &#160; &#160; &#160; &#160; table_data.write(pack('&gt;i', v))
+</I>&gt;<i>
+</I>&gt;<i> The problem might actually lie in the server side parser code:
+</I>&gt;<i>
+</I>&gt;<i> src/rabbit_binary_parser.erl
+</I>&gt;<i>
+</I>&gt;<i> 99 parse_field_value(&lt;&lt;&quot;l&quot;, Value:64/signed, Rest/binary&gt;&gt;) -&gt;
+</I>&gt;<i> 100 &#160; &#160; {long, Value, Rest};
+</I>&gt;<i>
+</I>&gt;<i> The 0-8 specification doesn't define a long type outside of the &quot;I&quot;
+</I>&gt;<i> type, so this excludes this feature (which is a *great* feature) from
+</I>&gt;<i> older clients.
+</I>&gt;<i>
+</I>&gt;<i> You should probably just have x-expires look for a regular 0-8
+</I>&gt;<i> supported, 4-byte &quot;I&quot;-type integer. It will limit queue time expiry
+</I>&gt;<i> maximum to 68 years, but one has to make design tradeoffs every once
+</I>&gt;<i> and awhile ;).
+</I>&gt;<i>
+</I>&gt;<i> Good work on the 2.0 release. Its looking fantastic thus far.
+</I>&gt;<i>
+</I>&gt;<i> Stephen
+</I>&gt;<i>
+</I></PRE>
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="008642.html">[rabbitmq-discuss] Python AMQPLib causes exception when trying to	declare queue with X-Expires
+</A></li>
+	<LI>Next message: <A HREF="008654.html">[rabbitmq-discuss] Python AMQPLib causes exception when trying	to declare queue with X-Expires
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#8643">[ date ]</a>
+              <a href="thread.html#8643">[ thread ]</a>
+              <a href="subject.html#8643">[ subject ]</a>
+              <a href="author.html#8643">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

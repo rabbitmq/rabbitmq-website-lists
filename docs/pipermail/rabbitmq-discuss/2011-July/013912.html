@@ -1,0 +1,766 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] 15000 msg/sec
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%2015000%20msg/sec&In-Reply-To=%3CCAL9wd7ebwnbm2%3Do0-U9pptqe%3DzfhbdNiuZrrhbtnk%3D6Q2XPbjg%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="013911.html">
+   <LINK REL="Next"  HREF="013913.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] 15000 msg/sec</H1>
+    <B>News Aanad</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%2015000%20msg/sec&In-Reply-To=%3CCAL9wd7ebwnbm2%3Do0-U9pptqe%3DzfhbdNiuZrrhbtnk%3D6Q2XPbjg%40mail.gmail.com%3E"
+       TITLE="[rabbitmq-discuss] 15000 msg/sec">news.anand11 at gmail.com
+       </A><BR>
+    <I>Fri Jul 15 14:42:40 BST 2011</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="013911.html">[rabbitmq-discuss] 15000 msg/sec
+</A></li>
+        <LI>Next message: <A HREF="013913.html">[rabbitmq-discuss] 15000 msg/sec
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#13912">[ date ]</a>
+              <a href="thread.html#13912">[ thread ]</a>
+              <a href="subject.html#13912">[ subject ]</a>
+              <a href="author.html#13912">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>This is my code.
+
+
+//  The contents of this file are subject to the Mozilla Public License
+//  Version 1.1 (the &quot;License&quot;); you may not use this file except in
+//  compliance with the License. You may obtain a copy of the License
+//  at <A HREF="http://www.mozilla.org/MPL/">http://www.mozilla.org/MPL/</A>
+//
+//  Software distributed under the License is distributed on an &quot;AS IS&quot;
+//  basis, WITHOUT WARRANTY OF ANY KIND, either express or implied. See
+//  the License for the specific language governing rights and
+//  limitations under the License.
+//
+//  The Original Code is RabbitMQ.
+//
+//  The Initial Developer of the Original Code is VMware, Inc.
+//  Copyright (c) 2007-2011 VMware, Inc.  All rights reserved.
+//
+
+
+package com.rabbitmq.examples;
+
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.DataInputStream;
+import java.io.DataOutputStream;
+import java.io.IOException;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.List;
+import java.util.SortedSet;
+import java.util.TreeSet;
+import java.util.UUID;
+import java.util.concurrent.Semaphore;
+
+import org.apache.commons.cli.CommandLine;
+import org.apache.commons.cli.CommandLineParser;
+import org.apache.commons.cli.GnuParser;
+import org.apache.commons.cli.HelpFormatter;
+import org.apache.commons.cli.Option;
+import org.apache.commons.cli.Options;
+import org.apache.commons.cli.ParseException;
+
+import com.rabbitmq.client.AMQP;
+import com.rabbitmq.client.Channel;
+import com.rabbitmq.client.ConfirmListener;
+import com.rabbitmq.client.Connection;
+import com.rabbitmq.client.ConnectionFactory;
+import com.rabbitmq.client.Envelope;
+import com.rabbitmq.client.MessageProperties;
+import com.rabbitmq.client.QueueingConsumer;
+import com.rabbitmq.client.QueueingConsumer.Delivery;
+import com.rabbitmq.client.ReturnListener;
+import com.rabbitmq.client.ShutdownSignalException;
+
+
+public class MulticastMain {
+
+    public static void main(String[] args) {
+        Options options = getOptions();
+        CommandLineParser parser = new GnuParser();
+        try {
+            CommandLine cmd = parser.parse(options, args);
+
+            if (cmd.hasOption('?')) {
+                usage(options);
+                System.exit(0);
+            }
+
+            String hostName      = strArg(cmd, 'h', &quot;localhost&quot;);
+            int portNumber       = intArg(cmd, 'p', AMQP.PROTOCOL.PORT);
+            String exchangeType  = strArg(cmd, 't', &quot;direct&quot;);
+            String exchangeName  = strArg(cmd, 'e', exchangeType);
+            int samplingInterval = intArg(cmd, 'i', 1);
+            int rateLimit        = intArg(cmd, 'r', 0);
+            int producerCount    = intArg(cmd, 'x', 1);
+            int consumerCount    = intArg(cmd, 'y', 1);
+            int producerTxSize   = intArg(cmd, 'm', 0);
+            int consumerTxSize   = intArg(cmd, 'n', 0);
+            long confirm         = intArg(cmd, 'c', -1);
+            boolean autoAck      = cmd.hasOption('a');
+            int prefetchCount    = intArg(cmd, 'q', 0);
+            int minMsgSize       = intArg(cmd, 's', 0);
+            int timeLimit        = intArg(cmd, 'z', 0);
+            List&lt;?&gt; flags        = lstArg(cmd, 'f');
+            int frameMax         = intArg(cmd, 'M', 0);
+            int heartbeat        = intArg(cmd, 'b', 0);
+
+            if ((producerTxSize &gt; 0) &amp;&amp; confirm &gt;= 0) {
+                throw new ParseException(&quot;Cannot select both
+producerTxSize&quot;+
+                                         &quot; and confirm&quot;);
+            }
+
+            //setup
+            String id = UUID.randomUUID().toString();
+            Stats stats = new Stats(1000L * samplingInterval);
+            ConnectionFactory factory = new ConnectionFactory();
+            factory.setHost(hostName);
+            factory.setPort(portNumber);
+            factory.setRequestedFrameMax(frameMax);
+            factory.setRequestedHeartbeat(heartbeat);
+
+            Thread[] consumerThreads = new Thread[consumerCount];
+            Connection[] consumerConnections = new
+Connection[consumerCount];
+            for (int i = 0; i &lt; consumerCount; i++) {
+                System.out.println(&quot;starting consumer #&quot; + i);
+                Connection conn = factory.newConnection();
+                consumerConnections[i] = conn;
+                Channel channel = conn.createChannel();
+                if (consumerTxSize &gt; 0) channel.txSelect();
+                channel.exchangeDeclare(exchangeName, exchangeType);
+                String queueName =
+                        channel.queueDeclare(&quot;&quot;,
+flags.contains(&quot;persistent&quot;),
+                                             true, false, null).getQueue();
+                QueueingConsumer consumer = new QueueingConsumer(channel);
+                if (prefetchCount &gt; 0) channel.basicQos(prefetchCount);
+                channel.basicConsume(queueName, autoAck, consumer);
+                channel.queueBind(queueName, exchangeName, id);
+                Thread t =
+                    new Thread(new Consumer(consumer, id,
+                                            consumerTxSize, autoAck,
+                                            stats, timeLimit));
+                consumerThreads[i] = t;
+                t.start();
+            }
+            Thread[] producerThreads = new Thread[producerCount];
+            Connection[] producerConnections = new
+Connection[producerCount];
+            for (int i = 0; i &lt; producerCount; i++) {
+                System.out.println(&quot;starting producer #&quot; + i);
+                Connection conn = factory.newConnection();
+                producerConnections[i] = conn;
+                Channel channel = conn.createChannel();
+                if (producerTxSize &gt; 0) channel.txSelect();
+                if (confirm &gt;= 0) channel.confirmSelect();
+                channel.exchangeDeclare(exchangeName, exchangeType);
+                final Producer p = new Producer(channel, exchangeName, id,
+                                                flags, producerTxSize,
+                                                1000L * samplingInterval,
+                                                rateLimit, minMsgSize,
+timeLimit,
+                                                confirm);
+                channel.setReturnListener(p);
+                channel.setConfirmListener(p);
+                Thread t = new Thread(p);
+                producerThreads[i] = t;
+                t.start();
+            }
+
+            for (int i = 0; i &lt; producerCount; i++) {
+                producerThreads[i].join();
+                producerConnections[i].close();
+            }
+
+            for (int i = 0; i &lt; consumerCount; i++) {
+                consumerThreads[i].join();
+                consumerConnections[i].close();
+            }
+
+        }
+        catch( ParseException exp ) {
+            System.err.println(&quot;Parsing failed. Reason: &quot; +
+exp.getMessage());
+            usage(options);
+        } catch (Exception e) {
+            System.err.println(&quot;Main thread caught exception: &quot; + e);
+            e.printStackTrace();
+            System.exit(1);
+        }
+    }
+
+    private static void usage(Options options) {
+        HelpFormatter formatter = new HelpFormatter();
+        formatter.printHelp(&quot;&lt;program&gt;&quot;, options);
+    }
+
+    private static Options getOptions() {
+        Options options = new Options();
+        options.addOption(new Option(&quot;?&quot;, &quot;help&quot;,      false,&quot;show usage&quot;));
+        options.addOption(new Option(&quot;h&quot;, &quot;host&quot;,      true, &quot;broker
+host&quot;));
+        options.addOption(new Option(&quot;p&quot;, &quot;port&quot;,      true, &quot;broker
+port&quot;));
+        options.addOption(new Option(&quot;t&quot;, &quot;type&quot;,      true, &quot;exchange
+type&quot;));
+        options.addOption(new Option(&quot;e&quot;, &quot;exchange&quot;,  true, &quot;exchange
+name&quot;));
+        options.addOption(new Option(&quot;i&quot;, &quot;interval&quot;,  true, &quot;sampling
+interval&quot;));
+        options.addOption(new Option(&quot;r&quot;, &quot;rate&quot;,      true, &quot;rate limit&quot;));
+        options.addOption(new Option(&quot;x&quot;, &quot;producers&quot;, true, &quot;producer
+count&quot;));
+        options.addOption(new Option(&quot;y&quot;, &quot;consumers&quot;, true, &quot;consumer
+count&quot;));
+        options.addOption(new Option(&quot;m&quot;, &quot;ptxsize&quot;,   true, &quot;producer tx
+size&quot;));
+        options.addOption(new Option(&quot;n&quot;, &quot;ctxsize&quot;,   true, &quot;consumer tx
+size&quot;));
+        options.addOption(new Option(&quot;c&quot;, &quot;confirm&quot;,   true, &quot;max
+unconfirmed publishes&quot;));
+        options.addOption(new Option(&quot;a&quot;, &quot;autoack&quot;,   false,&quot;auto ack&quot;));
+        options.addOption(new Option(&quot;q&quot;, &quot;qos&quot;,       true, &quot;qos prefetch
+count&quot;));
+        options.addOption(new Option(&quot;s&quot;, &quot;size&quot;,      true, &quot;message
+size&quot;));
+        options.addOption(new Option(&quot;z&quot;, &quot;time&quot;,      true, &quot;time limit&quot;));
+        Option flag =     new Option(&quot;f&quot;, &quot;flag&quot;,      true, &quot;message
+flag&quot;);
+        flag.setArgs(Option.UNLIMITED_VALUES);
+        options.addOption(flag);
+        options.addOption(new Option(&quot;M&quot;, &quot;framemax&quot;,  true, &quot;frame max&quot;));
+        options.addOption(new Option(&quot;b&quot;, &quot;heartbeat&quot;, true, &quot;heartbeat
+interval&quot;));
+        return options;
+    }
+
+    private static String strArg(CommandLine cmd, char opt, String def) {
+        return cmd.getOptionValue(opt, def);
+    }
+
+    private static int intArg(CommandLine cmd, char opt, int def) {
+        return Integer.parseInt(cmd.getOptionValue(opt,
+Integer.toString(def)));
+    }
+
+    private static List&lt;?&gt; lstArg(CommandLine cmd, char opt) {
+        String[] vals = cmd.getOptionValues('f');
+        if (vals == null) {
+            vals = new String[] {};
+        }
+        return Arrays.asList(vals);
+    }
+
+    public static class Producer implements Runnable, ReturnListener,
+                                            ConfirmListener
+    {
+        private Channel channel;
+        private String  exchangeName;
+        private String  id;
+        private boolean mandatory;
+        private boolean immediate;
+        private boolean persistent;
+        private int     txSize;
+        private long    interval;
+        private int     rateLimit;
+        private long    timeLimit;
+
+        private byte[]  message;
+
+        private long    startTime;
+        private long    lastStatsTime;
+        private int     msgCount;
+        private int     returnCount;
+
+        private long      confirm;
+        private Semaphore confirmPool;
+        private long      confirmCount;
+        private long      nackCount;
+        private volatile SortedSet&lt;Long&gt; unconfirmedSet =
+            Collections.synchronizedSortedSet(new TreeSet&lt;Long&gt;());
+
+        public Producer(Channel channel, String exchangeName, String id,
+                        List&lt;?&gt; flags, int txSize,
+                        long interval, int rateLimit, int minMsgSize, int
+timeLimit,
+                        long confirm)
+            throws IOException {
+
+            this.channel      = channel;
+            this.exchangeName = exchangeName;
+            this.id           = id;
+            this.mandatory    = flags.contains(&quot;mandatory&quot;);
+            this.immediate    = flags.contains(&quot;immediate&quot;);
+            this.persistent   = flags.contains(&quot;persistent&quot;);
+            this.txSize       = txSize;
+            this.interval     = interval;
+            this.rateLimit    = rateLimit;
+            this.timeLimit    = 1000L * timeLimit;
+            this.message      = new byte[minMsgSize];
+            this.confirm      = confirm;
+            if (confirm &gt; 0) {
+                this.confirmPool  = new Semaphore((int)confirm);
+            }
+        }
+
+        public synchronized void handleReturn(int replyCode,
+                                              String replyText,
+                                              String exchange,
+                                              String routingKey,
+                                              AMQP.BasicProperties
+properties,
+                                              byte[] body)
+            throws IOException {
+            returnCount++;
+        }
+
+        public void handleAck(long seqNo, boolean multiple) {
+            handleAckNack(seqNo, multiple, false);
+        }
+
+        public void handleNack(long seqNo, boolean multiple) {
+            handleAckNack(seqNo, multiple, true);
+        }
+
+        private void handleAckNack(long seqNo, boolean multiple,
+                                   boolean nack) {
+            int numConfirms = 0;
+            if (multiple) {
+                SortedSet&lt;Long&gt; confirmed = unconfirmedSet.headSet(seqNo +
+1);
+                numConfirms += confirmed.size();
+                confirmed.clear();
+            } else {
+                unconfirmedSet.remove(seqNo);
+                numConfirms = 1;
+            }
+            synchronized (this) {
+                if (nack) {
+                    nackCount += numConfirms;
+                } else {
+                    confirmCount += numConfirms;
+                }
+            }
+
+            if (confirmPool != null) {
+                for (int i = 0; i &lt; numConfirms; ++i) {
+                    confirmPool.release();
+                }
+            }
+
+        }
+
+        public void run() {
+
+            long now;
+            now = startTime = lastStatsTime = System.currentTimeMillis();
+            msgCount = 0;
+            int totalMsgCount = 0;
+
+            try {
+
+                while (timeLimit == 0 || now &lt; startTime + timeLimit) {
+                    if (confirmPool != null) {
+                        confirmPool.acquire();
+                    }
+                    delay(now);
+                    publish(createMessage(totalMsgCount));
+                    totalMsgCount++;
+                    msgCount++;
+
+                    if (txSize != 0 &amp;&amp; totalMsgCount % txSize == 0) {
+                        channel.txCommit();
+                    }
+                    now = System.currentTimeMillis();
+                }
+
+            } catch (IOException e) {
+                throw new RuntimeException(e);
+            } catch (InterruptedException e) {
+                throw new RuntimeException (e);
+            }
+
+            System.out.println(&quot;sending rate avg: &quot; +
+                               (totalMsgCount * 1000L / (now - startTime)) +
+                               &quot; msg/s&quot;);
+
+        }
+
+        private void publish(byte[] msg)
+            throws IOException {
+
+            unconfirmedSet.add(channel.getNextPublishSeqNo());
+            channel.basicPublish(exchangeName, id,
+                                 mandatory, immediate,
+                                 persistent ?
+MessageProperties.MINIMAL_PERSISTENT_BASIC :
+MessageProperties.MINIMAL_BASIC,
+                                 msg);
+        }
+
+        private void delay(long now)
+            throws InterruptedException {
+
+            long elapsed = now - lastStatsTime;
+            //example: rateLimit is 5000 msg/s,
+            //10 ms have elapsed, we have sent 200 messages
+            //the 200 msgs we have actually sent should have taken us
+            //200 * 1000 / 5000 = 40 ms. So we pause for 40ms - 10ms
+            long pause = rateLimit == 0 ?
+                0 : (msgCount * 1000L / rateLimit - elapsed);
+            if (pause &gt; 0) {
+                Thread.sleep(pause);
+            }
+            if (elapsed &gt; interval) {
+                long sendRate, returnRate, confirmRate, nackRate;
+                synchronized(this) {
+                    sendRate     = msgCount     * 1000L / elapsed;
+                    returnRate   = returnCount  * 1000L / elapsed;
+                    confirmRate  = confirmCount * 1000L / elapsed;
+                    nackRate     = nackCount    * 1000L / elapsed;
+                    msgCount     = 0;
+                    returnCount  = 0;
+                    confirmCount = 0;
+                    nackCount    = 0;
+                }
+                System.out.print(&quot;sending rate: &quot; + sendRate + &quot; msg/s&quot;);
+                if (mandatory || immediate) {
+                    System.out.print(&quot;, returns: &quot; + returnRate + &quot; ret/s&quot;);
+                }
+                if (confirm &gt;= 0) {
+                    System.out.print(&quot;, confirms: &quot; + confirmRate + &quot; c/s&quot;);
+                    if (nackRate &gt; 0) {
+                        System.out.print(&quot;, nacks: &quot; + nackRate + &quot; n/s&quot;);
+                    }
+                }
+                System.out.println();
+                lastStatsTime = now;
+            }
+        }
+
+        private byte[] createMessage(int sequenceNumber)
+            throws IOException {
+
+            ByteArrayOutputStream acc = new ByteArrayOutputStream();
+            DataOutputStream d = new DataOutputStream(acc);
+            long nano = System.nanoTime();
+            d.writeInt(sequenceNumber);
+            d.writeLong(nano);
+            d.flush();
+            acc.flush();
+            byte[] m = acc.toByteArray();
+            if (m.length &lt;= message.length) {
+                System.arraycopy(m, 0, message, 0, m.length);
+                return message;
+            } else {
+                return m;
+            }
+        }
+
+    }
+
+    public static class Consumer implements Runnable {
+
+        private QueueingConsumer q;
+        private String           id;
+        private int              txSize;
+        private boolean          autoAck;
+        private Stats            stats;
+        private long             timeLimit;
+
+        public Consumer(QueueingConsumer q, String id,
+                        int txSize, boolean autoAck,
+                        Stats stats, int timeLimit) {
+
+            this.q         = q;
+            this.id        = id;
+            this.txSize    = txSize;
+            this.autoAck   = autoAck;
+            this.stats     = stats;
+            this.timeLimit = 1000L * timeLimit;
+        }
+
+        public void run() {
+
+            long now;
+            long startTime;
+            startTime = now = System.currentTimeMillis();
+            int totalMsgCount = 0;
+
+            Channel channel = q.getChannel();
+
+            try {
+
+                while (timeLimit == 0 || now &lt; startTime + timeLimit) {
+                    Delivery delivery;
+                    if (timeLimit == 0) {
+                        delivery = q.nextDelivery();
+                    } else {
+                        delivery = q.nextDelivery(startTime + timeLimit -
+now);
+                        if (delivery == null) break;
+                    }
+            totalMsgCount++;
+
+                    DataInputStream d = new DataInputStream(new
+ByteArrayInputStream(delivery.getBody()));
+                    d.readInt();
+                    long msgNano = d.readLong();
+                    long nano = System.nanoTime();
+
+                    Envelope envelope = delivery.getEnvelope();
+
+                    if (!autoAck) {
+                        channel.basicAck(envelope.getDeliveryTag(), false);
+                    }
+
+                    if (txSize != 0 &amp;&amp; totalMsgCount % txSize == 0) {
+                        channel.txCommit();
+                    }
+
+                    now = System.currentTimeMillis();
+
+                    stats.collectStats(now,
+id.equals(envelope.getRoutingKey()) ? (nano - msgNano) : 0L);
+                }
+
+            } catch (IOException e) {
+                throw new RuntimeException(e);
+            } catch (InterruptedException e) {
+                throw new RuntimeException (e);
+            } catch (ShutdownSignalException e) {
+                throw new RuntimeException(e);
+            }
+
+            long elapsed = now - startTime;
+            if (elapsed &gt; 0) {
+                System.out.println(&quot;recving rate avg: &quot; +
+                                   (totalMsgCount * 1000L / elapsed) +
+                                   &quot; msg/s&quot;);
+            }
+        }
+
+    }
+
+    public static class Stats {
+
+        private long    interval;
+
+        private long    lastStatsTime;
+        private int     msgCount;
+        private int     latencyCount;
+        private long    minLatency;
+        private long    maxLatency;
+        private long    cumulativeLatency;
+
+        public Stats(long interval) {
+            this.interval = interval;
+            reset(System.currentTimeMillis());
+        }
+
+        private void reset(long t) {
+            lastStatsTime     = t;
+            msgCount          = 0;
+            latencyCount      = 0;
+            minLatency        = Long.MAX_VALUE;
+            maxLatency        = Long.MIN_VALUE;
+            cumulativeLatency = 0L;
+        }
+
+        public synchronized void collectStats(long now, long latency) {
+            msgCount++;
+
+            if (latency &gt; 0) {
+                minLatency = Math.min(minLatency, latency);
+                maxLatency = Math.max(maxLatency, latency);
+                cumulativeLatency += latency;
+                latencyCount++;
+            }
+
+            long elapsed = now - lastStatsTime;
+            if (elapsed &gt; interval) {
+                System.out.println(&quot;recving rate: &quot; +
+                                   (1000L * msgCount / elapsed) +
+                                   &quot; msg/s&quot; +
+                                   (latencyCount &gt; 0 ?
+                                    &quot;, min/avg/max latency: &quot; +
+                                    minLatency/1000L + &quot;/&quot; +
+                                    cumulativeLatency / (1000L *
+latencyCount) + &quot;/&quot; +
+                                    maxLatency/1000L + &quot; microseconds&quot; :
+                                    &quot;&quot;));
+                reset(now);
+            }
+
+        }
+
+    }
+
+}
+
+
+On Fri, Jul 15, 2011 at 7:06 PM, Eugene Kirpichov &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">ekirpichov at gmail.com</A>&gt;wrote:
+
+&gt;<i> I am sorry but this link doesn't have any source code - this is the
+</I>&gt;<i> library.
+</I>&gt;<i> I meant *your* source code, the code of your program; the code which
+</I>&gt;<i> exercises the library and gets 5000 msg/s.
+</I>&gt;<i>
+</I>&gt;<i> P.S. Please use &quot;Reply all&quot;, this discussion is most probably
+</I>&gt;<i> interesting for many people in the community.
+</I>&gt;<i>
+</I>&gt;<i> 2011/7/15 News Aanad &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">news.anand11 at gmail.com</A>&gt;:
+</I>&gt;<i> &gt; I am following this link for my java code:
+</I>&gt;<i> &gt;
+</I>&gt;<i> <A HREF="http://www.rabbitmq.com/releases/rabbitmq-java-client/v2.5.1/rabbitmq-java-client-bin-2.5.1.tar.gz">http://www.rabbitmq.com/releases/rabbitmq-java-client/v2.5.1/rabbitmq-java-client-bin-2.5.1.tar.gz</A>
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; On Fri, Jul 15, 2011 at 6:56 PM, Eugene Kirpichov &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">ekirpichov at gmail.com</A>&gt;
+</I>&gt;<i> &gt; wrote:
+</I>&gt;<i> &gt;&gt;
+</I>&gt;<i> &gt;&gt; Please show the source code of all participating components. It's
+</I>&gt;<i> &gt;&gt; impossible to say anything definite without it.
+</I>&gt;<i> &gt;&gt;
+</I>&gt;<i> &gt;&gt; 2011/7/15 News Aanad &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">news.anand11 at gmail.com</A>&gt;:
+</I>&gt;<i> &gt;&gt; &gt;
+</I>&gt;<i> &gt;&gt; &gt; Till now i am getting the result of 5000 msg/sec in java.
+</I>&gt;<i> &gt;&gt; &gt;
+</I>&gt;<i> &gt;&gt; &gt; On Fri, Jul 15, 2011 at 6:53 PM, Eugene Kirpichov &lt;
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">ekirpichov at gmail.com</A>&gt;
+</I>&gt;<i> &gt;&gt; &gt; wrote:
+</I>&gt;<i> &gt;&gt; &gt;&gt;
+</I>&gt;<i> &gt;&gt; &gt;&gt; I guess you should get the speed you want, and much more, if you just
+</I>&gt;<i> &gt;&gt; &gt;&gt; set up a high enough value for prefetch (see basic.qos) and set
+</I>&gt;<i> &gt;&gt; &gt;&gt; autoack.
+</I>&gt;<i> &gt;&gt; &gt;&gt; I got ~8k msg/s with much larger messages and persistence turned on
+</I>&gt;<i> &gt;&gt; &gt;&gt; too.
+</I>&gt;<i> &gt;&gt; &gt;&gt;
+</I>&gt;<i> &gt;&gt; &gt;&gt; 2011/7/15 News Aanad &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">news.anand11 at gmail.com</A>&gt;:
+</I>&gt;<i> &gt;&gt; &gt;&gt; &gt;
+</I>&gt;<i> &gt;&gt; &gt;&gt; &gt; Message size is 199 bytes
+</I>&gt;<i> &gt;&gt; &gt;&gt; &gt; Messaging scenario is Persistence
+</I>&gt;<i> &gt;&gt; &gt;&gt; &gt;
+</I>&gt;<i> &gt;&gt; &gt;&gt; &gt; On Fri, Jul 15, 2011 at 6:47 PM, Eugene Kirpichov
+</I>&gt;<i> &gt;&gt; &gt;&gt; &gt; &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">ekirpichov at gmail.com</A>&gt;
+</I>&gt;<i> &gt;&gt; &gt;&gt; &gt; wrote:
+</I>&gt;<i> &gt;&gt; &gt;&gt; &gt;&gt;
+</I>&gt;<i> &gt;&gt; &gt;&gt; &gt;&gt; Hi.
+</I>&gt;<i> &gt;&gt; &gt;&gt; &gt;&gt;
+</I>&gt;<i> &gt;&gt; &gt;&gt; &gt;&gt; What's the size of messages?
+</I>&gt;<i> &gt;&gt; &gt;&gt; &gt;
+</I>&gt;<i> &gt;&gt; &gt;&gt; &gt;&gt; What's your messaging scenario in general? Persistence, prefetch,
+</I>&gt;<i> &gt;&gt; &gt;&gt; &gt;&gt; transactions?
+</I>&gt;<i> &gt;&gt; &gt;&gt; &gt;
+</I>&gt;<i> &gt;&gt; &gt;&gt; &gt;&gt;
+</I>&gt;<i> &gt;&gt; &gt;&gt; &gt;&gt; 2011/7/15 News Aanad &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">news.anand11 at gmail.com</A>&gt;:
+</I>&gt;<i> &gt;&gt; &gt;&gt; &gt;&gt; &gt; Hi, I wanted to achieve the goal of 15000 msg/sec in RabbitMQ. I
+</I>&gt;<i> &gt;&gt; &gt;&gt; &gt;&gt; &gt; have
+</I>&gt;<i> &gt;&gt; &gt;&gt; &gt;&gt; &gt; tried a lot in java as well as in ruby. And right now
+</I>&gt;<i> implementing
+</I>&gt;<i> &gt;&gt; &gt;&gt; &gt;&gt; &gt; node.js .
+</I>&gt;<i> &gt;&gt; &gt;&gt; &gt;&gt; &gt; I want to prefer java because after lots of experimentation the
+</I>&gt;<i> &gt;&gt; &gt;&gt; &gt;&gt; &gt; only
+</I>&gt;<i> &gt;&gt; &gt;&gt; &gt;&gt; &gt; java has given me good result but still goal is not achieved.
+</I>&gt;<i> &gt;&gt; &gt;&gt; &gt;&gt; &gt; So i want help to know how to reach upto 15000 msg/sec in
+</I>&gt;<i> RabbitMQ
+</I>&gt;<i> &gt;&gt; &gt;&gt; &gt;&gt; &gt; using java. If any good suggestion  is there please tell me or
+</I>&gt;<i> if
+</I>&gt;<i> &gt;&gt; &gt;&gt; &gt;&gt; &gt; any
+</I>&gt;<i> &gt;&gt; &gt;&gt; &gt;&gt; &gt; site to prefer then please tell me.
+</I>&gt;<i> &gt;&gt; &gt;&gt; &gt;&gt; &gt;
+</I>&gt;<i> &gt;&gt; &gt;&gt; &gt;&gt; &gt; Thanks.
+</I>&gt;<i> &gt;&gt; &gt;&gt; &gt;&gt; &gt; _______________________________________________
+</I>&gt;<i> &gt;&gt; &gt;&gt; &gt;&gt; &gt; rabbitmq-discuss mailing list
+</I>&gt;<i> &gt;&gt; &gt;&gt; &gt;&gt; &gt; <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;<i> &gt;&gt; &gt;&gt; &gt;&gt; &gt;
+</I>&gt;<i> &gt;&gt; &gt;&gt; &gt;&gt; &gt;
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>&gt;<i> &gt;&gt; &gt;&gt; &gt;&gt; &gt;
+</I>&gt;<i> &gt;&gt; &gt;&gt; &gt;&gt;
+</I>&gt;<i> &gt;&gt; &gt;&gt; &gt;&gt;
+</I>&gt;<i> &gt;&gt; &gt;&gt; &gt;&gt;
+</I>&gt;<i> &gt;&gt; &gt;&gt; &gt;&gt; --
+</I>&gt;<i> &gt;&gt; &gt;&gt; &gt;&gt; Eugene Kirpichov
+</I>&gt;<i> &gt;&gt; &gt;&gt; &gt;&gt; Principal Engineer, Mirantis Inc. <A HREF="http://www.mirantis.com/">http://www.mirantis.com/</A>
+</I>&gt;<i> &gt;&gt; &gt;&gt; &gt;&gt; Editor, <A HREF="http://fprog.ru/">http://fprog.ru/</A>
+</I>&gt;<i> &gt;&gt; &gt;&gt; &gt;
+</I>&gt;<i> &gt;&gt; &gt;&gt; &gt;
+</I>&gt;<i> &gt;&gt; &gt;&gt;
+</I>&gt;<i> &gt;&gt; &gt;&gt;
+</I>&gt;<i> &gt;&gt; &gt;&gt;
+</I>&gt;<i> &gt;&gt; &gt;&gt; --
+</I>&gt;<i> &gt;&gt; &gt;&gt; Eugene Kirpichov
+</I>&gt;<i> &gt;&gt; &gt;&gt; Principal Engineer, Mirantis Inc. <A HREF="http://www.mirantis.com/">http://www.mirantis.com/</A>
+</I>&gt;<i> &gt;&gt; &gt;&gt; Editor, <A HREF="http://fprog.ru/">http://fprog.ru/</A>
+</I>&gt;<i> &gt;&gt; &gt;
+</I>&gt;<i> &gt;&gt; &gt;
+</I>&gt;<i> &gt;&gt;
+</I>&gt;<i> &gt;&gt;
+</I>&gt;<i> &gt;&gt;
+</I>&gt;<i> &gt;&gt; --
+</I>&gt;<i> &gt;&gt; Eugene Kirpichov
+</I>&gt;<i> &gt;&gt; Principal Engineer, Mirantis Inc. <A HREF="http://www.mirantis.com/">http://www.mirantis.com/</A>
+</I>&gt;<i> &gt;&gt; Editor, <A HREF="http://fprog.ru/">http://fprog.ru/</A>
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt;
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> --
+</I>&gt;<i> Eugene Kirpichov
+</I>&gt;<i> Principal Engineer, Mirantis Inc. <A HREF="http://www.mirantis.com/">http://www.mirantis.com/</A>
+</I>&gt;<i> Editor, <A HREF="http://fprog.ru/">http://fprog.ru/</A>
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20110715/e18e2d3d/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20110715/e18e2d3d/attachment.htm</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="013911.html">[rabbitmq-discuss] 15000 msg/sec
+</A></li>
+	<LI>Next message: <A HREF="013913.html">[rabbitmq-discuss] 15000 msg/sec
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#13912">[ date ]</a>
+              <a href="thread.html#13912">[ thread ]</a>
+              <a href="subject.html#13912">[ subject ]</a>
+              <a href="author.html#13912">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

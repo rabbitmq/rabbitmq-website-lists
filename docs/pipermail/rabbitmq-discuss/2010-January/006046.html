@@ -1,0 +1,191 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Monitoring rabbitmq
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20Monitoring%20rabbitmq&In-Reply-To=">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="006037.html">
+   <LINK REL="Next"  HREF="006067.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Monitoring rabbitmq</H1>
+    <B>Mark Steele</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20Monitoring%20rabbitmq&In-Reply-To="
+       TITLE="[rabbitmq-discuss] Monitoring rabbitmq">msteele at beringmedia.com
+       </A><BR>
+    <I>Tue Jan 26 20:42:39 GMT 2010</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="006037.html">[rabbitmq-discuss] rabbitmq 1.7.1 from package on debian
+</A></li>
+        <LI>Next message: <A HREF="006067.html">[rabbitmq-discuss] Monitoring rabbitmq
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#6046">[ date ]</a>
+              <a href="thread.html#6046">[ thread ]</a>
+              <a href="subject.html#6046">[ subject ]</a>
+              <a href="author.html#6046">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi folks,
+
+I'm trying to find a good way to monitor rabbit for inclusion in an HA
+cluster (pacemaker/corosync).
+
+Does anyone have a good resource agent already created for such a purpose?
+
+Here is what I've got so far:
+
+
+#!/bin/bash
+
+#######################################################################
+# Initialization:
+. /usr/lib/ocf/resource.d/heartbeat/.ocf-shellfuncs
+#######################################################################
+
+meta_data() {
+        cat &lt;&lt;END
+&lt;?xml version=&quot;1.0&quot;?&gt;
+&lt;!DOCTYPE resource-agent SYSTEM &quot;ra-api-1.dtd&quot;&gt;
+&lt;resource-agent name=&quot;rabbitmq&quot; version=&quot;0.9&quot;&gt;
+&lt;version&gt;1.0&lt;/version&gt;
+
+&lt;longdesc lang=&quot;en&quot;&gt;
+Rabbitmq agent
+&lt;/longdesc&gt;
+&lt;shortdesc lang=&quot;en&quot;&gt;Rabbitmq resource agent&lt;/shortdesc&gt;
+&lt;actions&gt;
+&lt;action name=&quot;start&quot;        timeout=&quot;90&quot; /&gt;
+&lt;action name=&quot;stop&quot;         timeout=&quot;100&quot; /&gt;
+&lt;action name=&quot;monitor&quot;      timeout=&quot;20&quot; interval=&quot;10&quot; depth=&quot;0&quot;
+start-delay=&quot;0&quot; /&gt;
+&lt;action name=&quot;meta-data&quot;    timeout=&quot;5&quot;
+/&gt;
+&lt;action name=&quot;validate-all&quot;   timeout=&quot;30&quot;
+/&gt;
+&lt;/actions&gt;
+
+&lt;/resource-agent&gt;
+
+END
+
+}
+
+
+usage() {
+        cat &lt;&lt;END
+usage: $0 {start|stop|monitor|validate-all|meta-data}
+
+END
+}
+
+start() {
+        /usr/sbin/rabbitmq-multi start_all 1 2&gt;&amp;1 &gt; /dev/null
+        exit $?
+}
+
+stop() {
+  /usr/sbin/rabbitmq-multi stop_all 2&gt;&amp;1 &gt; /dev/null
+  ret=$?
+
+  if [ $ret -eq 2 ]; then
+    return $OCF_SUCCESS
+  fi
+
+  if [ $ret -ne 0 ]; then
+    sleep 5
+    pidof beam.smp
+    ret=$?
+    if [ $ret -eq 1 ]; then
+      /usr/bin/killall -TERM epmd beam.smp
+      sleep 30
+      /usr/bin/killall -KILL epmd beam.smp
+    fi
+  fi
+  return $OCF_SUCCESS
+}
+
+monitor() {
+  status=`/usr/sbin/rabbitmq-multi status 2&gt;&amp;1`
+  res=$?
+  if [ $res -eq 2 ]; then
+    return $OCF_NOT_RUNNING
+  fi
+
+  if [[ $status =~ 'not_running' ]]; then
+    return $OCF_NOT_RUNNING
+  else
+    if [ $res -eq 0 ]; then
+      return $OCF_SUCCESS
+    else
+      return $OCF_ERR_GENERIC
+    fi
+  fi
+}
+
+validate() {
+    return $OCF_SUCCESS
+}
+
+case $__OCF_ACTION in
+meta-data)      meta_data
+                exit $OCF_SUCCESS
+                ;;
+start)          start;;
+stop)           stop;;
+monitor)        monitor;;
+validate-all)   validate;;
+usage|help)     usage
+                exit $OCF_SUCCESS
+                ;;
+*)              usage
+                exit $OCF_ERR_UNIMPLEMENTED
+                ;;
+esac
+rc=$?
+ocf_log debug &quot;${OCF_RESOURCE_INSTANCE} $__OCF_ACTION : $rc&quot;
+exit $rc
+
+
+---------
+
+It feels like a bit of a kludge though. If anyone has any suggestions on how
+to thoroughly monitor rabbit, please let me know.
+
+
+Regards,
+
+-- 
+Mark Steele
+Director of development
+Bering Media Inc.
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: <A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20100126/85ed2d4b/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20100126/85ed2d4b/attachment.htm</A> 
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="006037.html">[rabbitmq-discuss] rabbitmq 1.7.1 from package on debian
+</A></li>
+	<LI>Next message: <A HREF="006067.html">[rabbitmq-discuss] Monitoring rabbitmq
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#6046">[ date ]</a>
+              <a href="thread.html#6046">[ thread ]</a>
+              <a href="subject.html#6046">[ subject ]</a>
+              <a href="author.html#6046">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

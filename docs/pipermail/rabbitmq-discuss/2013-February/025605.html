@@ -1,0 +1,213 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Very slow get (dequeue) on node B if shovel on node A is configured with {ack_mode, on_confirm}
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Very%20slow%20get%20%28dequeue%29%20on%20node%20B%20if%20shovel%0A%20on%20node%20A%20is%20configured%20with%20%7Back_mode%2C%20on_confirm%7D&In-Reply-To=%3CCAHA3fyWVD_hRUmMbQCORi8%2Bru1_dg2WWYC5S-LyqaCP0O_oUDw%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="025488.html">
+   <LINK REL="Next"  HREF="025607.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Very slow get (dequeue) on node B if shovel on node A is configured with {ack_mode, on_confirm}</H1>
+    <B>bratner bratner</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Very%20slow%20get%20%28dequeue%29%20on%20node%20B%20if%20shovel%0A%20on%20node%20A%20is%20configured%20with%20%7Back_mode%2C%20on_confirm%7D&In-Reply-To=%3CCAHA3fyWVD_hRUmMbQCORi8%2Bru1_dg2WWYC5S-LyqaCP0O_oUDw%40mail.gmail.com%3E"
+       TITLE="[rabbitmq-discuss] Very slow get (dequeue) on node B if shovel on node A is configured with {ack_mode, on_confirm}">ratner2 at gmail.com
+       </A><BR>
+    <I>Thu Feb 21 15:10:17 GMT 2013</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="025488.html">[rabbitmq-discuss] Very slow get (dequeue) on node B if shovel on node A is configured with {ack_mode, on_confirm}
+</A></li>
+        <LI>Next message: <A HREF="025607.html">[rabbitmq-discuss] Very slow get (dequeue) on node B if shovel on node A is configured with {ack_mode, on_confirm}
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#25605">[ date ]</a>
+              <a href="thread.html#25605">[ thread ]</a>
+              <a href="subject.html#25605">[ subject ]</a>
+              <a href="author.html#25605">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi!
+
+Sorry for the long delay. I did some more tests and found a way to speed
+things up.
+After changing {ack_mode, on_confirm} to {ack_mode, on_publish} things
+started to work well.
+Which means that the speed of reading the messages from the queue NodeB was
+the speed they
+were published to the queue on NodeA.
+
+Before this change (when 'on_confirm' was set) messages where piling up in
+the queue on NodeB.
+So if i published 100 messages per sec into a queue on nodeA, the queue on
+nodeB would receive all of those and the queue on nodeA would be empty (as
+it should). But the PHP script on nodeB (below) would read something like
+3-8 messages per sec and the rest (92-97 messages per sec) would keep
+piling up in the queue on nodeB.
+That is until i completely stopped writing new messages to the queue on
+nodeA. Then this script will read messages like crazy until the queue on
+nodeB was completely empty.
+
+So I left with a couple of questions. What is causing the write and the
+read to be so uneven with 'on_confirm' given that there no real resources
+problem? Is this a bug or a feature?
+How much reliability do I lose if i use 'on_publish' ? Is there a chance
+messages can just disappear with 'on_publish' ?
+
+Here is the outline of my php test reader, very simple:
+
+&lt;?php
+$connection = new AMQPConnection();
+$connection-&gt;setLogin(&quot;&lt;login_nodeb&gt;&quot;);
+$connection-&gt;setPassword(&quot;&lt;password_nodeb&quot;);
+$connection-&gt;setVhost(&quot;vhostB&quot;);
+$connection-&gt;connect();
+
+if (!$connection-&gt;isConnected()) {
+    die('Not connected :('. PHP_EOL);
+}
+$channel    = new AMQPChannel($connection);
+$queue      = new AMQPQueue($channel);
+$queue-&gt;setName('queueB');
+
+while(true) {
+        while($queue-&gt;get(AMQP_AUTOACK)) {
+           /* do stuff here, count messages, run mps stats etc... */
+        }
+        /* sleep some not to eat the whole cpu */
+        sleep(1);
+}
+
+
+Thanks,
+Boris
+
+On Wed, Feb 13, 2013 at 5:52 PM, Simon MacMullen &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">simon at rabbitmq.com</A>&gt; wrote:
+
+&gt;<i> That sounds very wrong.
+</I>&gt;<i>
+</I>&gt;<i> Which version of RabbitMQ are you using? Can you post (a cut down version
+</I>&gt;<i> of) your PHP script somewhere? (I have no familiarity with the PHP client
+</I>&gt;<i> but I'd like to see what it's doing...)
+</I>&gt;<i>
+</I>&gt;<i> Cheers, Simon
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> On 13/02/13 14:33, bratner bratner wrote:
+</I>&gt;<i>
+</I>&gt;&gt;<i> Hi!
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> My setup includes a rabbitmq-c application that publishes messages on
+</I>&gt;&gt;<i> node A.
+</I>&gt;&gt;<i> The publishing rate is about 200mps, each message can be up to 10Kb.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Shovel (node A) is configured to move them to node B.
+</I>&gt;&gt;<i> On node B i'm dequeuing the messages with a PHP test script with
+</I>&gt;&gt;<i> $queue-&gt;get(AMQP_AUTOACK).
+</I>&gt;&gt;<i> If i keep the publishing rate at 200mps then i can see that the queue on
+</I>&gt;&gt;<i> node A is empty and the Q on node B is
+</I>&gt;&gt;<i> filling up. The read-rate of my test script is really low.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> If i stop the publishing, 3-5 seconds later, my test script starts
+</I>&gt;&gt;<i> reading like crazy until the queue on node B is empty.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Even If I slow down the publishing rate to 5mps , same is happening ,
+</I>&gt;&gt;<i> messages are piling up on node B until i dial down the pressure.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> This problem disappears if I set ack_mode to on_publish or no_ack. In
+</I>&gt;&gt;<i> this case the reader script reads with the publishing speed.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> My configuration :
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> [
+</I>&gt;&gt;<i> {rabbit, [
+</I>&gt;&gt;<i> {log_levels, [{connection, error}]}
+</I>&gt;&gt;<i> ]},
+</I>&gt;&gt;<i> {rabbitmq_shovel,
+</I>&gt;&gt;<i> [ {shovels, [ {messagemover, [
+</I>&gt;&gt;<i> {sources, [
+</I>&gt;&gt;<i> {broker, &quot;<A HREF="amqp://usera:pass@localhost/**vhosta">amqp://usera:pass@localhost/**vhosta</A>
+</I>&gt;&gt;<i> &lt;<A HREF="amqp://cdrposter:4VkI6MKH@**localhost/sipout">amqp://cdrposter:4VkI6MKH@**localhost/sipout</A>&gt;&quot;},
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> {declarations, [
+</I>&gt;&gt;<i> {'exchange.declare',[{**exchange, &lt;&lt;&quot;my-fanout&quot;&gt;&gt;},{type,
+</I>&gt;&gt;<i> &lt;&lt;&quot;fanout&quot;&gt;&gt;},durable]},
+</I>&gt;&gt;<i> {'queue.declare',[{queue,&lt;&lt;&quot;**messages&quot;&gt;&gt;},durable]},
+</I>&gt;&gt;<i> {'queue.bind',[{exchange, &lt;&lt;&quot;my-fanout&quot;&gt;&gt;},{queue, &lt;&lt;&quot;messages&quot;&gt;&gt;}]}
+</I>&gt;&gt;<i> ]}
+</I>&gt;&gt;<i> ]},
+</I>&gt;&gt;<i> {destinations, [
+</I>&gt;&gt;<i> {brokers, [ &quot;<A HREF="amqp://userb:pass@nodeB/**vhostb">amqp://userb:pass@nodeB/**vhostb</A>
+</I>&gt;&gt;<i> &lt;<A HREF="amqp://cdr_manager:Ci2XOb3b@**10.200.10.218/cdrs&lt;http://cdr_manager:Ci2XOb3b@10.200.10.218/cdrs">amqp://cdr_manager:Ci2XOb3b@**10.200.10.218/cdrs&lt;http://cdr_manager:Ci2XOb3b@10.200.10.218/cdrs</A>&gt;&gt;&quot;
+</I>&gt;&gt;<i> ]},
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> {declarations, [
+</I>&gt;&gt;<i> {'exchange.declare',[{**exchange, &lt;&lt;&quot;my-fanout&quot;&gt;&gt;},{type,
+</I>&gt;&gt;<i> &lt;&lt;&quot;fanout&quot;&gt;&gt;},durable]},
+</I>&gt;&gt;<i> {'queue.declare',[{queue,&lt;&lt;&quot;**messages&quot;&gt;&gt;},durable]},
+</I>&gt;&gt;<i> {'queue.bind',[{exchange, &lt;&lt;&quot;my-fanout&quot;&gt;&gt;},{queue, &lt;&lt;&quot;messages&quot;&gt;&gt;}]}
+</I>&gt;&gt;<i> ]}
+</I>&gt;&gt;<i> ]},
+</I>&gt;&gt;<i> {queue, &lt;&lt;&quot;messages&quot;&gt;&gt;},
+</I>&gt;&gt;<i> {prefetch_count, 200},
+</I>&gt;&gt;<i> {ack_mode, on_confirm},
+</I>&gt;&gt;<i> {publish_properties, [{delivery_mode, 2}]},
+</I>&gt;&gt;<i> {reconnect_delay, 5}
+</I>&gt;&gt;<i> ]}
+</I>&gt;&gt;<i> ]}
+</I>&gt;&gt;<i> ]}
+</I>&gt;&gt;<i> ].
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Thank you,
+</I>&gt;&gt;<i> Boris.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> ______________________________**_________________
+</I>&gt;&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.</A>**rabbitmq.com&lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>&gt;
+</I>&gt;&gt;<i> <A HREF="https://lists.rabbitmq.com/**cgi-bin/mailman/listinfo/**rabbitmq-discuss&lt;https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/**cgi-bin/mailman/listinfo/**rabbitmq-discuss&lt;https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>&gt;
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> --
+</I>&gt;<i> Simon MacMullen
+</I>&gt;<i> RabbitMQ, VMware
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20130221/953bac01/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20130221/953bac01/attachment.htm</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="025488.html">[rabbitmq-discuss] Very slow get (dequeue) on node B if shovel on node A is configured with {ack_mode, on_confirm}
+</A></li>
+	<LI>Next message: <A HREF="025607.html">[rabbitmq-discuss] Very slow get (dequeue) on node B if shovel on node A is configured with {ack_mode, on_confirm}
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#25605">[ date ]</a>
+              <a href="thread.html#25605">[ thread ]</a>
+              <a href="subject.html#25605">[ subject ]</a>
+              <a href="author.html#25605">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

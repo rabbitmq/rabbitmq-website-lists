@@ -1,0 +1,205 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Messages disappearing
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Messages%20disappearing&In-Reply-To=%3CF3E9C1826A037A4A84F4D58424D54D7B02E181AA%40AMSPRD0302MB111.eurprd03.prod.outlook.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="016292.html">
+   <LINK REL="Next"  HREF="016294.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Messages disappearing</H1>
+    <B>Nick Pateman</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Messages%20disappearing&In-Reply-To=%3CF3E9C1826A037A4A84F4D58424D54D7B02E181AA%40AMSPRD0302MB111.eurprd03.prod.outlook.com%3E"
+       TITLE="[rabbitmq-discuss] Messages disappearing">nick.pateman at certivox.com
+       </A><BR>
+    <I>Wed Nov 16 17:02:40 GMT 2011</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="016292.html">[rabbitmq-discuss] Messages disappearing
+</A></li>
+        <LI>Next message: <A HREF="016294.html">[rabbitmq-discuss] Messages disappearing
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#16293">[ date ]</a>
+              <a href="thread.html#16293">[ thread ]</a>
+              <a href="subject.html#16293">[ subject ]</a>
+              <a href="author.html#16293">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Here's the method I'm using to send the messages, the connection has already been established by this point...
+
+void send_batch(amqp_connection_state_t conn,
+               char const *queue_name,
+               int rate_limit,
+               int message_count)
+{
+  uint64_t start_time = now_microseconds();
+  int i;
+  int sent = 0;
+  int previous_sent = 0;
+  uint64_t previous_report_time = start_time;
+  uint64_t next_summary_time = start_time + SUMMARY_EVERY_US;
+
+  char message[256];
+  amqp_bytes_t message_bytes;
+
+  for (i = 0; i &lt; sizeof(message); i++) {
+    message[i] = i &amp; 0xff;
+  }
+
+  message_bytes.len = sizeof(message);
+  message_bytes.bytes = message;
+
+  for (i = 0; i &lt; message_count; i++) {
+    uint64_t now = now_microseconds();
+
+    amqp_basic_properties_t props;
+    props._flags = AMQP_BASIC_CONTENT_TYPE_FLAG | AMQP_BASIC_DELIVERY_MODE_FLAG;
+    props.content_type = amqp_cstring_bytes(&quot;text/plain&quot;);
+    props.delivery_mode = 2; /* persistent delivery mode */
+    die_on_error(amqp_basic_publish(conn,
+            1,
+            amqp_cstring_bytes(&quot;amq.direct&quot;),
+            amqp_cstring_bytes(queue_name),
+            0,
+            0,
+            &amp;props,
+            amqp_cstring_bytes(&quot;Hello world!&quot;)),
+            &quot;Publishing&quot;);
+
+    sent++;
+    if (now &gt; next_summary_time) {
+      int countOverInterval = sent - previous_sent;
+      double intervalRate = countOverInterval / ((now - previous_report_time) / 1000000.0);
+      printf(&quot;%d ms: Sent %d - %d since last report (%d Hz)\n&quot;,
+         (int)(now - start_time) / 1000, sent, countOverInterval, (int) intervalRate);
+
+      previous_sent = sent;
+      previous_report_time = now;
+      next_summary_time += SUMMARY_EVERY_US;
+    }
+
+    while (((i * 1000000.0) / (now - start_time)) &gt; rate_limit) {
+      microsleep(2000);
+      now = now_microseconds();
+    }
+  }
+
+  {
+    uint64_t stop_time = now_microseconds();
+    int total_delta = stop_time - start_time;
+
+    printf(&quot;PRODUCER - Message count: %d\n&quot;, message_count);
+    printf(&quot;Total time, milliseconds: %d\n&quot;, total_delta / 1000);
+    printf(&quot;Overall messages-per-second: %g\n&quot;, (message_count / (total_delta / 1000000.0)));
+  }
+}
+
+
+From: Alvaro Videla [mailto:<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">videlalvaro at gmail.com</A>]
+Sent: 16 November 2011 16:58
+To: Nick Pateman
+Cc: <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+Subject: Re: [rabbitmq-discuss] Messages disappearing
+
+If you post some sample code people might be able to help. Specifically the binding code and the publish code with routing keys.
+
+Also does the original code works as expected?
+On Wed, Nov 16, 2011 at 5:55 PM, Nick Pateman &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">nick.pateman at certivox.com</A>&lt;mailto:<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">nick.pateman at certivox.com</A>&gt;&gt; wrote:
+Hey there,
+
+I've got a small application writing messages to a message queue.  I basically modified an example taken from the C driver.
+
+Anyway, I can see incoming and outgoing message rate increasing for the queue within the administration web page but I don't currently have any application picking up the messages, they seem to be getting instantly delivered somewhere else.
+
+My rates jump from 0/0 to 10/10, 10 in a second and 10 out a second.
+
+Any idea where my messages are going?  I want to see the counters increase before I get my daemon running.  Many thanks!
+
+Nick.
+
+_______________________________________________
+rabbitmq-discuss mailing list
+<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>&lt;mailto:<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>&gt;
+<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20111116/340d673d/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20111116/340d673d/attachment.htm</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="016292.html">[rabbitmq-discuss] Messages disappearing
+</A></li>
+	<LI>Next message: <A HREF="016294.html">[rabbitmq-discuss] Messages disappearing
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#16293">[ date ]</a>
+              <a href="thread.html#16293">[ thread ]</a>
+              <a href="subject.html#16293">[ subject ]</a>
+              <a href="author.html#16293">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

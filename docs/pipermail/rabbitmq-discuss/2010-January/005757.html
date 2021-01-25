@@ -1,0 +1,185 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] JMS/AMQP use case
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20JMS/AMQP%20use%20case&In-Reply-To=4B42EB19.2060101%40gmail.com">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="005756.html">
+   <LINK REL="Next"  HREF="005760.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] JMS/AMQP use case</H1>
+    <B>Alexis Richardson</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20JMS/AMQP%20use%20case&In-Reply-To=4B42EB19.2060101%40gmail.com"
+       TITLE="[rabbitmq-discuss] JMS/AMQP use case">alexis.richardson at gmail.com
+       </A><BR>
+    <I>Tue Jan  5 11:06:32 GMT 2010</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="005756.html">[rabbitmq-discuss] JMS/AMQP use case
+</A></li>
+        <LI>Next message: <A HREF="005760.html">[rabbitmq-discuss] JMS/AMQP use case
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#5757">[ date ]</a>
+              <a href="thread.html#5757">[ thread ]</a>
+              <a href="subject.html#5757">[ subject ]</a>
+              <a href="author.html#5757">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Jan,
+
+Thanks for your question.
+
+On Tue, Jan 5, 2010 at 7:32 AM, Jan Van Besien &lt;<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">janvanbesien at gmail.com</A>&gt; wrote:
+&gt;<i> Hi all,
+</I>&gt;<i>
+</I>&gt;<i> We currently use JMS between a lot of internal components, and also
+</I>&gt;<i> expose a JMS interface externally (a set of topics) to our customers. As
+</I>&gt;<i> JMS is a Java only thing, we are looking into language neutral
+</I>&gt;<i> alternatives for the customer facing interface. The AMQP standard seems
+</I>&gt;<i> to fit our needs, but I haven't figured out yet what the ideal
+</I>&gt;<i> deployment scenario (with rabbitMQ) would be.
+</I>&gt;<i>
+</I>&gt;<i> Is it possible (and desirable) to continue using JMS internally (without
+</I>&gt;<i> rabbitMQ) in a first phase, and have an AMQP interface on top of it?
+</I>
+Yes and no ;-)
+
+It's not really possible to do this in an elegant ('built in to the
+broker') way at the moment.  The AMQP model is more general than JMS,
+making it hard to model AMQP from JMS without (in effect) building a
+Java AMQP broker from scratch.  On the other hand, because AMQP is
+more general than JMS, providing a JMS interface to an AMQP broker has
+been done, modulo some warts and gotchas.
+
+It may get easier to expose AMQP interfaces to JMS brokers when we
+finally reach AMQP 1.0.  This is intended to be factored in such a way
+that 'legacy' message brokers can expose AMQP message formats but not
+full behaviours.  This would be similar, in effect, to how a JMS
+broker might expose a STOMP interface today.
+
+That said....
+
+&gt;<i> If
+</I>&gt;<i> so, could you give me some hints on how the setup would be than.
+</I>
+Despite my remarks above, about AMQP being more general than JMS, this
+is certainly something you could try.  Let's say you want to run JMS
+as your core system and gradually layer AMQP on top of it.  You could:
+
+1. Install and run RabbitMQ
+2. Set up some queues and bindings (perhaps, one for each of your public topics)
+3. Publish AMQP messages to RabbitMQ
+4. Consume AMQP messages from RabbitMQ using a Java client.
+5. In the same Java client, create JMS messages from the payloads of
+the AMQP and forward them to your JMS system
+
+You could do the above yourself, and it would work, but with some
+drawbacks I am sure I don't need to enumerate.  Indeed, this approach
+could potentially be extended to something a bit more robust.
+
+*Alternatively*
+
+Have you looked at STOMP?  If your infra requires JMS based messaging
+inside for some time, then STOMP is one way to cross the language
+barrier.  It's not as powerful as AMQP for defining broker behaviour
+(routing, delivery, qos), but, you don't always need that.
+
+
+
+
+
+&gt;<i> I guess
+</I>&gt;<i> I need to deploy the rabbitMQ server, and develop some component which
+</I>&gt;<i> makes the &quot;bridge&quot; between JMS and AMQP (listening to incoming JMS
+</I>&gt;<i> messages and &quot;forwarding&quot; them to the rabbitMQ server or something like
+</I>&gt;<i> that).
+</I>
+Well, now you are asking a different question :-)
+
+Above I described how to expose a JMS infra using some sort of AMQP
+gateway, so that you could send messages to RabbitMQ in AMQP and
+forward them to JMS brokers.
+
+If you want to do this the other way round, ie. send JMS messages to
+RabbitMQ, then you can use the JMS client.
+
+Note that:
+
+1) Because JMS is an API not a protocol, it is possible to expose it
+on the client side 100%, and use any protocol you like to communicate
+between your JMS client and your broker.  This by the way raises the
+question &quot;what is a JMS broker?&quot;.  And the answer is: &quot;something that
+has a JMS client&quot;.  Go figure.
+
+2) Because AMQP's model is somewhat different from JMS, not all of the
+JMS 'TCK' API is modelled in the current JMS clients.
+
+3) Not very many people use JMS with RabbitMQ, so I am not sure what
+currently works with what.
+
+Here is a 'how to' -
+<A HREF="http://www.lshift.net/blog/2009/03/16/openamqs-jms-client-with-rabbitmq-server">http://www.lshift.net/blog/2009/03/16/openamqs-jms-client-with-rabbitmq-server</A>
+
+We hope to make all this much easier to run OOTB very soon.
+
+
+
+&gt;<i> Does this sound like a good idea at all, or should I maybe try to use
+</I>&gt;<i> rabbitMQ as the underlying implementation for the internal JMS as well?
+</I>
+Honestly, it depends on your use case and the extent to which your
+existing messaging infra is welded into place.
+
+At this stage I would recommend *experimenting* with some of the
+approaches I described above.  By all means ask any question on this
+list if you get stuck.
+
+
+&gt;<i> I'm sorry if these are newbie questions... The individual pieces of
+</I>&gt;<i> documentation seem comprehensive enough, but I currently fail to get the
+</I>&gt;<i> overall idea of how to apply it to my use case (could be me of course).
+</I>
+I am sorry the JMS-AMQP thing is not as clear as it could be.
+
+alexis
+
+
+
+&gt;<i> Thanks in advance,
+</I>&gt;<i> Jan
+</I>&gt;<i>
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;<i> <A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;<i> <A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>&gt;<i>
+</I>
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="005756.html">[rabbitmq-discuss] JMS/AMQP use case
+</A></li>
+	<LI>Next message: <A HREF="005760.html">[rabbitmq-discuss] JMS/AMQP use case
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#5757">[ date ]</a>
+              <a href="thread.html#5757">[ thread ]</a>
+              <a href="subject.html#5757">[ subject ]</a>
+              <a href="author.html#5757">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

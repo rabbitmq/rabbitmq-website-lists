@@ -1,0 +1,346 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Use a mysql databse table as the provider for rabbitmq queue
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Use%20a%20mysql%20databse%20table%20as%20the%20provider%0A%20for%20rabbitmq%20queue&In-Reply-To=%3C507EB371.6060807%40rabbitmq.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="023121.html">
+   <LINK REL="Next"  HREF="023116.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Use a mysql databse table as the provider for rabbitmq queue</H1>
+    <B>Tim Watson</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Use%20a%20mysql%20databse%20table%20as%20the%20provider%0A%20for%20rabbitmq%20queue&In-Reply-To=%3C507EB371.6060807%40rabbitmq.com%3E"
+       TITLE="[rabbitmq-discuss] Use a mysql databse table as the provider for rabbitmq queue">tim at rabbitmq.com
+       </A><BR>
+    <I>Wed Oct 17 14:32:33 BST 2012</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="023121.html">[rabbitmq-discuss] Use a mysql databse table as the provider for rabbitmq queue
+</A></li>
+        <LI>Next message: <A HREF="023116.html">[rabbitmq-discuss] Unexpected log generated
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#23125">[ date ]</a>
+              <a href="thread.html#23125">[ thread ]</a>
+              <a href="subject.html#23125">[ subject ]</a>
+              <a href="author.html#23125">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi Ryan,
+
+On 10/17/2012 02:03 PM, Ryan R. wrote:
+&gt;<i> Ok I've definitely got what you're trying to say concerning the use of 
+</I>&gt;<i> DBs and message broker.
+</I>&gt;<i>
+</I>
+Good, and your post has helped me to understand what you're doing more 
+clearly, so this should get easier now.
+
+&gt;<i> To explain a bit more, I'll answer the few questiosn you've scattered 
+</I>&gt;<i> across your reply :
+</I>&gt;<i>
+</I>&gt;<i> Is it a distributed architecture ?
+</I>&gt;<i>
+</I>&gt;<i> Definitely yes, each app will run on a different server
+</I>&gt;<i>
+</I>
+Ok, so that's more the classic integration architecture for sure.
+
+&gt;<i> Why do I need to keep apps separate ?
+</I>&gt;<i>
+</I>&gt;<i> Simply because my project can be viewed as a application suite 
+</I>&gt;<i> composed of about 5 different apps. The end-user will be able to 
+</I>&gt;<i> choose which of the apps he wants and I want to only provide what is 
+</I>&gt;<i> absolutely necessary for the end-user based on what he asked for, 
+</I>&gt;<i> nothing more nothing less. Therefore if the end user only wants one 
+</I>&gt;<i> app out five I'm not going to provide him with a RabbitMQ, he will 
+</I>&gt;<i> have no use for it. However should he asked for a set of apps that 
+</I>&gt;<i> need to communicate, then I'll install a RabbitMQ to let them communicate.
+</I>
+Ok, well that is certainly do-able and I can understand the reasons why 
+a particular customer site that doesn't need the middle-ware might as 
+well skip it.
+
+&gt;<i> Now like I said, I'm looking for a way to do this without changing 
+</I>&gt;<i> anything in the apps' code.
+</I>&gt;<i> What I'm looking for is a solution where I would have something like a 
+</I>&gt;<i> &quot;watcher&quot; external app that would keep an eye on what's going on in 
+</I>&gt;<i> each app and manage the content of each RabbitMQ queues accordingly.
+</I>&gt;<i>
+</I>
+Right, and in fact that's probably quite a common pattern in integration 
+architectures. What I would ask is this: how are these applications 
+supposed to know about the incoming data? And how, for that matter, is 
+the data supposed to get into the queues in the first place?
+
+Now, one solution to this is to do what you say and write a new 
+application, a copy of which resides alongside each main app in the 
+system and basically does two things:
+
+1. periodically read data from the database for application 1 and write 
+it to a queue
+2. constantly (in a worker thread, or periodically in the main one) read 
+data from a queue and write it to the application database
+
+This is fine, in theory, as long as you bare in mind that what you're 
+basically doing is making the overall system into a sort of 'shared 
+database where tables are replicated/synchronised via queues'. Think 
+about it a while and it's clear that, even if the tables being read from 
+and/or written to are different, that basically you end up with the same 
+thing. Then ask yourself if you'd design a distributed database that 
+uses a messaging system as its replication back-bone.
+
+Now I don't want to completely put you off that approach. It certainly 
+has some things going for it: you do not need to change the application 
+code anywhere, and if the application doesn't need the messaging system 
+then you just avoid installing the 'watcher' process (and broker) in the 
+first place. Job done!
+
+There are things to consider with this approach though, which will 
+re-enforce my point about it being like a distributed database that 
+isn't. Consider some rhetorical questions about the systems that may or 
+may not be communicating:
+
+- do they rely on incoming information in order to do their job?
+- does incoming information lead (causally) to more outgoing information?
+- does outgoing information rely on future incoming information?
+- and for any of the above, does the order in which information is 
+handled ever matter?
+
+If the answer to any of those questions is 'yes', then it might be worth 
+reconsidering the use of a separate 'watcher'. All of those scenarios 
+can lead to races, deadlocks and all manner of other problems usually 
+associated with concurrent application development, because a 
+distributed system that uses asynchronous message passing is 
+*inherently* concurrent in nature and races/deadlocks/etc are all *much* 
+harder to spot (and fix) when they're distributed!
+
+&gt;<i> That peculiar aspect of the apps is for my longterm evolution of my 
+</I>&gt;<i> app : for my personal use, the simpler approach of the code for 
+</I>&gt;<i> pushing a mesage in the queues embedded in the app would be fine. But 
+</I>&gt;<i> since I'd like to make it evolve to something else, I'd rather think 
+</I>&gt;<i> ahead and try to do so right now.
+</I>&gt;<i>
+</I>
+Well, I'm unable to comment on the design choices for a technology I 
+know nothing about, but I will offer this. If messaging is made into a 
+specific (service) layer for an application, that application should 
+usually be able to evolve without ever changing the messaging code. The 
+event publication subsystem is, after all, a fairly static design point 
+- you choose what to publish and when (which can, of course, be made 
+configurable in any language/platform) and then just leave the 
+publication code alone. The event listening subsystem is likewise fairly 
+static. You start a worker thread (or external process) and register 
+callbacks that get run when a message arrives. Just as with the 
+publication subsystem, you can pass whatever callbacks you like and 
+these can be chosen at build time *or* at runtime, possibly driven by 
+configuration settings if that is required. Finally, the remaining 
+problem is what to do when there *is no broker* because the application 
+is standalone. I think this is fairly simple - just set a flag (or 
+configuration value) when starting you application and let the event 
+handling subsystems (both the listener and publisher) treat all function 
+calls as a no-op when there is no broker to communicate with.
+
+The great advantage of this approach, IMO, is precisely the one you seem 
+to want - that the applications can be evolved over time to publish new 
+data and/or respond to new (or existing) messages in varying ways. 
+Providing you have the infrastructure to make decisions about what to do 
+in callbacks based on configuration settings, you *might* even be able 
+to add new behaviours to your applications without writing any code! ;)
+
+But..... There is the up-front cost of embedding the messaging 
+technology into your applications in the first place. Personally, I 
+would not make that cost the primary driver behind the design decision 
+though. In your shoes, I would consider carefully how the interactions 
+between these applications work and understand the distribution and 
+information sharing model they need to conform to first. Once that is 
+clear, then you can decide whether or not the timing, ordering and/or 
+existential questions about the system architecture as a whole really 
+matter or not. If they don't, then you might as well choose the external 
+'watcher' as this minimises the impact on your code base and simplifies 
+your deployments. If, on the other hand, they do matter, then you should 
+*very* carefully consider whether the decoupling that the 'watcher' 
+offers is likely to be a hindrance or a help. If enough of those causal 
+relationships in the information sharing model require coupling of some 
+kind, then interacting directly with a messaging system (where you can 
+choose whether or not you care about acknowledgements/receipts, 
+batching, transactions/confirms, and other such features) might well 
+prove to be architecturally important.
+
+HTH and makes some degree of sense!
+
+Cheers,
+Tim
+
+&gt;<i> Hope these explanations help a little more.
+</I>&gt;<i>
+</I>&gt;<i> Cheers,
+</I>&gt;<i> Ryan.
+</I>&gt;<i>
+</I>&gt;<i> 2012/10/17 Tim Watson &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">tim at rabbitmq.com</A> &lt;mailto:<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">tim at rabbitmq.com</A>&gt;&gt;
+</I>&gt;<i>
+</I>&gt;<i>     On 10/17/2012 11:40 AM, Ryan R. wrote:
+</I>&gt;<i>
+</I>&gt;<i>         I think I understand what you mean with the shared library.
+</I>&gt;<i>         However, in my case, RabbitMQ would only be installed if need
+</I>&gt;<i>         be (meaning more than one of the apps are present, and two of
+</I>&gt;<i>         those need to be synchronised for part of their data).
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>     That actually complicates the picture somewhat - is there a reason
+</I>&gt;<i>     why this is the case? In a typical integration architecture, the
+</I>&gt;<i>     messaging broker is deployed centrally (on the LAN somewhere) and
+</I>&gt;<i>     clients choose whether or not they want to connect to it from
+</I>&gt;<i>     whatever machine they're running on. To me, it is sounding like
+</I>&gt;<i>     you're describing an architecture where both applications reside
+</I>&gt;<i>     on the same machine and assuming that the broker will also need to
+</I>&gt;<i>     be co-resident with them, which is not really the case, though
+</I>&gt;<i>     there's nothing to prohibit that either.
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>         That said, using a shared library would require me to
+</I>&gt;<i>         &quot;include/import&quot; said library when I need to, therefore making
+</I>&gt;<i>         me change my app code depending of the situation I'm in.
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>     Well yes, if you're going to add messaging capabilities to your
+</I>&gt;<i>     applications that don't currently support it, then you are going
+</I>&gt;<i>     to have to write *some* code and integrate it into them! :)
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>         And said library would only be required when there's a
+</I>&gt;<i>         RabbitMQ available anyway.
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>     I think you're making your life more complicated than it needs to
+</I>&gt;<i>     be by thinking about whether the messaging broker is available vs.
+</I>&gt;<i>     not. The broker should *always* be available when applications
+</I>&gt;<i>     residing on different machines need to communicate with one
+</I>&gt;<i>     another, regardless of whether those applications are running or
+</I>&gt;<i>     not. Again, it feels like you're trying to deal with applications
+</I>&gt;<i>     running on the same machine - have I picked that up correctly? It
+</I>&gt;<i>     might help if you explained your architecture in a bit more
+</I>&gt;<i>     detail, so I can understand exactly what you're trying to achieve.
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>         Now a bit further in your message you talk about a listener
+</I>&gt;<i>         library.
+</I>&gt;<i>         I'd like to know a bit more about this.
+</I>&gt;<i>         How would an external library be able to listen to anything
+</I>&gt;<i>         happening within my app ?
+</I>&gt;<i>         Would it be listening on the DB queries ?
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>     No, not at all. Let's say you've got two applications, App1 and
+</I>&gt;<i>     App2. You'll write some library code that both applications share,
+</I>&gt;<i>     that probably looks something like this (with *wide* variations
+</I>&gt;<i>     depending on language/platform - I've just written pseudo code to
+</I>&gt;<i>     keep things simple):
+</I>&gt;<i>
+</I>&gt;<i>     -------------------------------------
+</I>&gt;<i>
+</I>&gt;<i>     function init = do
+</I>&gt;<i>         read_config_file_for_this_app
+</I>&gt;<i>         open_connection_to_broker
+</I>&gt;<i>         store_connection_somewhere_in_memory
+</I>&gt;<i>     end
+</I>&gt;<i>
+</I>&gt;<i>     function listen = do
+</I>&gt;<i>         get_connection_from_memory
+</I>&gt;<i>         read_message_from_broker
+</I>&gt;<i>         pass_message_to_application_thread_somehow
+</I>&gt;<i>         listen
+</I>&gt;<i>     end
+</I>&gt;<i>
+</I>&gt;<i>     function publish = do
+</I>&gt;<i>         get_connection_from_memory
+</I>&gt;<i>         send_message_to_broker
+</I>&gt;<i>     end
+</I>&gt;<i>
+</I>&gt;<i>     -------------------------------------
+</I>&gt;<i>
+</I>&gt;<i>     Now in your applications, you'll call the shared 'init' library
+</I>&gt;<i>     function when you're starting up to bootstrap the connection to
+</I>&gt;<i>     the broker. When your application is publishing data, it calls
+</I>&gt;<i>     publish and if/when you need to subscribe to data then you'll call
+</I>&gt;<i>     'listen'. The fact is that 'how to listen' for incoming messages
+</I>&gt;<i>     really depends on how you're going to use them. But the point is
+</I>&gt;<i>     that the applications read from and write to the messaging broker,
+</I>&gt;<i>     and do so independently of database tables. You *may* decide to do
+</I>&gt;<i>     something like write a middle-man application that periodically
+</I>&gt;<i>     reads a database table and publishes each row to the messaging
+</I>&gt;<i>     broker so it can be read from a queue, or do that with a worker
+</I>&gt;<i>     thread instead of a separate application. I would *not* do
+</I>&gt;<i>     anything here with the database though. If applications need to
+</I>&gt;<i>     share data, then **they should send it to one another via message
+</I>&gt;<i>     queues.** If they need to persist data, they should persist their
+</I>&gt;<i>     own data in their own tables in the database, but they should
+</I>&gt;<i>     **not use the database to communicate with one another.** That is
+</I>&gt;<i>     the key thing with using messaging instead shared data(bases).
+</I>&gt;<i>
+</I>&gt;<i>     There is an overhead in sending (and in some cases, duplicating)
+</I>&gt;<i>     data between applications of course. This is *more* than
+</I>&gt;<i>     compensated for by the reduced coupling that comes from
+</I>&gt;<i>     integrating using messaging technology. This approach may not be
+</I>&gt;<i>     suited to integrating applications that are running on the same
+</I>&gt;<i>     physical machine and are tightly and deliberately coupled however.
+</I>&gt;<i>     I can't really elaborate on the suitability of messaging for your
+</I>&gt;<i>     project without understanding a good deal more about it I'm afraid.
+</I>&gt;<i>
+</I>&gt;<i>     I hope that clears a few things up at least! :)
+</I>&gt;<i>
+</I>&gt;<i>     Cheers,
+</I>&gt;<i>     Tim
+</I>&gt;<i>
+</I>&gt;<i>
+</I>
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20121017/79ed34af/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20121017/79ed34af/attachment.htm</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="023121.html">[rabbitmq-discuss] Use a mysql databse table as the provider for rabbitmq queue
+</A></li>
+	<LI>Next message: <A HREF="023116.html">[rabbitmq-discuss] Unexpected log generated
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#23125">[ date ]</a>
+              <a href="thread.html#23125">[ thread ]</a>
+              <a href="subject.html#23125">[ subject ]</a>
+              <a href="author.html#23125">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

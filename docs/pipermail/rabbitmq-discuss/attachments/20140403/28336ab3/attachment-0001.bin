@@ -1,0 +1,104 @@
+--- a/src/com/rabbitmq/client/ConnectionFactory.java	2014-04-03 13:57:52.741712589 +0200
++++ b/src/com/rabbitmq/client/ConnectionFactory.java	2014-04-03 14:00:24.361712573 +0200
+@@ -19,7 +19,10 @@
+ import java.io.IOException;
+ import java.security.KeyManagementException;
+ import java.security.NoSuchAlgorithmException;
++import java.util.List;
++import java.util.ArrayList;
+ import java.util.Map;
++import java.util.HashMap;
+ import java.util.concurrent.ExecutorService;
+ 
+ import java.net.URI;
+@@ -84,6 +87,7 @@
+     private String virtualHost                    = DEFAULT_VHOST;
+     private String host                           = DEFAULT_HOST;
+     private int port                              = USE_DEFAULT_PORT;
++    private String[] failoverHosts                = null;
+     private int requestedChannelMax               = DEFAULT_CHANNEL_MAX;
+     private int requestedFrameMax                 = DEFAULT_FRAME_MAX;
+     private int requestedHeartbeat                = DEFAULT_HEARTBEAT;
+@@ -143,6 +147,22 @@
+     }
+ 
+     /**
++     * Retrieve the failover hosts.
++     * @return the failover hosts to use when connecting if the main broker is down
++     */
++    public String[] getFailoverHosts() {
++        return this.failoverHosts;
++    }
++
++    /**
++     * Set the fail host.
++     * @param failHost the failover host to use when connecting if the main broker is down
++     */
++    public void setFailoverHosts(String[] failoverHosts) {
++        this.failoverHosts = failoverHosts;
++    }
++
++    /**
+      * Retrieve the user name.
+      * @return the AMQP user name to use when connecting to the broker
+      */
+@@ -245,6 +265,19 @@
+ 
+             setVirtualHost(uriDecode(uri.getPath().substring(1)));
+         }
++
++        String[] params = uri.getQuery().split("&");  
++        Map<String, String> map = new HashMap<String, String>();  
++        for (String param : params)  
++        {  
++            String name = param.split("=")[0];  
++            String value = param.split("=")[1];  
++
++            if ("failoverHosts".equals(name)) {
++                String[] failoverHosts = value.split(",");
++                setFailoverHosts(failoverHosts);
++            }
++        }  
+     }
+ 
+     /**
+@@ -609,9 +642,16 @@
+      * @throws IOException if it encounters a problem
+      */
+     public Connection newConnection() throws IOException {
+-        return newConnection(this.sharedExecutor,
+-                             new Address[] {new Address(getHost(), getPort())}
+-                            );
++        List<Address> addresses = new ArrayList<Address>();
++        addresses.add(new Address(getHost(), getPort()));
++
++        if (getFailoverHosts() != null) {
++            for (String failoverHost : getFailoverHosts()) {
++                addresses.add(new Address(failoverHost, getPort()));
++            }
++        }
++
++        return newConnection(this.sharedExecutor, addresses.toArray(new Address[] {}));
+     }
+ 
+     /**
+@@ -621,9 +661,16 @@
+      * @throws IOException if it encounters a problem
+      */
+     public Connection newConnection(ExecutorService executor) throws IOException {
+-        return newConnection(executor,
+-                             new Address[] {new Address(getHost(), getPort())}
+-                            );
++        List<Address> addresses = new ArrayList<Address>();
++        addresses.add(new Address(getHost(), getPort()));
++
++        if (getFailoverHosts() != null) {
++            for (String failoverHost : getFailoverHosts()) {
++                addresses.add(new Address(failoverHost, getPort()));
++            }
++        }
++
++        return newConnection(executor, addresses.toArray(new Address[] {}));
+     }
+ 
+     @Override public ConnectionFactory clone(){

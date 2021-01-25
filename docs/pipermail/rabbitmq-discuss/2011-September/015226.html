@@ -1,0 +1,282 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Pika - how to properly publish from a periodic	background thread?
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Pika%20-%20how%20to%20properly%20publish%20from%20a%20periodic%0A%09background%20thread%3F&In-Reply-To=%3Ca05c76b9-4a8c-413f-afee-ee37b0dfa261%40x32g2000prf.googlegroups.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="015276.html">
+   <LINK REL="Next"  HREF="015278.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Pika - how to properly publish from a periodic	background thread?</H1>
+    <B>Aaron Voelker</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Pika%20-%20how%20to%20properly%20publish%20from%20a%20periodic%0A%09background%20thread%3F&In-Reply-To=%3Ca05c76b9-4a8c-413f-afee-ee37b0dfa261%40x32g2000prf.googlegroups.com%3E"
+       TITLE="[rabbitmq-discuss] Pika - how to properly publish from a periodic	background thread?">aaron at contextlogic.com
+       </A><BR>
+    <I>Thu Sep 22 21:26:31 BST 2011</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="015276.html">[rabbitmq-discuss] acks from temporary queues
+</A></li>
+        <LI>Next message: <A HREF="015278.html">[rabbitmq-discuss] Pika - how to properly publish from a periodic background thread?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#15226">[ date ]</a>
+              <a href="thread.html#15226">[ thread ]</a>
+              <a href="subject.html#15226">[ subject ]</a>
+              <a href="author.html#15226">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>I'm using Python 2.6.6, Ubuntu 10.10, and Pika 0.9.5.
+
+I have a situation where I want to publish to a queue from a
+background thread at a periodic interval. The main thread is consuming
+on some different callback.
+
+I assumed (incorrectly) that wrapping my callback and publish in a
+mutex would solve this problem. I ran into some weird behaviour before
+I realized that maybe this isn't the correct approach.
+
+What happens is that the worker I publish to from the background
+thread will send work back to the callback for the main thread.
+Normally, this is fine, but in weird situations (race condition?),
+after a few hours of running my application, it will get Pika into an
+unrecoverable state. Some sample code which duplicates this problem,
+along with the resulting error messages, is included in this message
+in case someone happens to Google for this error message (which got me
+next to nowhere).
+
+What is the correct way to do this? Note that both the callback and
+the scheduler have to have shared access to the same variables (hence
+the mutex), and performance does NOT matter (the scheduler runs once
+per minute, and doesn't do too much.
+
+The worker-&gt;producer looks something like this (run this first and
+keep it running):
+
+#!/usr/bin/python
+
+import pika
+import time
+
+######### Consumer-&gt;Producer Code
+
+connection =
+pika.BlockingConnection(pika.ConnectionParameters('localhost'))
+channel = connection.channel()
+
+channel.queue_declare(queue='test1')
+channel.queue_declare(queue='test2')
+
+def callback(ch, method, properties, body):
+    print &quot;In Callback&quot;, method.routing_key, body
+    channel.basic_publish(exchange='',
+routing_key=properties.reply_to, body=body)
+    ch.basic_ack(delivery_tag = method.delivery_tag)
+
+channel.basic_qos(prefetch_count=5)
+channel.basic_consume(callback, 'test1')
+channel.basic_consume(callback, 'test2')
+channel.start_consuming()
+
+-----------------------------------------------------
+
+And the periodic producer looks something like this:
+
+#!/usr/bin/python
+
+import pika
+import time
+import threading
+
+######### Producer-&gt;Consumer Code
+
+mutex = threading.Lock()
+
+connection =
+pika.BlockingConnection(pika.ConnectionParameters('localhost'))
+channel = connection.channel()
+
+channel.queue_declare(queue='test1')
+channel.queue_declare(queue='test2')
+channel.queue_declare(queue='return_test1')
+channel.queue_declare(queue='return_test2')
+
+def send_msg(life):
+    if life &lt;= 0: return
+    print &quot;Publishing&quot;
+    channel.basic_publish(exchange='', routing_key='test1',
+properties=pika.BasicProperties(reply_to='return_test1'),
+body=str(life))
+
+def callback(ch, method, properties, body):
+    mutex.acquire()
+
+    print &quot;In Callback&quot;, method.routing_key, body
+    send_msg(int(body)-1)
+    ch.basic_ack(delivery_tag = method.delivery_tag)
+
+    mutex.release()
+
+def background_periodic_scheduler():
+    for i in range(2): # only need two iterations for this test
+        time.sleep(2)
+
+        mutex.acquire()
+        for j in range(50):
+            send_msg(3)
+        mutex.release()
+
+threading.Thread(target=background_periodic_scheduler).start()
+
+channel.basic_qos(prefetch_count=5)
+channel.basic_consume(callback, 'return_test1')
+channel.basic_consume(callback, 'return_test2')
+channel.start_consuming()
+
+-----------------------------------------------------
+
+Then upon running this (may take a couple tries!) I get the following
+error message(s):
+
+/usr/local/lib/python2.6/dist-packages/pika/callback.py:69:
+UserWarning: CallbackManager.add: Duplicate callback found for
+&quot;1:Basic.CancelOk&quot;
+  (self.__class__.__name__, prefix, key))
+Traceback (most recent call last):
+  File &quot;./rabbittests2a.py&quot;, line 47, in &lt;module&gt;
+    channel.start_consuming()
+  File &quot;/usr/local/lib/python2.6/dist-packages/pika/adapters/
+blocking_connection.py&quot;, line 293, in start_consuming
+    self.transport.connection.process_data_events()
+  File &quot;/usr/local/lib/python2.6/dist-packages/pika/adapters/
+blocking_connection.py&quot;, line 94, in process_data_events
+    self._handle_read()
+  File &quot;/usr/local/lib/python2.6/dist-packages/pika/adapters/
+base_connection.py&quot;, line 162, in _handle_read
+    self._on_data_available(data)
+  File &quot;/usr/local/lib/python2.6/dist-packages/pika/connection.py&quot;,
+line 589, in _on_data_available
+    frame)                 # Args
+  File &quot;/usr/local/lib/python2.6/dist-packages/pika/callback.py&quot;, line
+124, in process
+    callback(*args, **keywords)
+  File &quot;/usr/local/lib/python2.6/dist-packages/pika/connection.py&quot;,
+line 427, in _on_remote_close
+    self.close(frame.method.reply_code, frame.method.reply_text)
+  File &quot;/usr/local/lib/python2.6/dist-packages/pika/adapters/
+blocking_connection.py&quot;, line 48, in close
+    BaseConnection.close(self, code, text)
+  File &quot;/usr/local/lib/python2.6/dist-packages/pika/connection.py&quot;,
+line 383, in close
+    self._channels[channel_number].close(code, text)
+  File &quot;/usr/local/lib/python2.6/dist-packages/pika/channel.py&quot;, line
+275, in close
+    self.basic_cancel(consumer_tag)
+  File &quot;/usr/local/lib/python2.6/dist-packages/pika/channel.py&quot;, line
+336, in basic_cancel
+    self._on_cancel_ok, [spec.Basic.CancelOk])
+  File &quot;/usr/local/lib/python2.6/dist-packages/pika/adapters/
+blocking_connection.py&quot;, line 205, in rpc
+    self._on_rpc_complete)
+TypeError: 'NoneType' object is not iterable
+ERROR:pika:BlockingConnection: Socket Error on 7: 32
+ERROR:pika:BlockingConnection: Socket is closed
+ERROR:pika:BlockingConnection: Socket is closed
+ERROR:pika:BlockingConnection: Socket is closed
+ERROR:pika:BlockingConnection: Socket is closed
+ERROR:pika:BlockingConnection: Socket is closed
+ERROR:pika:BlockingConnection: Socket is closed
+ERROR:pika:BlockingConnection: Socket is closed
+/usr/local/lib/python2.6/dist-packages/pika/connection.py:642:
+UserWarning: Pika: Write buffer exceeded warning threshold at 1599
+bytes and an estimated 10 frames behind
+  warn(message % (self.outbound_buffer.size, est_frames_behind))
+ERROR:pika:BlockingConnection: Socket is closed
+/usr/local/lib/python2.6/dist-packages/pika/connection.py:642:
+UserWarning: Pika: Write buffer exceeded warning threshold at 1634
+bytes and an estimated 10 frames behind
+  warn(message % (self.outbound_buffer.size, est_frames_behind))
+ERROR:pika:BlockingConnection: Socket is closed
+/usr/local/lib/python2.6/dist-packages/pika/connection.py:642:
+UserWarning: Pika: Write buffer exceeded warning threshold at 1673
+bytes and an estimated 10 frames behind
+  warn(message % (self.outbound_buffer.size, est_frames_behind))
+ERROR:pika:BlockingConnection: Socket is closed
+
+...
+
+ERROR:pika:BlockingConnection: Socket is closed
+/usr/local/lib/python2.6/dist-packages/pika/connection.py:642:
+UserWarning: Pika: Write buffer exceeded warning threshold at 10033
+bytes and an estimated 65 frames behind
+  warn(message % (self.outbound_buffer.size, est_frames_behind))
+ERROR:pika:BlockingConnection: Socket is closed
+/usr/local/lib/python2.6/dist-packages/pika/connection.py:642:
+UserWarning: Pika: Write buffer exceeded warning threshold at 10072
+bytes and an estimated 65 frames behind
+  warn(message % (self.outbound_buffer.size, est_frames_behind))
+ERROR:pika:BlockingConnection: Socket is closed
+/usr/local/lib/python2.6/dist-packages/pika/connection.py:642:
+UserWarning: Pika: Write buffer exceeded warning threshold at 10541
+bytes and an estimated 68 frames behind
+  warn(message % (self.outbound_buffer.size, est_frames_behind))
+
+...
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="015276.html">[rabbitmq-discuss] acks from temporary queues
+</A></li>
+	<LI>Next message: <A HREF="015278.html">[rabbitmq-discuss] Pika - how to properly publish from a periodic background thread?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#15226">[ date ]</a>
+              <a href="thread.html#15226">[ thread ]</a>
+              <a href="subject.html#15226">[ subject ]</a>
+              <a href="author.html#15226">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,139 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Consumer Callback
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Consumer%20Callback&In-Reply-To=%3C9E349AF4-25D2-4871-8E6E-ECF2528A25A9%40rabbitmq.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="014072.html">
+   <LINK REL="Next"  HREF="014192.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Consumer Callback</H1>
+    <B>Steve Powell</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Consumer%20Callback&In-Reply-To=%3C9E349AF4-25D2-4871-8E6E-ECF2528A25A9%40rabbitmq.com%3E"
+       TITLE="[rabbitmq-discuss] Consumer Callback">steve at rabbitmq.com
+       </A><BR>
+    <I>Tue Jul 26 11:21:17 BST 2011</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="014072.html">[rabbitmq-discuss]  Consumer Callback
+</A></li>
+        <LI>Next message: <A HREF="014192.html">[rabbitmq-discuss] Consumer Callback
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#14168">[ date ]</a>
+              <a href="thread.html#14168">[ thread ]</a>
+              <a href="subject.html#14168">[ subject ]</a>
+              <a href="author.html#14168">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Dear fangbot,
+You do not say whether you are using Python or Java (the two languages shown on the tutorials pages) but I will assume it is Java.
+
+&gt;<i> is there a way to create an event
+</I>&gt;<i> such that when a queue gets pushed a message, it automatically calls
+</I>&gt;<i> consumer.nextDelivery somehow
+</I>
+
+The simple answer is 'yes', approximately.  There is a push interface (defined by the Consumer interface) which is driven whenever a message is delivered.
+
+The tutorials use QueueingConsumer, which is a way to isolate the clients engine (the channel thread) from the user's thread.  As you observe, this is a pull interface. QueueingConsumer.nextDelivery() will block until there is a message to return.
+
+If you want to use a push interface (which is what QueueingConsumer uses under the covers) then you are free to create your own Consumer (implementation of the Consumer interface) class, and the handleDelivery() method therein will be driven when a message arrives.  The drawback is that this 'callback' is driven on a RabbitMQ client thread, and (at the moment) you are not permitted to do long-running things on this thread or make channel calls, or block, as this will often result in deadlocks. However, if you can limit what this does, you are free to communicate with another thread of yours, for example to put it on a BlockingQueue (like QueueingConsumer does), or to otherwise trigger another thread to do something.
+
+The easiest (and recommended) way to code your own Consumer is to subclass DefaultConsumer, and override the methods you want to change (in your case handleDelivery()). Take a look at the DefaultConsumer class to see what it does.
+
+Other methods on the Consumer interface are driven if other events occur, like channel close, for example.  Your class can then do the right thing.
+
+This area is currently being reworked -- not to change the interface (much!) but to lift some of the restrictions on the things a callback method can do without causing deadlocks -- which will also see better control of the system resources used by the consumer callbacks.
+
+I hope this helps -- please come back here if you have any more questions; or even if you don't -- we'd like to know how you get on.
+
+Steve Powell  (a happy bunny)
+----------some definitions from the SPD----------
+Rigatoni n. A prime-ministerial grin.
+Nigella n. The next bottle-size up from a Nebuchadnezzar.
+Homily adv. Rather like a frenchman.
+
+On 20 Jul 2011, at 23:26, fangbot wrote:
+
+&gt;<i> 
+</I>&gt;<i> I'm looking to create multiple publishers/subscribers from the main thread
+</I>&gt;<i> that my program is run (i.e. the thread where I have declared my channel).
+</I>&gt;<i> It seems that in the tutorials, the only way for consumers to get a message
+</I>&gt;<i> from the queue its connected to is to explicitly call
+</I>&gt;<i> consumer.nextDelivery(). However, as far as my understanding, in order to
+</I>&gt;<i> constantly check for new publications, this call must reside within a
+</I>&gt;<i> while(true) loop. 
+</I>&gt;<i> 
+</I>&gt;<i> Say I wanted to create a consumer with an anonymous queue and attach it to
+</I>&gt;<i> an exchange. Then, I want to make a publication to that exchange. When that
+</I>&gt;<i> publication is made, the consumer will print something to the console using
+</I>&gt;<i> an overridden nextDelivery(). In order to do this, do I have to basically
+</I>&gt;<i> 
+</I>&gt;<i> 1. Create the consumer/queue and attach it with a routingId to the exchange
+</I>&gt;<i> 2. Publish a method with that routingId to the exchange
+</I>&gt;<i> 3. Invoke the while loop to constantly check for messages
+</I>&gt;<i> 
+</I>&gt;<i> in that order?
+</I>&gt;<i> 
+</I>&gt;<i> If so, then is there a way to support two (or more) consumers to
+</I>&gt;<i> automatically get nextDelivery? It seems that the only way is to write a
+</I>&gt;<i> while loop that goes through every consumer, and calls nextDelivery on that
+</I>&gt;<i> consumer, in an infinite loop. Instead, is there a way to create an event
+</I>&gt;<i> such that when a queue gets pushed a message, it automatically calls
+</I>&gt;<i> consumer.nextDelivery somehow?
+</I>&gt;<i> 
+</I>&gt;<i> Thanks in advance for the reply. I'm fairly new to RabbitMQ, so please
+</I>&gt;<i> forgive me if the question is somewhat basic/has already been answered
+</I>&gt;<i> elsewhere :-D.
+</I>&gt;<i> -- 
+</I>&gt;<i> View this message in context: <A HREF="http://old.nabble.com/Consumer-Callback-tp32103305p32103305.html">http://old.nabble.com/Consumer-Callback-tp32103305p32103305.html</A>
+</I>&gt;<i> Sent from the RabbitMQ mailing list archive at Nabble.com.
+</I>&gt;<i> 
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20110726/fccedb35/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20110726/fccedb35/attachment.htm</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="014072.html">[rabbitmq-discuss]  Consumer Callback
+</A></li>
+	<LI>Next message: <A HREF="014192.html">[rabbitmq-discuss] Consumer Callback
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#14168">[ date ]</a>
+              <a href="thread.html#14168">[ thread ]</a>
+              <a href="subject.html#14168">[ subject ]</a>
+              <a href="author.html#14168">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

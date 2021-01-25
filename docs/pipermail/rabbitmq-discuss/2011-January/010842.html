@@ -1,0 +1,250 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] pika and node.amqp interop
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20pika%20and%20node.amqp%20interop&In-Reply-To=%3C4D3AB598.5030200%40rabbitmq.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="010837.html">
+   <LINK REL="Next"  HREF="010838.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] pika and node.amqp interop</H1>
+    <B>Michael Bridgen</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20pika%20and%20node.amqp%20interop&In-Reply-To=%3C4D3AB598.5030200%40rabbitmq.com%3E"
+       TITLE="[rabbitmq-discuss] pika and node.amqp interop">mikeb at rabbitmq.com
+       </A><BR>
+    <I>Sat Jan 22 10:46:48 GMT 2011</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="010837.html">[rabbitmq-discuss] pika and node.amqp interop
+</A></li>
+        <LI>Next message: <A HREF="010838.html">[rabbitmq-discuss] Missing erlang functions?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#10842">[ date ]</a>
+              <a href="thread.html#10842">[ thread ]</a>
+              <a href="subject.html#10842">[ subject ]</a>
+              <a href="author.html#10842">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi Dan,
+
+&gt;<i> I am new to rabbitmq. I got the python &quot;getting started&quot; examples to
+</I>&gt;<i> work just fine.
+</I>&gt;<i> I would like to be able to send messages between node.js (using
+</I>&gt;<i> node.amqp) and python/pika.
+</I> &gt;
+&gt;<i> I can successfully receive a message in node.js using this code:
+</I>&gt;<i>
+</I>&gt;<i> [receiver - node.js]
+</I>&gt;<i> var sys = require('sys');
+</I>&gt;<i> var amqp = require('./amqp');
+</I>&gt;<i>
+</I>&gt;<i> var connection = amqp.createConnection({ host: 'localhost' });
+</I>&gt;<i>
+</I>&gt;<i> // Wait for connection to become established.
+</I>&gt;<i> connection.addListener('ready', function () {
+</I>&gt;<i>    // Create a queue and bind to all messages.
+</I>&gt;<i>    // Use the default 'amq.topic' exchange
+</I>&gt;<i>
+</I>&gt;<i>    var q = connection.queue('my-queue');
+</I>&gt;<i>    // Catch all messages
+</I>&gt;<i>    q.bind('#');
+</I>&gt;<i>
+</I>&gt;<i>    // Receive messages
+</I>&gt;<i>    q.subscribe(function (message) {
+</I>&gt;<i>      // Print messages to stdout
+</I>&gt;<i>      sys.puts(sys.inspect(message));
+</I>&gt;<i>    });
+</I>&gt;<i> });
+</I>&gt;<i>
+</I>&gt;<i> [sender - python/pika]
+</I>&gt;<i> #!/usr/bin/env python
+</I>&gt;<i> import pika
+</I>&gt;<i>
+</I>&gt;<i> connection = pika.AsyncoreConnection(pika.ConnectionParameters(
+</I>&gt;<i>          host='localhost'))
+</I>&gt;<i> channel = connection.channel()
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> channel.basic_publish(exchange='',
+</I>&gt;<i>                        routing_key='my-queue',
+</I>&gt;<i>                        body='Hello World!')
+</I>&gt;<i> print &quot; [x] Sent 'Hello World!'&quot;
+</I>&gt;<i> connection.close()
+</I>
+You should be aware that node-amqp, at least Ryan's original and most 
+forks of it, make some unorthodox choices for parameter defaults and 
+behaviour, which to be fair are probably inherited from the EventMachine 
+AMQP client.
+
+In particular, the exchange that's published or bound to, if none is 
+given, is &quot;amq.topic&quot;.  This is directly at odds with AMQP, for which an 
+empty exchange name means the &quot;default exchange&quot; defined in the 
+specification; that is, route directly to the queue named in the routing 
+key.
+
+So your example above is working by coincidence -- you don't need to 
+bind the queue in the node.js code, since your Python code is 
+effectively sending straight to the queue.  I.e., the node.js code sets up
+
+(amq.topic) --&quot;#&quot;--&gt; [ | | my-queue | | ]
+
+but the message sent in the Python code actually follows
+
+(default) --&quot;my-queue&quot;--&gt; [ | | my-queue | | ]
+
+&gt;<i> But I can't go the other way. I'm not sure that the message sent by
+</I>&gt;<i> node.js is going anywhere. I've looked at the unit tests for node.amqp
+</I>&gt;<i> (they all pass) but there is something I am missing, probably to do with
+</I>&gt;<i> exchanges or something. I'd like to do something like this:
+</I>&gt;<i>
+</I>&gt;<i> [sender - node.js]
+</I>&gt;<i> var sys = require('sys');
+</I>&gt;<i> var amqp = require('./amqp');
+</I>&gt;<i>
+</I>&gt;<i> var connection = amqp.createConnection({ host: 'localhost' });
+</I>&gt;<i>
+</I>&gt;<i> // Wait for connection to become established.
+</I>&gt;<i> connection.addListener('ready', function () {
+</I>&gt;<i>    // Create a queue and bind to all messages.
+</I>&gt;<i>    // Use the default 'amq.topic' exchange
+</I>&gt;<i>    connection.publish(&quot;my-queue&quot;, {random_key:&quot;this is my message&quot;});
+</I>&gt;<i>    connection.end();
+</I>&gt;<i> });
+</I>&gt;<i>
+</I>&gt;<i> [receiver - python/pika]
+</I>&gt;<i> #!/usr/bin/env python
+</I>&gt;<i> import pika
+</I>&gt;<i> import sys
+</I>&gt;<i>
+</I>&gt;<i> connection = pika.AsyncoreConnection(pika.ConnectionParameters(
+</I>&gt;<i>          host='localhost'))
+</I>&gt;<i> channel = connection.channel()
+</I>&gt;<i>
+</I>&gt;<i> print ' [*] Waiting for messages. To exit press CTRL+C'
+</I>&gt;<i>
+</I>&gt;<i> def callback(ch, method, properties, body):
+</I>&gt;<i>      print body,
+</I>&gt;<i>      sys.stdout.flush()
+</I>&gt;<i> channel.basic_consume(callback,
+</I>&gt;<i>                        queue='my-queue',
+</I>&gt;<i>                        no_ack=True)
+</I>&gt;<i>
+</I>&gt;<i> pika.asyncore_loop()
+</I>
+This way around (presuming there's a restart in-between runs), node.js 
+sends to amq.topic, but nothing is bound there, so the message is discarded.
+
+You might try binding the queue, in the Python, to the exchange 
+&quot;amq.topic&quot;.  You should probably also declare it.
+
+If you actually don't want to use &quot;amq.topic&quot;, and you probably don't if 
+you can help it, you might declare your own exchange and use that.
+
+I'm not sure there's a way to send to the default exchange in node-amqp. 
+  I fixed this, and some other things, in my fork, but it's a bit behind 
+the curve at the minute.
+<A HREF="http://github.com/squaremo/node-amqp">http://github.com/squaremo/node-amqp</A>
+
+&gt;<i> But nothing happens.
+</I>&gt;<i>
+</I>&gt;<i> Another thing (possibly related?) that I run into is if I create a queue
+</I>&gt;<i> in python using, e.g.:
+</I>&gt;<i>
+</I>&gt;<i> channel.queue_declare(queue='hello')
+</I>&gt;<i>
+</I>&gt;<i> Then, in node.js, when I do:
+</I>&gt;<i>
+</I>&gt;<i>    var q = connection.queue('hello');
+</I>&gt;<i>
+</I>&gt;<i> I get this:
+</I>&gt;<i>
+</I>&gt;<i> Unhandled channel error: PRECONDITION_FAILED - parameters for queue
+</I>&gt;<i> 'hello' in vhost '/' not equivalent
+</I>&gt;<i>
+</I>&gt;<i> events:12
+</I>&gt;<i>          throw arguments[1];
+</I>&gt;<i>                         ^
+</I>&gt;<i> Error: PRECONDITION_FAILED - parameters for queue 'hello' in vhost '/'
+</I>&gt;<i> not equivalent
+</I>&gt;<i>      at Queue._onMethod
+</I>&gt;<i> (/Users/dtenenba/dev/dev-amqp/node-amqp/amqp.js:1390:15)
+</I>&gt;<i>      at Connection._onMethod
+</I>&gt;<i> (/Users/dtenenba/dev/dev-amqp/node-amqp/amqp.js:784:28)
+</I>&gt;<i>      at AMQPParser.onMethod
+</I>&gt;<i> (/Users/dtenenba/dev/dev-amqp/node-amqp/amqp.js:698:12)
+</I>&gt;<i>      at AMQPParser._parseMethodFrame
+</I>&gt;<i> (/Users/dtenenba/dev/dev-amqp/node-amqp/amqp.js:415:10)
+</I>&gt;<i>      at AMQPParser.execute
+</I>&gt;<i> (/Users/dtenenba/dev/dev-amqp/node-amqp/amqp.js:196:20)
+</I>&gt;<i>      at Connection.&lt;anonymous&gt;
+</I>&gt;<i> (/Users/dtenenba/dev/dev-amqp/node-amqp/amqp.js:731:12)
+</I>&gt;<i>      at Connection.emit (events:31:17)
+</I>&gt;<i>      at IOWatcher.callback (net:489:16)
+</I>&gt;<i>      at node.js:773:9
+</I>&gt;<i>
+</I>&gt;<i> It appears that python's idea of a 'hello' queue is different from that
+</I>&gt;<i> of node.amqp's. How can I do this so that I don't receive this error?
+</I>
+You can provide explicit values for the other parameters; that is (with 
+parameter names from memory ..),
+
+[node.js]
+var q = connection.queue(&quot;hello&quot;,
+           { autoDelete: true, durable: false, exclusive: false });
+
+[Python]
+q = channel.queue_declare(queue='hello',
+                           auto_delete=true,
+                           durable=false,
+                           exclusive=false)
+
+
+I suspect the libraries differ only in the default value for 
+auto-delete, so supplying that may be enough.
+
+&gt;<i> Hope this is the right place for this question. If not please tell me
+</I>&gt;<i> where I should post it.
+</I>
+This is a good place.
+
+Regards,
+Michael
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="010837.html">[rabbitmq-discuss] pika and node.amqp interop
+</A></li>
+	<LI>Next message: <A HREF="010838.html">[rabbitmq-discuss] Missing erlang functions?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#10842">[ date ]</a>
+              <a href="thread.html#10842">[ thread ]</a>
+              <a href="subject.html#10842">[ subject ]</a>
+              <a href="author.html#10842">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

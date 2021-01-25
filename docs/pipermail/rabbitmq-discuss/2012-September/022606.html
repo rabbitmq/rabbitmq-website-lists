@@ -1,0 +1,153 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Fwd: .Net RabbitMQ.Client Issue: Deadlock on	ConnectionShutdown
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Fwd%3A%20.Net%20RabbitMQ.Client%20Issue%3A%20Deadlock%20on%0A%09ConnectionShutdown&In-Reply-To=%3CCAAzMECnYZByaUQUCAguhOnOu%3DJAAKoKZxq-zGfsj-zGFj2owTg%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="022604.html">
+   <LINK REL="Next"  HREF="022634.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Fwd: .Net RabbitMQ.Client Issue: Deadlock on	ConnectionShutdown</H1>
+    <B>Derek Greer</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Fwd%3A%20.Net%20RabbitMQ.Client%20Issue%3A%20Deadlock%20on%0A%09ConnectionShutdown&In-Reply-To=%3CCAAzMECnYZByaUQUCAguhOnOu%3DJAAKoKZxq-zGfsj-zGFj2owTg%40mail.gmail.com%3E"
+       TITLE="[rabbitmq-discuss] Fwd: .Net RabbitMQ.Client Issue: Deadlock on	ConnectionShutdown">dbgreer at gmail.com
+       </A><BR>
+    <I>Fri Sep 21 15:48:59 BST 2012</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="022604.html">[rabbitmq-discuss] Fwd: .Net RabbitMQ.Client Issue: Deadlock on ConnectionShutdown
+</A></li>
+        <LI>Next message: <A HREF="022634.html">[rabbitmq-discuss] Fwd: .Net RabbitMQ.Client Issue: Deadlock on ConnectionShutdown
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#22606">[ date ]</a>
+              <a href="thread.html#22606">[ thread ]</a>
+              <a href="subject.html#22606">[ subject ]</a>
+              <a href="author.html#22606">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>I appreciate the guidance that you shouldn't call IModel.Close() from a
+shutdown callback due to the way the code is currently designed, but I
+submit that this is a design flaw within the .Net client and that ideally
+you should be able to do this.
+
+As far as considering connection renewal rather than channel renewal, I
+don't understand how this would be possible. You yourself said:
+
+*&quot;It is not possible to maintain the previous subscription to the broker*
+*and somehow inject a new channel and/or connection into it. You will*
+*need to re-establish all contained channels and all associated*
+*subscriptions when the connection shuts down.&quot;*
+
+
+
+If I'm misunderstanding what you mean by this, please provide a bit more
+detail as to what you're referring to.
+
+
+Currently, I'm working around the issue with the following code:
+
+//
+------------------------------------------------------------------------------------------
+// Closing/disposing channels on IConnection.ConnectionShutdown causes a
+deadlock, so
+// the ISession.SessionShutdown event is used here to infer a connection
+shutdown.
+//
+------------------------------------------------------------------------------------------
+((ConnectionBase) connection).m_session0.SessionShutdown +=
+UnexpectedConnectionShutdown;
+
+This obviously isn't ideal, as the SessionShutdown isn't intended to be
+part of the public API.  I also not completely sure why it works, I just
+know that it satisfies my integration test suite.
+
+Again, the problem I'm trying to address is to model a Subscription which
+can be cancelled on demand (i.e. the user wants to maintain the connection,
+but wants to unsubscribe from receiving a given message type), and which
+can be renewed when a new connection is obtained.  Using the
+IModel.ModelShutdown event here isn't what someone would want to do from a
+design perspective, as there are things I want to do on connection shutdown
+that I don't want to do on every model shutdown.  It just simply isn't the
+right event for the case at hand.  I also can't just not call
+IModel.Close() in all cases.
+
+Bottom line, I see a design flaw here that needs to be recognized and
+addressed.
+
+Speaking of which, this mailing list is a horrible way to deal with product
+specific bug reports.  Why doesn't your team use github or some other
+facility which has a proper bug tracking system?
+
+
+
+
+
+
+
+On Fri, Sep 21, 2012 at 9:25 AM, Emile Joubert &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">emile at rabbitmq.com</A>&gt; wrote:
+
+&gt;<i> Hi Derek,
+</I>&gt;<i>
+</I>&gt;<i> On 21/09/12 14:59, Derek Greer wrote:
+</I>&gt;<i> &gt; I'm wanting to loop through all my
+</I>&gt;<i> &gt; Subscription instances and call Renew() after I have a new connection.
+</I>&gt;<i> &gt;  Part of the Renew() logic is to stop the current thread, and part of the
+</I>&gt;<i> &gt; normal course of stopping is to attempt to close the channel/model.
+</I>&gt;<i>
+</I>&gt;<i> You shouldn't close the channel/IModel from within a shutdown callback.
+</I>&gt;<i> Also consider performing connection re-establishment rather than channel
+</I>&gt;<i> re-establishment/renewal.
+</I>&gt;<i>
+</I>&gt;<i> -Emile
+</I>&gt;<i>
+</I>&gt;<i>
+</I>
+
+-- 
+___________________________________________
+Derek Greer
+<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">dbgreer at gmail.com</A>     | @derekgreer &lt;<A HREF="http://twitter.com/derekgreer">http://twitter.com/derekgreer</A>&gt;
+lostechies.com &lt;<A HREF="http://derekgreer.lostechies.com/">http://derekgreer.lostechies.com/</A>&gt; |
+freshbrewedcode.com&lt;<A HREF="http://derekgreer.freshbrewedcode.com">http://derekgreer.freshbrewedcode.com</A>&gt;
+ | aspiringcraftsman.com
+___________________________________________
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20120921/e83595d1/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20120921/e83595d1/attachment.htm</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="022604.html">[rabbitmq-discuss] Fwd: .Net RabbitMQ.Client Issue: Deadlock on ConnectionShutdown
+</A></li>
+	<LI>Next message: <A HREF="022634.html">[rabbitmq-discuss] Fwd: .Net RabbitMQ.Client Issue: Deadlock on ConnectionShutdown
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#22606">[ date ]</a>
+              <a href="thread.html#22606">[ thread ]</a>
+              <a href="subject.html#22606">[ subject ]</a>
+              <a href="author.html#22606">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

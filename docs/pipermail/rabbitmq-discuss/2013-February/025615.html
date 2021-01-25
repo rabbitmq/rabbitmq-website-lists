@@ -1,0 +1,143 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] How to do blocking asynchronously with Pika? I want 1 message at a time and stop receiving until I'm ready again.
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20How%20to%20do%20blocking%20asynchronously%20with%20Pika%3F%0A%20I%20want%201%20message%20at%20a%20time%20and%20stop%20receiving%20until%20I%27m%20ready%20again.&In-Reply-To=%3C51266FC1.7090508%40rabbitmq.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="025614.html">
+   <LINK REL="Next"  HREF="025616.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] How to do blocking asynchronously with Pika? I want 1 message at a time and stop receiving until I'm ready again.</H1>
+    <B>Matthias Radestock</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20How%20to%20do%20blocking%20asynchronously%20with%20Pika%3F%0A%20I%20want%201%20message%20at%20a%20time%20and%20stop%20receiving%20until%20I%27m%20ready%20again.&In-Reply-To=%3C51266FC1.7090508%40rabbitmq.com%3E"
+       TITLE="[rabbitmq-discuss] How to do blocking asynchronously with Pika? I want 1 message at a time and stop receiving until I'm ready again.">matthias at rabbitmq.com
+       </A><BR>
+    <I>Thu Feb 21 19:04:33 GMT 2013</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="025614.html">[rabbitmq-discuss] How to do blocking asynchronously with Pika? I want 1 message at a time and stop receiving until I'm ready again.
+</A></li>
+        <LI>Next message: <A HREF="025616.html">[rabbitmq-discuss] How to do blocking asynchronously with Pika? I want 1 message at a time and stop receiving until I'm ready again.
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#25615">[ date ]</a>
+              <a href="thread.html#25615">[ thread ]</a>
+              <a href="subject.html#25615">[ subject ]</a>
+              <a href="author.html#25615">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Scott,
+
+On 21/02/13 18:11, Scott Chapman wrote:
+&gt;<i> If 1st message arrives, I ack it, and I am processing it then 2nd message
+</I>&gt;<i> arrives, it will be held _in_the_client_?
+</I>
+Yes.
+
+&gt;<i> So if the client gets rebooted, the message will be lost?
+</I>
+No. The server holds on to messages until they have been acknowledged.
+
+You may want to read 
+<A HREF="http://www.rabbitmq.com/tutorials/tutorial-two-python.html,">http://www.rabbitmq.com/tutorials/tutorial-two-python.html,</A> if you 
+haven't done so already.
+
+&gt;<i> It appears that I can set the basic.qos prefetch-count to zero to solve
+</I>&gt;<i> this problem?
+</I>
+No. Zero means &quot;unlimited&quot;. But there is no problem to start with.
+
+&gt;<i> If I decide to cancel the consumer,  I assume the proper order of events
+</I>&gt;<i> would be:
+</I>&gt;<i>
+</I>&gt;<i> Enable Consumer
+</I>&gt;<i> Receive message 1
+</I>&gt;<i> Cancel Consumer
+</I>&gt;<i> Ack Message
+</I>&gt;<i> Process Message
+</I>&gt;<i> -&gt; back to Enable Consumer.
+</I>
+What do you want to happen when the client crashes during Process Message?
+
+The typical consumer sequence, in AMQP commands, is
+
+- basic.qos{prefetch=n}
+- basic.consume
+- on basic.deliver (i.e. receiving of a message)
+   - process message
+   - basic.ack
+
+If the prefetch is set to 1 (though see note below), we can guarantee 
+that the client only ever has at most one message sent to it until it 
+issues an ack. And sending the ack after processing ensures that if 
+anything goes wrong during processing, e.g. the client crashes, then the 
+server will requeue the message, so other clients (or the same client 
+when it reconnects) can process it.
+
+In some circumstances you may want to do the following instead:
+
+- basic.qos{prefetch=n}
+- basic.consume
+- on basic.deliver
+   - basic.cancel
+   - process message until a safe point from which the client can recover
+   - basic.ack
+   - do more, possibly expensive, processing of the message
+   - basic.consume
+
+which is closer to what you envisaged. But that's a lot more complex and 
+expensive, so only warranted if the workload fits that special pattern 
+of message processing being very expensive and splittable into two phases.
+
+&gt;<i> I think one would not want to ACK the message before canceling the
+</I>&gt;<i> consumer because it might immediately dump another message into the
+</I>&gt;<i> consumer?
+</I>
+Correct.
+
+Now back to setting the prefetch. For maximum performance you'd want to 
+tune that s.t. whenever the client has finished processing a message 
+then the next message has just arrived from the server moments earlier. 
+That way the client never sits there idle waiting for a message or, 
+conversely, buffers a whole bunch of messages that could be processed by 
+other consumers. The right figure here is highly dependent on workload 
+and network latency.
+
+
+Regards,
+
+Matthias.
+</PRE>
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="025614.html">[rabbitmq-discuss] How to do blocking asynchronously with Pika? I want 1 message at a time and stop receiving until I'm ready again.
+</A></li>
+	<LI>Next message: <A HREF="025616.html">[rabbitmq-discuss] How to do blocking asynchronously with Pika? I want 1 message at a time and stop receiving until I'm ready again.
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#25615">[ date ]</a>
+              <a href="thread.html#25615">[ thread ]</a>
+              <a href="subject.html#25615">[ subject ]</a>
+              <a href="author.html#25615">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

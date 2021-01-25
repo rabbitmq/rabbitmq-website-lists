@@ -1,0 +1,151 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Weird Crash (91MB message over STOMP)	[Reproducible]
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20Weird%20Crash%20%2891MB%20message%20over%20STOMP%29%0A%09%5BReproducible%5D&In-Reply-To=50c8ffe90908080129u64c7f775rd52d5283ba3a5ade%40mail.gmail.com">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="004443.html">
+   <LINK REL="Next"  HREF="004447.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Weird Crash (91MB message over STOMP)	[Reproducible]</H1>
+    <B>Matthias Radestock</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20Weird%20Crash%20%2891MB%20message%20over%20STOMP%29%0A%09%5BReproducible%5D&In-Reply-To=50c8ffe90908080129u64c7f775rd52d5283ba3a5ade%40mail.gmail.com"
+       TITLE="[rabbitmq-discuss] Weird Crash (91MB message over STOMP)	[Reproducible]">matthias at lshift.net
+       </A><BR>
+    <I>Sat Aug  8 10:32:31 BST 2009</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="004443.html">[rabbitmq-discuss] Weird Crash (91MB message over STOMP)	[Reproducible]
+</A></li>
+        <LI>Next message: <A HREF="004447.html">[rabbitmq-discuss] Weird Crash (91MB message over STOMP)	[Reproducible]
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#4446">[ date ]</a>
+              <a href="thread.html#4446">[ thread ]</a>
+              <a href="subject.html#4446">[ subject ]</a>
+              <a href="author.html#4446">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Darien,
+
+Darien Kindlund wrote:
+&gt;<i> Actually, this problem is a bit worse.... apparently, when RabbitMQ
+</I>&gt;<i> restarts and recovers the persister -- even persistent messages marked
+</I>&gt;<i> 'ready' on OTHER durable queues are NOT retrievable by other STOMP
+</I>&gt;<i> clients.... I get the same type of error in the rabbit.log:
+</I>&gt;<i> 
+</I>&gt;<i> =ERROR REPORT==== 8-Aug-2009::04:21:16 ===
+</I>&gt;<i> STOMP Reply command unhandled: {'basic.deliver',
+</I>&gt;<i>                                    &lt;&lt;&quot;Q_1.manager.workers&quot;&gt;&gt;,
+</I>&gt;<i>                                    1,
+</I>&gt;<i>                                    false,
+</I>&gt;<i>                                    &lt;&lt;&quot;events&quot;&gt;&gt;,
+</I>&gt;<i>                                    &lt;&lt;&quot;1.job.create.job.urls.job_alerts&quot;&gt;&gt;}
+</I>
+Right. I think I know what the problem is, and it is indeed a bug in the 
+STOMP adapter which causes it to barf when attempting to deliver any 
+message that was recovered from the persister.
+
+&gt;<i> The unit test case for this would be:
+</I>&gt;<i> 1) Create a durable exchange
+</I>&gt;<i> 2) Create a durable queue
+</I>&gt;<i> 3) Bind the queue to the exchange
+</I>&gt;<i> 4) Make sure the queue has no consumers subscribed
+</I>&gt;<i> 5) Send a small (normal) persistent message to the queue
+</I>&gt;<i> 6) Crash RabbitMQ by sending a large message to a different, unrelated queue
+</I>&gt;<i> 7) Kill epmd
+</I>&gt;<i> 8) Restart RabbitMQ
+</I>&gt;<i> 9) Verify the (normal) message still exists via rabbitmqctl
+</I>&gt;<i> 10) Start STOMP consumer and attempt to subscribe to the queue
+</I>&gt;<i> 11) STOMP consumer waits, RabbitMQ generates the log message, but no
+</I>&gt;<i> persistent (normal) message gets delivered
+</I>
+You should be able to skip steps 6 and 7, i.e. just bounce rabbit 
+normally, and still see the problem.
+
+&gt;<i> I see the 'unacknowledged messages' after a start up the STOMP
+</I>&gt;<i> clients.
+</I>
+*phew*. That is much more plausible, and means there is unlikely to be a 
+bug in the rabbit core.
+
+&gt;<i> So, I'm thinking the order of operations is:
+</I>&gt;<i> 1) Unacknowledged messages exist on the queue
+</I>&gt;<i> 2) RabbitMQ dies
+</I>&gt;<i> 3) RabbitMQ starts up
+</I>&gt;<i> 4) Recovery mode starts, marks all un-ack'd messages as 'ready'
+</I>&gt;<i> 5) STOMP clients connect
+</I>&gt;<i> 6) RabbitMQ generates the STOMP error
+</I>&gt;<i> 7) I check the rabbitmqctl output, and see that there are un-ack'd messages
+</I>&gt;<i> 
+</I>&gt;<i> To be honest, I can't seem to replicate the issue where the STOMP
+</I>&gt;<i> clients disconnect and the messages remain 'un-ack'd' -- I'm thinking
+</I>&gt;<i> this error may be transient or somehow a wierd corner case.  If I ever
+</I>&gt;<i> encounter that scenario again, I'll be sure to save the mnesia
+</I>&gt;<i> directory at that point.
+</I>
+Makes sense. There may well be a delay between the error being generated 
+and the messages being moved back into the 'ready' state, particularly, 
+say, when rabbit is busy dumping a large error message to a log file.
+
+&gt;<i> I don't have a pure AMQP test client, but I'm curious if this error
+</I>&gt;<i> condition exists if the large message were sent over AMQP instead of
+</I>&gt;<i> STOMP...
+</I>
+That we have definitely tested. And no, it doesn't cause an error.
+
+
+So, in summary, I think you have managed to uncover three bugs in the 
+STOMP adapter:
+
+1) attempting to deliver messages recovered from the persister via STOMP 
+causes an error
+
+2) STOMP client disconnects can result in huge error messages being logged
+
+3) sending large messages via STOMP causes rabbit to die
+
+
+Thanks for your help in tracking down these problems.
+
+
+I have one last request: Would it be possible for you to construct a 
+simple test case for 3? Ideally I want something along the lines of &quot;1) 
+start a clean (i.e. no existing db) rabbit with stomp enabled, 2) run 
+this program, 3) see rabbit die&quot;. Based on your investigation so far, 
+the program in question could perhaps be as simple as creating a large 
+message and then attempting to send it over STOMP.
+
+
+Regards,
+
+Matthias.
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="004443.html">[rabbitmq-discuss] Weird Crash (91MB message over STOMP)	[Reproducible]
+</A></li>
+	<LI>Next message: <A HREF="004447.html">[rabbitmq-discuss] Weird Crash (91MB message over STOMP)	[Reproducible]
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#4446">[ date ]</a>
+              <a href="thread.html#4446">[ thread ]</a>
+              <a href="subject.html#4446">[ subject ]</a>
+              <a href="author.html#4446">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

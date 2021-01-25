@@ -1,0 +1,174 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] major failure when clearing large queue	backlog
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20major%20failure%20when%20clearing%20large%20queue%0A%09backlog&In-Reply-To=%3CCAHiEoM6wKfw8q_tDYjumG6HCOdr8G%3D7yqg8E4yZF50uaE4hmaw%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="014545.html">
+   <LINK REL="Next"  HREF="014562.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] major failure when clearing large queue	backlog</H1>
+    <B>Aaron Westendorf</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20major%20failure%20when%20clearing%20large%20queue%0A%09backlog&In-Reply-To=%3CCAHiEoM6wKfw8q_tDYjumG6HCOdr8G%3D7yqg8E4yZF50uaE4hmaw%40mail.gmail.com%3E"
+       TITLE="[rabbitmq-discuss] major failure when clearing large queue	backlog">aaron at agoragames.com
+       </A><BR>
+    <I>Mon Aug 15 18:29:23 BST 2011</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="014545.html">[rabbitmq-discuss] major failure when clearing large queue backlog
+</A></li>
+        <LI>Next message: <A HREF="014562.html">[rabbitmq-discuss] major failure when clearing large queue backlog
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#14556">[ date ]</a>
+              <a href="thread.html#14556">[ thread ]</a>
+              <a href="subject.html#14556">[ subject ]</a>
+              <a href="author.html#14556">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>I have seen those log files of which you speak. They are ..... large, to say
+the least.
+
+I just checked in to app and SASL and there's nothing from that time frame.
+On the host which had the queue in question, the best I have is 78k SASL
+messages over the course of the day that look like the one I pasted below.
+
+=SUPERVISOR REPORT==== 9-Aug-2011::12:19:16 ===
+     Supervisor: {&lt;0.7200.4&gt;,rabbit_channel_sup_sup}
+     Context:    shutdown_error
+     Reason:     shutdown
+     Offender:   [{pid,&lt;0.15122.24&gt;},
+                  {name,channel_sup},
+                  {mfa,{rabbit_channel_sup,start_link,[]}},
+                  {restart_type,temporary},
+                  {shutdown,infinity},
+                  {child_type,supervisor}]
+
+
+I can email you logs, but they're really not exciting. It's all just noise
+as messages were published and consumers had yet to initialize and declare
+exchanges, queues and bindings.
+
+I assume you have tests for spooling to disk when rabbit is low on memory.
+Has this been tested in a cluster situation such as I described?
+
+I checked our configurations, and I wonder if this is what caused the
+problem:
+[{rabbit, [{vm_memory_high_watermark, 0}, {cluster_nodes,
+['artemis','hermes']}]}].
+
+
+-Aaron
+
+
+
+
+
+On Mon, Aug 15, 2011 at 9:21 AM, Matthew Sackman &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">matthew at rabbitmq.com</A>&gt;wrote:
+
+&gt;<i> Hi Aaron,
+</I>&gt;<i>
+</I>&gt;<i> On Fri, Aug 12, 2011 at 02:27:25PM -0400, Aaron Westendorf wrote:
+</I>&gt;<i> &gt; We've put two new rabbit 2.5 hosts into production at the same time as we
+</I>&gt;<i> &gt; performed some other major upgrades to our software on 9 August. As
+</I>&gt;<i> &gt; designed, our messages queued up in rabbit, and we slowly consumed them.
+</I>&gt;<i> &gt; When the queues were empty, rabbit blew up and took out both hosts in the
+</I>&gt;<i> &gt; cluster.
+</I>&gt;<i>
+</I>&gt;<i> Not quite as designed. Do you have the logs available for these machines
+</I>&gt;<i> from as they blew up that you can send us (maybe off list)?
+</I>&gt;<i>
+</I>&gt;<i> &gt; Shortly after the queues drained, rabbit became completely unresponsive.
+</I>&gt;<i> Our
+</I>&gt;<i> &gt; `watch` process to list_queues and check on the state stopped running. We
+</I>&gt;<i> &gt; observed heavy swap churn via kswapd[0-9]+. It appeared that rabbit was
+</I>&gt;<i> &gt; trying to load in all of the data that it had paged to disk.  I've
+</I>&gt;<i> attached
+</I>&gt;<i> &gt; graphs that show when this event occurred, but they're the weekly rollups
+</I>&gt;<i> so
+</I>&gt;<i> &gt; it's hidden in the noise. The &quot;max&quot; column is the best record of the
+</I>&gt;<i> limits
+</I>&gt;<i> &gt; that were hit, especially the &quot;committed&quot; value which is significantly
+</I>&gt;<i> &gt; higher than the 8GB of RAM available.
+</I>&gt;<i>
+</I>&gt;<i> To me, this sounds like Rabbit was about to crash. Sadly, Erlang is very
+</I>&gt;<i> very poor at string handling. When processes in Erlang crash, they have
+</I>&gt;<i> their last known state, stacktrace, and &quot;last message in&quot; dumped to the
+</I>&gt;<i> log. This is fantastic from a debugging pov, but Erlang is so awful at
+</I>&gt;<i> converting all this data to a string to put into the log, that I
+</I>&gt;<i> regularly see Erlang eat GBs of RAM, eventually running out and then
+</I>&gt;<i> swapping to death when converting a few MB of state to a string. This
+</I>&gt;<i> seems to match what happened to you.
+</I>&gt;<i>
+</I>&gt;<i> However, Rabbit certainly shouldn't have crashed, and we've had very few
+</I>&gt;<i> crash reports with 2.5.1. It's possible that the logs contain at least
+</I>&gt;<i> part of the reason for the crash, and if so, they'd help a lot. But
+</I>&gt;<i> other than that there's very little for us to go on to try and help out.
+</I>&gt;<i>
+</I>&gt;<i> If you have the logs available and if they contain errors then they'd be
+</I>&gt;<i> of great help. Has Rabbit been behaving itself since or did you
+</I>&gt;<i> downgrade back to your previously known-good version?
+</I>&gt;<i>
+</I>&gt;<i> Best wishes,
+</I>&gt;<i>
+</I>&gt;<i> Matthew
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>&gt;<i>
+</I>
+
+
+-- 
+Aaron Westendorf
+Senior Software Engineer
+Agora Games
+359 Broadway
+Troy, NY 12180
+Phone: 518.268.1000
+<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">aaron at agoragames.com</A>
+www.agoragames.com
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20110815/54947f12/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20110815/54947f12/attachment.htm</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="014545.html">[rabbitmq-discuss] major failure when clearing large queue backlog
+</A></li>
+	<LI>Next message: <A HREF="014562.html">[rabbitmq-discuss] major failure when clearing large queue backlog
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#14556">[ date ]</a>
+              <a href="thread.html#14556">[ thread ]</a>
+              <a href="subject.html#14556">[ subject ]</a>
+              <a href="author.html#14556">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

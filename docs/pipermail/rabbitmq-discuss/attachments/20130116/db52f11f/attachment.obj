@@ -1,0 +1,97 @@
+﻿using System;
+using RabbitMQ.Client;
+
+namespace ConsoleApplication2
+{
+    class Program
+    {
+
+        const int TimeOutBeforeGiveUp = 10000;
+        static void Main(string[] args)
+        {
+            var r = new Random();
+
+            string exchangeName = "test" + r.Next();
+            int nbMessages = 1000;
+            var connFactory = new ConnectionFactory
+            {
+                HostName = "localhost",
+                Port = 5672,
+                UserName = ConnectionFactory.DefaultUser,
+                Password = ConnectionFactory.DefaultPass,
+                VirtualHost = ConnectionFactory.DefaultVHost,
+                RequestedHeartbeat = 60
+            };
+            var connPublisher = connFactory.CreateConnection();
+            var modelPublisher = connPublisher.CreateModel();
+
+            modelPublisher.ExchangeDeclare(exchangeName, "x-consistent-hash", false, true, null);
+            var qName1 = exchangeName + "Q1";
+
+            var connConsumer1 = connFactory.CreateConnection();
+            var modelConsumer1 = connConsumer1.CreateModel();
+
+            modelConsumer1.QueueDeclare(qName1, false, true, true, null);
+            modelConsumer1.QueueBind(qName1, exchangeName, "20");
+
+            
+            byte[] messageBodyBytes = System.Text.Encoding.UTF8.GetBytes("Hello, world!");
+            for(var i=0;i<nbMessages;++i)
+                modelPublisher.BasicPublish(exchangeName, r.Next().ToString(), null, messageBodyBytes);
+            Console.WriteLine("Sent "+ nbMessages+" messages");
+
+            var received1 = Receive(nbMessages, qName1, modelConsumer1);
+            Console.WriteLine("Received "+received1 + (received1 == nbMessages ? " ok" : " not ok"));
+            Console.ReadKey();
+
+            modelConsumer1.Close();
+
+
+            var qName2 = exchangeName + "Q2";
+            modelPublisher.ExchangeDeclare(exchangeName, "x-consistent-hash", false, true, null);
+            var connConsumer2 = connFactory.CreateConnection();
+            var modelConsumer2 = connConsumer2.CreateModel();
+
+            modelConsumer2.QueueDeclare(qName2, false, true, true, null);
+            modelConsumer2.QueueBind(qName2, exchangeName, "20");
+
+            for (var i = 0; i < nbMessages; ++i)
+                modelPublisher.BasicPublish(exchangeName, r.Next().ToString(), null, messageBodyBytes);
+            Console.WriteLine("Sent " + nbMessages + " messages");
+
+            var received2 = Receive(nbMessages, qName2, modelConsumer2);
+            Console.WriteLine("Received " + received2 + (received2 == nbMessages ? " ok" : " not ok"));
+            Console.ReadKey();
+
+        }
+
+        private static int Receive(int nbMessages, string qName, IModel modelConsumer)
+        {
+            var consumer = new QueueingBasicConsumer(modelConsumer);
+            string consumerTag = modelConsumer.BasicConsume(qName, false, consumer);
+            var received = 0;
+            while (received < nbMessages)
+            {
+                try
+                {
+                    object o;
+                    if (consumer.Queue.Dequeue(TimeOutBeforeGiveUp, out o))
+                    {
+                        var e = (RabbitMQ.Client.Events.BasicDeliverEventArgs)o;
+                        IBasicProperties props = e.BasicProperties;
+                        byte[] body = e.Body;
+                        modelConsumer.BasicAck(e.DeliveryTag, false);
+                        ++received;
+                    }
+                    else
+                        return received;
+                }
+                catch (RabbitMQ.Client.Exceptions.OperationInterruptedException ex)
+                {
+                    return received;
+                }
+            }
+            return received;
+        }
+    }
+}

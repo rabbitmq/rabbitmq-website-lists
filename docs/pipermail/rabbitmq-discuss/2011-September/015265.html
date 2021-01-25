@@ -1,0 +1,171 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] acks from temporary queues
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20acks%20from%20temporary%20queues&In-Reply-To=%3C20110926095412.GA9030%40southbank.eng.vmware.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="015256.html">
+   <LINK REL="Next"  HREF="015272.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] acks from temporary queues</H1>
+    <B>Alexandru Scvor&#355;ov</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20acks%20from%20temporary%20queues&In-Reply-To=%3C20110926095412.GA9030%40southbank.eng.vmware.com%3E"
+       TITLE="[rabbitmq-discuss] acks from temporary queues">alexandru at rabbitmq.com
+       </A><BR>
+    <I>Mon Sep 26 10:54:12 BST 2011</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="015256.html">[rabbitmq-discuss] acks from temporary queues
+</A></li>
+        <LI>Next message: <A HREF="015272.html">[rabbitmq-discuss] acks from temporary queues
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#15265">[ date ]</a>
+              <a href="thread.html#15265">[ thread ]</a>
+              <a href="subject.html#15265">[ subject ]</a>
+              <a href="author.html#15265">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi Jonathan,
+
+&gt;<i> 1. Do consumer acks have more significance in transactions, such that
+</I>&gt;<i> I could use those to effect the functionality I'm looking for?
+</I>
+Not really, no.  I don't think there's anyway to get what you want
+automatically.
+
+&gt;<i> 2. If not, is there any way (apart from the admin HTTP API) for
+</I>&gt;<i> determining the number of consumers (e.g., bound queues) for a given
+</I>&gt;<i> exchange? This way I could test the number of reply messages as you
+</I>&gt;<i> suggest; otherwise, with needing to register and account for a dynamic
+</I>&gt;<i> array of servers, I would lose a good deal of what I had hoped would
+</I>&gt;<i> be the benefit of a fanout broadcast.
+</I>
+There's no AMQP way of finding how many queues are bound to an exchange.
+As you say, there's the management API, but using that is likely to lead
+to races (what happens if you query the number of queues, then one of
+the machines dies before it sends its acknowledgement?).
+
+You could kind of get what you want with AMQP.  Use a fanout exchange
+like you want for broadcast messages, but use a direct exchange for
+direct communication between machines.  You could use the fanout
+exchange to make sure that all the machines know about each other (in
+particular, that each knows the queues the others bound to the direct
+exchange, so that they can communicate directly).  And you could use the
+direct exchange to publish persistent, confirm, mandatory, immediate messages
+directly to other machines.  With these messages, the sender will be
+notified if the other machine received the message (only a confirm is
+received for the publish), or if the other machine went offline in the past
+(a basic.return and a confirm is received).  This way, the sending
+machine would know which other machines received its message and, so,
+will know to wait for the correct number of responses.  The queue bound
+to the direct exchange would have to be durable, auto-delete for this to
+work (durable for confirms to work and auto-delete so that once the sole
+consumer dies, the queue is deleted and publishing to it will result in
+a basic.return).  In addition, when processing &quot;please log out this
+user&quot; messages, a machine should *not* acknowledge that it has
+received the message until after it publishes its response (this way, if
+the machine dies while processing, the sender will get a basic.return for
+it). 
+
+Hope this helps.
+
+Cheers,
+Alex
+
+On Fri, Sep 23, 2011 at 04:44:14PM -0700, gneeri wrote:
+&gt;<i> Hi Matthias,
+</I>&gt;<i> 
+</I>&gt;<i> Thanks for clarifying that. From the explication of the rules for
+</I>&gt;<i> confirms, it had appeared to me that the relationships to queues and
+</I>&gt;<i> consumers had more weight in the confirmation process. That not being
+</I>&gt;<i> the case, I have 2 brief follow up questions:
+</I>&gt;<i> 
+</I>&gt;<i> 1. Do consumer acks have more significance in transactions, such that
+</I>&gt;<i> I could use those to effect the functionality I'm looking for?
+</I>&gt;<i> 
+</I>&gt;<i> 2. If not, is there any way (apart from the admin HTTP API) for
+</I>&gt;<i> determining the number of consumers (e.g., bound queues) for a given
+</I>&gt;<i> exchange? This way I could test the number of reply messages as you
+</I>&gt;<i> suggest; otherwise, with needing to register and account for a dynamic
+</I>&gt;<i> array of servers, I would lose a good deal of what I had hoped would
+</I>&gt;<i> be the benefit of a fanout broadcast.
+</I>&gt;<i> 
+</I>&gt;<i> Thanks in advance,
+</I>&gt;<i> Jonathan
+</I>&gt;<i> 
+</I>&gt;<i> On Sep 23, 6:55&#160;pm, Matthias Radestock &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">matth... at rabbitmq.com</A>&gt; wrote:
+</I>&gt;<i> &gt; On 23/09/11 21:26, gneeri wrote:
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; &gt; My expectation, then, is that producer would publish its message and
+</I>&gt;<i> &gt; &gt; then be blocked until the delayed consumer returns an ack
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; Confirms mean one thing and one thing only: that the broker has accepted
+</I>&gt;<i> &gt; responsibility for the message.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; They concern the interaction between producers and the broker, and &#160;have
+</I>&gt;<i> &gt; nothing to do with consumer acks.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; Yes, there are some conditions in which a consumer ack can trigger a
+</I>&gt;<i> &gt; confirm in RabbitMQ, but that is an implementation detail and not
+</I>&gt;<i> &gt; something you'd want to design an application around.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; &gt; My hope is that I will not have to aggregate a list of servers and
+</I>&gt;<i> &gt; &gt; pass along a single message to each server, but perhaps that is what
+</I>&gt;<i> &gt; &gt; will be required.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; You can still send a single message via a fanout exchange. But the
+</I>&gt;<i> &gt; consumers then in turn need to send a message back to the sender. Your
+</I>&gt;<i> &gt; sender will need to know how many consumers there are so it knows when
+</I>&gt;<i> &gt; it has gotten all responses..
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; Regards,
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; Matthias.
+</I>&gt;<i> &gt; _______________________________________________
+</I>&gt;<i> &gt; rabbitmq-discuss mailing list
+</I>&gt;<i> &gt; <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-disc... at lists.rabbitmq.comhttps</A>://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I></PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="015256.html">[rabbitmq-discuss] acks from temporary queues
+</A></li>
+	<LI>Next message: <A HREF="015272.html">[rabbitmq-discuss] acks from temporary queues
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#15265">[ date ]</a>
+              <a href="thread.html#15265">[ thread ]</a>
+              <a href="subject.html#15265">[ subject ]</a>
+              <a href="author.html#15265">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,175 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Flow Control
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20Flow%20Control&In-Reply-To=6c2563b20811100818u1f744d21m784147a4f046217a%40mail.gmail.com">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001940.html">
+   <LINK REL="Next"  HREF="001946.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Flow Control</H1>
+    <B>Ben Hood</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20Flow%20Control&In-Reply-To=6c2563b20811100818u1f744d21m784147a4f046217a%40mail.gmail.com"
+       TITLE="[rabbitmq-discuss] Flow Control">0x6e6562 at gmail.com
+       </A><BR>
+    <I>Mon Nov 10 17:36:22 GMT 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001940.html">[rabbitmq-discuss] Flow Control
+</A></li>
+        <LI>Next message: <A HREF="001946.html">[rabbitmq-discuss] Flow Control
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1944">[ date ]</a>
+              <a href="thread.html#1944">[ thread ]</a>
+              <a href="subject.html#1944">[ subject ]</a>
+              <a href="author.html#1944">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Ed,
+
+On Mon, Nov 10, 2008 at 4:18 PM, Edwin Fine
+&lt;<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss_efine at usa.net</A>&gt; wrote:
+&gt;&gt;<i> Also, even if you use a call, how will you know that the message
+</I>&gt;&gt;<i> hasn't been binned by the gen_server instance that you invoked
+</I>&gt;&gt;<i> quasi-synchronously?
+</I>&gt;<i>
+</I>&gt;<i> Because the call will return an ok?
+</I>
+Sure, but all that means is that the gen_server instance has received
+your message and said ok, it doesn't mean that the broker has accepted
+responsibility for it.
+
+&gt;<i> Application level acknowldgement, meaning that my consumer explicitly sends
+</I>&gt;<i> an application-level acknowledgement message to the producer? Let me
+</I>&gt;<i> hopefully not annoy you by again comparing with WebSphere MQ. When you PUT a
+</I>&gt;<i> message to the queue manager, you get a return code which, if it is a
+</I>&gt;<i> success, means that the queue manager has got your message and it's all
+</I>&gt;<i> good. No app level acks needed. No transactions needed. With using a cast to
+</I>&gt;<i> send a message to the broker, if the client has a problem with the message
+</I>&gt;<i> (this happened to me recently), the producer has no idea of this. I only
+</I>&gt;<i> found out by seeing errors in my log file. Or at least, I don't know of a
+</I>&gt;<i> way to find out other than by starting a transaction, which I am loath to do
+</I>&gt;<i> because of performance concerns.
+</I>
+Ok, there are few separate issues here:
+
+1) I said that in general app level acknowledgements are the best
+thing to have in terms of responsibility transfer - but they are not
+always practical or possible (e.g. fire and forget semantics) and they
+not strictly necessary;
+
+2) You are describing responsibility transfer in terms of MQ series -
+the comparison to make would between sending messages on a per-message
+ack basis to MQ series and wrapping a whole of AMQP basic.publish
+commands in a TX - and measure the different
+
+3) Are you aware of what overhead using AMQP transactions has in your
+particular use case? Remember that the semantics of a TX in AMQP is
+not necessarily identical to that of MQ series.
+
+4) I agree that using a cast will swallow bugs whereas a call will be
+reported inline to the invocation. However, cast is lot cheaper than
+call (weren't you talking about TX's being expensive?)
+
+&gt;<i> What happened is that I refactored some code and in doing so created a bug
+</I>&gt;<i> that tried to send a record instead of a list in the basic.publish. Yes, my
+</I>&gt;<i> fault, but I would have liked to have known about it at the code level. The
+</I>&gt;<i> message was lost because there apparently was no way to detect this, let
+</I>&gt;<i> alone recover from it (except maybe the txn, which I have not tried).
+</I>&gt;<i>
+</I>&gt;<i> == 8-Nov-2008::20:08:59 == ERROR -  emulator
+</I>&gt;<i> Error in process &lt;0.191.0&gt; on node '<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">xhg_rel at ender</A>' with exit value:
+</I>&gt;<i> {badarg,[{erlang,list_to_binary,[{frame_rec,&lt;&lt;217
+</I>&gt;<i> bytes&gt;&gt;,1226192940,0,active,ok,0,undefined,0,&lt;&lt;33
+</I>&gt;<i> bytes&gt;&gt;}]},{rabbit_binary_generator,create_frame,3},{rabbit_binary_generator,build_content_frames,5},{rabbit_binary_generator,build_simple_content_frames...
+</I>
+
+That is a fair point. May I suggest that we let the application choose
+what it wants to do - adding an equivalent call command would be
+trivial. What do you think?
+
+&gt;&gt;<i> Have you looked at the test that I wrote for this in the test_util
+</I>&gt;&gt;<i> module - it does pretty much what you describe.
+</I>&gt;<i>
+</I>&gt;<i> I have looked at the test, but it does not do anything like what I was
+</I>&gt;<i> trying to describe :)
+</I>&gt;<i>
+</I>&gt;<i> What I was trying to describe was having a gen_server or gen_fsm that has a
+</I>&gt;<i> clause something like this;
+</I>&gt;<i>
+</I>&gt;<i> handle_info(#'channel.flow'{active = false}, State) -&gt;
+</I>&gt;<i>     {noreply, State#state{channel_flow = false}};
+</I>&gt;<i>
+</I>&gt;<i> handle_info(#'channel.flow'{active = true}, State) -&gt;
+</I>&gt;<i>     {noreply, State#state{channel_flow = true}};
+</I>
+Sure, but this is all on the receiving process' side, so whether it
+handles it as a gen_server or as a plain jane receive block *should*
+be irrelevant. Furthermore, the receiving process may just ignore the
+notification or it may not register itself in the first place.
+
+So I think the more important side of things is how the channel
+process propagates the event that it receives from the broker.
+
+And this is what I have done - when the amqp_channel receives the
+#'channel.flow'{active = false} from the broker, it sends the
+registered listener a pause atom - in the reverse it sends it a resume
+atom.
+
+Hence what you are suggesting is equivalent to what I have already done :-)
+
+&gt;<i> When receiving the &quot;down&quot; signal, the producer can then go into an idle
+</I>&gt;<i> state voluntarily. I don't like the idea of the client silently throwing
+</I>&gt;<i> away producer messages.
+</I>
+See the comment above giving the app the choice between the &quot;really
+safe&quot; call and the &quot;really cool&quot; cast.
+
+&gt;<i> I really don't like the sound of that. I don't like silent discards in
+</I>&gt;<i> general.
+</I>
+Is this a re-transmission issue in your mail ;-)
+
+&gt;&gt;<i> The only issue I see is the added complexity involved in the
+</I>&gt;&gt;<i> application - it would have to have a receive loop that matches on the
+</I>&gt;&gt;<i> pause and resume atoms sent to it by the channel process.
+</I>&gt;<i>
+</I>&gt;<i> Not if done the way I suggested. Then it just becomes another handle_info
+</I>&gt;<i> clause and state change.
+</I>
+As indicated above, this can easily be processed by the app as a
+gen_server callback, but that is down to the client. Having said that,
+what you are suggesting is sensible and probably would consitute best
+practice.
+
+Ben
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001940.html">[rabbitmq-discuss] Flow Control
+</A></li>
+	<LI>Next message: <A HREF="001946.html">[rabbitmq-discuss] Flow Control
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1944">[ date ]</a>
+              <a href="thread.html#1944">[ thread ]</a>
+              <a href="subject.html#1944">[ subject ]</a>
+              <a href="author.html#1944">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

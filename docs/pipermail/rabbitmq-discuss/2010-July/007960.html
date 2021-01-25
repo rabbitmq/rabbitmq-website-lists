@@ -1,0 +1,165 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Memory problems
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Memory%20problems&In-Reply-To=%3CAANLkTikhA76ezh7NfrEUT6VcSrcx56YZ-KV0kTVfcYnP%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="007959.html">
+   <LINK REL="Next"  HREF="007963.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Memory problems</H1>
+    <B>Marek Majkowski</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Memory%20problems&In-Reply-To=%3CAANLkTikhA76ezh7NfrEUT6VcSrcx56YZ-KV0kTVfcYnP%40mail.gmail.com%3E"
+       TITLE="[rabbitmq-discuss] Memory problems">majek04 at gmail.com
+       </A><BR>
+    <I>Wed Jul 14 14:33:47 BST 2010</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="007959.html">[rabbitmq-discuss] Memory problems
+</A></li>
+        <LI>Next message: <A HREF="007963.html">[rabbitmq-discuss] configure: error: could not find AMQP spec file	at &quot;'/codegen/amqp-0.9.1.json'&quot;
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#7960">[ date ]</a>
+              <a href="thread.html#7960">[ thread ]</a>
+              <a href="subject.html#7960">[ subject ]</a>
+              <a href="author.html#7960">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>(resent, looks like previously it haven't gone to the mailing list)
+
+Nicol&#225;s
+
+First, sorry for timing, I must have missed your message somehow.
+
+2010/6/3 Nicol&#225;s C&#233;sar &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">nico at nicocesar.com</A>&gt;:
+&gt;<i> A process -&gt; A_q queue -&gt; B process -&gt; fat_queue -&gt; many C processes (even
+</I>&gt;<i> that I have many Cs,&#160;&#160; A is much faster)
+</I>&gt;<i>
+</I>&gt;<i> Here is the problem when everythig is almost empty:
+</I>&gt;<i>
+</I>&gt;<i> rabbitmqctl list_queues memory | awk '{T += $1;}END{print T;}'
+</I>&gt;<i> 5703040
+</I>&gt;<i>
+</I>&gt;<i> this means that the total memory used for queues is arround 5Mb but RES
+</I>&gt;<i> memory for beam.smp process is 358Mb !!!
+</I>
+You're right. rabbitmqctl memory report isn't anything useful.
+
+Actually, it's impossible to give any decent memory statistics. Consider
+a fanout exchange, where a single message gets distributed into multiple queues.
+RabbitMQ actually doesn't copy the message, it shares it between
+queues - what should memory usage return in that case?
+
+
+&gt;<i> And when I start using it, things get worse. beam.smp just jumps from 400m
+</I>&gt;<i> to1.6G (in jumps of 100-200m per second) and well... my VPS provider just
+</I>&gt;<i> decides to kill almost everything on that machine. Right now I'm killing the
+</I>&gt;<i> B process after a bunch of messages, but actually i don't know how to
+</I>&gt;<i> estimate how much memory rabbit will be using per message.
+</I>
+RabbitMQ stores messages body as erlang binaries. They are handled
+by a bit different garbage collection algorithms than normal erlang runtime
+(that's another reason why we don't really know how much memory
+messages are using).
+
+Generally, garbage collector once in a while decides that it needs to
+defragment the memory. To do so it allocates a big memory block
+and copies used data there. After that's done, it frees the old memory block.
+
+But for a while erlang will use _twice_ as much memory as it really needs.
+
+That can be one of the reasons why you see the huge memory consumption.
+Another reason may be badly tune garbage collector. In one
+of my installations I noticed that setting some magic erlang gc option made
+rabbit use way less memory. But tuning gc internals is not a thing we want
+to recommend.
+
+&gt;<i> I've heard the &quot;new persister&quot; (what a name, eh!) is &quot;much better&quot; with
+</I>&gt;<i> &quot;memory issues&quot;:
+</I>&gt;<i> <A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/2010-May/007251.html">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/2010-May/007251.html</A>
+</I>
+It definitely is. If you can afford compiling rabbit from source, please give
+it a try. Just do &quot;hg up bug21673; make run&quot;. More info here:
+&#160;<A HREF="http://www.rabbitmq.com/build-server.html#obtaining">http://www.rabbitmq.com/build-server.html#obtaining</A>
+
+Using erlang R13B03 or later may also help (it introduces better
+garbage collection for binaries)
+
+&gt;<i> taken from:
+</I>&gt;<i> <A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/2010-February/006397.html">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/2010-February/006397.html</A>
+</I>&gt;<i>
+</I>&gt;&gt;<i> =INFO REPORT==== 16-Feb-2010::04:42:05 ===
+</I>&gt;&gt;<i> Memory limit set to 3196MB.
+</I>&gt;<i>
+</I>&gt;<i> I'd love that functionality! when was implemented? or what parameters I need
+</I>&gt;<i> to pass to rabbit?
+</I>
+The idea behind it, is to tell the producers that they should stop
+sending messages
+when rabbit is using too much memory. To make it useful your client
+must support
+channel.flow amqp command, which tells the client to stop sending.
+I'm afraid python-amqplib doesn't support that.
+
+Some server side documentation:
+&#160;<A HREF="http://www.rabbitmq.com/extensions.html#memsup">http://www.rabbitmq.com/extensions.html#memsup</A>
+
+This functionality works a bit differently in the new persister
+branch. It gives a hint
+to rabbit about how much memory rabbit may use. If it's using more - data gets
+saved to the disk. So theoretically you should never see channel.flow
+(if you have fast enough disk).
+
+Cheers,
+&#160;Marek Majkowski
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="007959.html">[rabbitmq-discuss] Memory problems
+</A></li>
+	<LI>Next message: <A HREF="007963.html">[rabbitmq-discuss] configure: error: could not find AMQP spec file	at &quot;'/codegen/amqp-0.9.1.json'&quot;
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#7960">[ date ]</a>
+              <a href="thread.html#7960">[ thread ]</a>
+              <a href="subject.html#7960">[ subject ]</a>
+              <a href="author.html#7960">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

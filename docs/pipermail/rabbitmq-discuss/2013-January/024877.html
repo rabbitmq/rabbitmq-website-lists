@@ -1,0 +1,272 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] loss o messages on a cluster + durable	queues + mirrored queues
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20loss%20o%20messages%20on%20a%20cluster%20%2B%20durable%0A%09queues%20%2B%20mirrored%20queues&In-Reply-To=%3Cfc12ecc2-ff3a-44b5-9f7d-280c920bca99%40googlegroups.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="024870.html">
+   <LINK REL="Next"  HREF="024859.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] loss o messages on a cluster + durable	queues + mirrored queues</H1>
+    <B>Scott Brown</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20loss%20o%20messages%20on%20a%20cluster%20%2B%20durable%0A%09queues%20%2B%20mirrored%20queues&In-Reply-To=%3Cfc12ecc2-ff3a-44b5-9f7d-280c920bca99%40googlegroups.com%3E"
+       TITLE="[rabbitmq-discuss] loss o messages on a cluster + durable	queues + mirrored queues">scott.brown at secondsupper.com
+       </A><BR>
+    <I>Fri Jan 11 14:32:53 GMT 2013</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="024870.html">[rabbitmq-discuss] loss o messages on a cluster + durable queues + mirrored queues
+</A></li>
+        <LI>Next message: <A HREF="024859.html">[rabbitmq-discuss] &quot;Load balancing&quot; queue creation
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#24877">[ date ]</a>
+              <a href="thread.html#24877">[ thread ]</a>
+              <a href="subject.html#24877">[ subject ]</a>
+              <a href="author.html#24877">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>In general your queues should not be &quot;stopped&quot; so this would not be a 
+problem.  In practice there can be reasons this occurs.  I would look first 
+at minimizing the amount of time a message spends in a queue.  If you have 
+error queues that hold messages, don't use rabbit to store these.  Read 
+them off and store them in a db.
+If you absolutely feel you must be able to sync queues, the best I know of 
+is to create a process that reads and requeues the message.  You are likely 
+to lose message order if you have new messages coming in.
+
+On Friday, January 11, 2013 5:51:38 AM UTC-5, Alexandre Bunn wrote:
+&gt;<i>
+</I>&gt;<i> I've found in a forum (
+</I>&gt;<i> <A HREF="http://comments.gmane.org/gmane.comp.networking.rabbitmq.general/12438">http://comments.gmane.org/gmane.comp.networking.rabbitmq.general/12438</A>) a 
+</I>&gt;<i> user that have reported the same situation and an user have answered:
+</I>&gt;<i>
+</I>&gt;<i> &quot;
+</I>&gt;<i>
+</I>&gt;<i> You can run &quot;rabbitmqctl list_queues name slave_pids
+</I>&gt;<i> synchronised_slave_pids&quot; to see if the cluster is synchronized or not
+</I>&gt;<i> but I can tell you right now that they will not be. In step 3 when you
+</I>&gt;<i> start vm1 back up and it is the slave. It is telling you that there
+</I>&gt;<i> are 10 messages in the vm2 queue. When you talk to a broker in a
+</I>&gt;<i> cluster it will talk to the master queue. VM1 will not be synchronized
+</I>&gt;<i> until all 10 messages are read out of the vm2 queue, because rabbitmq
+</I>&gt;<i> mirrored clusters do not read old messages that are already in the
+</I>&gt;<i> master queue. The slave reads the tail of the new message being sent
+</I>&gt;<i> to the master and expects that once it has been long enough then it
+</I>&gt;<i> will catch up to the same state as the master.
+</I>&gt;<i> <A HREF="http://www.rabbitmq.com/ha.html">http://www.rabbitmq.com/ha.html</A> &quot;Unsynchronised Slaves&quot; I think does a
+</I>&gt;<i> good job of explaining it.
+</I>&gt;<i> &quot;
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> Does rabbitmq continues with this behavior? Is there any configuration 
+</I>&gt;<i> that I can do to solve this issue?
+</I>&gt;<i>
+</I>&gt;<i> Thanks
+</I>&gt;<i>
+</I>&gt;<i> Alexandre
+</I>&gt;<i>
+</I>&gt;<i> Em quinta-feira, 10 de janeiro de 2013 21h29min24s UTC-2, Scott Brown 
+</I>&gt;<i> escreveu:
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Alex, I believe what you are seeing is because mirrored queues do not 
+</I>&gt;&gt;<i> automatically sync.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i>    - When you restart node1 it has 0 messages and is not synced with 
+</I>&gt;&gt;<i>    node2.  Since node1 was offline, the durable messages in it's queue are 
+</I>&gt;&gt;<i>    considered out dated, since node2 is more likely to be up to date, and are 
+</I>&gt;&gt;<i>    discarded.  Node1 is now a slave of node2, but the messages in node2 are 
+</I>&gt;&gt;<i>    not copied to node1.
+</I>&gt;&gt;<i>    - Then when you restart node2, node1 with 0 messages becomes the 
+</I>&gt;&gt;<i>    master.
+</I>&gt;&gt;<i>    
+</I>&gt;&gt;<i> This can feel odd, because often you bounce one box and then the other 
+</I>&gt;&gt;<i> for maintenance or similar.  You need to make sure that all messages in the 
+</I>&gt;&gt;<i> queue when one node is bounced have been drained before bouncing the other 
+</I>&gt;&gt;<i> node.  You can verify this in a few ways, but the easiest is to just peek 
+</I>&gt;&gt;<i> at the Admin console and your queue will show -1 (or -n for n nodes) rather 
+</I>&gt;&gt;<i> than +1.  This tells you that the mirrors are not synced.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> On Wednesday, January 9, 2013 1:57:54 PM UTC-5, Alexandre Bunn wrote:
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i> Good afternoon
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i> I have a 2 nodes cluster with mirrored queues and I'm setting 
+</I>&gt;&gt;&gt;<i> delivery_mode = 2 when I'm publishing messages to the cluster. I'm missing 
+</I>&gt;&gt;&gt;<i> messages when I follow these steps below (for test issues).
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i> Step 0 - Node1 (master) Node2 (slave)
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i> # rabbitmqctl cluster_status
+</I>&gt;&gt;&gt;<i> Cluster status of node '<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at vid-mq01-mia</A>' ...
+</I>&gt;&gt;&gt;<i> [{nodes,[{disc,['<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at vid-mq01-mia</A>','<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at vid-mq02-mia</A>']}]},
+</I>&gt;&gt;&gt;<i>  {running_nodes,['<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at vid-mq02-mia</A>','<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at vid-mq01-mia</A>']},
+</I>&gt;&gt;&gt;<i>  {partitions,[]}]
+</I>&gt;&gt;&gt;<i> ...done.
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i> # rabbitmqctl list_policies
+</I>&gt;&gt;&gt;<i> Listing policies ...
+</I>&gt;&gt;&gt;<i> /       ha-all  ^ha\\.  {&quot;ha-mode&quot;:&quot;all&quot;}       0
+</I>&gt;&gt;&gt;<i> ...done.
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i> ## rabbitmqctl list_queues name durable policy
+</I>&gt;&gt;&gt;<i> Listing queues ...
+</I>&gt;&gt;&gt;<i> ha.teste        true    ha-all
+</I>&gt;&gt;&gt;<i> ...done.
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i> - Step 1 - I write 2 messages, at ha.teste queue, 1 on each member of 
+</I>&gt;&gt;&gt;<i> the cluster and the messages are mirrored as expected. Here there are two 
+</I>&gt;&gt;&gt;<i> messages on each nodes (rabbitmqctl list_queues)
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i> -- node1
+</I>&gt;&gt;&gt;<i> # rabbitmqctl list_queues
+</I>&gt;&gt;&gt;<i> Listing queues ...
+</I>&gt;&gt;&gt;<i> ha.teste        2
+</I>&gt;&gt;&gt;<i> ...done.
+</I>&gt;&gt;&gt;<i> # rabbitmqctl list_queues name pid slave_pids synchronised_slave_pids
+</I>&gt;&gt;&gt;<i> Listing queues ...
+</I>&gt;&gt;&gt;<i> ha.teste        &lt;'<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at vid-mq01-mia</A>'.3.253.0&gt; 
+</I>&gt;&gt;&gt;<i> [&lt;'<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at vid-mq02-mia</A>'.2.252.0&gt;]       [&lt;'<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at vid-mq02-mia</A>'.2.252.0&gt;]
+</I>&gt;&gt;&gt;<i> ...done.
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i> -- node2
+</I>&gt;&gt;&gt;<i> # rabbitmqctl list_queues
+</I>&gt;&gt;&gt;<i> Listing queues ...
+</I>&gt;&gt;&gt;<i> ha.teste        2
+</I>&gt;&gt;&gt;<i> ...done.
+</I>&gt;&gt;&gt;<i> # rabbitmqctl list_queues name pid slave_pids synchronised_slave_pids
+</I>&gt;&gt;&gt;<i> Listing queues ...
+</I>&gt;&gt;&gt;<i> ha.teste        &lt;'<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at vid-mq01-mia</A>'.3.253.0&gt; 
+</I>&gt;&gt;&gt;<i> [&lt;'<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at vid-mq02-mia</A>'.2.252.0&gt;]       [&lt;'<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at vid-mq02-mia</A>'.2.252.0&gt;]
+</I>&gt;&gt;&gt;<i> ...done.
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i> - Step 2 - I've stopped rabbitmq-server on node1 and node2 assume the 
+</I>&gt;&gt;&gt;<i> master. Here there are the two messages on node2
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i> -- Logs on node2
+</I>&gt;&gt;&gt;<i> Mirrored-queue (queue 'ha.teste' in vhost '/'): Promoting slave 
+</I>&gt;&gt;&gt;<i> &lt;'<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at vid-mq02-mia</A>'.2.252.0&gt; to master
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i> -- Status of the cluster on node2
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i> # rabbitmqctl cluster_status
+</I>&gt;&gt;&gt;<i> Cluster status of node '<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at vid-mq02-mia</A>' ...
+</I>&gt;&gt;&gt;<i> [{nodes,[{disc,['<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at vid-mq01-mia</A>','<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at vid-mq02-mia</A>']}]},
+</I>&gt;&gt;&gt;<i>  {running_nodes,['<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at vid-mq02-mia</A>']},
+</I>&gt;&gt;&gt;<i>  {partitions,[]}]
+</I>&gt;&gt;&gt;<i> ...done.
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i> -- Status of the ha.teste queue on node2
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i> # rabbitmqctl list_queues
+</I>&gt;&gt;&gt;<i> Listing queues ...
+</I>&gt;&gt;&gt;<i> ha.teste        2
+</I>&gt;&gt;&gt;<i> ...done.
+</I>&gt;&gt;&gt;<i> # rabbitmqctl list_queues name pid slave_pids synchronised_slave_pids
+</I>&gt;&gt;&gt;<i> Listing queues ...
+</I>&gt;&gt;&gt;<i> ha.teste        &lt;'<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at vid-mq02-mia</A>'.2.252.0&gt; []      []
+</I>&gt;&gt;&gt;<i> ...done.
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i> - Step 3 - I start the rabbitmq-server on node1, node2 still master and 
+</I>&gt;&gt;&gt;<i> node1 is running as slave. Here there are the two messages on node1 and 
+</I>&gt;&gt;&gt;<i> node2
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i> -- Log on node2
+</I>&gt;&gt;&gt;<i> =INFO REPORT==== 9-Jan-2013::18:40:46 ===
+</I>&gt;&gt;&gt;<i> rabbit on node '<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at vid-mq01-mia</A>' up
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i> -- Status of the cluster on node1
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i> # rabbitmqctl cluster_status
+</I>&gt;&gt;&gt;<i> Cluster status of node '<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at vid-mq01-mia</A>' ...
+</I>&gt;&gt;&gt;<i> [{nodes,[{disc,['<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at vid-mq01-mia</A>','<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at vid-mq02-mia</A>']}]},
+</I>&gt;&gt;&gt;<i>  {running_nodes,['<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at vid-mq02-mia</A>','<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at vid-mq01-mia</A>']},
+</I>&gt;&gt;&gt;<i>  {partitions,[]}]
+</I>&gt;&gt;&gt;<i> ...done.
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i> -- Status of the ha.teste queue on node2
+</I>&gt;&gt;&gt;<i> # rabbitmqctl list_queues
+</I>&gt;&gt;&gt;<i> Listing queues ...
+</I>&gt;&gt;&gt;<i> ha.teste        2
+</I>&gt;&gt;&gt;<i> ...done.
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i> # rabbitmqctl list_queues name pid slave_pids synchronised_slave_pids
+</I>&gt;&gt;&gt;<i> Listing queues ...
+</I>&gt;&gt;&gt;<i> ha.teste        &lt;'<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at vid-mq02-mia</A>'.2.252.0&gt; 
+</I>&gt;&gt;&gt;<i> [&lt;'<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at vid-mq01-mia</A>'.1.253.0&gt;]       []
+</I>&gt;&gt;&gt;<i> ...done.
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i> - Step 4 - I've stopped rabbitmq-server on node2 and node1 assume the 
+</I>&gt;&gt;&gt;<i> master but the messages disapeared
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i> -- Logs on node1
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i> =INFO REPORT==== 9-Jan-2013::18:43:42 ===
+</I>&gt;&gt;&gt;<i> Mirrored-queue (queue 'ha.teste' in vhost '/'): Promoting slave 
+</I>&gt;&gt;&gt;<i> &lt;'<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at vid-mq01-mia</A>'.1.253.0&gt; to master
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i> =INFO REPORT==== 9-Jan-2013::18:43:42 ===
+</I>&gt;&gt;&gt;<i> rabbit on node '<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at vid-mq02-mia</A>' down
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i> -- Cluster status on node1
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i> # rabbitmqctl cluster_status
+</I>&gt;&gt;&gt;<i> Cluster status of node '<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at vid-mq01-mia</A>' ...
+</I>&gt;&gt;&gt;<i> [{nodes,[{disc,['<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at vid-mq01-mia</A>','<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at vid-mq02-mia</A>']}]},
+</I>&gt;&gt;&gt;<i>  {running_nodes,['<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at vid-mq01-mia</A>']},
+</I>&gt;&gt;&gt;<i>  {partitions,[]}]
+</I>&gt;&gt;&gt;<i> ...done.
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i> -- Status of the ha.teste queue on node1
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i> # rabbitmqctl list_queues
+</I>&gt;&gt;&gt;<i> Listing queues ...
+</I>&gt;&gt;&gt;<i> ha.teste        0
+</I>&gt;&gt;&gt;<i> ...done.
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i> # rabbitmqctl list_queues name pid slave_pids synchronised_slave_pids
+</I>&gt;&gt;&gt;<i> Listing queues ...
+</I>&gt;&gt;&gt;<i> ha.teste        &lt;'<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at vid-mq01-mia</A>'.1.253.0&gt; []      []
+</I>&gt;&gt;&gt;<i> ...done.
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i> Is it expected? What we have to do at server side or client side (python 
+</I>&gt;&gt;&gt;<i> script) to make the messages really durable? All the servers are running 
+</I>&gt;&gt;&gt;<i> centos6 x86_64 and rabbitmq 3.0.1-1.
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i> Thanks
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i> Alexandre Bunn
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20130111/ebcc4cfc/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20130111/ebcc4cfc/attachment.htm</A>&gt;
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="024870.html">[rabbitmq-discuss] loss o messages on a cluster + durable queues + mirrored queues
+</A></li>
+	<LI>Next message: <A HREF="024859.html">[rabbitmq-discuss] &quot;Load balancing&quot; queue creation
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#24877">[ date ]</a>
+              <a href="thread.html#24877">[ thread ]</a>
+              <a href="subject.html#24877">[ subject ]</a>
+              <a href="author.html#24877">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

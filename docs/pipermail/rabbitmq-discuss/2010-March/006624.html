@@ -1,0 +1,101 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] RabbitMQ crash caused by channel leak?
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20RabbitMQ%20crash%20caused%20by%20channel%20leak%3F&In-Reply-To=E132581E-43AB-4D8E-8A75-997765A31598%40gmail.com">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="006617.html">
+   <LINK REL="Next"  HREF="006625.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] RabbitMQ crash caused by channel leak?</H1>
+    <B>Matthew Sackman</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20RabbitMQ%20crash%20caused%20by%20channel%20leak%3F&In-Reply-To=E132581E-43AB-4D8E-8A75-997765A31598%40gmail.com"
+       TITLE="[rabbitmq-discuss] RabbitMQ crash caused by channel leak?">matthew at lshift.net
+       </A><BR>
+    <I>Fri Mar 12 11:37:09 GMT 2010</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="006617.html">[rabbitmq-discuss] RabbitMQ crash caused by channel leak?
+</A></li>
+        <LI>Next message: <A HREF="006625.html">[rabbitmq-discuss] RabbitMQ crash caused by channel leak?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#6624">[ date ]</a>
+              <a href="thread.html#6624">[ thread ]</a>
+              <a href="subject.html#6624">[ subject ]</a>
+              <a href="author.html#6624">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>On Thu, Mar 11, 2010 at 02:28:48PM -0600, Ian Ragsdale wrote:
+&gt;<i> =CRASH REPORT==== 11-Mar-2010::08:13:21 ===
+</I>&gt;<i>   crasher:
+</I>&gt;<i>     pid: &lt;0.16638.1&gt;
+</I>&gt;<i>     registered_name: []
+</I>&gt;<i>     exception error: a system limit has been reached
+</I>&gt;<i>       in function  spawn/3
+</I>
+Yes, I think you've probably run out of processes. The default process
+limit in erlang is 32768, but this can be raised up to 134217727. To set
+this for Rabbit, in your rabbitmq.conf file (which under Linux will be
+at /etc/rabbitmq/rabbitmq.conf) add:
+
+SERVER_START_ARGS=&quot;+P 1000000&quot;
+
+Which will get you 1000,000 processes. Note that the additional
+accounting done by the erlang VM will mean that you'll see more memory
+used.
+
+&gt;<i> Based on the number of channels in the logged dictionary, I'm guessing I hit a limit on the number of channels, which I'm guessing was the cause of the crash.  Does this sound like a likely cause?  I've identified and removed the code that was creating all the channels, but I'm concerned that it appears to be so easy for a single rogue client to take down the entire server.  Is there a way for me to prevent this?
+</I>
+Mmmm, that's a good point, and no, there's no such knob. In
+rabbit_reader.erl, at around line 589, you should find the following
+code:
+
+    ok = send_on_channel0(
+           Sock,
+           #'connection.tune'{channel_max = 0,
+                              %% set to zero once QPid fix their negotiation
+                              frame_max = 131072,
+                              heartbeat = 0}),
+
+That channel_max = 0 implies no limit on the number of channels (well,
+it's a 16-bit uint, so 65536). If you set that to a lower number then
+well-behaved clients may take note of that. However it's still not
+enforced at the server. For that, you'll need to either add to the last
+head of handle_frame in rabbit_reader (at the bottom, before it calls
+send_to_new_channel). The difficulty here is that channels don't need to
+be allocated in the correct order and can be reused. Gaps can appear etc
+etc, so it's a bit harder than just looking at the channels number, you
+actually have to count. I'll raise a bug for this and we'll fix it in
+due course.
+
+Matthew
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="006617.html">[rabbitmq-discuss] RabbitMQ crash caused by channel leak?
+</A></li>
+	<LI>Next message: <A HREF="006625.html">[rabbitmq-discuss] RabbitMQ crash caused by channel leak?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#6624">[ date ]</a>
+              <a href="thread.html#6624">[ thread ]</a>
+              <a href="subject.html#6624">[ subject ]</a>
+              <a href="author.html#6624">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

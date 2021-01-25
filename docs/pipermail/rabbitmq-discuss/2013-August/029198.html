@@ -1,0 +1,431 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Handling Consumer Cancel Notifications in	Java Client
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Handling%20Consumer%20Cancel%20Notifications%20in%0A%09Java%20Client&In-Reply-To=%3CCAHEpgBCYZJZp%3DN5sa6Y6fCoEpNndMS2qJ0F6t6kT88vx4twLzg%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="029191.html">
+   <LINK REL="Next"  HREF="029200.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Handling Consumer Cancel Notifications in	Java Client</H1>
+    <B>Chris</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Handling%20Consumer%20Cancel%20Notifications%20in%0A%09Java%20Client&In-Reply-To=%3CCAHEpgBCYZJZp%3DN5sa6Y6fCoEpNndMS2qJ0F6t6kT88vx4twLzg%40mail.gmail.com%3E"
+       TITLE="[rabbitmq-discuss] Handling Consumer Cancel Notifications in	Java Client">stuff at moesel.net
+       </A><BR>
+    <I>Fri Aug  9 14:19:04 BST 2013</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="029191.html">[rabbitmq-discuss] Handling Consumer Cancel Notifications in	Java Client
+</A></li>
+        <LI>Next message: <A HREF="029200.html">[rabbitmq-discuss] Handling Consumer Cancel Notifications in	Java Client
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#29198">[ date ]</a>
+              <a href="thread.html#29198">[ thread ]</a>
+              <a href="subject.html#29198">[ subject ]</a>
+              <a href="author.html#29198">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>I'm not sure if I can send attachments in this mailing list, so I'll inline
+the data in the message.  Please let me know if there are any issues or
+questions.  I am using RabbitMQ Java client 3.0.1 w/ RabbitMQ server 3.1.1.
+
+*Thread Dump*
+
+I did a thread dump on a simple app and here is what seems to be the
+relevant portion when I try to reconsume (full thread dump at end of
+message):
+
+&quot;AMQP Connection 10.106.76.31:5672&quot; prio=5 tid=0x00007fde3383e000
+nid=0x6203 in Object.wait() [0x00000001104bc000]
+   java.lang.Thread.State: WAITING (on object monitor)
+at java.lang.Object.wait(Native Method)
+- waiting on &lt;0x00000007d5bfb028&gt; (a
+com.rabbitmq.utility.BlockingValueOrException)
+at java.lang.Object.wait(Object.java:503)
+at com.rabbitmq.utility.BlockingCell.get(BlockingCell.java:50)
+- locked &lt;0x00000007d5bfb028&gt; (a
+com.rabbitmq.utility.BlockingValueOrException)
+at
+com.rabbitmq.utility.BlockingCell.uninterruptibleGet(BlockingCell.java:89)
+- locked &lt;0x00000007d5bfb028&gt; (a
+com.rabbitmq.utility.BlockingValueOrException)
+at
+com.rabbitmq.utility.BlockingValueOrException.uninterruptibleGetValue(BlockingValueOrException.java:33)
+at
+com.rabbitmq.client.impl.AMQChannel$BlockingRpcContinuation.getReply(AMQChannel.java:343)
+at com.rabbitmq.client.impl.ChannelN.basicConsume(ChannelN.java:972)
+at com.rabbitmq.client.impl.ChannelN.basicConsume(ChannelN.java:941)
+at com.rabbitmq.client.impl.ChannelN.basicConsume(ChannelN.java:933)
+at com.rabbitmq.client.impl.ChannelN.basicConsume(ChannelN.java:926)
+at
+com.avid.acs.example.rabbitmq.SimpleConsumerExample$SimpleConsumer.handleCancel(SimpleConsumerExample.java:50)
+at com.rabbitmq.client.impl.ChannelN.processAsync(ChannelN.java:395)
+at
+com.rabbitmq.client.impl.AMQChannel.handleCompleteInboundCommand(AMQChannel.java:144)
+at com.rabbitmq.client.impl.AMQChannel.handleFrame(AMQChannel.java:91)
+at
+com.rabbitmq.client.impl.AMQConnection$MainLoop.run(AMQConnection.java:533)
+
+
+*Simple App to Reproduce*
+
+I *can* reproduce this in a simple Java app, which I will copy below.  Here
+is how I reproduce it:
+
+   - You need a running active/active cluster with a policy to mirror the
+   queue you will test with
+   - Create the queue on node1 so that is where its master resides (with
+   slave on node2)
+   - Run the SimpleConsumerExample so it connects to node2
+   - Restart RabbitMQ on node1 so that the master dies and the slave on
+   node2 is promoted.
+
+At this point, we should see handleCancel invoked (it is) and then
+reconsume from the channel (this is where it hangs).
+
+*The Java Example Code*
+*
+*
+
+package example.rabbitmq;
+
+import com.rabbitmq.client.AMQP;
+import com.rabbitmq.client.Channel;
+import com.rabbitmq.client.Connection;
+import com.rabbitmq.client.ConnectionFactory;
+import com.rabbitmq.client.DefaultConsumer;
+import com.rabbitmq.client.Envelope;
+
+import java.io.IOException;
+
+public class SimpleConsumerExample {
+    private static final String DEFAULT_URI = &quot;<A HREF="amqp://localhost&quot;;">amqp://localhost&quot;;</A>
+    private static final String DEFAULT_QUEUE = &quot;test_queue&quot;;
+
+    public static void main(String[] args) throws Exception {
+        String uri = args.length &gt; 0 ? args[0] : DEFAULT_URI;
+        String queueName = args.length &gt; 1 ? args[1] : DEFAULT_QUEUE;
+        ConnectionFactory factory = new ConnectionFactory();
+        factory.setUri(uri);
+
+        Connection connection = factory.newConnection();
+        Channel channel = connection.createChannel();
+        String queue = channel.queueDeclare(queueName, true, false, false,
+null).getQueue();
+        String cTag = channel.basicConsume(queue, true, new
+SimpleConsumer(channel, queue));
+        System.out.println(&quot;basicConsume: &quot; + cTag);
+    }
+
+    public static class SimpleConsumer extends DefaultConsumer {
+        private String queue;
+
+        public SimpleConsumer(Channel channel, String queue) {
+            super(channel);
+            this.queue = queue;
+        }
+
+        @Override
+        public void handleDelivery(String consumerTag, Envelope envelope,
+AMQP.BasicProperties properties, byte[] body) throws IOException {
+            System.out.println(&quot;handleDelivery: &quot; + consumerTag);
+        }
+
+        @Override
+        public void handleCancel(String consumerTag) throws IOException {
+            System.out.println(&quot;handleCancel: &quot; + consumerTag);
+            super.handleCancel(consumerTag);
+
+            String cTag = getChannel().basicConsume(queue, this);
+            System.out.println(&quot;basic(Re)Consume: &quot; + cTag); // &lt;-- Never
+gets here
+        }
+    }
+}
+
+
+*The Thread Dump*
+*
+*
+
+Full thread dump OpenJDK 64-Bit Server VM (24.0-b49 mixed mode):
+
+&quot;DestroyJavaVM&quot; prio=5 tid=0x00007fde35802000 nid=0x1d03 waiting on
+condition [0x0000000000000000]
+   java.lang.Thread.State: RUNNABLE
+
+&quot;pool-1-thread-1&quot; prio=5 tid=0x00007fde338a7800 nid=0x6603 waiting on
+condition [0x000000011072d000]
+   java.lang.Thread.State: WAITING (parking)
+at sun.misc.Unsafe.park(Native Method)
+- parking to wait for  &lt;0x00000007d57e8fe8&gt; (a
+java.util.concurrent.locks.AbstractQueuedSynchronizer$ConditionObject)
+at java.util.concurrent.locks.LockSupport.park(LockSupport.java:186)
+at
+java.util.concurrent.locks.AbstractQueuedSynchronizer$ConditionObject.await(AbstractQueuedSynchronizer.java:2043)
+at
+java.util.concurrent.LinkedBlockingQueue.take(LinkedBlockingQueue.java:442)
+at
+java.util.concurrent.ThreadPoolExecutor.getTask(ThreadPoolExecutor.java:1068)
+at
+java.util.concurrent.ThreadPoolExecutor.runWorker(ThreadPoolExecutor.java:1130)
+at
+java.util.concurrent.ThreadPoolExecutor$Worker.run(ThreadPoolExecutor.java:615)
+at java.lang.Thread.run(Thread.java:724)
+
+&quot;pool-2-thread-1&quot; prio=5 tid=0x00007fde3504d800 nid=0x6403 waiting on
+condition [0x000000011062a000]
+   java.lang.Thread.State: TIMED_WAITING (parking)
+at sun.misc.Unsafe.park(Native Method)
+- parking to wait for  &lt;0x00000007d5c4f300&gt; (a
+java.util.concurrent.locks.AbstractQueuedSynchronizer$ConditionObject)
+at java.util.concurrent.locks.LockSupport.parkNanos(LockSupport.java:226)
+at
+java.util.concurrent.locks.AbstractQueuedSynchronizer$ConditionObject.awaitNanos(AbstractQueuedSynchronizer.java:2082)
+at
+java.util.concurrent.ScheduledThreadPoolExecutor$DelayedWorkQueue.take(ScheduledThreadPoolExecutor.java:1090)
+at
+java.util.concurrent.ScheduledThreadPoolExecutor$DelayedWorkQueue.take(ScheduledThreadPoolExecutor.java:807)
+at
+java.util.concurrent.ThreadPoolExecutor.getTask(ThreadPoolExecutor.java:1068)
+at
+java.util.concurrent.ThreadPoolExecutor.runWorker(ThreadPoolExecutor.java:1130)
+at
+java.util.concurrent.ThreadPoolExecutor$Worker.run(ThreadPoolExecutor.java:615)
+at java.lang.Thread.run(Thread.java:724)
+
+&quot;AMQP Connection 10.106.76.31:5672&quot; prio=5 tid=0x00007fde3383e000
+nid=0x6203 in Object.wait() [0x00000001104bc000]
+   java.lang.Thread.State: WAITING (on object monitor)
+at java.lang.Object.wait(Native Method)
+- waiting on &lt;0x00000007d5bfb028&gt; (a
+com.rabbitmq.utility.BlockingValueOrException)
+at java.lang.Object.wait(Object.java:503)
+at com.rabbitmq.utility.BlockingCell.get(BlockingCell.java:50)
+- locked &lt;0x00000007d5bfb028&gt; (a
+com.rabbitmq.utility.BlockingValueOrException)
+at
+com.rabbitmq.utility.BlockingCell.uninterruptibleGet(BlockingCell.java:89)
+- locked &lt;0x00000007d5bfb028&gt; (a
+com.rabbitmq.utility.BlockingValueOrException)
+at
+com.rabbitmq.utility.BlockingValueOrException.uninterruptibleGetValue(BlockingValueOrException.java:33)
+at
+com.rabbitmq.client.impl.AMQChannel$BlockingRpcContinuation.getReply(AMQChannel.java:343)
+at com.rabbitmq.client.impl.ChannelN.basicConsume(ChannelN.java:972)
+at com.rabbitmq.client.impl.ChannelN.basicConsume(ChannelN.java:941)
+at com.rabbitmq.client.impl.ChannelN.basicConsume(ChannelN.java:933)
+at com.rabbitmq.client.impl.ChannelN.basicConsume(ChannelN.java:926)
+at
+com.avid.acs.example.rabbitmq.SimpleConsumerExample$SimpleConsumer.handleCancel(SimpleConsumerExample.java:50)
+at com.rabbitmq.client.impl.ChannelN.processAsync(ChannelN.java:395)
+at
+com.rabbitmq.client.impl.AMQChannel.handleCompleteInboundCommand(AMQChannel.java:144)
+at com.rabbitmq.client.impl.AMQChannel.handleFrame(AMQChannel.java:91)
+at
+com.rabbitmq.client.impl.AMQConnection$MainLoop.run(AMQConnection.java:533)
+
+&quot;Monitor Ctrl-Break&quot; daemon prio=5 tid=0x00007fde34009000 nid=0x6003
+runnable [0x000000011035c000]
+   java.lang.Thread.State: RUNNABLE
+at java.net.SocketInputStream.socketRead0(Native Method)
+at java.net.SocketInputStream.read(SocketInputStream.java:150)
+at java.net.SocketInputStream.read(SocketInputStream.java:121)
+at sun.nio.cs.StreamDecoder.readBytes(StreamDecoder.java:283)
+at sun.nio.cs.StreamDecoder.implRead(StreamDecoder.java:325)
+at sun.nio.cs.StreamDecoder.read(StreamDecoder.java:177)
+- locked &lt;0x00000007d5657698&gt; (a java.io.InputStreamReader)
+at java.io.InputStreamReader.read(InputStreamReader.java:184)
+at java.io.BufferedReader.fill(BufferedReader.java:154)
+at java.io.BufferedReader.readLine(BufferedReader.java:317)
+- locked &lt;0x00000007d5657698&gt; (a java.io.InputStreamReader)
+at java.io.BufferedReader.readLine(BufferedReader.java:382)
+at com.intellij.rt.execution.application.AppMain$1.run(AppMain.java:85)
+at java.lang.Thread.run(Thread.java:724)
+
+&quot;Service Thread&quot; daemon prio=5 tid=0x00007fde3308f000 nid=0x5c03 runnable
+[0x0000000000000000]
+   java.lang.Thread.State: RUNNABLE
+
+&quot;C2 CompilerThread1&quot; daemon prio=5 tid=0x00007fde3308e800 nid=0x5a03
+waiting on condition [0x0000000000000000]
+   java.lang.Thread.State: RUNNABLE
+
+&quot;C2 CompilerThread0&quot; daemon prio=5 tid=0x00007fde3308d000 nid=0x5803
+waiting on condition [0x0000000000000000]
+   java.lang.Thread.State: RUNNABLE
+
+&quot;Signal Dispatcher&quot; daemon prio=5 tid=0x00007fde33035000 nid=0x5603 waiting
+on condition [0x0000000000000000]
+   java.lang.Thread.State: RUNNABLE
+
+&quot;Finalizer&quot; daemon prio=5 tid=0x00007fde33818800 nid=0x4603 in
+Object.wait() [0x000000010f9f2000]
+   java.lang.Thread.State: WAITING (on object monitor)
+at java.lang.Object.wait(Native Method)
+- waiting on &lt;0x00000007d5505448&gt; (a java.lang.ref.ReferenceQueue$Lock)
+at java.lang.ref.ReferenceQueue.remove(ReferenceQueue.java:135)
+- locked &lt;0x00000007d5505448&gt; (a java.lang.ref.ReferenceQueue$Lock)
+at java.lang.ref.ReferenceQueue.remove(ReferenceQueue.java:151)
+at java.lang.ref.Finalizer$FinalizerThread.run(Finalizer.java:189)
+
+&quot;Reference Handler&quot; daemon prio=5 tid=0x00007fde33817800 nid=0x4403 in
+Object.wait() [0x000000010f8ef000]
+   java.lang.Thread.State: WAITING (on object monitor)
+at java.lang.Object.wait(Native Method)
+- waiting on &lt;0x00000007d5504fd0&gt; (a java.lang.ref.Reference$Lock)
+at java.lang.Object.wait(Object.java:503)
+at java.lang.ref.Reference$ReferenceHandler.run(Reference.java:133)
+- locked &lt;0x00000007d5504fd0&gt; (a java.lang.ref.Reference$Lock)
+
+&quot;VM Thread&quot; prio=5 tid=0x00007fde33815000 nid=0x4203 runnable
+
+&quot;GC task thread#0 (ParallelGC)&quot; prio=5 tid=0x00007fde3380e800 nid=0x3203
+runnable
+
+&quot;GC task thread#1 (ParallelGC)&quot; prio=5 tid=0x00007fde3303a800 nid=0x3403
+runnable
+
+&quot;GC task thread#2 (ParallelGC)&quot; prio=5 tid=0x00007fde3303b000 nid=0x3603
+runnable
+
+&quot;GC task thread#3 (ParallelGC)&quot; prio=5 tid=0x00007fde3303b800 nid=0x3803
+runnable
+
+&quot;GC task thread#4 (ParallelGC)&quot; prio=5 tid=0x00007fde3303c000 nid=0x3a03
+runnable
+
+&quot;GC task thread#5 (ParallelGC)&quot; prio=5 tid=0x00007fde3303d000 nid=0x3c03
+runnable
+
+&quot;GC task thread#6 (ParallelGC)&quot; prio=5 tid=0x00007fde3303d800 nid=0x3e03
+runnable
+
+&quot;GC task thread#7 (ParallelGC)&quot; prio=5 tid=0x00007fde3303e000 nid=0x4003
+runnable
+
+&quot;VM Periodic Task Thread&quot; prio=5 tid=0x00007fde33086000 nid=0x5e03 waiting
+on condition
+
+JNI global references: 161
+
+Heap
+ PSYoungGen      total 38912K, used 10145K [0x00000007d5500000,
+0x00000007d8000000, 0x0000000800000000)
+  eden space 33792K, 30% used
+[0x00000007d5500000,0x00000007d5ee8558,0x00000007d7600000)
+  from space 5120K, 0% used
+[0x00000007d7b00000,0x00000007d7b00000,0x00000007d8000000)
+  to   space 5120K, 0% used
+[0x00000007d7600000,0x00000007d7600000,0x00000007d7b00000)
+ ParOldGen       total 87040K, used 0K [0x0000000780000000,
+0x0000000785500000, 0x00000007d5500000)
+  object space 87040K, 0% used
+[0x0000000780000000,0x0000000780000000,0x0000000785500000)
+ PSPermGen       total 21504K, used 4385K [0x000000077ae00000,
+0x000000077c300000, 0x0000000780000000)
+  object space 21504K, 20% used
+[0x000000077ae00000,0x000000077b248528,0x000000077c300000)
+
+
+*Conclusion*
+*
+*
+Thanks for any help you can give!
+
+-Chris
+
+*
+*
+
+
+On Fri, Aug 9, 2013 at 3:19 AM, Michael Klishin &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">mklishin at gopivotal.com</A>&gt;wrote:
+
+&gt;<i> Chris:
+</I>&gt;<i>
+</I>&gt;<i> &gt; Whenever I try to do anything with the channel in my &quot;handleCancel&quot;
+</I>&gt;<i> method implementation, it blocks forever.  I'm guessing there is a lock on
+</I>&gt;<i> the channel while I'm in that method, and that lock that prevents me from
+</I>&gt;<i> redeclaring queues or consuming from them?
+</I>&gt;<i>
+</I>&gt;<i> Chris,
+</I>&gt;<i>
+</I>&gt;<i> There should be no lock that prevents operations from handleCancel.
+</I>&gt;<i>
+</I>&gt;<i> Can you use VisualVM or jstack to take a thread dump and see what method
+</I>&gt;<i> hangs?
+</I>&gt;<i> Do you see any alarms mentioned in RabbitMQ log?
+</I>&gt;<i>
+</I>&gt;<i> Is there a way you can reproduce this issue with a code sample you can
+</I>&gt;<i> post?
+</I>&gt;<i> --
+</I>&gt;<i> MK
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20130809/5b8f8e3a/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20130809/5b8f8e3a/attachment.htm</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="029191.html">[rabbitmq-discuss] Handling Consumer Cancel Notifications in	Java Client
+</A></li>
+	<LI>Next message: <A HREF="029200.html">[rabbitmq-discuss] Handling Consumer Cancel Notifications in	Java Client
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#29198">[ date ]</a>
+              <a href="thread.html#29198">[ thread ]</a>
+              <a href="subject.html#29198">[ subject ]</a>
+              <a href="author.html#29198">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,440 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] cluster buster
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20cluster%20buster&In-Reply-To=%3Cb2d7eeda-b5cb-406a-abec-b03bf4e9a2e3%40googlegroups.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="023127.html">
+   <LINK REL="Next"  HREF="023133.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] cluster buster</H1>
+    <B>Mark Ward</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20cluster%20buster&In-Reply-To=%3Cb2d7eeda-b5cb-406a-abec-b03bf4e9a2e3%40googlegroups.com%3E"
+       TITLE="[rabbitmq-discuss] cluster buster">ward.mark at gmail.com
+       </A><BR>
+    <I>Wed Oct 17 16:53:13 BST 2012</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="023127.html">[rabbitmq-discuss] understanding the inet_dist_listen_min	inet_dist_listen_max
+</A></li>
+        <LI>Next message: <A HREF="023133.html">[rabbitmq-discuss] cluster buster
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#23132">[ date ]</a>
+              <a href="thread.html#23132">[ thread ]</a>
+              <a href="subject.html#23132">[ subject ]</a>
+              <a href="author.html#23132">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hello,
+I am testing what happens to the cluster when nodes are shutdown.  The 
+results of my testing have not been positive.  I hope to either be advised 
+if I have a mistake in my cluster setup or if something is really going 
+wrong.
+
+The issue is when I shutdown a server using the Windows Services to stop a 
+node the cluster does fail over the queue but does not continue delivering 
+messages to the subscriber.  The subscriber also does not receive any 
+errors.  The client's connection still has a running status but no data 
+flows.  I am able to reproduce this error.
+
+I have added two test run results to this email. I have more tests and the 
+results saved if more information is required.  I can also rerun future 
+tests.
+
+I have the following puny virtual machines for my cluster.
+3 Virtual Machines
+&#8226; Windows 2008 R2 sp1 64-bit
+&#8226; 1 GB of RAM
+&#8226; 16 GB of drive space free
+RabbitMQ: 2.8.7
+Erlang: R15B02
+RabbitMQ is setup as the following on each of the nodes:
+[ {kernel, [{inet_dist_listen_min, 55021}, {inet_dist_listen_max, 55021} ] 
+},
+{rabbit, 
+[{cluster_nodes, ['<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at RIOBARON-1</A>', '<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at RIOOVERLORD-1</A>', 
+'<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at CUST1-MASTER</A>']}
+,{vm_memory_high_watermark, 0.2}]
+} 
+].
+
+Virtual Host: MoBunniesMoProblems
+Queue: MoData: Mirror(all) and Durable
+Admin is setup on all nodes.
+Using the .NET client version: 2.8.7 (nuget download)
+The publisher uses SelectConfirm with messages set to persistent.
+The subscriber uses BasicConsume with BasicQos set depending on the test. 
+(10, 1000, 5)
+Message size has been 3,196 bytes
+100,000 messages sent in each test.
+
+---------------------------------------------------------------------------------------------
+Test 01:
+Assumptions: shutdown cluster node.  A new server will be master of the 
+queue.  subscriber should continue to receive messages.  reconnection is 
+possible and duplicate messages are possible.
+Result: A node took ownership of the node's queue.  The subscriber failed 
+to continue after the node was shutdown.  connection was never dropped.
+
+Test Notes
+Before testing make sure all servers in the cluster are active and see each 
+other.  Admin confirmed this with all green for nodes.
+Publish 100k messages 3,196 in size with no subscriber active.
+When all messages have been published Turn on subscriber.
+During subscriber's active download of the messages shut down the node that 
+is the master of the queue.
+Queue will fail over to the next oldest node.
+Subscriber connection will not be inturrupted but will stop receiving data.
+
+riobaron-1: the connection server.  The publisher will send to this server. 
+ The subscriber will connect to this server.
+riooverlord-1: MoData queue master.  queue was mirrored on riobaron-1 and 
+cust1-master.  Stats server.
+cust1-master: mirror: second oldest server in the cluster.  
+
+During the publishing the high watermark for memory and drive space was 
+never reached.
+
+After riooverlord-1 was shutdown using Windows Service manager to shutdown 
+the rabbitMQ service.  cust1-master was promoted as the MoData queue master.
+Subscriber data send stopped but the connection was still active.  Timeout 
+on the connection was set to 25 seconds.  The connection never timed out 
+even after letting it sit for 24 hours.
+
+Results of log files:
+riobaron-1's log file
+=INFO REPORT==== 16-Oct-2012::08:02:15 ===
+rabbit on node '<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at RIOOVERLORD-1</A>' down
+
+
+=ERROR REPORT==== 16-Oct-2012::08:02:15 ===
+Mnesia('<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at RIOBARON-1</A>'): ** ERROR ** mnesia_event got 
+{inconsistent_database, bad_decision, '<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at RIOOVERLORD-1</A>'}
+
+cust1-master's log file
+
+=INFO REPORT==== 16-Oct-2012::08:02:18 ===
+Statistics database started.
+
+
+=INFO REPORT==== 16-Oct-2012::08:02:18 ===
+Mirrored-queue (queue 'Q' in vhost '/'): Slave 
+&lt;'<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at CUST1-MASTER</A>'.2.255.0&gt; saw deaths of mirrors 
+&lt;'<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at RIOOVERLORD-1</A>'.1.220.0&gt; 
+
+
+=INFO REPORT==== 16-Oct-2012::08:02:18 ===
+Mirrored-queue (queue 'Q' in vhost '/'): Promoting slave 
+&lt;'<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at CUST1-MASTER</A>'.2.255.0&gt; to master
+
+
+=INFO REPORT==== 16-Oct-2012::08:02:18 ===
+rabbit on node '<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at RIOOVERLORD-1</A>' down
+
+
+=INFO REPORT==== 16-Oct-2012::08:02:18 ===
+Mirrored-queue (queue 'MoData' in vhost 'MoBunnyMoProblems'): Slave 
+&lt;'<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at CUST1-MASTER</A>'.2.253.0&gt; saw deaths of mirrors 
+&lt;'<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at RIOOVERLORD-1</A>'.1.219.0&gt; 
+
+
+=INFO REPORT==== 16-Oct-2012::08:02:18 ===
+Mirrored-queue (queue 'MoData' in vhost 'MoBunnyMoProblems'): Promoting 
+slave &lt;'<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at CUST1-MASTER</A>'.2.253.0&gt; to master
+
+
+=ERROR REPORT==== 16-Oct-2012::08:02:18 ===
+Mnesia('<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at CUST1-MASTER</A>'): ** ERROR ** mnesia_event got 
+{inconsistent_database, bad_decision, '<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at RIOOVERLORD-1</A>'}
+
+riooverlord-1's log file
+
+=INFO REPORT==== 16-Oct-2012::08:02:16 ===
+Stopping Rabbit
+
+
+=INFO REPORT==== 16-Oct-2012::08:02:16 ===
+    application: rabbitmq_management
+    exited: stopped
+    type: permanent
+
+
+=INFO REPORT==== 16-Oct-2012::08:02:16 ===
+    application: rabbitmq_management_agent
+    exited: stopped
+    type: permanent
+
+
+=INFO REPORT==== 16-Oct-2012::08:02:16 ===
+stopped TCP Listener on 0.0.0.0:5672
+
+
+=INFO REPORT==== 16-Oct-2012::08:02:16 ===
+stopped TCP Listener on [::]:5672
+
+
+=INFO REPORT==== 16-Oct-2012::08:02:16 ===
+    application: rabbit
+    exited: stopped
+    type: permanent
+
+
+=ERROR REPORT==== 16-Oct-2012::08:02:16 ===
+Error in process &lt;0.20312.2&gt; on node '<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at RIOOVERLORD-1</A>' with exit 
+value: 
+{badarg,[{mnesia_tm,commit_participant,6,[{file,&quot;mnesia_tm.erl&quot;},{line,1750}]}]}
+
+
+
+=INFO REPORT==== 16-Oct-2012::08:02:16 ===
+    application: mnesia
+    exited: stopped
+    type: permanent
+
+
+=INFO REPORT==== 16-Oct-2012::08:02:16 ===
+    application: os_mon
+    exited: stopped
+    type: permanent
+
+
+=INFO REPORT==== 16-Oct-2012::08:02:16 ===
+Halting Erlang VM
+
+
+---------------------------------------------------------------------------------------------
+Test 02:
+Assumption: send data into cluster. shutdown cluster master node of the 
+queue.  subscriber should continue to receive messages.
+Result: a new node promoted to master of the queue upon the shutdown. 
+ subscriber did not receive data after the promotion.  connection was still 
+running and no errors from the client.
+
+Test Notes:
+All nodes in the cluster were online and green.  The queue was mirrored on 
+all nodes.
+queue starts off with 0 messages in the queue.
+
+riobaron-1: connection server.  publisher connected to this server. 
+ subscriber connects to this server.  youngest server in the cluster
+cust1-master: stats server and master of MoData queue.   oldest server
+riooverlord: second oldest server.
+
+After the publisher completed the subscriber was turned on.  During the 
+subscribers connection and active data being received the riobaron-1 server 
+was shutdown.  The subscriber reconnected to riooverlord-1.  Data resumed 
+to send to the subscriber.  During the subscription the cust1-master node 
+was shutdown.  Subscription stopped.  connection remained active and 
+running.
+rioverlord-1 become the new master of the MoData queue.
+
+Waited on the cluster but the connection remained active but no data 
+received from the cluster.  When the client is shutdown and makes a new 
+connection sending will resume.
+
+Results from log files:
+
+riobaron-1: 
+=INFO REPORT==== 17-Oct-2012::08:15:35 ===
+rabbit on node '<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at RIOOVERLORD-1</A>' up
+
+
+=INFO REPORT==== 17-Oct-2012::08:24:46 ===
+Stopping Rabbit
+
+
+=INFO REPORT==== 17-Oct-2012::08:24:46 ===
+    application: rabbitmq_management
+    exited: stopped
+    type: permanent
+
+
+=INFO REPORT==== 17-Oct-2012::08:24:46 ===
+    application: rabbitmq_management_agent
+    exited: stopped
+    type: permanent
+
+
+=INFO REPORT==== 17-Oct-2012::08:24:46 ===
+stopped TCP Listener on 0.0.0.0:5672
+
+
+=INFO REPORT==== 17-Oct-2012::08:24:46 ===
+stopped TCP Listener on [::]:5672
+
+
+=INFO REPORT==== 17-Oct-2012::08:24:46 ===
+    application: rabbit
+    exited: stopped
+    type: permanent
+
+
+=INFO REPORT==== 17-Oct-2012::08:24:46 ===
+    application: mnesia
+    exited: stopped
+    type: permanent
+
+
+=INFO REPORT==== 17-Oct-2012::08:24:46 ===
+    application: os_mon
+    exited: stopped
+    type: permanent
+
+
+=INFO REPORT==== 17-Oct-2012::08:24:46 ===
+Halting Erlang VM
+
+cust1-master:
+=INFO REPORT==== 17-Oct-2012::08:15:12 ===
+Statistics database started.
+
+
+=INFO REPORT==== 17-Oct-2012::08:15:32 ===
+rabbit on node '<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at RIOBARON-1</A>' up
+
+
+=INFO REPORT==== 17-Oct-2012::08:15:38 ===
+rabbit on node '<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at RIOOVERLORD-1</A>' up
+
+
+=INFO REPORT==== 17-Oct-2012::08:16:03 ===
+Adding mirror of queue 'MoData' in vhost 'MoBunnyMoProblems' on node 
+'<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at RIOOVERLORD-1</A>': &lt;3151.343.0&gt;
+
+
+=INFO REPORT==== 17-Oct-2012::08:16:03 ===
+Adding mirror of queue 'MoData' in vhost 'MoBunnyMoProblems' on node 
+'<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at RIOBARON-1</A>': &lt;3150.354.0&gt;
+
+
+=INFO REPORT==== 17-Oct-2012::08:24:49 ===
+rabbit on node '<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at RIOBARON-1</A>' down
+
+
+=INFO REPORT==== 17-Oct-2012::08:27:11 ===
+rabbit on node '<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at RIOBARON-1</A>' up
+
+
+=INFO REPORT==== 17-Oct-2012::08:46:05 ===
+rabbit on node '<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at RIOBARON-1</A>' down
+
+
+=INFO REPORT==== 17-Oct-2012::08:46:44 ===
+Stopping Rabbit
+
+
+=INFO REPORT==== 17-Oct-2012::08:46:44 ===
+    application: rabbitmq_management
+    exited: stopped
+    type: permanent
+
+
+=INFO REPORT==== 17-Oct-2012::08:46:44 ===
+    application: rabbitmq_management_agent
+    exited: stopped
+    type: permanent
+
+
+=INFO REPORT==== 17-Oct-2012::08:46:44 ===
+stopped TCP Listener on 0.0.0.0:5672
+
+
+=INFO REPORT==== 17-Oct-2012::08:46:44 ===
+stopped TCP Listener on [::]:5672
+
+
+=INFO REPORT==== 17-Oct-2012::08:46:45 ===
+    application: rabbit
+    exited: stopped
+    type: permanent
+
+
+=INFO REPORT==== 17-Oct-2012::08:46:45 ===
+    application: mnesia
+    exited: stopped
+    type: permanent
+
+
+=INFO REPORT==== 17-Oct-2012::08:46:45 ===
+    application: os_mon
+    exited: stopped
+    type: permanent
+
+
+=INFO REPORT==== 17-Oct-2012::08:46:45 ===
+Halting Erlang VM
+
+riooverlord-1:
+
+=INFO REPORT==== 17-Oct-2012::08:24:47 ===
+rabbit on node '<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at RIOBARON-1</A>' down
+
+
+=INFO REPORT==== 17-Oct-2012::08:24:47 ===
+Mirrored-queue (queue 'MoData' in vhost 'MoBunnyMoProblems'): Slave 
+&lt;'<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at RIOOVERLORD-1</A>'.3.343.0&gt; saw deaths of mirrors 
+&lt;'<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at RIOBARON-1</A>'.2.354.0&gt; 
+
+
+=INFO REPORT==== 17-Oct-2012::08:24:47 ===
+Mirrored-queue (queue 'Q' in vhost '/'): Slave 
+&lt;'<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at RIOOVERLORD-1</A>'.3.258.0&gt; saw deaths of mirrors 
+&lt;'<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at RIOBARON-1</A>'.2.252.0&gt; 
+
+
+
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20121017/59a63a76/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20121017/59a63a76/attachment.htm</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="023127.html">[rabbitmq-discuss] understanding the inet_dist_listen_min	inet_dist_listen_max
+</A></li>
+	<LI>Next message: <A HREF="023133.html">[rabbitmq-discuss] cluster buster
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#23132">[ date ]</a>
+              <a href="thread.html#23132">[ thread ]</a>
+              <a href="subject.html#23132">[ subject ]</a>
+              <a href="author.html#23132">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

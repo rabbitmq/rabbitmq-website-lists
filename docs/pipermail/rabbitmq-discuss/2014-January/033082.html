@@ -1,0 +1,198 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Federation Topologies &amp; Limitations
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Federation%20Topologies%20%26%20Limitations&In-Reply-To=%3CCAKgmDnFfivYO4uVNs2LSodrH13VvGtzi_OqUBze9ZP6ThFMLdA%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="033077.html">
+   <LINK REL="Next"  HREF="033169.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Federation Topologies &amp; Limitations</H1>
+    <B>Laing, Michael</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Federation%20Topologies%20%26%20Limitations&In-Reply-To=%3CCAKgmDnFfivYO4uVNs2LSodrH13VvGtzi_OqUBze9ZP6ThFMLdA%40mail.gmail.com%3E"
+       TITLE="[rabbitmq-discuss] Federation Topologies &amp; Limitations">michael.laing at nytimes.com
+       </A><BR>
+    <I>Thu Jan 16 00:03:26 GMT 2014</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="033077.html">[rabbitmq-discuss] Federation Topologies &amp; Limitations
+</A></li>
+        <LI>Next message: <A HREF="033169.html">[rabbitmq-discuss] Federation Topologies &amp; Limitations
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#33082">[ date ]</a>
+              <a href="thread.html#33082">[ thread ]</a>
+              <a href="subject.html#33082">[ subject ]</a>
+              <a href="author.html#33082">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Not seeing any other answers (yet)...
+
+We have experimented with many topologies and have tried federation, but
+the design that has proven the most rugged and simplest and is in
+production uses shovels.
+
+We have a core cluster that runs an exchange: the 'postoffice', This
+cluster has a 'well-known' address so the retail instances can find it.
+Each retail instance that comes up creates and runs 2 shovels:
+
+1) the shovel from the core defines a source queue in the core with an
+instance identifier, e.g. 'outbox_i-12345', and a binding to the core
+postoffice exchange including that identifier (its address - more about
+that later).
+
+2) the shovel to the core uses the instance's 'outbox' queue as source,
+which is bound to the instance postoffice exchange and specifies the
+destination exchange as postoffice.
+
+We use 'addresses' as routing and binding keys. Our addresses have 3 parts:
+'action', 'from_address', 'to_address'. The parts are separated by periods.
+
+Each address has parts: we use 'region', 'product', 'service',
+'instance_id', 'pid'. Also separated by periods.
+
+Hence the 'address' of a retail instance is, e.g.:
+action: any action =&gt; *
+from_address:
+  region: from any =&gt; * (the postoffice actually spans multiple regions)
+  product: from any =&gt; * (identifies an internal customer)
+  service: from any =&gt; * (an app or a level of service)
+  instance: from any =&gt; *
+  pid: from any =&gt; *
+to_address:
+  region: mine =&gt; us-west-2
+  product: for any =&gt; *
+  service: for any =&gt; *
+  instance: mine =&gt; i-12345
+  pid: for any =&gt; *
+
+So that is: '*.*.*.*.*.*.us-west-2.*.*.i-12345.*' meaning the instance will
+accept anything sent to its region and instance-id.
+
+A typical routing key might be:
+'sub-resp.eu-west-1.messaging.update.i-98765.444.us-west-2.messaging.gateway.i-12345.-'
+meaning that a service running on a particular pid in another instance is
+sending our instance a message for a different service, same product, on an
+unknown pid.
+
+There should be an app queue bound to the postoffice on the instance with
+an appropriate key to receive the message.
+
+We have standard routines, of course, to handle the creation and
+manipulation of keys. Plus our deployments are automated - so all those
+asterisks are quite easy to handle in practice although a little hard to
+look at!
+
+And of course you can come up with your own addressing scheme to match your
+requirements that could be simpler.
+
+This is just a straightforward bus implementation, made possible by the
+flexibility of the RabbitMQ routing/binding scheme. We have found it very
+useful and have extended the 'postoffice' across all of our instances in
+multiple regions with good result.
+
+Michael Laing
+NYTimes
+
+
+
+
+
+On Wed, Jan 15, 2014 at 2:19 PM, Josh West &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">jsw at one.com</A>&gt; wrote:
+
+&gt;<i> Hi folks,
+</I>&gt;<i>
+</I>&gt;<i> I'm currently working with the federation plugin in order to connect
+</I>&gt;<i> potentially 100-200 different brokers.  The purpose is to provide a virtual
+</I>&gt;<i> message bus, where systems on any broker can send messages to other systems
+</I>&gt;<i> that are likely connected to a different broker. Basically, a communication
+</I>&gt;<i> network / message bus.
+</I>&gt;<i>
+</I>&gt;<i> I am experimenting with different architectures and it seems that in order
+</I>&gt;<i> to prevent message duplications, I'll have to go with a complete graph and
+</I>&gt;<i> max-hops set to 1 -- or in other words, each broker will have to directly
+</I>&gt;<i> federate with the other 100-200 brokers.
+</I>&gt;<i>
+</I>&gt;<i> I'm wondering about the limitations (if they exist) of the federation
+</I>&gt;<i> plugin or this style of architecture.  There isn't much information out
+</I>&gt;<i> there on the pro's and con's of different topologies (aside from obvious
+</I>&gt;<i> issues with a large ring topology).
+</I>&gt;<i>
+</I>&gt;<i> Can anybody elaborate or add any input?
+</I>&gt;<i>
+</I>&gt;<i> Thanks!
+</I>&gt;<i>
+</I>&gt;<i> --
+</I>&gt;<i> Josh West
+</I>&gt;<i> One.com - <A HREF="http://www.one.com">http://www.one.com</A>
+</I>&gt;<i>
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20140115/cb527f59/attachment.html">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20140115/cb527f59/attachment.html</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="033077.html">[rabbitmq-discuss] Federation Topologies &amp; Limitations
+</A></li>
+	<LI>Next message: <A HREF="033169.html">[rabbitmq-discuss] Federation Topologies &amp; Limitations
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#33082">[ date ]</a>
+              <a href="thread.html#33082">[ thread ]</a>
+              <a href="subject.html#33082">[ subject ]</a>
+              <a href="author.html#33082">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

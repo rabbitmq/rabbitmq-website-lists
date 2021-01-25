@@ -1,0 +1,128 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] mirrored cluster crashes after node failure
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20mirrored%20cluster%20crashes%20after%20node%20failure&In-Reply-To=%3C53507612-76b6-4788-a83a-a7169bf85349%40googlegroups.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="030544.html">
+   <LINK REL="Next"  HREF="030553.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] mirrored cluster crashes after node failure</H1>
+    <B>Matt Wheeler</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20mirrored%20cluster%20crashes%20after%20node%20failure&In-Reply-To=%3C53507612-76b6-4788-a83a-a7169bf85349%40googlegroups.com%3E"
+       TITLE="[rabbitmq-discuss] mirrored cluster crashes after node failure">matt.wheeler at 4cite.com
+       </A><BR>
+    <I>Mon Sep 30 19:34:40 BST 2013</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="030544.html">[rabbitmq-discuss] configure external data store(like	database)	for message durability in rabbitmq
+</A></li>
+        <LI>Next message: <A HREF="030553.html">[rabbitmq-discuss] mirrored cluster crashes after node failure
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#30552">[ date ]</a>
+              <a href="thread.html#30552">[ thread ]</a>
+              <a href="subject.html#30552">[ subject ]</a>
+              <a href="author.html#30552">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>We have a 3 node rabbitmq cluster consisting of 2 disk nodes and one memory 
+node.  (disk nodes are rabbitmq-00 and 01, memory node is core-01) 
+
+queues are durable and mirrored (show +2 in control panel, etc.) and show 
+syncronized:
+
+# rabbitmqctl list_queues name slave_pids synchronised_slave_pids
+Listing queues ...
+...
+SVC_mailbox_lookup [&lt;'<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at rabbitmq-01</A>'.2.301.0&gt;, 
+&lt;'<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at core-01</A>'.1.268.0&gt;] [&lt;'<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at core-01</A>'.1.268.0&gt;, 
+&lt;'<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at rabbitmq-01</A>'.2.301.0&gt;]
+...
+
+#  rabbitmqctl list_policies
+Listing policies ...
+/ ha-all ^SVC_ {&quot;ha-mode&quot;:&quot;all&quot;} 0
+...done.
+
+
+We put in SSD mounted to '/var/lib/rabbitmq' to host the mnesia database on 
+rabbitmq-00/01.  we only did a single drive figuring that if the disk 
+failed the node would crash and the others in the HA cluster would take 
+over - all clients have been coded for failover.
+
+The SSD on rabbitmq-00 failed.   i don't have logs of that event from 
+rabbitmq-00's point of view - for some reason it didn't write out anything.
+
+I do have it from rabbitmq-01's:
+
+=INFO REPORT==== 26-Sep-2013::16:07:20 ===
+Mirrored-queue (queue 'SVC_mailbox_lookup' in vhost '/'): Slave &lt;'
+<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at rabbitmq-01</A>'.3.785.0&gt; &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at 4c-rabbitmq-01</A>'.3.785.0&gt;&gt; saw deaths 
+of mirrors &lt;'<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at rabbitmq-00</A>'.3.1415.0&gt;&lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at 4c-rabbitmq-00</A>'.3.1415.0&gt;&gt; 
+
+=INFO REPORT==== 26-Sep-2013::16:07:20 ===
+Mirrored-queue (queue 'SVC_mailbox_lookup' in vhost '/'): Promoting slave &lt;'
+<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at rabbitmq-01</A>'.3.785.0&gt; &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at 4c-rabbitmq-01</A>'.3.785.0&gt;&gt; to master
+
+but then:
+
+=ERROR REPORT==== 26-Sep-2013::16:17:17 ===
+connection &lt;0.487.0&gt;, channel 1 - soft error:
+{amqp_error,not_found,
+&quot;home node '<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at core-01</A>' of durable queue 'SVC_mailbox_lookup' in vhost 
+'/' is down or inaccessible&quot;,
+'queue.declare'}
+
+This is repeated for each queue. 
+
+It looks like rabbitmq-01 took over as master, but then the nodes become 
+non-responsive because they can't write to disk on core-01 (the memory 
+node.)
+
+we shutdown whatever was still running on rabbitmq-00.   and everything was 
+still unavailable.  we then shutdown core-01 and lastly rabbitmq-01, then 
+restarted rabbitmq-01, but it came up with NO queues.   
+
+is this an error with the way the HA cluster is handling failover or an 
+error with our configurations - should we not mix memory and disk nodes in 
+an HA cluster?   
+
+I'm trying to figure this our because we want to be sure that if any node 
+in the cluster fails, the others take over seamlessly.  our code does 
+that... we just need the clusters to soldier on and that no records are 
+lost.
+
+Thanks.  
+
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20130930/3cc961a5/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20130930/3cc961a5/attachment.htm</A>&gt;
+</PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="030544.html">[rabbitmq-discuss] configure external data store(like	database)	for message durability in rabbitmq
+</A></li>
+	<LI>Next message: <A HREF="030553.html">[rabbitmq-discuss] mirrored cluster crashes after node failure
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#30552">[ date ]</a>
+              <a href="thread.html#30552">[ thread ]</a>
+              <a href="subject.html#30552">[ subject ]</a>
+              <a href="author.html#30552">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

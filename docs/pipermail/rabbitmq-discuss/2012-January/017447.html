@@ -1,0 +1,149 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] RabbitMQ load issues
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20RabbitMQ%20load%20issues&In-Reply-To=%3CCAHtD%2B9NnX9HPYPWk9RJdd9sojj68ch4%3DTj6-is66ZtdTU1TNtw%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="017426.html">
+   <LINK REL="Next"  HREF="017523.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] RabbitMQ load issues</H1>
+    <B>Jeremy Pierre</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20RabbitMQ%20load%20issues&In-Reply-To=%3CCAHtD%2B9NnX9HPYPWk9RJdd9sojj68ch4%3DTj6-is66ZtdTU1TNtw%40mail.gmail.com%3E"
+       TITLE="[rabbitmq-discuss] RabbitMQ load issues">j.14159 at gmail.com
+       </A><BR>
+    <I>Tue Jan 17 20:57:46 GMT 2012</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="017426.html">[rabbitmq-discuss] RabbitMQ load issues
+</A></li>
+        <LI>Next message: <A HREF="017523.html">[rabbitmq-discuss] RabbitMQ load issues
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#17447">[ date ]</a>
+              <a href="thread.html#17447">[ thread ]</a>
+              <a href="subject.html#17447">[ subject ]</a>
+              <a href="author.html#17447">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi Simon,
+
+Thanks for your reply.  I'll try to clarify/respond in kind below:
+
+&lt;SNIP&gt;
+
+&gt;<i> Hmm. While RabbitMQ is designed to scale :-) 100k queues and 700k bindings
+</I>&gt;<i> does start to sound like &quot;a lot&quot;.
+</I>&gt;<i>
+</I>&gt;<i> Having said that I was able to create that number of queues / bindings on my
+</I>&gt;<i> desktop machine in half an hour or so without *too* much trouble.
+</I>&gt;<i>
+</I>&gt;<i> Some tips:
+</I>&gt;<i>
+</I>&gt;<i> * If you're declaring queues in bulk, make sure you do so synchonously (i.e.
+</I>&gt;<i> nowait=false).
+</I>
+To be perfectly honest, I can't find this (with a relatively cursory
+investigation) in the APIs I'm using(Akka 1.2 AMQP module that
+leverages RabbitMQ's Java lib iirc).  Having said that, I'm creating
+queues one at a time(albeit quickly) - not sure if this addresses the
+bulk queue declaration you're referring to?  I'll dig further into the
+APIs on my side.
+
+&gt;<i> * If you're going to have that many queues and that few routing keys then
+</I>&gt;<i> presumably every message published will be delivered to huge numbers of
+</I>&gt;<i> queues. I assume you expect your publishing rate to be small. Publishing a
+</I>&gt;<i> couple of messages per second is a lot if they're delivered to 50k queues.
+</I>
+The number of routing keys is actually fairly high given that the
+userId and actual message categories are completely variable.  With
+the example I gave(~100k queues), each queue is bound to a unique
+routing key(topic) and a message typically is delivered to a very
+small number of queues(20-30 would be a theoretical maximum and a very
+rare situation).  As additional applications are built on top of the
+base collection layer and RabbitMQ, the queue count will go much
+higher(obviously).
+
+For what it's worth, our testing load(30k &quot;users&quot;, 6 queues per user
+in my original posting though we never got that high before rabbit
+choked) generates an easy 150-200 messages per second going into
+RabbitMQ and this can spike higher.  Production will see 200k-300k
+users at least I expect.
+
+&gt;<i> * Every queue process consumes a fixed small amount of memory. Spreading
+</I>&gt;<i> queues out over a cluster will help.
+</I>
+We're experimenting with a 3-node cluster as of today though I've
+reduced the queue count by determining the update type at my
+application layer and using topics with wildcards, e.g.
+&quot;&lt;source&gt;.&lt;userId&gt;.*&quot;
+
+&gt;<i> * Every queue and binding creates a row in an Mnesia table. Mnesia tables
+</I>&gt;<i> always reside in RAM, so for huge numbers of queues in a cluster expect to
+</I>&gt;<i> use lots of RAM. Therefore instead of clustering you will probably find it
+</I>&gt;<i> better to shard the queues out over independent brokers and connect them
+</I>&gt;<i> with federation. The case of huge numbers of queues and very few routing
+</I>&gt;<i> keys could almost be made for federation. For the massive fanout case you
+</I>&gt;<i> probably want to build a (maybe multi-layered) federation tree rather than
+</I>&gt;<i> the complete graph people use more often with federation.
+</I>
+Thanks for suggesting this!  We may go this route but I'm wary of
+putting sharding logic in our application layer(perhaps unjustifiably
+so).  Truth be told I was kind of hoping for a &quot;silver bullet&quot; with
+RabbitMQ ;)  In the meantime, we'll bump the RAM for our cluster nodes
+and see what happens.
+
+&gt;<i> * For every active queue (one that has sent or received a message in the
+</I>&gt;<i> last few seconds) there is a small CPU cost when using the management
+</I>&gt;<i> plugin. With huge numbers of queues per node it may be helpful to disable
+</I>&gt;<i> mgmt. On the other hand &quot;rabbitmqctl list_queues&quot; will contact all the
+</I>&gt;<i> queues synchronously (maybe waking them up). Monitoring will be an issue.
+</I>
+Good to know, we'll keep that in mind while testing load, etc.
+
+Thanks for the feedback!  Any other ideas based on my above responses
+are *most* welcome!
+
+Regards,
+
+Jeremy Pierre
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="017426.html">[rabbitmq-discuss] RabbitMQ load issues
+</A></li>
+	<LI>Next message: <A HREF="017523.html">[rabbitmq-discuss] RabbitMQ load issues
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#17447">[ date ]</a>
+              <a href="thread.html#17447">[ thread ]</a>
+              <a href="subject.html#17447">[ subject ]</a>
+              <a href="author.html#17447">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

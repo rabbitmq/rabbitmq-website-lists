@@ -1,0 +1,142 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Exchange with throttling
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Exchange%20with%20throttling&In-Reply-To=%3C8DA457D4-3C5C-45CD-A69C-2FC3F55728DF%40rabbitmq.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="021587.html">
+   <LINK REL="Next"  HREF="021573.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Exchange with throttling</H1>
+    <B>Tim Watson</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Exchange%20with%20throttling&In-Reply-To=%3C8DA457D4-3C5C-45CD-A69C-2FC3F55728DF%40rabbitmq.com%3E"
+       TITLE="[rabbitmq-discuss] Exchange with throttling">watson.timothy at gmail.com
+       </A><BR>
+    <I>Tue Jul 31 09:58:34 BST 2012</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="021587.html">[rabbitmq-discuss] Exchange with throttling
+</A></li>
+        <LI>Next message: <A HREF="021573.html">[rabbitmq-discuss] Exchange with throttling
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#21600">[ date ]</a>
+              <a href="thread.html#21600">[ thread ]</a>
+              <a href="subject.html#21600">[ subject ]</a>
+              <a href="author.html#21600">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>
+On 30 Jul 2012, at 10:45, F&#233;lix L&#243;pez &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">jaaaelpumuki at gmail.com</A>&gt; wrote:
+
+&gt;<i> Definitely I would like to extend the flow control mechanism to support something similar as I've done with plugin, so someone can set a maximum messages per second or something similar
+</I>&gt;<i> 
+</I>
+The flow control mechanism at the moment uses the concept of credit. You could possibly use internal or user defined sensors to limit or release available credit, without introducing throttle points at unnatural junctions in the process flow. I'm not saying we would do that, just that it sounds like a more convincing approach to customising flow control. The key thing is to understand where you actually want to introduce back pressure, as apply it in the wrong place almost certainly won't help and a lot of careful thought went into designing the existing approach, so (a) changing that would require just as much careful consideration and (b) opening the choice of how to apply throttling to user defined actions, sensors or throttles would require even more careful design. We would also have to consider the implications of supporting this, as any arbitrary user code that runs inside rabbit can have a variety of effects which need to be understood and documented.
+
+I would also like to offer another architectural approach to meeting this requirement. By introducing traffic management in a border controller you obviate the need to alter the broker's behaviour in potentially unpredictable ways. A border control component doesn't have to be AMQP aware, so you can defer to smart network kit or a trusted software implementation. If a single connection (to a given endpoint) can be both producer and consumer, then a traffic manager that isn't aware of AMQP framing could potentially block progress by, for example, preventing ACKs from being delivered where a single client connection is handling both roles over two different channels. In this case, you could deploy a rabbit node to act as a border controller and use an intermediary client (say the erlang direct client, which is likely to be very efficient in this respect) to do the rate limiting before forwarding messages to the real destination endpoint. I think it's worthwhile exploring the alternative possibilities before adding complexity to the broker.
+
+&gt;<i> 2012/7/30 Tim Watson &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">tim at rabbitmq.com</A>&gt;
+</I>&gt;<i> Just to add to Emile's comments, I there are a couple of things to consider here.
+</I>&gt;<i> 
+</I>&gt;<i> Firstly, it's important to point out that letting the Channel process mailbox fill up could lead to unexpected and unpredictable performance characteristics, and doesn't appear to offer anything that per-connection flow control isn't already doing. Also, creating an mnesia transaction for each routing operation is likely to produce an altogether *different* kind of throttling of Rabbit's performance across a cluster, and probably (in fact, almost certainly) not the one you intended.
+</I>&gt;<i> 
+</I>&gt;<i> I would strongly recommend reconsidering this approach. If you're interested in extending the flow control mechanism to support alternative measures, then perhaps we should have a collective conversation about that instead, as Emile is quite right in suggesting that approach makes more sense.
+</I>&gt;<i> 
+</I>&gt;<i> Cheers,
+</I>&gt;<i> Tim
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> On 07/28/2012 11:52 AM, F&#233;lix L&#243;pez wrote:
+</I>&gt;&gt;<i> Thanks, 
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;<i> I've finally made a plugin to do that. I think what I wanted to do It cannot be possible with mechanism you sent me in the email. 
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;<i> The plugin is here <A HREF="https://github.com/flopezluis/rabbitmq-throttling-exchange,">https://github.com/flopezluis/rabbitmq-throttling-exchange,</A> It has a lot to improve and certainly I'm not sure of the impact of this exchange in the performance of rabbitmq.
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;<i> 2012/7/24 Emile Joubert &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">emile at rabbitmq.com</A>&gt;
+</I>&gt;&gt;<i> Hi,
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;<i> On 23/07/12 18:20, F&#233;lix wrote:
+</I>&gt;&gt;<i> &gt; Is there anything similar in rabbitmq?
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;<i> Yes, the broker has a connection-based flow control mechanism - see
+</I>&gt;&gt;<i> <A HREF="http://www.rabbitmq.com/memory.html#per-connection">http://www.rabbitmq.com/memory.html#per-connection</A>
+</I>&gt;&gt;<i> and a blog post that explains further:
+</I>&gt;&gt;<i> <A HREF="http://www.rabbitmq.com/blog/2012/04/17/rabbitmq-performance-measurements-part-1/">http://www.rabbitmq.com/blog/2012/04/17/rabbitmq-performance-measurements-part-1/</A>
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;<i> Bear in mind that blocking an Erlang process will lead to a backlog in
+</I>&gt;&gt;<i> its internal mailbox without slowing down the network. Also, the
+</I>&gt;&gt;<i> exchange is not a natural control point for bandwidth limiting, because
+</I>&gt;&gt;<i> an exchange is not a process. A channel would be a more natural choice.
+</I>&gt;&gt;<i> You may be able to adapt the existing flow control mechanism to grant
+</I>&gt;&gt;<i> credits based on bandwidth rather than message count.
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;<i> -Emile
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;<i> -- 
+</I>&gt;&gt;<i> <A HREF="http://www.linkedin.com/in/flopezluis">http://www.linkedin.com/in/flopezluis</A>
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;<i> It's easier to ask forgiveness than it is to get permission
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;<i> &quot;.....it doesn't matter how many times you fail. It doesn't matter how many times you almost get it right. No one is going to know or care about your failures, and either should you. All you have to do is learn from them and those around you because...All that matters in business is that you get it right once. Then everyone can tell you how lucky you are.&quot;
+</I>&gt;&gt;<i> --Mark Cuban&quot;
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;<i> &quot;Always be the worst guy in every band you're in.&quot; If you're the best guy there, you need to be in a different band. And I think that works for almost everything that's out there as well.&quot; Pat Metheny
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;<i> _______________________________________________
+</I>&gt;&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> -- 
+</I>&gt;<i> <A HREF="http://www.linkedin.com/in/flopezluis">http://www.linkedin.com/in/flopezluis</A>
+</I>&gt;<i> 
+</I>&gt;<i> It's easier to ask forgiveness than it is to get permission
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> &quot;.....it doesn't matter how many times you fail. It doesn't matter how many times you almost get it right. No one is going to know or care about your failures, and either should you. All you have to do is learn from them and those around you because...All that matters in business is that you get it right once. Then everyone can tell you how lucky you are.&quot;
+</I>&gt;<i> --Mark Cuban&quot;
+</I>&gt;<i> 
+</I>&gt;<i> &quot;Always be the worst guy in every band you're in.&quot; If you're the best guy there, you need to be in a different band. And I think that works for almost everything that's out there as well.&quot; Pat Metheny
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20120731/420dd120/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20120731/420dd120/attachment.htm</A>&gt;
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="021587.html">[rabbitmq-discuss] Exchange with throttling
+</A></li>
+	<LI>Next message: <A HREF="021573.html">[rabbitmq-discuss] Exchange with throttling
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#21600">[ date ]</a>
+              <a href="thread.html#21600">[ thread ]</a>
+              <a href="subject.html#21600">[ subject ]</a>
+              <a href="author.html#21600">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

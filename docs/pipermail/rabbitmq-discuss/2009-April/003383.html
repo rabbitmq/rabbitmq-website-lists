@@ -1,0 +1,174 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] basic design question
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20basic%20design%20question&In-Reply-To=42fa2da60904211919l6eadb0c0t6da3e884ad40d291%40mail.gmail.com">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003382.html">
+   <LINK REL="Next"  HREF="003385.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] basic design question</H1>
+    <B>Isaac Cambron</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20basic%20design%20question&In-Reply-To=42fa2da60904211919l6eadb0c0t6da3e884ad40d291%40mail.gmail.com"
+       TITLE="[rabbitmq-discuss] basic design question">icambron at gmail.com
+       </A><BR>
+    <I>Wed Apr 22 04:33:16 BST 2009</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003382.html">[rabbitmq-discuss] basic design question
+</A></li>
+        <LI>Next message: <A HREF="003385.html">[rabbitmq-discuss] basic design question
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3383">[ date ]</a>
+              <a href="thread.html#3383">[ thread ]</a>
+              <a href="subject.html#3383">[ subject ]</a>
+              <a href="author.html#3383">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>I did get the tip revision to work (the problem was just that I hadn't shut
+down the server properly). However, I'm still not seeing the desired
+behavior. I have two programs:
+
+The client, which does this:
+
+ch.QueueDeclare(&quot;myqueue&quot;);
+ch.ExchangeDeclare(&quot;ex&quot;, ExchangeType.Direct);
+ch.QueueBind(&quot;myqueue&quot;, &quot;ex&quot;, &quot;test&quot;, false, null);
+for (int i = 0; i &lt; 11; i++ )
+                    ch.BasicPublish(&quot;ex&quot;, &quot;test&quot;, null,
+Encoding.UTF8.GetBytes(&quot;message &quot; + i));
+
+and the server, which does this:
+
+                QueueingBasicConsumer consumer = new
+QueueingBasicConsumer();
+                ch.BasicConsume(&quot;myqueue&quot;, true, null, consumer);
+                ch.BasicQos(0, 1, false);
+
+                while (true)
+                {
+                    try
+                    {
+                        BasicDeliverEventArgs e = (BasicDeliverEventArgs)
+consumer.Queue.Dequeue();
+                        Console.WriteLine(Encoding.UTF8.GetString(e.Body));
+
+                        Thread.Sleep(seconds * 1000); //pretend to take a
+while
+
+                        ch.BasicAck(e.DeliveryTag, false);
+                    }
+
+
+If I run the client and then two different instances of the server, one with
+the seconds variable set to 1 second and the other with 2, I'd expect the
+former instance to print twice as many message bodies. Instead, they
+alternate, as if they had just aggressively fetched everything in the queue
+in a round-robin way.
+
+Do I have something conceptually wrong, or is that an implementation issue?
+
+
+On Tue, Apr 21, 2009 at 10:19 PM, Isaac Cambron &lt;<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">icambron at gmail.com</A>&gt; wrote:
+
+&gt;<i> Matthias,
+</I>&gt;<i>
+</I>&gt;<i> Thanks, that's very helpful. A couple of follow-up questions:
+</I>&gt;<i>
+</I>&gt;<i> 1. What snapshot should I use? I tried out the default revision (not sure
+</I>&gt;<i> what that tracks) and it didn't queue like I expected; the first consumer to
+</I>&gt;<i> subscribe got all the tasks, even if more subscribers were added before the
+</I>&gt;<i> acks. I can't get the tip to run at all (crashes on startup). Presumably I
+</I>&gt;<i> need something in between?
+</I>&gt;<i>
+</I>&gt;<i> 2. It's not clear to me what all of the other available qos parameters
+</I>&gt;<i> mean. It appears (and again, wasn't able to try this on the tip revision)
+</I>&gt;<i> that only BasicQos(0, n, false) is supported. This sounds like it's what I
+</I>&gt;<i> want anyway (with, obv, n=1); is that right?
+</I>&gt;<i>
+</I>&gt;<i> If what I have was expected to work, I can provide source code, or the
+</I>&gt;<i> crash dump if that's unexpected too.
+</I>&gt;<i>
+</I>&gt;<i> Thanks,
+</I>&gt;<i> Isaac
+</I>&gt;<i>
+</I>&gt;<i> On Tue, Apr 21, 2009 at 7:38 PM, Matthias Radestock &lt;<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">matthias at lshift.net</A>&gt;wrote:
+</I>&gt;<i>
+</I>&gt;&gt;<i> Isaac,
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Isaac Cambron wrote:
+</I>&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i> I have a client that will publish a bunch of tasks to execute - tasks A,
+</I>&gt;&gt;&gt;<i> B, C, D, E. I have a pool of machines that, individually, know how to do
+</I>&gt;&gt;&gt;<i> some subset of the tasks. For example, let's say that machine 1 can do A, B,
+</I>&gt;&gt;&gt;<i> and C, and machine 2 can do C, D, and E. A machine can only do one task at a
+</I>&gt;&gt;&gt;<i> time, and I only want one machine to do any particular task. Tasks can wait
+</I>&gt;&gt;&gt;<i> indefinitely until there's a free machine capable of executing it.
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i> I'm not sure what pieces go where. Do I create one queue per task? (If
+</I>&gt;&gt;&gt;<i> so, how will I make the machines only respond to one message from any queue
+</I>&gt;&gt;&gt;<i> at a time?)
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> That, in combination with a basic.qos prefetch count of 1, should work.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> More specifically ...
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> - create a direct exchange to which tasks get published, using the task
+</I>&gt;&gt;<i> type as the routing key
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> - create one queue per task type and bind it to the direct exchange with
+</I>&gt;&gt;<i> the tasks type as the binding key
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> - let each worker machine open a channel, set the basic.qos prefetch count
+</I>&gt;&gt;<i> to 1, and then subscribe to (basic.consume) each of the queues corresponding
+</I>&gt;&gt;<i> to task types supported by that worker.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> - when a worker is done with a task it basic.ack's the message
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> The prefetch count limits the number of tasks a worker will be sent before
+</I>&gt;&gt;<i> ack'ing them. Note that the basic.qos functionality required to do that has
+</I>&gt;&gt;<i> not made it into an official release yet; you'll have to use  a recent
+</I>&gt;&gt;<i> snapshot of the RabbitMQ source. Your example is actually a pretty
+</I>&gt;&gt;<i> interesting use case for basic.qos, exploiting some of the more advanced
+</I>&gt;&gt;<i> aspects of that feature, so I'd love to hear how it works out for you.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Regards,
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Matthias.
+</I>&gt;&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: <A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20090421/60a609fd/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20090421/60a609fd/attachment.htm</A> 
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003382.html">[rabbitmq-discuss] basic design question
+</A></li>
+	<LI>Next message: <A HREF="003385.html">[rabbitmq-discuss] basic design question
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3383">[ date ]</a>
+              <a href="thread.html#3383">[ thread ]</a>
+              <a href="subject.html#3383">[ subject ]</a>
+              <a href="author.html#3383">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

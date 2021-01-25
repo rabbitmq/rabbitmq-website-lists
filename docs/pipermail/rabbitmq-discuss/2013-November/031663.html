@@ -1,0 +1,168 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Feature Req / Bug list
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Feature%20Req%20/%20Bug%20list&In-Reply-To=%3CCAJ4uuZY0agfwfjChtes3LHsTmADhs2ZnTUR557%3Dir5-Lbk20sg%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="031661.html">
+   <LINK REL="Next"  HREF="031664.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Feature Req / Bug list</H1>
+    <B>Graeme N</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Feature%20Req%20/%20Bug%20list&In-Reply-To=%3CCAJ4uuZY0agfwfjChtes3LHsTmADhs2ZnTUR557%3Dir5-Lbk20sg%40mail.gmail.com%3E"
+       TITLE="[rabbitmq-discuss] Feature Req / Bug list">graeme at sudo.ca
+       </A><BR>
+    <I>Mon Nov  4 20:29:32 GMT 2013</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="031661.html">[rabbitmq-discuss] Feature Req / Bug list
+</A></li>
+        <LI>Next message: <A HREF="031664.html">[rabbitmq-discuss] Feature Req / Bug list
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#31663">[ date ]</a>
+              <a href="thread.html#31663">[ thread ]</a>
+              <a href="subject.html#31663">[ subject ]</a>
+              <a href="author.html#31663">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Ok, so here's the issues I'm still seeing with the latest nightly build
+(rabbitmq-server-3.2.0.41104-1.noarch):
+
+- multiple simultaneous API calls on the CLI from running rabbitmqctl and
+amqp-delete-queue in parallel from bash still cause weird buggy responses
+from RMQ. running my setup_queues.sh multiple times is enough to trigger
+it. Seems to be primarily running the operations in the first loop that
+have problems, the second loop (which creates the queues) seems to run fine
+in parallel, which is good.
+- this is also the case with my rebalance_cluster.sh script when run in
+parallel, the API handler breaks and skips applying about half of the new
+policies.
+- bug where policies with &gt; 2 replicas don't get properly auto-replicated
+is still present. Running rebalance_cluster.sh multiple times causes many
+queues to end up under-replicated after the first pass. however, there
+seems to be a workaround: if I apply a global replication policy of
+&quot;exactly 3&quot;, and then delete the per-queue policies, this seems to force a
+resync as it switches queues to the global policy, and so they end up fully
+replicated to the 3 nodes I specified with the per-queue policies.
+- still lots of replication problems related to pulling and re-adding
+nodes. running the toggle_nodes.sh script in a loop with the global
+&quot;exactly 3&quot; policy demonstrates that as nodes are removed, it doesn't
+automatically replicate to a different node, just leaves queues with only 1
+replica, and doesn't always re-replicate back to the node which was pulled
+after it's been re-added. after a few iterations (3-5), this causes data
+loss on queues, with queues that have sequentially lost all their replicas
+ending up empty, even though the global policy says they should be ensuring
+there's always 3 copies of the data.
+- running toggle_nodes.sh in a loop will also still get to the point where
+rabbitmq refuses to do any further node leave/join operations until the
+cluster is fully killed and brought back up.
+- this also eventually causes a few of the queues to enter the weird state
+where they list unsyncronized mirrors, but aren't attempting to sync. at
+this point, rebalance_cluster.sh will also fail, and the cluster will
+reject all policy operation requests, until it's fully killed and restarted.
+
+On the bright side:
+
+- loading 10k messages per queue seems faster on my VM than with the 3.2.0
+release, even when doing 3x local replication.
+- bug where it was deleting queues as they approached 10k messages when
+policies had been applied seems to be gone.
+- cluster management functions run sequentially from scripts seems to be
+safe now, haven't been able to generate any bad behaviour as long as I'm
+not running more than one cluster command at a time, and as long as I'm not
+removing and adding nodes.
+- have a known good way to rebalance queues across cluster systems, even if
+it is slow and requires a workaround to get fully synced.
+
+I'm really hoping you guys can replicate the more severe errors around
+polices and node management. I'm happy to provide thorough reproduction
+steps, information, logs, etc for anything I've reported here, if you guys
+are having issues reproducing internally.
+
+Graeme
+
+
+
+On Mon, Nov 4, 2013 at 11:00 AM, Graeme N &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">graeme at sudo.ca</A>&gt; wrote:
+
+&gt;<i> Hi Simon,
+</I>&gt;<i>
+</I>&gt;<i> It does seem likely to me that fixing the initial issues I found would
+</I>&gt;<i> resolve the other problems, so I'll definitely re-test within the next day
+</I>&gt;<i> or so using the latest nightly build, and let you know how it goes.
+</I>&gt;<i>
+</I>&gt;<i> Thanks!
+</I>&gt;<i> Graeme
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> On Mon, Nov 4, 2013 at 6:05 AM, Simon MacMullen &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">simon at rabbitmq.com</A>&gt;wrote:
+</I>&gt;<i>
+</I>&gt;&gt;<i> On 29/10/2013 12:06AM, Graeme N wrote:
+</I>&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i> These errors are all really strange, and so I'm hoping you guys can
+</I>&gt;&gt;&gt;<i> reproduce them, and best case scenario, find something that accounts for
+</I>&gt;&gt;&gt;<i> these problems which we can then patch in our production environment.
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> We haven't been able to recreate your most recent issues - but it's
+</I>&gt;&gt;<i> possible that they're all copies of the same underlying problem as the
+</I>&gt;&gt;<i> first lot you reported (which are now fixed).
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> So would you be able to have another go, with a recent nightly build?
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> <A HREF="http://www.rabbitmq.com/nightly-builds.html">http://www.rabbitmq.com/nightly-builds.html</A>
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Cheers, Simon
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> --
+</I>&gt;&gt;<i> Simon MacMullen
+</I>&gt;&gt;<i> RabbitMQ, Pivotal
+</I>&gt;&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20131104/aac1cafa/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20131104/aac1cafa/attachment.htm</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="031661.html">[rabbitmq-discuss] Feature Req / Bug list
+</A></li>
+	<LI>Next message: <A HREF="031664.html">[rabbitmq-discuss] Feature Req / Bug list
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#31663">[ date ]</a>
+              <a href="thread.html#31663">[ thread ]</a>
+              <a href="subject.html#31663">[ subject ]</a>
+              <a href="author.html#31663">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,169 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Cannot send message with STOMP
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Cannot%20send%20message%20with%20STOMP&In-Reply-To=%3C1D9CBD89533EE94D8295DFBFD923C23F649F007B%40PLOXCHG03.cern.ch%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="019567.html">
+   <LINK REL="Next"  HREF="019574.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Cannot send message with STOMP</H1>
+    <B>Lionel Cons</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Cannot%20send%20message%20with%20STOMP&In-Reply-To=%3C1D9CBD89533EE94D8295DFBFD923C23F649F007B%40PLOXCHG03.cern.ch%3E"
+       TITLE="[rabbitmq-discuss] Cannot send message with STOMP">Lionel.Cons at cern.ch
+       </A><BR>
+    <I>Mon Apr 16 16:18:32 BST 2012</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="019567.html">[rabbitmq-discuss] Cannot send message with STOMP
+</A></li>
+        <LI>Next message: <A HREF="019574.html">[rabbitmq-discuss] Cannot send message with STOMP
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#19571">[ date ]</a>
+              <a href="thread.html#19571">[ thread ]</a>
+              <a href="subject.html#19571">[ subject ]</a>
+              <a href="author.html#19571">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Tony,
+
+Thanks for your reply.
+
+Since RabbitMQ does not report any error back to the client and does not record anything in its logs either, it&#8217;s hard to find out what really happens. IMHO, if RabbitMQ thinks something is wrong, it should clearly say so.
+
+Back to my test, the protocol used is STOMP 1.0 (RabbitMQ correctly reports it in its CONNECTED frame). There is no escaping defined in STOMP 1.0 so RabbitMQ should IMHO not perform any (de)escaping.
+
+If escaping is indeed the source of the problem, could one please consider:
+
+-          Logging errors coming from incorrect escaping
+
+-          Not performing STOMP 1.1 (de)escaping on STOMP 1.0 connections
+?
+
+Cheers,
+
+Lionel
+
+From: <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">tonygarnockjones at gmail.com</A> [mailto:<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">tonygarnockjones at gmail.com</A>] On Behalf Of Tony Garnock-Jones
+Sent: Monday, April 16, 2012 4:19 PM
+To: Lionel Cons
+Cc: <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+Subject: Re: [rabbitmq-discuss] Cannot send message with STOMP
+
+It's probably the backslashes in the headers that you're sending. Because STOMP's syntax forbids linefeeds and colons not only in header names but also in header values (!!), RabbitMQ's STOMP codec uses backslash escaping (for the values only, I note), which isn't part of the specification.
+
+Even though you're not sending colons in header values, you're being affected by the escaping. STOMP's syntax plus RabbitMQ's ad-hoc escaping then are two wrongs that definitely don't make a right :-(
+
+STOMP's syntax, terrible though it is, is set in stone, so I guess the only hope left is some tweak to or removal of the backslash escaping mechanism in the RabbitMQ codec. I'm at a loss as to what the right thing to do here is. (Besides fix STOMP, obviously.)
+
+One option would be to do no escaping, but if a header is about to be encoded using some illegal character (i.e. LF or colon), encode it using some totally nonstandard but also totally unambiguous format such as a colon in the first column of the line followed by two netstrings? It'd completely crash any parser that wasn't looking out for it, because it's illegal syntax, but then so is including an unescaped colon or LF in the first place, so we're already into uncharted territory.
+
+:<i>4:what,17:a terrible design,
+</I>
+A middle ground would be to forbid sending colons in header *names* but silently pass them on in header *values* (they're harmless, and it's a silly restriction), and if a LF were seen, to encode it as LF-colon. A naive parser then would see a pseudo-header with an empty name; parsers expecting this convention would understand it to be a header value continuation from the previous line.
+
+Any way you slice it, though: yuck.
+
+Regards,
+  Tony
+
+On 16 April 2012 09:42, Lionel Cons &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">lionel.cons at cern.ch</A>&lt;mailto:<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">lionel.cons at cern.ch</A>&gt;&gt; wrote:
+It seems I cannot send _some_ messages using STOMP. After investigation,
+this seems to come from the presence of &quot;exotic&quot; characters in the header.
+
+I managed to reproduce the problem with netcat and the attached file.
+
+When I try to use the file to send the message, I get nothing back:
+
+$ (cat frame; sleep 1) | nc broker 6123
+
+If I remove the two header lines starting with rnd-, it does work as
+expected:
+
+$ (cat frame.clean; sleep 1) | nc broker 6123
+CONNECTED
+session:session-wUaTaF5qzu7nKZ4TmuaWFM
+heart-beat:0,0
+server:RabbitMQ/2.8.0
+version:1.0
+
+RECEIPT
+receipt-id:abc
+
+So it seems that RabbitMQ does not like these header lines... Any idea on
+what is happening?
+
+Cheers,
+
+Lionel
+
+
+_______________________________________________
+rabbitmq-discuss mailing list
+<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>&lt;mailto:<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>&gt;
+<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+
+
+
+--
+Tony Garnock-Jones
+<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">tonygarnockjones at gmail.com</A>&lt;mailto:<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">tonygarnockjones at gmail.com</A>&gt;
+<A HREF="http://homepages.kcbbs.gen.nz/tonyg/">http://homepages.kcbbs.gen.nz/tonyg/</A>
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20120416/34664c31/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20120416/34664c31/attachment.htm</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="019567.html">[rabbitmq-discuss] Cannot send message with STOMP
+</A></li>
+	<LI>Next message: <A HREF="019574.html">[rabbitmq-discuss] Cannot send message with STOMP
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#19571">[ date ]</a>
+              <a href="thread.html#19571">[ thread ]</a>
+              <a href="subject.html#19571">[ subject ]</a>
+              <a href="author.html#19571">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

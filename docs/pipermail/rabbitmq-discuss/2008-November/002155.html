@@ -1,0 +1,196 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Form Submission - Add A Question
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20Form%20Submission%20-%20Add%20A%20Question&In-Reply-To=269388e30811241145v27bfdbf6v49a88b73333f372b%40mail.gmail.com">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002140.html">
+   <LINK REL="Next"  HREF="002095.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Form Submission - Add A Question</H1>
+    <B>Sean Treadway</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20Form%20Submission%20-%20Add%20A%20Question&In-Reply-To=269388e30811241145v27bfdbf6v49a88b73333f372b%40mail.gmail.com"
+       TITLE="[rabbitmq-discuss] Form Submission - Add A Question">sean at soundcloud.com
+       </A><BR>
+    <I>Wed Nov 26 12:39:45 GMT 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002140.html">[rabbitmq-discuss] Form Submission - Add A Question
+</A></li>
+        <LI>Next message: <A HREF="002095.html">[rabbitmq-discuss] Catching channel disconnect
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2155">[ date ]</a>
+              <a href="thread.html#2155">[ thread ]</a>
+              <a href="subject.html#2155">[ subject ]</a>
+              <a href="author.html#2155">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Ben,
+
+On Nov 24, 2008, at 8:45 PM, Ben Hood wrote:
+&gt;<i> What I meant by absorbing back pressure would be an example where the
+</I>&gt;<i> consuming client pulls every message from the socket and buffers it
+</I>&gt;<i> internally. This would negate the effect of back pressure and just
+</I>&gt;<i> exercise memory pressure on the client application to compensate for
+</I>&gt;<i> this. This would an example where you would be throwing away the flow
+</I>&gt;<i> control provided by TCP (under the assumption that you are using TCP
+</I>&gt;<i> as a transport).
+</I>
+That the client library is snarfing up anything the broker is sending  
+it was what I initially thought you meant.  But then I looked hard and  
+I'm pretty sure this Ruby client doesn't pull all frames off the  
+socket and parse them.  With the test case provided there is some  
+logging of the protocol parsing, and the decoding of each frame only  
+happens when the processing of each message returns control back to  
+the event loop (every 10 seconds).  So then I thought that setting the  
+TCP window size to something very small could kick in TCP flow control  
+earlier to limit the bytes and hence messages sent by the broker.
+
+&gt;&gt;<i> This makes it clearer:
+</I>&gt;&gt;<i> <A HREF="http://lettuce.squarespace.com/faq/queues/when-declaring-a-queue-what-does-the-message-count-field-mea.html">http://lettuce.squarespace.com/faq/queues/when-declaring-a-queue-what-does-the-message-count-field-mea.html</A>
+</I>&gt;&gt;<i> But on a practical level, I think it's important to remind  
+</I>&gt;&gt;<i> explicitly that
+</I>&gt;&gt;<i> mid-flight messages for a consumer with no_ack=false are not  
+</I>&gt;&gt;<i> included in
+</I>&gt;&gt;<i> this count.
+</I>&gt;<i>
+</I>&gt;<i> Sorry, I don't quite follow this. Can you explain?
+</I>
+This is just a suggestion to include a bit more information in the FAQ  
+entry.  Coming from our application's point of view rather than the  
+broker's point of view, it was tough for me to put together a picture  
+of how all the pieces fit together.
+
+This is what I was seeing when understanding 'message count':
+
+The producer publishes 3 messages, the broker accepts these 3 and  
+increments the message count for each.  A consumer connects, the  
+broker puts the 3 messages in a packet on the wire and decrements the  
+broker's message count by 3.  The consumer parses the frames from the  
+wire and delivers 1 message to the application, the client application  
+updates its message count by 1.
+
+At this point, 3 messages exist - the producer has a count of 0, the  
+broker has a count of 0, the consumer application has a count of 1.
+
+There are 2 unaccounted messages somewhere.  I went on a hunt for  
+these messages.  With your and Matthias' help, I believe they exist in  
+consumer's socket's read buffer.
+
+These messages in the read buffer are the ones that are in mid- 
+flight.  Our client application logic per consumer could take up to 10  
+minutes per unit of work before the next message is parsed and handed  
+to our application, so those extra messages that are in &quot;mid-fight&quot;,  
+are looking like they're in &quot;mid-flight&quot; for 10-20 minutes which isn't  
+very intuitive by the name.  In the meantime, we could have started up  
+another client application to begin working on those mid-flight  
+messages if we knew that they existed by checking the 'message count'.
+&gt;<i>
+</I>
+
+&gt;<i> This sounds more like an application of basic.qos because you would to
+</I>&gt;<i> distribute messages based on the various consumers' ability to process
+</I>&gt;<i> units of work. By setting the prefetch window, you get more fine
+</I>&gt;<i> grained consumer flow control.
+</I>
+Indeed this is just what we're looking for.
+
+&gt;&gt;<i> It looks like branch 19684 (rabbitmqctl list_queues messages_ready)  
+</I>&gt;&gt;<i> gives us
+</I>&gt;&gt;<i> the statistic we can use to tune our consumer pools.  Are there any  
+</I>&gt;&gt;<i> plans of
+</I>&gt;&gt;<i> also exposing the 'messages_ready' statistic over AMQP?
+</I>&gt;<i>
+</I>&gt;<i> Hmmm, difficult question. Some of the Redhat guys have been talking
+</I>&gt;<i> about putting more managementy stuff into the protocol, but I don't
+</I>&gt;<i> know what the current situation.
+</I>&gt;<i>
+</I>&gt;<i> And coincidentally we have talking about using the codegen to add some
+</I>&gt;<i> propriety methods to Rabbit, but this is just talk.
+</I>&gt;<i>
+</I>&gt;<i> There were further discussions about SNMP as well.
+</I>&gt;<i>
+</I>&gt;<i> I think for now now backing an embedded RPC handler using JSON as a
+</I>&gt;<i> codec will pay even money. This would be quite simple to knock up with
+</I>&gt;<i> the Erlang client for example.
+</I>
+However the management numbers are exposed, I would plan on writing a  
+task that reads and publishes the numbers to a &quot;statistics&quot; exchange,  
+so consumers can adjust themselves without introducing dependencies on  
+other protocols.  This would put the management protocol/setup/ 
+dependency cost on 1 producer, verses having to have that cost to read  
+some stats on N consumers across M machine installations.
+
+Ideally, the system management numbers could be consumed by queues  
+bound to system exchanges, without introducing the step of  
+republishing them.  Like 'amq.statistics.messages-per-second.queue- 
+name'.   But, but, the monitoring/security requirements probably vary  
+greatly between applications, so we'd all probably end up writing  
+custom solutions to meet our application needs no matter what is  
+decided.
+
+&gt;&gt;<i> Or would branch 18577 (basic.qos) with pre-fetch set to 1 give us  
+</I>&gt;&gt;<i> the count
+</I>&gt;&gt;<i> of un-acknowledged messages we're looking for from a passive  
+</I>&gt;&gt;<i> queue.declare?
+</I>&gt;<i>
+</I>&gt;<i> I'm not sure I understand - if you set the prefetch size to be one,
+</I>&gt;<i> only one outstanding message per channel is allowed - I don't think
+</I>&gt;<i> this answers your question though.
+</I>
+I'm pretty sure that with only 1 outstanding channel message, the  
+message count will be something we can use for smaller queue depths,  
+because the window of time before the message is parsed from the wire  
+and in the client application's control is a fraction of the time that  
+it takes before the client application acknowledges the message.  Then  
+here, we'll just need to setup our client applications to have 1  
+consumer per channel.
+
+If pre-fetch was 2, the message count would be 2 less per channel,  
+even though the client application was only working on 1 message.  One  
+message would be on the client's socket, the other message would be in  
+the client's logic/worker loop.  For us, message count for these  
+queues should be interpreted as &quot;number of messages that are not  
+currently within client application logic&quot;, so we'll set the pre-fetch  
+to 1, to make sure there are 0 messages left on the client's socket.
+
+&gt;<i> No, this just a way to quickly grab that one message that wasn't
+</I>&gt;<i> acked. It would make no difference if you were to start another
+</I>&gt;<i> consumer for the same queue on a different channel - this is 6 of one
+</I>&gt;<i> and half a dozen of the other.
+</I>
+Good to know that the delivery priorities between basic.consume and  
+basic.get are equivalent.
+
+Thanks, I hope this help you understand one of our uses of RabbitMQ,
+Sean
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002140.html">[rabbitmq-discuss] Form Submission - Add A Question
+</A></li>
+	<LI>Next message: <A HREF="002095.html">[rabbitmq-discuss] Catching channel disconnect
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2155">[ date ]</a>
+              <a href="thread.html#2155">[ thread ]</a>
+              <a href="subject.html#2155">[ subject ]</a>
+              <a href="author.html#2155">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

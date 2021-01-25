@@ -1,0 +1,214 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Error code 541
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20Error%20code%20541&In-Reply-To=269388e30809110347o7ba89312y5fec995035cddaab%40mail.gmail.com">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001427.html">
+   <LINK REL="Next"  HREF="001436.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Error code 541</H1>
+    <B>Eran Sandler</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20Error%20code%20541&In-Reply-To=269388e30809110347o7ba89312y5fec995035cddaab%40mail.gmail.com"
+       TITLE="[rabbitmq-discuss] Error code 541">eran.sandler at gmail.com
+       </A><BR>
+    <I>Thu Sep 11 13:28:51 BST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001427.html">[rabbitmq-discuss] Error code 541
+</A></li>
+        <LI>Next message: <A HREF="001436.html">[rabbitmq-discuss] Error code 541
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1434">[ date ]</a>
+              <a href="thread.html#1434">[ thread ]</a>
+              <a href="subject.html#1434">[ subject ]</a>
+              <a href="author.html#1434">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>I use a virtual host and created a user that got access to the vhost and 
+have &quot;all&quot; access to the queue.
+
+
+
+This is some partial code of the publish part:
+
+
+==================
+
+MapMessageBuilder mapMessageBuilder = new MapMessageBuilder(ch);
+mapMessageBuilder.Properties.DeliveryMode = 2;
+
+foreach (KeyValuePair&lt;string, object&gt; pair in data) {
+    if (pair.Value != null) {
+        if (IsSupportedType(pair.Value.GetType())) {
+            mapMessageBuilder.Body.Add(pair.Key, pair.Value);
+        } else {
+            throw new ApplicationException(string.Format(&quot;Parameter 
+named \&quot;{0}\&quot; of type \&quot;{1}\&quot; is not supproted as a valid value.&quot;, 
+pair.Key, pair.Value.GetType().Name));
+        }
+    }
+}
+
+ch.BasicPublish(ticket, string.Empty, string.Empty, 
+mapMessageBuilder.GetContentHeader() as IBasicProperties, 
+mapMessageBuilder.GetContentBody());
+
+
+=======================
+
+
+I use the MapMessageBuilder to add only simple types (strings, int, 
+dates, etc - that's what the IsSupportedType checks) and publish it to a 
+persistent queue.
+
+
+This is what the web servers use to publish various actions to the queue.
+
+
+On the other end I have a dedicated service that among other things 
+accesses the queue to get the items published and perform various things 
+according to the data sent.
+
+
+The code there looks something like this:
+
+
+===================
+
+
+result = ch.BasicGet(ticket, queueName, false);
+if (result != null) {
+  try {
+        ch.BasicAck(result.DeliveryTag, false);
+
+        .
+
+        . do some work
+
+        .
+
+  catch (Exception ex) {
+
+       If we had a problem figure what it was, promote a counter on the 
+job itself and submit it back to the queue (after X tries we will not 
+resubmit it back)
+
+  }
+
+
+==================
+
+
+The publish code keeps on working correctly while the BasicGet code, on 
+the BasicGet call gets the 541 error.
+
+
+When all of this started to happen I delete the content of the DB 
+folder, recreated everything (including redefining the user, vhost and 
+durable queue) and restarted the app again.
+
+
+It worked for a while but kept on happening again. I have a snapshot of 
+all the files but the persister is about 180MB (which seems to be its 
+average size).
+
+
+Now it runs for about 12 hours through the command line (not erlsrv) and 
+so far it seems ok.
+
+The memory jumps up and down reaching ~500-600mb and sometimes dropping 
+back to 100mb and going straight up to 500-600mb. Currently its ~300Mb.
+
+
+
+Eran
+
+
+
+Ben Hood wrote:
+
+&gt;<i> Eran,
+</I>&gt;<i>
+</I>&gt;<i> On Wed, Sep 10, 2008 at 2:06 PM, Eran Sandler &lt;<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">eran.sandler at gmail.com</A>&gt; wrote:
+</I>&gt;<i>   
+</I>&gt;&gt;<i> The only thing I get is this:
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> =ERROR REPORT==== 10-Sep-2008::05:17:39 ===
+</I>&gt;&gt;<i> error on TCP connection &lt;0.337.0&gt; from 10.23.43.15:1193
+</I>&gt;&gt;<i> connection_closed_abruptly
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> =INFO REPORT==== 10-Sep-2008::05:17:39 ===
+</I>&gt;&gt;<i> closing TCP connection &lt;0.337.0&gt; from 10.23.43.15:1193
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> I see the connection created, accepted and then this error.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> I have a bunch of web server issuing data into the queue, they never get an
+</I>&gt;&gt;<i> error.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> I have a dedicated process that reads info from the queue. It connects ones
+</I>&gt;&gt;<i> and keeps on reading data (no subscription).
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> That connection alone is making the problem. Since it gets an error I open a
+</I>&gt;&gt;<i> new connection and model for it and it works a bit but then dies.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> The 541 error has no cause, as you can see.
+</I>&gt;&gt;<i>     
+</I>&gt;<i>
+</I>&gt;<i> This is strange. 541 is a general internal error which would get
+</I>&gt;<i> logged to the server log under normal circumstances.
+</I>&gt;<i>
+</I>&gt;<i> Could you send a condensed version of your code that can help us
+</I>&gt;<i> reproduce this please?
+</I>&gt;<i>
+</I>&gt;<i> A 541 error will also cause the broker to close both the channel and
+</I>&gt;<i> the connection to the client.
+</I>&gt;<i>
+</I>&gt;<i>   
+</I>&gt;&gt;<i> In addition to that, I have a lot of the following errors:
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> =ERROR REPORT==== 10-Sep-2008::05:17:39 ===
+</I>&gt;&gt;<i> Lax ticket check mode: ignoring cross-realm access for ticket 0
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Though I think they are not related.
+</I>&gt;&gt;<i>     
+</I>&gt;<i>
+</I>&gt;<i> No, this is just a cosmetic bug in 1.4.0 which has been fixed in the
+</I>&gt;<i> mainline code and will not be there in the next release.
+</I>&gt;<i>
+</I>&gt;<i> HTH,
+</I>&gt;<i>
+</I>&gt;<i> Ben
+</I>&gt;<i>   
+</I>
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: <A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20080911/c329c193/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20080911/c329c193/attachment.htm</A> 
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001427.html">[rabbitmq-discuss] Error code 541
+</A></li>
+	<LI>Next message: <A HREF="001436.html">[rabbitmq-discuss] Error code 541
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1434">[ date ]</a>
+              <a href="thread.html#1434">[ thread ]</a>
+              <a href="subject.html#1434">[ subject ]</a>
+              <a href="author.html#1434">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

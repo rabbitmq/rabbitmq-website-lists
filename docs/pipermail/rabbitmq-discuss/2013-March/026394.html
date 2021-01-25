@@ -1,0 +1,240 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> No subject
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20No%20subject&In-Reply-To=%3Cmailman.4.1365400402.3387.rabbitmq-discuss%40lists.rabbitmq.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="030583.html">
+   <LINK REL="Next"  HREF="030672.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>No subject</H1>
+    <B></B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20No%20subject&In-Reply-To=%3Cmailman.4.1365400402.3387.rabbitmq-discuss%40lists.rabbitmq.com%3E"
+       TITLE="No subject">
+       </A><BR>
+    <I>Thu Mar 14 15:04:54 GMT 2013</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="030583.html">No subject
+</A></li>
+        <LI>Next message: <A HREF="030672.html">No subject
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#26394">[ date ]</a>
+              <a href="thread.html#26394">[ thread ]</a>
+              <a href="subject.html#26394">[ subject ]</a>
+              <a href="author.html#26394">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>track of when the last time you received data, if this timer expires you
+know that your connection to the broker is dead and you need to close the
+socket. A second timer is needed to keep track of the last time you sent
+data, when this timer expires a heartbeat frame needs to be sent.
+
+The current design of rabbitmq-c single-threaded event-driven, meaning the
+library itself doesn't do anything when you're not calling into the
+library, and has no thread behind the scenes dealing with these timers. So
+lets say you received a message, then spent more than 2 * heartbeat
+interval processing the message without calling into rabbitmq-c, the
+connection would be closed by the broker.
+
+Using the current single-threaded event-driven model of the library I have
+not been able to come up with a good way to implement heartbeating that is
+totally internal to the library (it also needs to be cross platform and not
+rely on a non-sharable global resource like setitimer()/SIGALARM).
+
+The best way to fully implement heartbeats in rabbitmq-c is to add a thread
+behind the scenes that deals with these timers, a second alternative that
+could be provided by those who don't want the overhead of a separate
+behind-the-scenes thread would be to provide functions that could be
+plugged into an event loop.
+
+HTH
+-Alan
+
+
+On Fri, Apr 5, 2013 at 11:48 AM, Moebius &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">cmorris at voicerite.com</A>&gt; wrote:
+
+&gt;<i> I am new to all this, but wanted to ask a couple of questions.  If the
+</I>&gt;<i> library sees a heartbeat come in, why can't it just send one back in
+</I>&gt;<i> response?  Why would there have to be a message queue involved?
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> Alan Antonuk wrote
+</I>&gt;<i> &gt; While I cannot comment on what Dawn ended up doing, I can say a few words
+</I>&gt;<i> &gt; about the rabbitmq-c library.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; Currently the rabbitmq-c only has partial support for AMQP heartbeats:
+</I>&gt;<i> the
+</I>&gt;<i> &gt; library understands AMQP hearbeats at a protocol level, the library
+</I>&gt;<i> &gt; provides an interface for sending and receiving frames that allows
+</I>&gt;<i> &gt; heartbeat frames to be sent, however the library does not have an event
+</I>&gt;<i> &gt; loop that will automatically handle heartbeats for you.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; To use heartbeats with rabbitmq-c you would need to provide your own
+</I>&gt;<i> event
+</I>&gt;<i> &gt; loop/logic to send and receive heartbeat frames.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; HTH
+</I>&gt;<i> &gt; -Alan
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> --
+</I>&gt;<i> View this message in context:
+</I>&gt;<i> <A HREF="http://rabbitmq.1065348.n5.nabble.com/Is-heartbeat-option-working-in-C-client-tp23785p25909.html">http://rabbitmq.1065348.n5.nabble.com/Is-heartbeat-option-working-in-C-client-tp23785p25909.html</A>
+</I>&gt;<i> Sent from the RabbitMQ mailing list archive at Nabble.com.
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>&gt;<i>
+</I>
+--f46d044794f372ca6904d9d30cd4
+Content-Type: text/html; charset=ISO-8859-1
+Content-Transfer-Encoding: quoted-printable
+
+&lt;div dir=3D&quot;ltr&quot;&gt;Because thats not quite how AMQP heartbeats work (I&amp;#39;m =
+sorry if some code I posted earlier lead you astray). Heartbeats in AMQP wo=
+rk by having each peer (the broker, and the client) have a timer for receiv=
+ing something from the other host (something could be useful communication =
+like message delivery or publishing, or in the case that a peer has nothing=
+ useful to send, it can send a heartbeat). If the timer reaches 0 at either=
+ end, that peer is supposed to close the socket immediately.&lt;div&gt;
+&lt;br&gt;&lt;/div&gt;&lt;div&gt;From an implementation point of view you need to have 2 time=
+rs: one to keep track of when the last time you received data, if this time=
+r expires you know that your connection to the broker is dead and you need =
+to close the socket. A second timer is needed to keep track of the last tim=
+e you sent data, when this timer expires a heartbeat frame needs to be sent=
+.&lt;/div&gt;
+&lt;div&gt;&lt;br&gt;&lt;/div&gt;&lt;div&gt;The current design of rabbitmq-c single-threaded event-=
+driven, meaning the library itself doesn&amp;#39;t do anything when you&amp;#39;re =
+not calling into the library, and has no thread behind the scenes dealing w=
+ith these timers. So lets say you received a message, then spent more than =
+2 * heartbeat interval processing the message without calling into rabbitmq=
+-c, the connection would be closed by the broker.&lt;/div&gt;
+&lt;div&gt;&lt;br&gt;&lt;/div&gt;&lt;div style&gt;Using the current single-threaded event-driven mo=
+del of the library I have not been able to come up with a good way to imple=
+ment heartbeating that is totally internal to the library (it also needs to=
+ be cross platform and not rely on a non-sharable global resource like seti=
+timer()/SIGALARM). &lt;/div&gt;
+&lt;div style&gt;&lt;br&gt;&lt;/div&gt;&lt;div style&gt;The best way to fully implement heartbeats =
+in rabbitmq-c is to add a thread behind the scenes that deals with these ti=
+mers, a second alternative that could be provided by those who don&amp;#39;t wa=
+nt the overhead of a separate behind-the-scenes thread would be to provide =
+functions that could be plugged into an event loop.&lt;/div&gt;
+&lt;div style&gt;&lt;br&gt;&lt;/div&gt;&lt;div style&gt;HTH&lt;/div&gt;&lt;div style&gt;-Alan&lt;/div&gt;&lt;/div&gt;&lt;div c=
+lass=3D&quot;gmail_extra&quot;&gt;&lt;br&gt;&lt;br&gt;&lt;div class=3D&quot;gmail_quote&quot;&gt;On Fri, Apr 5, 2013=
+ at 11:48 AM, Moebius &lt;span dir=3D&quot;ltr&quot;&gt;&amp;lt;&lt;a href=3D&quot;mailto:<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">cmorris at voice</A>=
+rite.com&quot; target=3D&quot;_blank&quot;&gt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">cmorris at voicerite.com</A>&lt;/a&gt;&amp;gt;&lt;/span&gt; wrote:&lt;br&gt;
+&lt;blockquote class=3D&quot;gmail_quote&quot; style=3D&quot;margin:0 0 0 .8ex;border-left:1p=
+x #ccc solid;padding-left:1ex&quot;&gt;I am new to all this, but wanted to ask a co=
+uple of questions. =A0If the&lt;br&gt;
+library sees a heartbeat come in, why can&amp;#39;t it just send one back in&lt;br=
+&gt;<i>
+</I>response? =A0Why would there have to be a message queue involved?&lt;br&gt;
+&lt;br&gt;
+&lt;br&gt;
+Alan Antonuk wrote&lt;br&gt;
+&lt;div class=3D&quot;im&quot;&gt;&amp;gt; While I cannot comment on what Dawn ended up doing, =
+I can say a few words&lt;br&gt;
+&amp;gt;<i> about the rabbitmq-c library.&lt;br&gt;
+</I>&amp;gt;<i>&lt;br&gt;
+</I>&amp;gt;<i> Currently the rabbitmq-c only has partial support for AMQP heartbeats:=
+</I> the&lt;br&gt;
+&amp;gt;<i> library understands AMQP hearbeats at a protocol level, the library&lt;br=
+</I>&gt;<i>
+</I>&amp;gt;<i> provides an interface for sending and receiving frames that allows&lt;br&gt;
+</I>&amp;gt;<i> heartbeat frames to be sent, however the library does not have an even=
+</I>t&lt;br&gt;
+&amp;gt;<i> loop that will automatically handle heartbeats for you.&lt;br&gt;
+</I>&amp;gt;<i>&lt;br&gt;
+</I>&amp;gt;<i> To use heartbeats with rabbitmq-c you would need to provide your own e=
+</I>vent&lt;br&gt;
+&amp;gt;<i> loop/logic to send and receive heartbeat frames.&lt;br&gt;
+</I>&amp;gt;<i>&lt;br&gt;
+</I>&amp;gt;<i> HTH&lt;br&gt;
+</I>&amp;gt;<i> -Alan&lt;br&gt;
+</I>&lt;br&gt;
+&lt;br&gt;
+&lt;br&gt;
+&lt;br&gt;
+&lt;br&gt;
+&lt;/div&gt;--&lt;br&gt;
+View this message in context: &lt;a href=3D&quot;<A HREF="http://rabbitmq.1065348.n5.nabble.=">http://rabbitmq.1065348.n5.nabble.=</A>
+com/Is-heartbeat-option-working-in-C-client-tp23785p25909.html&quot; target=3D&quot;_=
+blank&quot;&gt;<A HREF="http://rabbitmq.1065348.n5.nabble.com/Is-heartbeat-option-working-in=">http://rabbitmq.1065348.n5.nabble.com/Is-heartbeat-option-working-in=</A>
+-C-client-tp23785p25909.html&lt;/a&gt;&lt;br&gt;
+
+Sent from the RabbitMQ mailing list archive at Nabble.com.&lt;br&gt;
+&lt;div class=3D&quot;HOEnZb&quot;&gt;&lt;div class=3D&quot;h5&quot;&gt;___________________________________=
+____________&lt;br&gt;
+rabbitmq-discuss mailing list&lt;br&gt;
+&lt;a href=3D&quot;mailto:<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>&quot;&gt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lis</A>=
+ts.rabbitmq.com&lt;/a&gt;&lt;br&gt;
+&lt;a href=3D&quot;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-dis=">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-dis=</A>
+cuss&quot; target=3D&quot;_blank&quot;&gt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo=">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo=</A>
+/rabbitmq-discuss&lt;/a&gt;&lt;br&gt;
+&lt;/div&gt;&lt;/div&gt;&lt;/blockquote&gt;&lt;/div&gt;&lt;br&gt;&lt;/div&gt;
+
+--f46d044794f372ca6904d9d30cd4--
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="030583.html">No subject
+</A></li>
+	<LI>Next message: <A HREF="030672.html">No subject
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#26394">[ date ]</a>
+              <a href="thread.html#26394">[ thread ]</a>
+              <a href="subject.html#26394">[ subject ]</a>
+              <a href="author.html#26394">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

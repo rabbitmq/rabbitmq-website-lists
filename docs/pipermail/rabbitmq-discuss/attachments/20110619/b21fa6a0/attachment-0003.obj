@@ -1,0 +1,124 @@
+-module(rabbit_boot_step).
+
+-export([boot/0, boot/1, run_boot_step/1, boot_steps/0, boot_steps/1, boot_error/2]).
+
+-ifdef(use_specs).
+
+-type(step_prefix() :: atom()).
+-type(step_name() :: atom()).
+-type(step_description() :: string()).
+-type(step_attribute() ::
+        {'description', step_description()} |
+        {'requires', step_name()} |
+        {'enables', step_name()} |
+        {'mfa', {module(), fun(), list()}}).
+-type(boot_step() :: {step_name(), [step_attribute()]}).
+
+-spec(boot/0 :: () -> ['ok']).
+-spec(boot/1 :: (step_prefix()) -> ['ok']).
+-spec(run_boot_step/1 :: (boot_step()) -> 'ok').
+-spec(boot_steps/0 :: () -> [boot_step()]).
+-spec(boot_steps/1 :: (step_prefix()) -> [boot_step()]).
+
+-endif.
+
+boot() ->
+    internal_run_boot_steps(boot_steps()).
+
+boot(Prefix) when is_atom(Prefix) ->
+    internal_run_boot_steps(boot_steps(Prefix)).
+
+internal_run_boot_steps(Steps) ->
+    [ok = run_boot_step(Step) || Step <- Steps].
+
+run_boot_step({StepName, Attributes}) ->
+    Description = case lists:keysearch(description, 1, Attributes) of
+                      {value, {_, D}} -> D;
+                      false           -> StepName
+                  end,
+    case [MFA || {mfa, MFA} <- Attributes] of
+        [] ->
+            io:format("-- ~s~n", [Description]);
+        MFAs ->
+            io:format("starting ~-60s ...", [Description]),
+            [try
+                 apply(M,F,A)
+             catch
+                 _:Reason -> boot_error("FAILED~nReason: ~p~nStacktrace: ~p~n",
+                                        [Reason, erlang:get_stacktrace()])
+             end || {M,F,A} <- MFAs],
+            io:format("done~n"),
+            ok
+    end.
+
+%% Returns the list of boot steps.
+%% Assumes application name as Prefix.
+%% See boot_steps/1.
+boot_steps() ->
+    {ok, App} = application:get_application(),
+    boot_steps(App).
+
+%% Returns the list of boot steps that start with Prefix.
+%% Boot steps are special module attributes of the form:
+%%  -prefix_boot_step(boot_step()).
+%% The prefix will usually be the application name for example
+%% RabbitMQ will use: rabbit_boot_step.
+boot_steps(Prefix) when is_atom(Prefix) ->
+    StepAttr = list_to_atom(atom_to_list(Prefix) ++ "_boot_step"),
+    sort_boot_steps(rabbit_misc:all_module_attributes(StepAttr)).
+
+boot_error(Format, Args) ->
+    io:format("BOOT ERROR: " ++ Format, Args),
+    error_logger:error_msg(Format, Args),
+    timer:sleep(1000),
+    exit({?MODULE, failure_during_boot}).
+
+sort_boot_steps(UnsortedSteps) ->
+    case rabbit_misc:build_acyclic_graph(fun vertices/2, fun edges/2,
+                                         UnsortedSteps) of
+        {ok, G} ->
+            %% Use topological sort to find a consistent ordering (if
+            %% there is one, otherwise fail).
+            SortedSteps = lists:reverse(
+                            [begin
+                                 {StepName, Step} = digraph:vertex(G, StepName),
+                                 Step
+                             end || StepName <- digraph_utils:topsort(G)]),
+            digraph:delete(G),
+            %% Check that all mentioned {M,F,A} triples are exported.
+            case [{StepName, {M,F,A}} ||
+                     {StepName, Attributes} <- SortedSteps,
+                     {mfa, {M,F,A}}         <- Attributes,
+                     not erlang:function_exported(M, F, length(A))] of
+                []               -> SortedSteps;
+                MissingFunctions -> boot_error(
+                                      "Boot step functions not exported: ~p~n",
+                                      [MissingFunctions])
+            end;
+        {error, {vertex, duplicate, StepName}} ->
+            boot_error("Duplicate boot step name: ~w~n", [StepName]);
+        {error, {edge, Reason, From, To}} ->
+            boot_error(
+              "Could not add boot step dependency of ~w on ~w:~n~s",
+              [To, From,
+               case Reason of
+                   {bad_vertex, V} ->
+                       io_lib:format("Boot step not registered: ~w~n", [V]);
+                   {bad_edge, [First | Rest]} ->
+                       [io_lib:format("Cyclic dependency: ~w", [First]),
+                        [io_lib:format(" depends on ~w", [Next]) ||
+                            Next <- Rest],
+                        io_lib:format(" depends on ~w~n", [First])]
+               end])
+    end.
+
+vertices(_Module, Steps) ->
+    [{StepName, {StepName, Atts}} || {StepName, Atts} <- Steps].
+
+edges(_Module, Steps) ->
+    [case Key of
+         requires -> {StepName, OtherStep};
+         enables  -> {OtherStep, StepName}
+     end || {StepName, Atts} <- Steps,
+            {Key, OtherStep} <- Atts,
+            Key =:= requires orelse Key =:= enables].

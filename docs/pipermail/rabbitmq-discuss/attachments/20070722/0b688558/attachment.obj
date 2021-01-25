@@ -1,0 +1,666 @@
+diff -r af848798cc65 include/rabbit.hrl
+--- a/include/rabbit.hrl	Sat Jun 16 13:12:20 2007 +0100
++++ b/include/rabbit.hrl	Sun Jul 22 23:40:35 2007 +0100
+@@ -29,7 +29,7 @@
+ -record(realm, {name, exchanges, queues}).
+ -record(user_realm, {username, realm, ticket_pattern}).
+ 
+--record(connection, {user, timeout_sec, heartbeat_sender_pid, frame_max, vhost}).
++-record(connection, {user, timeout_sec, heartbeat_sender_pid, frame_max, vhost, reader_pid, writer_pid}).
+ 
+ -record(content, {class_id,
+ 		  properties, %% either 'none', or a decoded record/tuple
+diff -r af848798cc65 src/amqp_client.erl
+--- /dev/null	Thu Jan 01 00:00:00 1970 +0000
++++ b/src/amqp_client.erl	Sun Jul 22 23:40:35 2007 +0100
+@@ -0,0 +1,317 @@
++-module(amqp_client).
++
++-include("rabbit.hrl").
++-include("rabbit_framing.hrl").
++
++-behaviour(gen_server).
++
++-export([start/0, stop/0]).
++-export([init/1, terminate/2, code_change/3, handle_call/3, handle_cast/2, handle_info/2]).
++-export([open_channel/2]).
++-export([access_request/2]).
++-export([queue_declare/3]).
++-export([exchange_declare/8]).
++-export([queue_bind/5]).
++-export([basic_publish/6]).
++-export([basic_consume/4]).
++-export([basic_properties/0]).
++
++-define(Username, username).
++-define(Password, password).
++-define(VHostPath, vhostpath).
++-define(Ticket, ticket).
++-define(AMQPServerModule, amqp_server_module).
++-define(AMQPSendFunction, amqp_send_function).
++
++-record(amq_channel, {number, pid}).
++
++%---------------------------------------------------------------------------
++% Start / Stop functions
++%---------------------------------------------------------------------------
++
++start() -> 
++	gen_server:start_link({local, ?MODULE}, ?MODULE, 
++                          [<<"admin">>,
++                           <<"changeit">>, 
++                           <<"localhost">>,
++                           rabbit_reader, handle_input], []).
++
++stop() -> 
++    gen_server:call({local, ?MODULE}, stop),
++    ok.
++
++%---------------------------------------------------------------------------
++% API Methods
++%---------------------------------------------------------------------------
++
++open_channel(Channel, OutOfBand) ->
++    gen_server:cast(?MODULE, {open_channel, Channel, OutOfBand}).
++
++access_request(Channel,Realm) ->
++    Access = #'access.request'{	realm = binary(Realm),
++					  			exclusive = false,
++								passive = true,
++								active = true,
++								write = true,
++								read = true},
++    gen_server:call(?MODULE, {access_request, Access, Channel}).
++
++queue_declare(Channel, Ticket, Q) ->
++    QueueDeclare = #'queue.declare'{ticket = Ticket,
++                                    queue = binary(Q), 
++                                    passive = false, 
++                                    durable = false, 
++                                    exclusive = false,
++                                    auto_delete = false,
++                                    nowait = false, 
++                                    arguments = []},
++    gen_server:cast(?MODULE, {Channel, QueueDeclare, <<>>}).
++
++exchange_declare(Channel, Ticket, Exchange, Type, Passive, Durable, AutoDelete, Map) ->
++    ExchangeDeclare = #'exchange.declare'{ticket = Ticket, exchange = binary(Exchange), 
++                                          type = binary(Type), passive = Passive,
++                                          durable = Durable, auto_delete = AutoDelete, 
++                                          internal = false, nowait = false, arguments = Map},
++    gen_server:cast(?MODULE, {Channel, ExchangeDeclare, <<>>}).
++
++queue_bind(Channel, Ticket, Q, Exchange, RoutingKey) ->
++    QueueBind = #'queue.bind'{ticket = Ticket, queue = binary(Q), 
++                              exchange = binary(Exchange), routing_key = binary(RoutingKey),
++                              nowait = false, arguments = <<>>},
++    gen_server:cast(?MODULE, {Channel, QueueBind, <<>>}).
++
++basic_publish(Channel, Ticket, Exchange, RoutingKey, Properties, Payload) ->
++    BasicPublish = #'basic.publish'{ticket = Ticket, exchange = binary(Exchange),
++                                    routing_key = binary(RoutingKey), 
++                                    mandatory = false, immediate = false},                 
++    Content = #content{class_id = 60, %% TODO HARDCODED VALUE
++		  properties = Properties, %% either 'none', or a decoded record/tuple
++		  properties_bin = 'none', %% either 'none', or an encoded properties binary
++		  %% Note: at most one of properties and properties_bin can be 'none' at once.
++		  payload_fragments_rev = [Payload] %% list of binaries, in reverse order (!)
++		 },             
++	gen_server:cast(?MODULE, {Channel, BasicPublish, Content}).    
++
++basic_consume(Channel, Ticket, Q, Consumer) ->
++    BasicConsume = #'basic.consume'{ticket = Ticket, queue = binary(Q), 
++                                    consumer_tag = <<"">>, 
++                                    no_local = false, no_ack = false, exclusive = false, nowait = false},
++	gen_server:cast(?MODULE, {Channel, BasicConsume, Consumer}).
++
++basic_properties() ->
++    #'P_basic'{content_type = <<"application/octet-stream">>, delivery_mode = 1, priority = 0}.
++
++%---------------------------------------------------------------------------
++% Internal plumbing
++%---------------------------------------------------------------------------
++
++binary(L) when is_list(L) ->
++    list_to_binary(L);
++
++binary(B) when is_binary(B) ->
++    B.
++
++%% TODO These look a bit java-ish
++getVHostPath(Table) ->
++    [{_,VHostPath}] = ets:lookup(Table, ?VHostPath),
++    VHostPath.
++
++getUsername(Table) ->
++	[{_,User}] = ets:lookup(Table, ?Username),
++    User.
++
++getPassword(Table) ->
++	[{_,Password}] = ets:lookup(Table, ?Password),
++    Password.
++
++getChannel(Channel, Table) ->
++    case ets:lookup(Table, Channel) of
++		[{_,Chan}] ->
++            Chan;
++        _ ->
++            exit( {channel_not_intialized, Channel})
++    end.
++
++getTicket(Table) ->
++	[{_,Ticket}] = ets:lookup(Table, ?Ticket),
++    Ticket.
++
++get_amqp_server_module(Table) ->
++	[{_,Mod}] = ets:lookup(Table, ?AMQPServerModule),
++    Mod.
++
++get_amqp_send_function(Table) ->
++	[{_,Fun}] = ets:lookup(Table, ?AMQPSendFunction),
++    Fun.
++
++native_send(Type, Request, Table) ->
++    Mod = get_amqp_server_module(Table),
++    Fun = get_amqp_send_function(Table),
++    Mod:Fun(Type, Request, self()).
++
++native_send_auth(Type, Request, Table) ->
++    Mod = get_amqp_server_module(Table),
++    Fun = get_amqp_send_function(Table),
++    Connection = #connection{user = #user{username = getUsername(Table)} , 
++                             vhost = getVHostPath(Table), 
++                             reader_pid = self(),
++                             writer_pid = self()},
++	Mod:Fun(Type, Request, Connection).
++
++%---------------------------------------------------------------------------
++% AMQP message handling
++%---------------------------------------------------------------------------
++
++%% connection.start
++amqp_handle(Peer, 
++                #'connection.start'{version_major = MajorVersion,
++									version_minor = MinorVersion,
++									server_properties = Properties,
++									mechanisms = Mechansims,
++									locales = Locales }, Table) ->                                    
++	StartOk = #'connection.start_ok'{
++		client_properties = [
++                            {<<"product">>,<<"Erlang-AMQC">>},
++                            {<<"version">>,<<"0.1">>},
++                            {<<"platform">>,<<"Erlang">>}                                                                               
++							], 
++        mechanism = <<"AMQPLAIN">>, 
++        response = [
++                    {<<"LOGIN">>, getUsername(Table) },
++                    {<<"PASSWORD">>, getPassword(Table) }
++                    ], 
++        locale = <<"en_US">>                                                       
++	},                                                       
++    Peer ! {self(), StartOk };
++
++%% connection.tune                                                                      
++amqp_handle(Peer, #'connection.tune'{channel_max = ChannelMax}, Table ) ->			     
++	TuneOk = #'connection.tune_ok'{channel_max = ChannelMax},                                                       
++    Peer ! {self(), TuneOk },
++    %% This is something where I don't understand the protocol,
++    %% What happens if the following command reaches the server before the tune ok?
++    %% Or doesn't get sent at all?       
++    ConnectionOpen = #'connection.open'{virtual_host = getVHostPath(Table) },        
++    Peer ! {self(), ConnectionOpen};                                
++
++%% connection.open_ok
++amqp_handle(Peer, {Channel, #'connection.open_ok'{known_hosts = KnownHosts} }, Table ) ->
++    ok;
++                                                                                     
++%% connection.close_ok    
++amqp_handle(Peer, {Channel, #'connection.close_ok'{} }, Table ) ->
++    ok;
++
++                                                                                                                 
++%% access.request_ok
++amqp_handle(Peer, #'access.request_ok'{ticket = NextTicket}, Table ) ->
++    ets:insert(Table, {?Ticket, NextTicket}),
++    io:format("Received ticket, ~p~n", [NextTicket] );                 
++                                                                   
++%% queue.declare_ok
++amqp_handle(Peer, #'queue.declare_ok'{queue = Q, 
++                                      message_count = MessageCount, 
++                                      consumer_count = ConsumerCount}, Table ) ->                                                                                                                                                                                                                                                                                                        
++	io:format("Q declared: ~p~n", [Q] );
++
++%% exchange.declare_ok
++amqp_handle(Peer, #'exchange.declare_ok'{}, Table ) ->                                                                                                                                                                                                                                                                                                        
++	io:format("exchange.declare_ok ~n");                                                                                                                                                          
++                                                  
++%% queue.bind_ok         
++amqp_handle(Peer, #'queue.bind_ok'{}, Table ) ->                                                                                                                                                                                                                                                                                                        
++	io:format("queue.bind_ok ~n");
++                                            
++%% basic.consume_ok
++amqp_handle(Peer, #'basic.consume_ok'{consumer_tag = ConsumerTag}, Table ) ->                                                                                                                                                                                                                                                                                                        
++	io:format("basic.consume_ok, tag = ~p~n", [ConsumerTag]);                                              
++                                                                                            
++%% Anything else                                                                                                                  
++amqp_handle(Peer, Message, Table ) ->
++    exit({amqp_client, unhandled_message , Message}).
++
++%% Sends AMQP messages
++amqp_send(Method, Channel, Table) ->
++	Chan = getChannel(Channel, Table),
++    io:format("Sending method ~p to ~p~n", [Method, Chan#amq_channel.pid]),
++    Chan#amq_channel.pid ! { self(), Method }.
++
++amqp_send(Method, Content, Channel, Table) ->
++	Chan = getChannel(Channel, Table),
++    io:format("Sending method ~p  with content ~p to ~p~n", [Method, Content, Chan#amq_channel.pid]),
++    Chan#amq_channel.pid ! { method, Method, Content }.    
++
++amqp_send(Method, Content, Channel, ConsumerPid, Table) ->
++	Chan = getChannel(Channel, Table),
++    io:format("Sending method ~p  with content ~p to ~p~n", [Method, Content, Chan#amq_channel.pid]),
++    Chan#amq_channel.pid ! { method, Method, Content, ConsumerPid }.
++
++%% This is an experimental blocking read in order to implement the bottom half of an RPC
++amqp_receive(Method) ->
++    receive
++	{send_command, { Method, Content } } ->
++        Content                                                                                                           
++    end.
++    
++%% This is an experimental blocking read in order to implement the bottom half of an RPC
++amqp_receive(Channel, Method) ->
++    receive
++	{Sender, { Channel, Method } } ->
++        ok                                                                                                           
++    end.
++
++%---------------------------------------------------------------------------
++% gen_server callbacks
++%---------------------------------------------------------------------------
++
++init([User, Pass, VHostPath, Mod, Fun]) ->
++    Table = ets:new(?MODULE,[]),
++    ets:insert(Table, {?Username, User} ),
++    ets:insert(Table, {?Password, Pass} ),
++    ets:insert(Table, {?VHostPath, VHostPath} ),
++    ets:insert(Table, {?AMQPServerModule, Mod} ),
++    ets:insert(Table, {?AMQPSendFunction, Fun} ),
++    {Connection, ChPid} = native_send(handshake, <<"AMQP", 1, 1, ?PROTOCOL_VERSION_MAJOR, ?PROTOCOL_VERSION_MINOR>>, Table),
++    {ok, Table}.
++
++terminate(_Reason, State) ->
++    ok.
++
++code_change(_OldVsn, State, _Extra) ->
++    State.
++
++%% Access a realm                                                  
++handle_call({ access_request, Method, Channel}, From , Table) ->
++    amqp_send(#'channel.open'{}, Channel, Table),
++    %% Block on receiving a channel.open_ok to keep the serialize the call sequence
++    amqp_receive(Channel, #'channel.open_ok'{}),                                   
++	amqp_send(Method,<<>>,Channel, Table),
++    %% Block on receiving a access.request_ok to return the ticket to the caller
++	%% Is this the best way to do this, because it ties the message passing to rabbit to a certain extent                                                                                             
++    NextTicket = amqp_receive('access.request_ok'),                                          
++	{reply, NextTicket, Table};                                              
++                                                     
++handle_call(_Request, _From, State) ->
++    {reply, ignored, State}.
++
++%% Create and open a channel
++handle_cast( {open_channel, Channel, OutOfBand} , Table) ->
++    {Connection, ChPid} = native_send_auth(open_channel, {Channel, OutOfBand}, Table),
++    Chan = #amq_channel{number = Channel, pid= ChPid},
++    ets:insert(Table, {Channel, Chan}),
++    {noreply, Table};                                                                                                           
++                     
++%% Non RPC calls                                                                                                      
++handle_cast( { Channel, Method, Content }, Table) ->
++    case is_pid(Content) of
++        true ->
++            amqp_send(Method, <<>>, Channel, Content, Table);
++        _ ->    
++    		amqp_send(Method, Content, Channel, Table)
++    end,    
++    {noreply, Table}.                                                                                                                                               
++
++handle_info( {Peer, Message}, Table) ->
++    io:format("Rec'd ---> ~p~n", [Message]),
++    amqp_handle(Peer, Message, Table),
++    {noreply, Table}.    
+diff -r af848798cc65 src/amqp_client_test.erl
+--- /dev/null	Thu Jan 01 00:00:00 1970 +0000
++++ b/src/amqp_client_test.erl	Sun Jul 22 23:40:35 2007 +0100
+@@ -0,0 +1,31 @@
++-module(amqp_client_test).
++
++-export([test/0]).
++
++test() ->
++    Channel = 1,
++    Realm = "/data",
++    Q = "a.b.c",
++    X = "x",
++    BindKey = "a.b.c.*",
++    RoutingKey = "a.b.c.d",
++    Payload = <<"foobar">>,
++    
++    amqp_client:open_channel(Channel, ""),
++    Ticket = amqp_client:access_request(Channel, Realm),
++    amqp_client:queue_declare(Channel,Ticket,Q),
++    amqp_client:exchange_declare(Channel, Ticket, X, "topic", false, false, true, <<>>),
++    amqp_client:queue_bind(Channel, Ticket, Q, X, BindKey),
++	amqp_client:basic_publish(Channel, Ticket, X, RoutingKey, amqp_client:basic_properties(), Payload ),
++	
++    {ok, Consumer} = gen_event:start({local, consumer}),
++    gen_event:add_handler(consumer, amqp_consumer , [] ),
++    
++	amqp_client:basic_consume(Channel, Ticket, Q, Consumer),
++    
++    receive
++    after 5000 ->
++        gen_event:stop(consumer)
++    end.  
++
++	
+\ No newline at end of file
+diff -r af848798cc65 src/amqp_consumer.erl
+--- /dev/null	Thu Jan 01 00:00:00 1970 +0000
++++ b/src/amqp_consumer.erl	Sun Jul 22 23:40:35 2007 +0100
+@@ -0,0 +1,20 @@
++-module(amqp_consumer).
++-behaviour(gen_event).
++
++-export([init/1, handle_info/2, terminate/2]).
++
++%---------------------------------------------------------------------------
++% gen_event callbacks
++%---------------------------------------------------------------------------
++
++init(Args) ->
++    {ok, []}.
++
++handle_info(Info, State) ->
++    io:format("---------------------------~n"),
++    io:format("AMQP Consumer, rec'd: ~p~n", [Info]),
++    io:format("---------------------------~n"),
++    {ok, State}.
++
++terminate(Args, State) ->
++    ok.
+\ No newline at end of file
+diff -r af848798cc65 src/rabbit.erl
+--- a/src/rabbit.erl	Sat Jun 16 13:12:20 2007 +0100
++++ b/src/rabbit.erl	Sun Jul 22 23:40:35 2007 +0100
+@@ -73,7 +73,7 @@ start(normal, []) ->
+     end,
+     {ok, Host} = application:get_env(listen_host),
+     {ok, Port} = application:get_env(listen_port),
+-    gen_server:start_link(?MODULE, [Host, Port], []).
++    gen_server:start_link({local, rabbit},?MODULE, [Host, Port], []).
+ 
+ stop(_State) ->
+     ok.
+@@ -223,8 +223,14 @@ code_change(_OldVsn, State, _Extra) ->
+ code_change(_OldVsn, State, _Extra) ->
+     State.
+ 
+-handle_call(_Request, _From, State) ->
+-    {reply, ignored, State}.
++handle_call({Type, Request}, {Pid,Ref}, State) ->
++    spawn(rabbit_reader, handle_input, [Type, Request, Pid]),
++    {reply, ignored, State};
++
++handle_call({Type, {User,VHost}, Request}, {Pid,Ref}, State) ->
++    Connection = #connection{user = #user{username = User} , vhost = VHost, reader_pid = Pid},
++    ChPid = rabbit_reader:handle_input(Type, Request, Connection),           
++    {reply, ChPid, State}.
+ 
+ handle_cast(_Request, State) ->
+     {noreply, State}.
+diff -r af848798cc65 src/rabbit_channel.erl
+--- a/src/rabbit_channel.erl	Sat Jun 16 13:12:20 2007 +0100
++++ b/src/rabbit_channel.erl	Sun Jul 22 23:40:35 2007 +0100
+@@ -25,7 +25,7 @@
+ -include("rabbit.hrl").
+ 
+ -export([read_frame/0, read_method/0, read_method/1]).
+--export([start/4]).
++-export([start/3,start/4]).
+ 
+ read_frame() ->
+     receive
+@@ -96,6 +96,28 @@ read_method(ExpectedMethodName) ->
+ 	     virtual_host,
+ 	     most_recently_declared_queue,
+ 	     next_ticket}).
++
++start(Connection, Channel, Timeout) ->
++    ReaderPid = Connection#connection.reader_pid,
++    receive
++	{Sender, #'channel.close_ok'{}} ->
++    	% We are required by the spec to ignore unsolicited close-ok messages.
++	    exit(normal);                                        
++    {Sender, #'channel.open'{}} ->
++        rabbit_log:info("~p: Opening channel ~p~n", [ReaderPid, Channel]),
++    	Sender ! {self(), {Channel, #'channel.open_ok'{} } },    
++        Tx0 = rabbit_transaction:start(),     
++        Tx1 = rabbit_transaction:set_writer_pid(Tx0, self()),
++        mainloop_without_framing(#ch{ channel = Channel,
++			  tx = Tx1,
++			  reader_pid = ReaderPid,
++			  writer_pid = Connection#connection.writer_pid,
++			  username = (Connection#connection.user)#user.username,
++			  virtual_host = Connection#connection.vhost,
++			  most_recently_declared_queue = <<>>,
++			  next_ticket = 101
++			 })                 
++    end.        	                                          
+ 
+ start(ReaderPid, Channel, Sock, Connection) ->
+     case read_method() of
+@@ -124,8 +146,19 @@ send(#ch{ writer_pid = W }, MethodRecord
+ send(#ch{ writer_pid = W }, MethodRecord) ->
+     ok = rabbit_writer:send_command(W, MethodRecord).
+ 
+-%%send(#ch{ writer_pid = W }, MethodRecord, Content) ->
+-%%    ok = rabbit_writer:send_command(W, MethodRecord, Content).
++mainloop_without_framing(State) ->
++    receive
++	{method, MethodRecord, Content} ->
++	    State1 = handle_method(MethodRecord, Content, State),
++	    mainloop_without_framing(State1);
++	{method, MethodRecord, Content, WriterPid} ->
++        State0 = State#ch{writer_pid = WriterPid},
++	    State1 = handle_method(MethodRecord, Content, State0),
++	    mainloop_without_framing(State1);                                  
++	Other ->
++	    rabbit_log:error("Unexpected ch~p content: ~p~n", [State#ch.channel, Other]),
++	    mainloop_without_framing(State)
++    end.
+ 
+ mainloop(State) ->
+     case read_frame() of
+diff -r af848798cc65 src/rabbit_channel0.erl
+--- a/src/rabbit_channel0.erl	Sat Jun 16 13:12:20 2007 +0100
++++ b/src/rabbit_channel0.erl	Sun Jul 22 23:40:35 2007 +0100
+@@ -24,7 +24,13 @@
+ -include("rabbit_framing.hrl").
+ -include("rabbit.hrl").
+ 
+--export([start/4]).
++-export([start/3,start/4]).
++
++start(ReaderPid, ChannelNum, Timeout) ->
++    {ok, UserDetails} = do_connection_start(ReaderPid, Timeout),
++    ok = do_connection_tune(ReaderPid, Timeout),
++    {ok, VHostPath} = do_connection_open(ReaderPid, UserDetails, Timeout),
++    wait_for_close(ReaderPid).
+ 
+ start(ReaderPid, _ChannelNum, Sock, InitialConnection) ->
+     {ok, UserDetails} = do_connection_start(Sock),
+@@ -61,6 +67,44 @@ read_method(Expected) ->
+     ?LOGMESSAGE(in, 0, M, C),
+     Result.
+ 
++connection_start_properties() ->
++    #'connection.start'{version_major = 8,
++				version_minor = 1,
++				server_properties =
++				[{<<"product">>, longstr, <<"RabbitMQ">>},
++				 {<<"version">>, longstr, <<"1.0">>},
++				 {<<"platform">>, longstr, <<"Erlang/OTP">>},
++				 {<<"copyright">>, longstr, <<"LShift Ltd">>}],
++				mechanisms = <<"PLAIN">>,
++				locales = <<"en_US">> }.
++
++connection_tune_properties() ->
++    #'connection.tune'{channel_max = 0,
++			       frame_max = 131072, %% set to zero once QPid fix their negotiation
++			       heartbeat = 0 }.
++
++connection_ok_properties() ->
++	#'connection.open_ok'{known_hosts = <<>>}.
++
++do_connection_start(Pid, Timeout) when is_pid(Pid) ->
++    Pid ! {self(), connection_start_properties()},
++	receive
++	{Sender, #'connection.start_ok'{mechanism = Mechanism, response = LoginTable}} ->
++        case {	lists:keysearch(<<"LOGIN">>, 1, LoginTable),
++	  			lists:keysearch(<<"PASSWORD">>, 1, LoginTable)} of
++			{{value, {_, UsernameBin}},
++	 		{value, {_, PasswordBin}}} ->
++	    		{ok, _U} = rabbit_access_control:user_pass_login(UsernameBin, PasswordBin);
++			_ ->
++	    		rabbit_misc:die(access_refused)
++    	end;
++    _ ->
++        rabbit_misc:die(protocol_mismatch)
++    after Timeout ->
++        ?LOGDEBUG("Connection start: Pid ~p timing out~n",[Pid]),
++        rabbit_misc:die(client_timeout)  
++    end.
++
+ do_connection_start(Sock) ->
+     ok = rabbit_writer:internal_send_command
+ 	   (Sock, 0,
+@@ -76,7 +120,20 @@ do_connection_start(Sock) ->
+     {ok, #'connection.start_ok'{mechanism = Mechanism, response = Response}, _} =
+ 	read_method('connection.start_ok'),
+     {ok, _U} = rabbit_access_control:check_login(Mechanism, Response).
+-
++                                    
++do_connection_tune(Pid, Timeout) when is_pid(Pid) ->
++    Pid ! { self(), connection_tune_properties() } ,
++    receive
++	{Sender, #'connection.tune_ok'{channel_max = ChannelMax} } ->
++    	rabbit_log:info("Tuned channel_max = ~p.~n", [ChannelMax]);    
++    _ ->
++        rabbit_misc:die(protocol_mismatch)
++    after Timeout ->
++        ?LOGDEBUG("Connection start: Pid ~p timing out~n",[Pid]),
++        rabbit_misc:die(client_timeout)  
++    end,
++    ok.           
++                                                                             
+ do_connection_tune(Sock) ->
+     ok = rabbit_writer:internal_send_command
+ 	   (Sock, 0,
+@@ -99,6 +156,25 @@ do_connection_open(Sock, UserDetails) ->
+     ok = rabbit_writer:internal_send_command(Sock, 0, #'connection.open_ok'{known_hosts = <<>>}),
+     {ok, VHostPath}.
+ 
++do_connection_open(Pid, UserDetails, Timeout) when is_pid(Pid) ->
++    receive
++	{Sender, #'connection.open'{virtual_host = VHostPath} } ->
++    	rabbit_access_control:check_vhost_access(UserDetails, VHostPath),
++        Pid ! { self(), {0, connection_ok_properties() } },
++        {ok, VHostPath};
++    _ ->
++    	rabbit_misc:die(protocol_mismatch)            
++    after Timeout ->
++    	?LOGDEBUG("Connection start: Pid ~p timing out~n",[Pid]),
++        rabbit_misc:die(client_timeout)   
++    end.
++
++wait_for_close(Pid) when is_pid(Pid) ->
++    receive
++    {Sender,'connection.close'} ->
++        Sender ! { self(), 0 , #'connection.close_ok'{}  }
++	end;
++
+ wait_for_close(Sock) ->
+     {ok, _, _} = read_method('connection.close'),
+-    ok = rabbit_writer:internal_send_command(Sock, 0, #'connection.close_ok'{}).
++    ok = rabbit_writer:internal_send_command(Sock, 0, #'connection.close_ok'{} ).
+diff -r af848798cc65 src/rabbit_reader.erl
+--- a/src/rabbit_reader.erl	Sat Jun 16 13:12:20 2007 +0100
++++ b/src/rabbit_reader.erl	Sun Jul 22 23:40:35 2007 +0100
+@@ -26,6 +26,7 @@
+ 
+ -export([accept_and_start/1]).
+ -export([init/1, start_connection/1]).
++-export([handle_input/3]).
+ -export([lookup_amqp_exception/1]).
+ 
+ -import(gen_tcp).
+@@ -225,18 +226,26 @@ handle_input({frame_payload, Type, Chann
+     end;
+ 
+ handle_input(handshake,
++	     	<<"AMQP",1,1,?PROTOCOL_VERSION_MAJOR,?PROTOCOL_VERSION_MINOR>>,                                                                    
++          	Pid) when is_pid(Pid)-> 
++    open_channel(0, rabbit_channel0, start, Pid);
++                                                                                        
++handle_input(handshake,
+ 	     <<"AMQP",1,1,?PROTOCOL_VERSION_MAJOR,?PROTOCOL_VERSION_MINOR>>,
+ 	     State) ->
+     {State1, _ChPid} = open_channel(0, rabbit_channel0, start, State),
+     switch_callback(State1#v1{connection =
+ 			        (State1#v1.connection)#connection{timeout_sec = ?NORMAL_TIMEOUT},
+-			      connection_state = starting}, frame_header, 7);
+-
++			      connection_state = starting}, frame_header, 7);              
++
++handle_input(open_channel, {Channel, OutOfBand}, Connection)->
++    open_channel(Connection, Channel, rabbit_channel, start);
++              
+ handle_input(handshake, Other, #v1{sock = Sock}) ->
+     rabbit_log:error("Bad header received: ~p~n", [Other]),
+     ok = gen_tcp:send(Sock, <<"AMQP",1,1,?PROTOCOL_VERSION_MAJOR,?PROTOCOL_VERSION_MINOR>>),
+     exit(reader_bad_header);
+-
++                                                                                            
+ handle_input(Callback, timeout,
+ 	     #v1{connection = #connection{timeout_sec = TimeoutSec}}) ->
+     rabbit_log:error("Reader timeout (~p s) in state ~p~n", [TimeoutSec, Callback]),
+@@ -247,11 +256,24 @@ handle_input(Callback, Data, _State) ->
+     rabbit_log:error("Bad input to reader in state ~p: ~p~n", [Callback, Data]),
+     exit(reader_bad_input).
+ 
++open_channel(Channel, Mod, Fun, State) when is_pid(State) ->
++    ChPid = spawn_link(Mod, Fun, [State, Channel, ?NORMAL_TIMEOUT]),
++    open_channel_internal(Channel,ChPid),
++    {State, ChPid};
++
++open_channel(Connection, Channel, Mod, Fun) when is_integer(Channel) ->
++    ChPid = spawn_link(Mod, Fun, [Connection, Channel, ?NORMAL_TIMEOUT]),
++    open_channel_internal(Channel,ChPid),
++    {Connection, ChPid};
++
+ open_channel(Channel, Mod, Fun, State) ->
+     ChPid = spawn_link(Mod, Fun, [self(), Channel, State#v1.sock, State#v1.connection]),
++    open_channel_internal(Channel,ChPid),
++    {State,ChPid}.                                     
++                                     
++open_channel_internal(Channel, ChPid) ->
+     put({channel, Channel}, {chpid, ChPid}),
+-    put({chpid, ChPid}, {channel, Channel}),
+-    {State, ChPid}.
++    put({chpid, ChPid}, {channel, Channel}).
+ 
+ %---------------------------------------------------------------------------
+ 

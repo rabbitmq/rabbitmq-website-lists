@@ -1,0 +1,204 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Why is the &quot;select&quot; always getting timed out in	consumer?
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Why%20is%20the%20%22select%22%20always%20getting%20timed%20out%20in%0A%09consumer%3F&In-Reply-To=%3C1386923788150-32046.post%40n5.nabble.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="032639.html">
+   <LINK REL="Next"  HREF="032546.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Why is the &quot;select&quot; always getting timed out in	consumer?</H1>
+    <B>kingsmasher1</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Why%20is%20the%20%22select%22%20always%20getting%20timed%20out%20in%0A%09consumer%3F&In-Reply-To=%3C1386923788150-32046.post%40n5.nabble.com%3E"
+       TITLE="[rabbitmq-discuss] Why is the &quot;select&quot; always getting timed out in	consumer?">raj.kumar.sanpui at gmail.com
+       </A><BR>
+    <I>Fri Dec 13 08:36:28 GMT 2013</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="032639.html">[rabbitmq-discuss] cluster crash when setting ha-mode=nodes
+</A></li>
+        <LI>Next message: <A HREF="032546.html">[rabbitmq-discuss] Why is the &quot;select&quot; always getting timed out	in consumer?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#32527">[ date ]</a>
+              <a href="thread.html#32527">[ thread ]</a>
+              <a href="subject.html#32527">[ subject ]</a>
+              <a href="author.html#32527">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>
+I desperately need a help. I have been slogging last couple of nights, but
+could not make it work !!!!!!
+
+I have a program in which a seperate thread publishes a message, and a
+consumer accepts it after ensuring the socket is readable (select), and
+ensuring and there are no frames enqueued (amqp_frames_enqueued) or data in
+buffer (amqp_data_in_buffer).
+
+But though the log says, the message is indeed published to the queue, it
+always times out.
+There was a similar example posted on the same forum, which i followed, but
+nothing works for me, and i always receive a timeout.
+
+Please help !!!!
+
+Here is my consumer code, till the point where it timedout.
+
+
+void *con(void *arg) {
+                        amqp_bytes_t queue;
+                std::string message;
+                printf(&quot;%s %s\n&quot;,__FUNCTION__,(char *) arg);
+
+                Debug(&quot;%s() - Get an mq connection\n&quot;, __FUNCTION__);
+                amqConnection *conn =  util.getAMQConnection ();
+                if (conn == NULL) {
+                        ErrLog(&quot;%s() - get connection failed\n&quot;,
+__FUNCTION__);
+                        pthread_exit(0) ;
+                }
+                Debug(&quot;%s() - declare exchange %s\n&quot;, __FUNCTION__,
+EXCHANGE);
+                int rc = conn-&gt;declareExchange(EXCHANGE, QUEUETYPE, 1);
+                if (rc != 0) {
+                        ErrLog(&quot;%s() - declare exchange %s %s failed\n&quot;,
+__FUNCTION__, EXCHANGE, QUEUETYPE);
+                        util.returnAMQConnection(conn);
+                        pthread_exit(0) ;
+                }
+
+                Debug(&quot;%s() - consume  %s\n&quot;, __FUNCTION__,ROUTINGKEY );
+                amqp_connection_state_t *state;
+                state = conn-&gt;getConnectionState( );
+                if (state == NULL)
+                        printf(&quot;Could not receive connection state
+object\n&quot;);
+
+                if (!amqp_frames_enqueued(*state) &amp;&amp;
+!amqp_data_in_buffer(*state)) {
+                         int sock = amqp_get_sockfd(*state);
+                         printf(&quot;socket: %d\n&quot;, sock);
+                         int flags = fcntl(sock, F_GETFL, 0);
+                         fcntl(sock, F_SETFL, flags | O_NONBLOCK);
+                         int ret = 0;
+                         do {
+                                struct timeval timeout;
+                                fd_set read_flags;
+                                FD_ZERO(&amp;read_flags);
+                                FD_SET(sock, &amp;read_flags);
+                                /* Wait upto a second. */
+
+                                timeout.tv_sec = 5;
+                                timeout.tv_usec = 0;
+                                ret = select(sock+1, &amp;read_flags, NULL,
+NULL, &amp;timeout);
+                                if (ret == -1)
+                                        printf(&quot;select: %s\n&quot;,
+strerror(errno));
+                                else if (ret == 0)
+                                        printf(&quot;select timedout\n&quot;);
+
+                                 if (FD_ISSET(sock, &amp;read_flags)) {
+                                        printf(&quot;Flag is set\n&quot;);
+                                        message = conn-&gt;consume(QUEUENAME,
+EXCHANGE, ROUTINGKEY);
+                                        if (0 == message.length()) {
+                                                ErrLog(&quot;%s() - consume queue
+%s failed\n&quot;, __FUNCTION__, QUEUENAME);
+                                                printf(&quot;%s() - consume queue
+%s failed\n&quot;, __FUNCTION__, QUEUENAME);
+                                                rc =
+conn-&gt;deleteQueue(QUEUENAME);
+                                                if (rc != 0) {
+                                                        ErrLog(&quot;%s() -
+delete queue %s failed\n&quot;, __FUNCTION__, QUEUENAME);
+                                                }
+                                               
+util.returnAMQConnection(conn);
+                                                pthread_exit(0) ;
+
+                                        }
+                                }
+                        } while (ret == 0);
+                }
+
+
+
+
+--
+View this message in context: <A HREF="http://rabbitmq.1065348.n5.nabble.com/Why-is-the-select-always-getting-timed-out-in-consumer-tp32046.html">http://rabbitmq.1065348.n5.nabble.com/Why-is-the-select-always-getting-timed-out-in-consumer-tp32046.html</A>
+Sent from the RabbitMQ mailing list archive at Nabble.com.
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="032639.html">[rabbitmq-discuss] cluster crash when setting ha-mode=nodes
+</A></li>
+	<LI>Next message: <A HREF="032546.html">[rabbitmq-discuss] Why is the &quot;select&quot; always getting timed out	in consumer?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#32527">[ date ]</a>
+              <a href="thread.html#32527">[ thread ]</a>
+              <a href="subject.html#32527">[ subject ]</a>
+              <a href="author.html#32527">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

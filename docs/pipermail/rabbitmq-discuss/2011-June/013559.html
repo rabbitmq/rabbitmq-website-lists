@@ -1,0 +1,126 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] precondition_failed error with amqp_client for erlang
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20precondition_failed%20error%20with%20amqp_client%0A%20for%20erlang&In-Reply-To=%3C20110630114821.GB18064%40rabbitmq.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="013548.html">
+   <LINK REL="Next"  HREF="013563.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] precondition_failed error with amqp_client for erlang</H1>
+    <B>Matthew Sackman</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20precondition_failed%20error%20with%20amqp_client%0A%20for%20erlang&In-Reply-To=%3C20110630114821.GB18064%40rabbitmq.com%3E"
+       TITLE="[rabbitmq-discuss] precondition_failed error with amqp_client for erlang">matthew at rabbitmq.com
+       </A><BR>
+    <I>Thu Jun 30 12:48:22 BST 2011</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="013548.html">[rabbitmq-discuss] precondition_failed error with amqp_client for	erlang
+</A></li>
+        <LI>Next message: <A HREF="013563.html">[rabbitmq-discuss] precondition_failed error with amqp_client	for erlang
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#13559">[ date ]</a>
+              <a href="thread.html#13559">[ thread ]</a>
+              <a href="subject.html#13559">[ subject ]</a>
+              <a href="author.html#13559">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi Max,
+
+On Wed, Jun 29, 2011 at 06:28:59PM -0400, Max Warnock wrote:
+&gt;<i> I've built a behavior in erlang to subscribe to a given topic exchange and
+</I>&gt;<i> farm out message handling.  I'm using the rabbitmq amqp_client library for
+</I>&gt;<i> erlang and when I put the system under heavy load I get, on occasion, the
+</I>&gt;<i> following error:
+</I>
+Could you let us know which version of Rabbit, Erlang and the Erlang
+client you're using?
+
+&gt;<i> =ERROR REPORT==== 29-Jun-2011::18:02:18 ===
+</I>&gt;<i> ** Generic server &lt;0.1117.0&gt; terminating
+</I>&gt;<i> ** Last message in was {'$gen_cast',
+</I>&gt;<i>                            {method,
+</I>&gt;<i>                                {'channel.close',406,
+</I>&gt;<i>                                    &lt;&lt;&quot;PRECONDITION_FAILED - unknown delivery
+</I>&gt;<i> tag 856&quot;&gt;&gt;,
+</I>&gt;<i>                                    60,80},
+</I>
+That's a double-ack (probably). Sadly, the AMQP 0-9-1 spec says that
+acking is not idempotent, thus it's a fault to ack the same message
+multiple times...
+
+&gt;<i> The server receive loop where the ack happens looks like this:
+</I>&gt;<i> receive
+</I>&gt;<i> ...
+</I>&gt;<i> {#'basic.deliver'{delivery_tag = Tag, routing_key = RoutingKey},
+</I>&gt;<i> #amqp_msg{payload = Payload}} -&gt;
+</I>&gt;<i>     amqp_channel:cast(get(amqp_channel_pid), #'basic.ack'{delivery_tag =
+</I>&gt;<i> Tag}),
+</I>&gt;<i>     spawn_and_queue(spawn_handle_message, Module, RoutingKey, Payload),
+</I>&gt;<i>     loop(Module);
+</I>&gt;<i> ...
+</I>&gt;<i> end
+</I>
+...hmmm, which is so simple that I can't see how it could go wrong: if
+you're not double acking then something else must be going on to make
+the broker think that it's not expecting an ack for that message, hence
+the error. If you're doing some sort of reject operation - either
+basic.nack or basic.reject on messages and you then subsequently ack one
+of those messages then that would also cause this error. There may be
+other cases as well.
+
+&gt;<i> The amqp_client_sup can't seem to bring back the the client either and dies
+</I>&gt;<i> from the retry intensity being reached.  I've done a hefty amount of
+</I>&gt;<i> googling and can't seem to find where things could be going wrong.  Before
+</I>&gt;<i> jumping into the amqp_client code I thought I'd ask the mailing list if they
+</I>&gt;<i> have any ideas.  The only thing I can think is that there is a race
+</I>&gt;<i> condition within the client library.  I will be double checking my code to
+</I>&gt;<i> be sure it isn't sending the ack twice, but given the simplicity of the ack
+</I>&gt;<i> the only way it could is if it receives the same message (with identical
+</I>&gt;<i> delivery tag) from the amqp_client library twice.
+</I>
+It could be a bug in the client library, but I'd be a little surprised
+if we're managing to duplicate messages somehow - that would be a new
+level of fail for us. ;) However, the fact that the entire connection
+dies is alarming and almost certainly a bug: PRECONDITION_FAILED is a
+soft error and should only tear down the channel, not the whole
+connection. After that, all you should have to do is create a new
+channel and everything else should be ok. If that's not the case please
+let us know.
+
+Best wishes,
+
+Matthew
+</PRE>
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="013548.html">[rabbitmq-discuss] precondition_failed error with amqp_client for	erlang
+</A></li>
+	<LI>Next message: <A HREF="013563.html">[rabbitmq-discuss] precondition_failed error with amqp_client	for erlang
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#13559">[ date ]</a>
+              <a href="thread.html#13559">[ thread ]</a>
+              <a href="subject.html#13559">[ subject ]</a>
+              <a href="author.html#13559">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

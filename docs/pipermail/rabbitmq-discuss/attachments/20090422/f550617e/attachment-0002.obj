@@ -1,0 +1,154 @@
+diff -r f3a16cc21b51 include/rabbit.hrl
+--- a/include/rabbit.hrl	Mon Apr 20 10:12:40 2009 +0100
++++ b/include/rabbit.hrl	Wed Apr 22 10:22:01 2009 -0500
+@@ -51,7 +51,7 @@
+ 
+ -record(exchange, {name, type, durable, auto_delete, arguments}).
+ 
+--record(amqqueue, {name, durable, auto_delete, arguments, pid}).
++-record(amqqueue, {name, durable, auto_delete, broadcast, arguments, pid}).
+ 
+ %% mnesia doesn't like unary records, so we add a dummy 'value' field
+ -record(route, {binding, value = const}).
+@@ -99,6 +99,7 @@
+       #amqqueue{name          :: queue_name(),
+                 durable       :: bool(),
+                 auto_delete   :: bool(),
++                broadcast     :: bool(),
+                 arguments     :: amqp_table(),
+                 pid           :: maybe(pid())}).
+ -type(exchange() ::
+diff -r f3a16cc21b51 src/rabbit_amqqueue.erl
+--- a/src/rabbit_amqqueue.erl	Mon Apr 20 10:12:40 2009 +0100
++++ b/src/rabbit_amqqueue.erl	Wed Apr 22 10:22:01 2009 -0500
+@@ -31,7 +31,7 @@
+ 
+ -module(rabbit_amqqueue).
+ 
+--export([start/0, recover/0, declare/4, delete/3, purge/1, internal_delete/1]).
++-export([start/0, recover/0, declare/5, delete/3, purge/1, internal_delete/1]).
+ -export([pseudo_queue/2]).
+ -export([lookup/1, with/2, with_or_die/2,
+          stat/1, stat_all/0, deliver/5, redeliver/2, requeue/3, ack/4]).
+@@ -64,7 +64,7 @@
+ 
+ -spec(start/0 :: () -> 'ok').
+ -spec(recover/0 :: () -> 'ok').
+--spec(declare/4 :: (queue_name(), bool(), bool(), amqp_table()) ->
++-spec(declare/5 :: (queue_name(), bool(), bool(), bool(), amqp_table()) ->
+              amqqueue()).
+ -spec(lookup/1 :: (queue_name()) -> {'ok', amqqueue()} | not_found()).
+ -spec(with/2 :: (queue_name(), qfun(A)) -> A | not_found()).
+@@ -151,10 +151,11 @@
+         end)),
+     ok.
+ 
+-declare(QueueName, Durable, AutoDelete, Args) ->
++declare(QueueName, Durable, AutoDelete, Broadcast, Args) ->
+     Q = start_queue_process(#amqqueue{name = QueueName,
+                                       durable = Durable,
+                                       auto_delete = AutoDelete,
++                                      broadcast = Broadcast,
+                                       arguments = Args,
+                                       pid = none}),
+     case rabbit_misc:execute_mnesia_transaction(
+@@ -334,6 +335,7 @@
+     #amqqueue{name = QueueName,
+               durable = false,
+               auto_delete = false,
++              broadcast = false,
+               arguments = [],
+               pid = Pid}.
+ 
+diff -r f3a16cc21b51 src/rabbit_amqqueue_process.erl
+--- a/src/rabbit_amqqueue_process.erl	Mon Apr 20 10:12:40 2009 +0100
++++ b/src/rabbit_amqqueue_process.erl	Wed Apr 22 10:22:01 2009 -0500
+@@ -72,6 +72,7 @@
+         [name,
+          durable,
+          auto_delete,
++         broadcast,
+          arguments,
+          pid,
+          messages_ready,
+@@ -161,11 +162,12 @@
+                                round_robin = RoundRobin,
+                                next_msg_id = NextId}) ->
+     ?LOGDEBUG("AMQQUEUE ~p DELIVERY:~n~p~n", [QName, Message]),
++    {_, _, _, _, IsBroadcast, _, _} = State#q.q,
+     case queue:out(RoundRobin) of
+         {{value, QEntry = {ChPid, #consumer{tag = ConsumerTag,
+                                             ack_required = AckRequired}}},
+          RoundRobinTail} ->
+-            C = #cr{limiter_pid = LimiterPid,
++    	    C = #cr{limiter_pid = LimiterPid,
+                     unsent_message_count = Count,
+                     unacked_messages = UAM} = ch_record(ChPid),
+             case not(AckRequired) orelse rabbit_limiter:can_send(
+@@ -186,10 +188,17 @@
+                             ok    -> queue:in(QEntry, RoundRobinTail);
+                             block -> block_consumers(ChPid, RoundRobinTail)
+                         end,
+-                    {offered, AckRequired, State#q{round_robin = NewConsumers,
++		   
++		   %broadcast attempt 
++		   case IsBroadcast of
++			   true -> deliver_immediately(Message, false,
++                                        State#q{round_robin = RoundRobinTail})
++		   end,
++
++		   {offered, AckRequired, State#q{round_robin = NewConsumers,
+                                                    next_msg_id = NextId + 1}};
+                 false ->
+-                    store_ch_record(C#cr{is_limit_active = true}),
++		    store_ch_record(C#cr{is_limit_active = true}),
+                     NewConsumers = block_consumers(ChPid, RoundRobinTail),
+                     deliver_immediately(Message, Delivered,
+                                         State#q{round_robin = NewConsumers})
+@@ -501,6 +510,7 @@
+ i(name,        #q{q = #amqqueue{name        = Name}})       -> Name;
+ i(durable,     #q{q = #amqqueue{durable     = Durable}})    -> Durable;
+ i(auto_delete, #q{q = #amqqueue{auto_delete = AutoDelete}}) -> AutoDelete;
++i(broadcast,   #q{q = #amqqueue{broadcast   = Broadcast}})  -> Broadcast;
+ i(arguments,   #q{q = #amqqueue{arguments   = Arguments}})  -> Arguments;
+ i(pid, _) ->
+     self();
+diff -r f3a16cc21b51 src/rabbit_channel.erl
+--- a/src/rabbit_channel.erl	Mon Apr 20 10:12:40 2009 +0100
++++ b/src/rabbit_channel.erl	Wed Apr 22 10:22:01 2009 -0500
+@@ -593,6 +593,7 @@
+                                durable = Durable,
+                                exclusive = ExclusiveDeclare,
+                                auto_delete = AutoDelete,
++                               broadcast = Broadcast,
+                                nowait = NoWait,
+                                arguments = Args},
+               _, State = #ch { virtual_host = VHostPath,
+@@ -629,7 +630,7 @@
+                 QueueName = rabbit_misc:r(VHostPath, queue, ActualNameBin),
+                 check_configure_permitted(QueueName, State),
+                 Finish(rabbit_amqqueue:declare(QueueName,
+-                                               Durable, AutoDelete, Args));
++                                               Durable, AutoDelete, Broadcast, Args));
+             Other = #amqqueue{name = QueueName} ->
+                 check_configure_permitted(QueueName, State),
+                 Other
+diff -r f3a16cc21b51 src/rabbit_control.erl
+--- a/src/rabbit_control.erl	Mon Apr 20 10:12:40 2009 +0100
++++ b/src/rabbit_control.erl	Wed Apr 22 10:22:01 2009 -0500
+@@ -237,6 +237,15 @@
+                                [VHostArg, ArgAtoms]),
+                       ArgAtoms);
+ 
++action(list_consumers, Node, Args, Inform) ->
++    Inform("Listing consumers", []),
++    {VHostArg, RemainingArgs} = parse_vhost_flag_bin(Args),
++    ArgAtoms = list_replace(node, pid, 
++                            default_if_empty(RemainingArgs, [name, messages, consumers])),
++    display_info_list(rpc_call(Node, rabbit_amqqueue, info_all,
++                               [VHostArg, ArgAtoms]),
++                      ArgAtoms);
++
+ action(list_exchanges, Node, Args, Inform) ->
+     Inform("Listing exchanges", []),
+     {VHostArg, RemainingArgs} = parse_vhost_flag_bin(Args),

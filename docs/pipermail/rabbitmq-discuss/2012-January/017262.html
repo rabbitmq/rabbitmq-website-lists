@@ -1,0 +1,277 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] RabbitMQ broker crashing under heavy load	with mirrored queues
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20RabbitMQ%20broker%20crashing%20under%20heavy%20load%0A%09with%20mirrored%20queues&In-Reply-To=%3Cbf3cdd0c-bd13-4205-9bca-ba77cd179aa1%40cs7g2000vbb.googlegroups.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="017297.html">
+   <LINK REL="Next"  HREF="017265.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] RabbitMQ broker crashing under heavy load	with mirrored queues</H1>
+    <B>Venkat</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20RabbitMQ%20broker%20crashing%20under%20heavy%20load%0A%09with%20mirrored%20queues&In-Reply-To=%3Cbf3cdd0c-bd13-4205-9bca-ba77cd179aa1%40cs7g2000vbb.googlegroups.com%3E"
+       TITLE="[rabbitmq-discuss] RabbitMQ broker crashing under heavy load	with mirrored queues">vveludan at gmail.com
+       </A><BR>
+    <I>Mon Jan  9 23:39:48 GMT 2012</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="017297.html">[rabbitmq-discuss] ConnectionFactory and load balancing
+</A></li>
+        <LI>Next message: <A HREF="017265.html">[rabbitmq-discuss] RabbitMQ broker crashing under heavy load	with mirrored queues
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#17262">[ date ]</a>
+              <a href="thread.html#17262">[ thread ]</a>
+              <a href="subject.html#17262">[ subject ]</a>
+              <a href="author.html#17262">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi Steve I have run some tests using RabbitMQ 2.7.1 please find the
+following:
+
+OS: CentOS release 5.5
+RabbitMQ Version: 2.7.1
+RabbitMQ Java Client: 2.7.1
+spring-amqp Version: 1.0.0RELEASE
+erlang version : 5.8.4 (<A HREF="http://repos.fedorapeople.org/repos/peter/">http://repos.fedorapeople.org/repos/peter/</A>
+erlang/epel-erlang.repo: using Erlang version:R14B)
+----------------------------------
+Cluster Information:
+Started Cluster with one RabbitMQ Node (Node A)
+After test.queue is created on Node A, joined Node B to the cluster.
+---------------------------------------------
+Parent Queue Configuration:
+
+@Configuration
+public abstract class AbstractMDBRabbitConfiguration {
+
+	protected abstract void configureMDBTemplate(RabbitTemplate
+template);
+
+
+
+
+	@Bean
+	public ConnectionFactory connectionFactory() {
+		String rabbitMQUser = &quot;guest&quot;;
+		String rabbitMQPassword = &quot;guest&quot;;
+		String rabbitMQHost = &quot;localhost&quot;;
+		CachingConnectionFactory connectionFactory = new
+CachingConnectionFactory(rabbitMQHost);
+		connectionFactory.setChannelCacheSize(10);
+		connectionFactory.setUsername(rabbitMQUser);
+		connectionFactory.setPassword(rabbitMQPassword);
+		return connectionFactory;
+	}
+
+	@Bean
+	public RabbitTemplate rabbitTemplate() {
+		RabbitTemplate template = new DMBTemplate(connectionFactory());
+		template.setMessageConverter(messageConverter());
+		configureMDBTemplate(template);
+		return template;
+	}
+
+
+	@Bean
+	public MessageConverter messageConverter() {
+		return new SimpleMessageConverter();
+	}
+
+	@Bean
+	public AmqpAdmin amqpAdmin() {
+		RabbitAdmin rabbitAdmin = new RabbitAdmin(connectionFactory());
+		return rabbitAdmin ;
+	}
+-------------------------------------------------------------------------------------
+Test Queue Configuaration:
+
+@Configuration
+public class LoggingConfiguration extends
+AbstractMDBRabbitConfiguration {
+
+	private static final String AUDIT_EXCHANGE_NAME = &quot;test.exchange&quot;;
+	private static final String AUDIT_QUEUE_NAME = &quot;test.queue&quot;;
+	private static final String AUDIT_ROUTING_KEY = AUDIT_QUEUE_NAME;
+
+	@Override
+	public void configureMDBTemplate(RabbitTemplate mdbTemplate) {
+		mdbTemplate.setExchange(AUDIT_EXCHANGE_NAME);
+		mdbTemplate.setRoutingKey(AUDIT_ROUTING_KEY);
+	}
+
+	@Bean
+	public Queue mdbQueue() {
+		Map&lt;String, Object&gt; args = new HashMap&lt;String, Object&gt;();
+		String haPolicyValue = &quot;all&quot;;
+		args.put(&quot;x-ha-policy&quot;, haPolicyValue);
+		Queue queue = new Queue(AUDIT_QUEUE_NAME,true,false,false,args);
+		return queue;
+	}
+
+	@Bean
+	public TopicExchange mdbAuditExchange() {
+		TopicExchange exchange = new
+TopicExchange(AUDIT_EXCHANGE_NAME,true,false);
+		return exchange;
+	}
+
+	@Bean
+	public Binding mdbAuditBinding() {
+		return
+BindingBuilder.bind(mdbQueue()).to(mdbAuditExchange()).with(AUDIT_ROUTING_KEY);
+	}
+}
+------------------------------------------------------
+Queue Consumer configuration:
+
+	&lt;context:component-scan base-package=&quot;com.test.services.logging&quot;&gt;
+	&lt;/context:component-scan&gt;
+
+	&lt;bean id=&quot;messageListenerContainer&quot;
+class=&quot;org.springframework.amqp.rabbit.listener.SimpleMessageListenerContainer&quot;&gt;
+		&lt;property name=&quot;connectionFactory&quot; ref=&quot;connectionFactory&quot; /&gt;
+		&lt;property name=&quot;queueNames&quot; value=&quot;test.queue&quot;/&gt;
+	    &lt;property name=&quot;concurrentConsumers&quot; value=&quot;5&quot; /&gt;
+	    &lt;property name=&quot;messageListener&quot; ref=&quot;messageListenerAdapter&quot; /&gt;
+	&lt;/bean&gt;
+
+	&lt;bean id=&quot;messageListenerAdapter&quot;
+class=&quot;org.springframework.amqp.rabbit.listener.adapter.MessageListenerAdapter&quot;&gt;
+		&lt;property name=&quot;delegate&quot; ref=&quot;logHandler&quot; /&gt;
+		&lt;property name=&quot;messageConverter&quot; ref=&quot;messageConverter&quot; /&gt;
+	&lt;/bean&gt;
+
+	&lt;bean id=&quot;loggingEventHandler&quot;
+class=&quot;com.test.services.logging.LoggingEventHandler&quot;&gt;
+	&lt;/bean&gt;
+
+	&lt;bean id=&quot;logHandler&quot;
+class=&quot;com.test.services.logging.LoggingProcessor&quot;&gt;
+		&lt;property name=&quot;loggingEventHandler&quot; ref=&quot;loggingEventHandler&quot;/&gt;
+	&lt;/bean&gt;
+
+
+-------------------------------------------------------
+Test Scenario:
+
+First Test: Stopped the Queue Consumer during the test to watch for
+the message count using rabbitmqctl list_queues
+
+Executed a program that spawns 10 threads, each thread placing 2000
+messages on test.queue.
+While messages are pumped into test.queue crashed (hard-failure using
+kill -9) RabbitMQ broker on Node A.
+Ran the above test for two iterations.
+Following are the findings:
+- In the first iteration lost only 3 messages. When the program that
+was pumping in messages is stopped found that 19997 messages were
+piled up in the queue.
+  Verified this by running rabbitmqctl list_queues
+- In the second iteration lost only 2 messages. When the program that
+was pumping in messages is stopped found that 19998 messages were
+piled up in the queue.
+  Verified this by running rabbitmqctl list_queues
+
+Second Test: Queue consumer was running during the test
+Executed the same program used in the first test to pump in messages.
+While messages are pumped in, hard crashed RabbitMQ broker on Node A.
+Same findings as in the first test. Lost 2 messages during the first
+iteration and 3 messages in the second iteration.
+
+These results are better compared to 2.7.0.
+
+I have one question, referring to <A HREF="http://www.rabbitmq.com/ha.html:">http://www.rabbitmq.com/ha.html:</A>
+As a result of the requeuing, clients that re-consume from the queue
+must be aware that they are likely to subsequently receive messages
+that they have seen previously
+
+During the second test when I had Queue Consumer was up and running, I
+didn't find any duplicate messages processed (though 2-3 messages
+lost)
+All messages processed are written to log. I have verified that there
+were no duplicate messages by running grep command to fetch the Thread
+Id on the log file.
+Please find the following info:
+[<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">ecloud at t-3</A> log]$ grep Thread-0 central-log.log | wc -l
+1999
+[<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">ecloud at t-3</A> log]$ grep Thread-1 central-log.log | wc -l
+2000
+[<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">ecloud at t-3</A> log]$ grep Thread-2 central-log.log | wc -l
+2000
+[<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">ecloud at t-3</A> log]$ grep Thread-3 central-log.log | wc -l
+2000
+[<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">ecloud at t-3</A> log]$ grep Thread-4 central-log.log | wc -l
+2000
+[<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">ecloud at t-3</A> log]$ grep Thread-5 central-log.log | wc -l
+2000
+[<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">ecloud at t-3</A> log]$ grep Thread-6 central-log.log | wc -l
+2000
+[<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">ecloud at t-3</A> log]$ grep Thread-7 central-log.log | wc -l
+2000
+[<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">ecloud at t-3</A> log]$ grep Thread-8 central-log.log | wc -l
+1999
+[<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">ecloud at t-3</A> log]$ grep Thread-9 central-log.log | wc -l
+2000
+
+You notice that there are two lines displaying 1999, this is because
+two messages were lost. Otherwise you see 2000 messages processed
+from each thread.
+
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="017297.html">[rabbitmq-discuss] ConnectionFactory and load balancing
+</A></li>
+	<LI>Next message: <A HREF="017265.html">[rabbitmq-discuss] RabbitMQ broker crashing under heavy load	with mirrored queues
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#17262">[ date ]</a>
+              <a href="thread.html#17262">[ thread ]</a>
+              <a href="subject.html#17262">[ subject ]</a>
+              <a href="author.html#17262">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,145 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Message accounting patch
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20Message%20accounting%20patch&In-Reply-To=">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003558.html">
+   <LINK REL="Next"  HREF="003562.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Message accounting patch</H1>
+    <B>Eric Windisch</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20Message%20accounting%20patch&In-Reply-To="
+       TITLE="[rabbitmq-discuss] Message accounting patch">eric at grokthis.net
+       </A><BR>
+    <I>Thu May 14 06:32:34 BST 2009</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003558.html">[rabbitmq-discuss] Erlang R13B
+</A></li>
+        <LI>Next message: <A HREF="003562.html">[rabbitmq-discuss] New rabbit access control in tip?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3559">[ date ]</a>
+              <a href="thread.html#3559">[ thread ]</a>
+              <a href="subject.html#3559">[ subject ]</a>
+              <a href="author.html#3559">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>With the help of Programming Erlang and the gracious folks at Philly  
+Lambda, I've completed a patch for message accounting.  Quite simply,  
+this patch adds two mnesia tables which count up the messages  
+submitted into Rabbit.  One table counts messages per user, and the  
+other counts messages per vhost.
+
+To pull data out, you can use the following code:
+
+  Ucount=fun() -&gt;  
+mnesia:dirty_read(rabbit_uaudit,mnesia:first(rabbit_uaudit)) end.
+  mnesia:transaction(Ucount).
+  Vcount=fun() -&gt;  
+mnesia:dirty_read(rabbit_vaudit,mnesia:first(rabbit_vaudit)) end.
+  mnesia:transaction(Vcount).
+
+This example will grab the data from the first entry from each table.   
+You can clearly substitute the Key argument with a string, or write a  
+more complicated expression as you might desire.
+
+Regards,
+Eric Windisch
+
+
+
+diff -r 2ce3d18b4383 include/rabbit.hrl
+--- a/include/rabbit.hrl	Fri Apr 24 17:08:19 2009 +0100
++++ b/include/rabbit.hrl	Thu May 14 05:17:18 2009 +0000
+@@ -52,6 +52,8 @@
+  -record(exchange, {name, type, durable, auto_delete, arguments}).
+
+  -record(amqqueue, {name, durable, auto_delete, arguments, pid}).
++
++-record(counter, {name, count}).
+
+  %% mnesia doesn't like unary records, so we add a dummy 'value' field
+  -record(route, {binding, value = const}).
+@@ -111,6 +113,10 @@
+        #binding{exchange_name    :: exchange_name(),
+                 queue_name       :: queue_name(),
+                 key              :: binding_key()}).
++-type(counter() ::
++      #counter{name          :: string(),
++               count         :: non_neg_integer()}).
++
+  %% TODO: make this more precise by tying specific class_ids to
+  %% specific properties
+  -type(undecoded_content() ::
+diff -r 2ce3d18b4383 src/rabbit_mnesia.erl
+--- a/src/rabbit_mnesia.erl	Fri Apr 24 17:08:19 2009 +0100
++++ b/src/rabbit_mnesia.erl	Thu May 14 05:17:18 2009 +0000
+@@ -143,7 +143,16 @@
+         {disc_copies, [node()]}]},
+       {rabbit_queue,
+        [{record_name, amqqueue},
+-       {attributes, record_info(fields, amqqueue)}]}].
++       {attributes, record_info(fields, amqqueue)}]},
++     {rabbit_vaudit,
++      [{record_name, counter},
++       {attributes, record_info(fields, counter)},
++       {disc_copies, [node()]}]},
++     {rabbit_uaudit,
++      [{record_name, counter},
++       {attributes, record_info(fields, counter)},
++       {disc_copies, [node()]}]}
++	].
+
+  table_names() -&gt;
+      [Tab || {Tab, _} &lt;- table_definitions()].
+diff -r 2ce3d18b4383 src/rabbit_reader.erl
+--- a/src/rabbit_reader.erl	Fri Apr 24 17:08:19 2009 +0100
++++ b/src/rabbit_reader.erl	Thu May 14 05:17:18 2009 +0000
+@@ -613,6 +613,13 @@
+                                            user = User},
+                             sock = Sock}) -&gt;
+      ok = rabbit_access_control:check_vhost_access(User, VHostPath),
++
++ 	%% EricW: I'm assuming that this is a decent place to
++ 	%% do message accounting. We can get the VHost and User
++ 	%% at any rate...
++ 	mnesia:dirty_update_counter(rabbit_vaudit,VHostPath,1),
++ 	mnesia:dirty_update_counter(rabbit_uaudit,User,1),
++
+      NewConnection = Connection#connection{vhost = VHostPath},
+      KnownHosts =  
+format_listeners(rabbit_networking:active_listeners()),
+      Redirects = compute_redirects(Insist),
+
+
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003558.html">[rabbitmq-discuss] Erlang R13B
+</A></li>
+	<LI>Next message: <A HREF="003562.html">[rabbitmq-discuss] New rabbit access control in tip?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3559">[ date ]</a>
+              <a href="thread.html#3559">[ thread ]</a>
+              <a href="subject.html#3559">[ subject ]</a>
+              <a href="author.html#3559">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

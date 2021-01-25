@@ -1,0 +1,153 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Are publisher confirms at all aware of HA (replicated) durable queues?
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Are%20publisher%20confirms%20at%20all%20aware%20of%20HA%0A%20%28replicated%29%20durable%20queues%3F&In-Reply-To=%3CCADUq8CwXi6fABUJsXB%3DbAONJZ80_c2yGerJPwBfV62ak8rJCiQ%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="015372.html">
+   <LINK REL="Next"  HREF="015378.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Are publisher confirms at all aware of HA (replicated) durable queues?</H1>
+    <B>Steve Rehrauer</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Are%20publisher%20confirms%20at%20all%20aware%20of%20HA%0A%20%28replicated%29%20durable%20queues%3F&In-Reply-To=%3CCADUq8CwXi6fABUJsXB%3DbAONJZ80_c2yGerJPwBfV62ak8rJCiQ%40mail.gmail.com%3E"
+       TITLE="[rabbitmq-discuss] Are publisher confirms at all aware of HA (replicated) durable queues?">steve.rehrauer at gmail.com
+       </A><BR>
+    <I>Wed Oct  5 14:54:36 BST 2011</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="015372.html">[rabbitmq-discuss] Are publisher confirms at all aware of HA (replicated) durable queues?
+</A></li>
+        <LI>Next message: <A HREF="015378.html">[rabbitmq-discuss] Are publisher confirms at all aware of HA (replicated) durable queues?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#15376">[ date ]</a>
+              <a href="thread.html#15376">[ thread ]</a>
+              <a href="subject.html#15376">[ subject ]</a>
+              <a href="author.html#15376">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Okay, thanks.
+
+I'm trying to chase down why I'm not seeing all the events I've
+published, in a test that shuts down the master node while events are
+being produced.  Am trying to understand what I might be doing wrong.
+Good to know that I can rely on robust publisher confirms!
+
+I've pruned the test back to a very simple thing now.  I have two
+nodes in the cluster.
+
+1. With both nodes running, I produce an event.
+2. I verify that I can consume this event.  I verify that I get a
+publisher confirmation from the broker.
+3. Using Alice, I stop the master node.
+4. I produce another event.
+5. I verify that I can consume this event.
+
+I'm not seeing the event from step 5.  I wonder if I'm not properly
+setting up the consumer?
+
+When I stop the master node in step 3, I see the consumer catch a
+ShutdownSignalException, with &quot;reason:
+{#method&lt;connection.close&gt;(reply-code=320,
+reply-text=CONNECTION_FORCED - broker forced connection closure with
+reason 'shutdown'&quot;.  The consumer reconnects to the broker,
+successfully as far as I can tell.
+
+When I try to produce another event in step 4, the producer also
+catches a ShutdownSignalException, with &quot;clean connection shutdown;
+reason: Attempt to use closed channel&quot;.  The producer also reconnects
+to the broker, successfully as far as I can tell.
+
+After the producer reconnects, I see it succeed in basicPublish().  I
+also see a publish confirmation from the broker for this event.
+
+However, the consumer is never seeing it.
+
+Q1: Is it surprising that the producer sees this in step 4?  I assumed
+that it would be the same for the producer as for the consumer; if the
+master node goes down, both sides must reconnect to the broker?
+
+Q2: I think I am asking for consumer cancellation notification in the
+consumer, but I never see the callback happen.  Should I expect to, in
+the scenario I've outlined above?  I'm now a little concerned I'm not
+setting it up properly, and this is why my consumer never sees this
+event.  Here's the Java code that I use, which is in a class that
+derives from RabbitMQ's ConnectionFactory.
+
+   public DerivedConnectionFactory() {
+      super();
+
+      ...
+
+        Map&lt;String, Object&gt; clientProperties = new HashMap&lt;String, Object&gt;();
+        clientProperties.put(
+               &quot;consumer_cancel_notify&quot;,
+                Boolean.valueOf(true)
+                );
+        this.setClientProperties(clientProperties);
+   }
+
+Thanks, --Steve
+
+On Wed, Oct 5, 2011 at 5:18 AM, Matthias Radestock
+&lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">matthias at rabbitmq.com</A>&gt; wrote:
+&gt;<i> Steve,
+</I>&gt;<i>
+</I>&gt;<i> On 04/10/11 18:05, Steve Rehrauer wrote:
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> If I'm asking the broker for publisher confirms, and I have a cluster
+</I>&gt;&gt;<i> of nodes, and I have durable queues that are replicated (x-ha-policy:
+</I>&gt;&gt;<i> &quot;all&quot;), does the broker send the confirm as soon as a message is
+</I>&gt;&gt;<i> persisted in the queues of the master node? &#160;It doesn't wait for those
+</I>&gt;&gt;<i> queues to be replicated to the slaves?
+</I>&gt;<i>
+</I>&gt;<i> From <A HREF="http://www.rabbitmq.com/ha.html#behaviour">http://www.rabbitmq.com/ha.html#behaviour</A>
+</I>&gt;<i>
+</I>&gt;<i> &lt;quote&gt;
+</I>&gt;<i> As the chosen slave becomes the master, no messages that are published to
+</I>&gt;<i> the mirrored-queue during this time will be lost: messages published to a
+</I>&gt;<i> mirrored-queue are always published directly to the master and all slaves.
+</I>&gt;<i> Thus should the master fail, the messages continue to be sent to the slaves
+</I>&gt;<i> and will be added to the queue once the promotion of a slave to the master
+</I>&gt;<i> completes.
+</I>&gt;<i>
+</I>&gt;<i> Similarly, messages published by clients using publisher confirms will still
+</I>&gt;<i> be confirmed correctly even if the master (or any slaves) fail between the
+</I>&gt;<i> message being published and the message being able to be confirmed to the
+</I>&gt;<i> publisher.
+</I>&gt;<i> &lt;/quote&gt;
+</I>&gt;<i>
+</I>&gt;<i> Matthias.
+</I>&gt;<i>
+</I></PRE>
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="015372.html">[rabbitmq-discuss] Are publisher confirms at all aware of HA (replicated) durable queues?
+</A></li>
+	<LI>Next message: <A HREF="015378.html">[rabbitmq-discuss] Are publisher confirms at all aware of HA (replicated) durable queues?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#15376">[ date ]</a>
+              <a href="thread.html#15376">[ thread ]</a>
+              <a href="subject.html#15376">[ subject ]</a>
+              <a href="author.html#15376">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

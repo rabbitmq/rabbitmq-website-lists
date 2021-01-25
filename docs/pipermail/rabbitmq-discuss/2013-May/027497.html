@@ -1,0 +1,131 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Architecture Question
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Architecture%20Question&In-Reply-To=%3C130F24DD-517C-4048-9F88-E61BD7D8C6E3%40rabbitmq.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="027490.html">
+   <LINK REL="Next"  HREF="027498.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Architecture Question</H1>
+    <B>Tim Watson</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Architecture%20Question&In-Reply-To=%3C130F24DD-517C-4048-9F88-E61BD7D8C6E3%40rabbitmq.com%3E"
+       TITLE="[rabbitmq-discuss] Architecture Question">tim at rabbitmq.com
+       </A><BR>
+    <I>Tue May 28 12:37:48 BST 2013</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="027490.html">[rabbitmq-discuss] Architecture Question
+</A></li>
+        <LI>Next message: <A HREF="027498.html">[rabbitmq-discuss] rabbitmq error report of plugins is too short and incomplete
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#27497">[ date ]</a>
+              <a href="thread.html#27497">[ thread ]</a>
+              <a href="subject.html#27497">[ subject ]</a>
+              <a href="author.html#27497">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi,
+
+On 28 May 2013, at 05:49, Crash Course wrote:
+
+&gt;<i> I'm running the broker (3.1.1) on a Dual Xeon E5 (12 cores total) with 256 MB and Windows Server 2012, on Erlang R16B (64bit).
+</I>
+I'm guessing you don't really mean 256MB right?
+
+&gt;<i> One of the primary workflows that we want to enable is using a cluster  is to have several workers behind the cluster taking messages from multiple clients.
+</I>&gt;<i> 
+</I>&gt;<i> With a single producer -&gt; direct exchange -&gt; single consumer on a single broker, I can get about 38000 messages / second. (I'm not sure where the performance limit is here, since I'm not queuing any messages, the consumer is the equivalent of /dev/null, and the CPU on the broker doesn't go above 12%)
+</I>
+There is no such thing as 'not queueing any messages' since consumers *have* to consume from a queue. Presumably what you're saying is that the consumer isn't doing any work before sending an ACK. Are you using ACKs, have you considered setting a prefetch count, etc? Have you read <A HREF="http://www.rabbitmq.com/blog/2012/04/25/rabbitmq-performance-measurements-part-2">http://www.rabbitmq.com/blog/2012/04/25/rabbitmq-performance-measurements-part-2</A> to get an idea of the baselines you might expect to see?
+
+&gt;<i> 
+</I>&gt;<i> To test it, I ran two brokers on the same server, and tried setting up a couple of different exchange/queue layouts:
+</I>
+Have you considered benchmarking with a single broker first, then adding in the clustering later on? Clustering is intended to provide reliability/robustness/fallback rather than improve performance - were you aware of that? Clustering comes with some overheads, e.g., if you publish to node-1 and consume from node-2, the messages have to be routed between nodes as well. A queue will *only* run on one node in the cluster, so producers and/or consumers connecting to some other node, will have their actions (i.e., publishing or consuming) forwarded to the node on which the queue is running.
+
+&gt;<i> Producers publishing to a single consistent hash exchange, with each consumer connecting to a private queue bound to the exchange
+</I>&gt;<i> Producers publishing to a single exchange / default exchange, with each consumer connecting to a single queue off the exchange
+</I>This limits throughput to the speed at which a single queue can progress, in terms of both accepting incoming messages *and* passing them on to individual consumers. Why? Because for each matching binding, the message will be routed to that (bound) queue. Are you saying that you're trying to use the producer supplied routing keys in combination with the bindings to distribute the load across multiple consumers? 
+
+Having multiple publishers and multiple consumers generally will increase throughput, though there will still be limits and of course for a single queue, messages will be delivered to consumers in a round-robin fashion.
+
+
+&gt;<i> In the first scenario above, if I use 24 consumers (and hence 24 queues) distributed equally across both brokers, I can barely muster 52000 messages / second (and going up to 30% CPU on each Erlang broker)
+</I>&gt;<i> 
+</I>
+What happens if you use producer =&gt; direct exch =&gt; queue =&gt; consumer * 24 instead? What about on a single broker? How fast can you make a single queue go (with your anticipated load) and what does the optimum balance between # producers and # consumers for a single queue appear to be on your hardware? What happens if you now take *that* configuration and balance it across multiple queues?
+
+&gt;<i> In the second scenario, I stop at under 10000 messages / second.
+</I>&gt;<i> 
+</I>
+How are your producers and consumers set up? Are your channels in confirm mode or using transactions? Are you using basic.get or basic.consume to consume, what about ACKs - are these auto or manual - if the latter, how long do your clients take to ACK? Have you considered changing the prefetch size, esp. if you've got multiple consumers per queue?
+
+&gt;<i> This leads me to believe that the former is the better design, but what kind of architecture would give a 4 fold or 10 fold increase in throughput? Would we have to hash prior to RabbitMQ? An x-consistent-hash in front of multiple x-consistent-hash exchanges?
+</I>&gt;<i> 
+</I>
+The idea of the x-consistent-hash-exchange is to evenly distributed messages based on routing key. If I were you, I'd start by benchmarking against a single broker with just one and then multiple producers *and* consumers per queue, if your application logic can cope with that. Then I'd consider introducing multiple exchanges and/or queues, both with 1 producer/consumer and then multiples, still on a single broker. Then, finally, I'd introduce clustering. By all means use the consistent hash exchange if it helps, but IMO first you should try to get a feel for how an &quot;out of the box&quot; topology can perform far various combinations (and multiples) of producers, consumers, queues, etc.
+
+Cheers,
+Tim
+
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20130528/a362c7bd/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20130528/a362c7bd/attachment.htm</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="027490.html">[rabbitmq-discuss] Architecture Question
+</A></li>
+	<LI>Next message: <A HREF="027498.html">[rabbitmq-discuss] rabbitmq error report of plugins is too short and incomplete
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#27497">[ date ]</a>
+              <a href="thread.html#27497">[ thread ]</a>
+              <a href="subject.html#27497">[ subject ]</a>
+              <a href="author.html#27497">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

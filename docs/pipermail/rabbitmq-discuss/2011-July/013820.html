@@ -1,0 +1,461 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] precondition_failed error with amqp_client for erlang
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20precondition_failed%20error%20with%20amqp_client%0A%20for%20erlang&In-Reply-To=%3C20110711123245.GB2688%40dakota.eng.vmware.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="013664.html">
+   <LINK REL="Next"  HREF="013615.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] precondition_failed error with amqp_client for erlang</H1>
+    <B>Alexandru Scvor&#355;ov</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20precondition_failed%20error%20with%20amqp_client%0A%20for%20erlang&In-Reply-To=%3C20110711123245.GB2688%40dakota.eng.vmware.com%3E"
+       TITLE="[rabbitmq-discuss] precondition_failed error with amqp_client for erlang">alexandru at rabbitmq.com
+       </A><BR>
+    <I>Mon Jul 11 13:32:45 BST 2011</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="013664.html">[rabbitmq-discuss] precondition_failed error with amqp_client	for erlang
+</A></li>
+        <LI>Next message: <A HREF="013615.html">[rabbitmq-discuss] RabbitMQ crash in production - help diagnose	from log
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#13820">[ date ]</a>
+              <a href="thread.html#13820">[ thread ]</a>
+              <a href="subject.html#13820">[ subject ]</a>
+              <a href="author.html#13820">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi Max,
+
+Sorry for the wait, we're actually rewriting that part of the Erlang
+client right now.  So, some of things I say now will change in the near
+future.
+
+&gt;<i> For the sake of clarity here is the glossary of terms I used in my last
+</I>
+Thanks for the clarification.
+
+&gt;<i> Yes a list of messages that the amqp_client process sends to a subscriber,
+</I>&gt;<i> particularly pertaining to errors in amqp_client land, would be very
+</I>&gt;<i> helpful.  I'd like to be able to handle all {'DOWN',Etc} messages with my
+</I>&gt;<i> long running process (server).  I'm hoping to handle all hard errors so that
+</I>&gt;<i> a restart from either supervisor (my long running process or the
+</I>&gt;<i> amqp_client's) won't break the communication between the two.
+</I>
+You don't need to call amqp_client:start/2.  Amqp_connection:start/1
+does that automatically.  If you really do need to do it manually, you
+should probably use amqp_client:start/0 which uses the .app.  I don't
+think it makes any difference to what you're doing.
+
+The AMQP client supervises connections and connections supervise their
+channels.  Neither channels nor connections are restarted if they
+encounter an error; in certain cases they actually take down their
+supervisors, as well.
+
+You normally receive messages from connections and channels.  I don't
+see any way for amqp_sup to send a message or even die.  It's only there
+if you need a quick way to close all connections.
+
+Connections and channels are gen_servers and you're used to working with
+them through the various amqp_connection and amqp_channel methods.
+Ignoring the usual call/casts and replies, connection shouldn't send you
+any messages and channel should only send:
+  * {#'basic.deliver'{}, #'amqp_msg'{}}, #'basic.cancel'{}, and
+    #'basic.cancel_ok'{}, to registered consumers (including the
+    default consumer),
+  * {#'basic.return'{}, #'amqp_msg'{}} to the return handler if it's
+    registered,
+  * #'channel.flow'{} to the flow handler if it's registered, and
+  * #'basic.ack'{} and #'basic.nack'{} to the confirm handler if it's
+    registered.
+
+(We're currently changing the way consumers work: consumer behaviour
+will be determined by what consumer module is registered with the
+channel.  The default selective_consumer will behave more or less like
+the current implementation and will send out approximately the same
+messages.  Direct_consumer, by contrast, will forward all the messages
+it receives to another process and let it handle the details of
+multiplexing many consumer processes.)
+
+In case of an error, connections and channels behave in the same way: if
+the error occurs while waiting for a blocking call to finish (for
+instance during an amqp_channel:call), the channel/connections will die
+and the calling process will be sent one of the exit signals below (as
+per gen_server normal behaviour); if the error occurs &quot;in the background&quot;,
+the channel/connection will exit with one of the reasons below.
+
+The following are Connection's possible exit reasons:
+  * normal, when the connection was closed cleanly by the *user*,
+  * {timeout_waiting_for_close_ok, Reason}, {socket_closing_timeout,
+    Reason}, socket_closed_unexpectedly, {socket_error, _},
+    {channel0_died, Reason}, heartbeat_timeout; these are all specific
+    to network connections: half deal with various environment problems,
+    the other half involve errant server behaviour or a key process
+    inside the connection dying;
+  * {shutdown, {error, Error}} caused by gen_tcp:connect during the initial
+    call to amqp_connection:start/0;
+  * {shutdown, normal}, {shutdown, {server_initiated_close, Code, Text}},
+    when the server initiated the connection close; again, normal just
+    means that the reply_code was 200;
+  * {shutdown, {app_initiated_close, Code, Text}}, {shutdown,
+    {server_misbehaved, Code, Text}}, {shutdown, {internal_error, Code,
+    Text}} when you or the amqp_client started shutting down the
+    connection;
+  * if you attempt to use a connection or channel method while the
+    connection is closing, the method will return closing.
+
+The following are Channel's possible exit reasons:
+  * normal, when the channel was closed cleanly by the *user*, or when
+    the connection is closed cleanly,
+  * timed_out_flushing_channel, timed_out_waiting_close_ok, when the
+    channel is waiting for various things; the first one happens when
+    the channel is closing cleanly but still has pending methods to
+    execute and times out; see below,
+  * {shutdown, {server_misbehaved, #amqp_error{}}}, when the server does
+    something illegal to the channel,
+  * {shutdown, {server_initiated_close, Code, Text}}, when the server
+    sends a channel.close to *this* channel (it it's sent to another
+    channel, this channel will exit with a connection_closing status),
+  * {shutdown, {app_initiated_close, Code, Text}}, when the user closes
+    this channel, and
+  * {shutdown, {connection_closing, Reason}}, when the connection is
+    closing and has instructed this channel to close; the Reason is
+    one of the connection closing reasons mentioned above; if the Reason
+    is normal, the channel will also exit with normal.
+
+Amqp_channel holds a queue of pending RPC methods to execute.  When you
+call amqp_channel:close/1, it starts &quot;flushing&quot;, that is, it no longer
+accepts new methods, but still tries to execute the already enqueued
+ones.
+
+Those are the different ways connections and channels can close as far
+as I can tell.
+
+We're currently changing the behaviour so that the various methods
+return {error, Error} rather than kill the calling process.
+
+&gt;<i> But I get the impression that I'm missing something about how I'm supposed
+</I>&gt;<i> to treat the amqp_client library with regard to amqp_client:start/2.  Should
+</I>&gt;<i> I be treating the amqp_client connection like mnesia (an application
+</I>&gt;<i> entirely independent of mine), add it to my existing supervision tree and
+</I>&gt;<i> share one connection throughout my application, or, what I'm currently
+</I>&gt;<i> doing, let each part of my application that needs to talk to amqp spin up
+</I>&gt;<i> and close their own connection/channel?
+</I>
+It's more of a standalone-application, I think.  There's not much point
+in supervising amqp_sup since it can't really go down.  It's probably
+best to just ignore it entirely and focus on channels and connections,
+which are *not* restarted on failure.
+
+Multiple connections is fine, especially since otherwise you'd have to
+worry about restarting connections *and* letting other processes know
+that the connection has changed.
+
+Does this help?
+
+Cheers,
+Alex
+
+On Tue, Jul 05, 2011 at 11:28:46AM -0400, Max Warnock wrote:
+&gt;<i> Sorry about the ambiguity,
+</I>&gt;<i> 
+</I>&gt;<i> For the sake of clarity here is the glossary of terms I used in my last
+</I>&gt;<i> email (which probably clashes with the erlang/amqp_client context you're
+</I>&gt;<i> coming from):
+</I>&gt;<i> 
+</I>&gt;<i> Server - I'm referring to my long running process in erlang that I have
+</I>&gt;<i> given a registered name and passed as the 3rd argument to
+</I>&gt;<i> amqp_client:subscribe/3.
+</I>&gt;<i> Listener - the process created by the amqp_client library when a connection
+</I>&gt;<i> and channel are opened
+</I>&gt;<i> Subscribe - calling of amqp_client:subscribe/3
+</I>&gt;<i> My - I'm using this pronoun to distinguish code written by me from code
+</I>&gt;<i> written by you cats at rabbitmq (client library, rabbitmq server, etc)
+</I>&gt;<i> 
+</I>&gt;<i> I've attached a diagram (approximation/abstraction) of how I'm interacting
+</I>&gt;<i> with the amqp_client library. (sorry to the mailing list if attaching a 40K
+</I>&gt;<i> diagram breaks etiquette).
+</I>&gt;<i> 
+</I>&gt;<i> I'm using the amqp_client library in network mode, i.e.,
+</I>&gt;<i> amqp_client:start(network, #amqp_params{host = Host, heartbeat=60000})
+</I>&gt;<i> 
+</I>&gt;<i> Yes a list of messages that the amqp_client process sends to a subscriber,
+</I>&gt;<i> particularly pertaining to errors in amqp_client land, would be very
+</I>&gt;<i> helpful.  I'd like to be able to handle all {'DOWN',Etc} messages with my
+</I>&gt;<i> long running process (server).  I'm hoping to handle all hard errors so that
+</I>&gt;<i> a restart from either supervisor (my long running process or the
+</I>&gt;<i> amqp_client's) won't break the communication between the two.
+</I>&gt;<i> 
+</I>&gt;<i> But I get the impression that I'm missing something about how I'm supposed
+</I>&gt;<i> to treat the amqp_client library with regard to amqp_client:start/2.  Should
+</I>&gt;<i> I be treating the amqp_client connection like mnesia (an application
+</I>&gt;<i> entirely independent of mine), add it to my existing supervision tree and
+</I>&gt;<i> share one connection throughout my application, or, what I'm currently
+</I>&gt;<i> doing, let each part of my application that needs to talk to amqp spin up
+</I>&gt;<i> and close their own connection/channel?
+</I>&gt;<i> 
+</I>&gt;<i> Thanks,
+</I>&gt;<i> -Max
+</I>&gt;<i> 
+</I>&gt;<i> On Mon, Jul 4, 2011 at 12:16 PM, Alexandru Scvor&#355;ov
+</I>&gt;<i> &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">alexandru at rabbitmq.com</A>&gt;wrote:
+</I>&gt;<i> 
+</I>&gt;<i> &gt; Hi Max,
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; I'm trying to run through the steps you provided, but I'm having a bit
+</I>&gt;<i> &gt; of trouble following.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; Are you using a network or a direct connection? (I assume network, but
+</I>&gt;<i> &gt; it probably doesn't matter)
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; By server, do you mean the actual RabbitMQ server, or you application?
+</I>&gt;<i> &gt; (I'm guessing your long-running application)
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; By subscribe, do you mean calling amqp_channel:subscribe/3?  If so, do
+</I>&gt;<i> &gt; you still need a list of the messages the channel may send its
+</I>&gt;<i> &gt; subscriber?
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; Or do you mean that your application is sending messages to its
+</I>&gt;<i> &gt; subscribers?
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; &gt; 6.) The server supervisor restarts the server which creates a new
+</I>&gt;<i> &gt; listener,
+</I>&gt;<i> &gt; &gt; but the old listener is still hanging around trying to send the the
+</I>&gt;<i> &gt; &gt; registered name
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; What's a listener?  Is it a process that receives messages from the
+</I>&gt;<i> &gt; erlang client because it's the endpoint of a subscription to a queue?
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; Can't you link listeners to the server so that when the server goes
+</I>&gt;<i> &gt; down, it takes the listeners with it?
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; &gt; So my question then is how should I kill the amqp_client?
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; What do you mean by amqp_client?  If it's an amqp_connection process,
+</I>&gt;<i> &gt; you can just send it an shutdown exit.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; Thanks for the information.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; Cheers,
+</I>&gt;<i> &gt; Alex
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; On Fri, Jul 01, 2011 at 01:51:10PM -0400, Max Warnock wrote:
+</I>&gt;<i> &gt; &gt; Problem found.  Thanks for your help.  The problem is a strange one and
+</I>&gt;<i> &gt; has
+</I>&gt;<i> &gt; &gt; to do with me not shutting my amqp_client listener down properly if my
+</I>&gt;<i> &gt; &gt; server dies.  Here is how it manifests:
+</I>&gt;<i> &gt; &gt;
+</I>&gt;<i> &gt; &gt; 1.) Server starts up and starts up a amqp client connection and channel
+</I>&gt;<i> &gt; &gt; 2.) The server binds to that channel and starts the subscription using a
+</I>&gt;<i> &gt; &gt; registered name name as the process to which messages will be sent
+</I>&gt;<i> &gt; &gt; 3.) Messages start coming in and are ack-ing fine
+</I>&gt;<i> &gt; &gt; 4.) Poor error handling in farming out processes brings the server down
+</I>&gt;<i> &gt; &gt; 5.) The server does no close the amqp_client connection
+</I>&gt;<i> &gt; &gt; 6.) The server supervisor restarts the server which creates a new
+</I>&gt;<i> &gt; listener,
+</I>&gt;<i> &gt; &gt; but the old listener is still hanging around trying to send the the
+</I>&gt;<i> &gt; &gt; registered name
+</I>&gt;<i> &gt; &gt; 7.) The older listener sends a message to the server
+</I>&gt;<i> &gt; &gt; 8.) The server tries to ack to the new listener which did not send the
+</I>&gt;<i> &gt; &gt; message
+</I>&gt;<i> &gt; &gt; 9.) The new server pukes because it never sent a message with that tag
+</I>&gt;<i> &gt; &gt;
+</I>&gt;<i> &gt; &gt; So my question then is how should I kill the amqp_client? If I send it an
+</I>&gt;<i> &gt; &gt; exit its supervisor will restart it.  This is what I was getting at with
+</I>&gt;<i> &gt; my
+</I>&gt;<i> &gt; &gt; tangential questions in the last email.  How should I shut down the
+</I>&gt;<i> &gt; &gt; amqp_client without shutting down all the other servers' amqp client
+</I>&gt;<i> &gt; &gt; listeners?
+</I>&gt;<i> &gt; &gt;
+</I>&gt;<i> &gt; &gt; Thanks for all the help,
+</I>&gt;<i> &gt; &gt; -Max
+</I>&gt;<i> &gt; &gt;
+</I>&gt;<i> &gt; &gt; On Thu, Jun 30, 2011 at 9:23 AM, Max Warnock &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">maxjwarnock at gmail.com</A>&gt;
+</I>&gt;<i> &gt; wrote:
+</I>&gt;<i> &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; Thanks, that's very helpful from both the possible issues to chase and
+</I>&gt;<i> &gt; &gt; &gt; sanity check perspectives.
+</I>&gt;<i> &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; I'm using erlang R13B04 with a rabbitmq server installed via gentoo's
+</I>&gt;<i> &gt; &gt; &gt; portage at version 2.4.1. I pulled the client library from github (tag
+</I>&gt;<i> &gt; &gt; &gt; 2.3.0, commit: 844738f9b56d34104c1ea2ac5700d0898126c5b4).
+</I>&gt;<i> &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; I'm going to write some debug code to store all the tags I try to ack
+</I>&gt;<i> &gt; on
+</I>&gt;<i> &gt; &gt; &gt; and see if I can get this error to where it's easily reproducible.
+</I>&gt;<i> &gt; Thanks
+</I>&gt;<i> &gt; &gt; &gt; for narrowing my search, it's very helpful.  I'll keep you updated. I
+</I>&gt;<i> &gt; must
+</I>&gt;<i> &gt; &gt; &gt; be doing something wrong somewhere.  I have a hard time believing such
+</I>&gt;<i> &gt; a
+</I>&gt;<i> &gt; &gt; &gt; widely used library could fail so hard myself.
+</I>&gt;<i> &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; One thing that would be extremely helpful is if you could point me to
+</I>&gt;<i> &gt; some
+</I>&gt;<i> &gt; &gt; &gt; documentation which I haven't been able to find:  I'm looking for a
+</I>&gt;<i> &gt; listing
+</I>&gt;<i> &gt; &gt; &gt; of all the events/messages that are sent out by the amqp client to a
+</I>&gt;<i> &gt; &gt; &gt; subscriber.  What does it send when it goes down, what other soft
+</I>&gt;<i> &gt; errors
+</I>&gt;<i> &gt; &gt; &gt; will it send out, etc.  Additionally, is there a doc somewhere for best
+</I>&gt;<i> &gt; &gt; &gt; practices in connecting a listener to another server/long-running
+</I>&gt;<i> &gt; process?
+</I>&gt;<i> &gt; &gt; &gt;  Not having either of those there has been some struggle to know how to
+</I>&gt;<i> &gt; &gt; &gt; restart the subscription/listening process if my server dies.  The
+</I>&gt;<i> &gt; &gt; &gt; amqp_client tutorial has been a great help, but when it comes to error
+</I>&gt;<i> &gt; &gt; &gt; handling from the listening module perspective it doesn't tell me what
+</I>&gt;<i> &gt; the
+</I>&gt;<i> &gt; &gt; &gt; library is expecting me to do.  I don't want to have to do a bunch of
+</I>&gt;<i> &gt; &gt; &gt; engineering because I'm square peg, round hole-ing the library.  The
+</I>&gt;<i> &gt; primary
+</I>&gt;<i> &gt; &gt; &gt; issues I'm concerned with are when my server dies hard and is destined
+</I>&gt;<i> &gt; to be
+</I>&gt;<i> &gt; &gt; &gt; restarted by its supervisor what should I send to the amqp client
+</I>&gt;<i> &gt; process?
+</I>&gt;<i> &gt; &gt; &gt; Should I send it close messages and then start a new one? Or should I
+</I>&gt;<i> &gt; &gt; &gt; reconnect to the client library.  This wouldn't be as big of an issue
+</I>&gt;<i> &gt; but I
+</I>&gt;<i> &gt; &gt; &gt; need to use durable/persistent queues and if I still have a listener
+</I>&gt;<i> &gt; hanging
+</I>&gt;<i> &gt; &gt; &gt; around with the same bindings on the same queue it will eat all my
+</I>&gt;<i> &gt; messages
+</I>&gt;<i> &gt; &gt; &gt; and send them nowhere.
+</I>&gt;<i> &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; Thanks,
+</I>&gt;<i> &gt; &gt; &gt; -Max
+</I>&gt;<i> &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; On Thu, Jun 30, 2011 at 7:48 AM, Matthew Sackman &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">matthew at rabbitmq.com</A>
+</I>&gt;<i> &gt; &gt;wrote:
+</I>&gt;<i> &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt;&gt; Hi Max,
+</I>&gt;<i> &gt; &gt; &gt;&gt;
+</I>&gt;<i> &gt; &gt; &gt;&gt; On Wed, Jun 29, 2011 at 06:28:59PM -0400, Max Warnock wrote:
+</I>&gt;<i> &gt; &gt; &gt;&gt; &gt; I've built a behavior in erlang to subscribe to a given topic
+</I>&gt;<i> &gt; exchange
+</I>&gt;<i> &gt; &gt; &gt;&gt; and
+</I>&gt;<i> &gt; &gt; &gt;&gt; &gt; farm out message handling.  I'm using the rabbitmq amqp_client
+</I>&gt;<i> &gt; library
+</I>&gt;<i> &gt; &gt; &gt;&gt; for
+</I>&gt;<i> &gt; &gt; &gt;&gt; &gt; erlang and when I put the system under heavy load I get, on
+</I>&gt;<i> &gt; occasion,
+</I>&gt;<i> &gt; &gt; &gt;&gt; the
+</I>&gt;<i> &gt; &gt; &gt;&gt; &gt; following error:
+</I>&gt;<i> &gt; &gt; &gt;&gt;
+</I>&gt;<i> &gt; &gt; &gt;&gt; Could you let us know which version of Rabbit, Erlang and the Erlang
+</I>&gt;<i> &gt; &gt; &gt;&gt; client you're using?
+</I>&gt;<i> &gt; &gt; &gt;&gt;
+</I>&gt;<i> &gt; &gt; &gt;&gt; &gt; =ERROR REPORT==== 29-Jun-2011::18:02:18 ===
+</I>&gt;<i> &gt; &gt; &gt;&gt; &gt; ** Generic server &lt;0.1117.0&gt; terminating
+</I>&gt;<i> &gt; &gt; &gt;&gt; &gt; ** Last message in was {'$gen_cast',
+</I>&gt;<i> &gt; &gt; &gt;&gt; &gt;                            {method,
+</I>&gt;<i> &gt; &gt; &gt;&gt; &gt;                                {'channel.close',406,
+</I>&gt;<i> &gt; &gt; &gt;&gt; &gt;                                    &lt;&lt;&quot;PRECONDITION_FAILED - unknown
+</I>&gt;<i> &gt; &gt; &gt;&gt; delivery
+</I>&gt;<i> &gt; &gt; &gt;&gt; &gt; tag 856&quot;&gt;&gt;,
+</I>&gt;<i> &gt; &gt; &gt;&gt; &gt;                                    60,80},
+</I>&gt;<i> &gt; &gt; &gt;&gt;
+</I>&gt;<i> &gt; &gt; &gt;&gt; That's a double-ack (probably). Sadly, the AMQP 0-9-1 spec says that
+</I>&gt;<i> &gt; &gt; &gt;&gt; acking is not idempotent, thus it's a fault to ack the same message
+</I>&gt;<i> &gt; &gt; &gt;&gt; multiple times...
+</I>&gt;<i> &gt; &gt; &gt;&gt;
+</I>&gt;<i> &gt; &gt; &gt;&gt; &gt; The server receive loop where the ack happens looks like this:
+</I>&gt;<i> &gt; &gt; &gt;&gt; &gt; receive
+</I>&gt;<i> &gt; &gt; &gt;&gt; &gt; ...
+</I>&gt;<i> &gt; &gt; &gt;&gt; &gt; {#'basic.deliver'{delivery_tag = Tag, routing_key = RoutingKey},
+</I>&gt;<i> &gt; &gt; &gt;&gt; &gt; #amqp_msg{payload = Payload}} -&gt;
+</I>&gt;<i> &gt; &gt; &gt;&gt; &gt;     amqp_channel:cast(get(amqp_channel_pid),
+</I>&gt;<i> &gt; #'basic.ack'{delivery_tag =
+</I>&gt;<i> &gt; &gt; &gt;&gt; &gt; Tag}),
+</I>&gt;<i> &gt; &gt; &gt;&gt; &gt;     spawn_and_queue(spawn_handle_message, Module, RoutingKey,
+</I>&gt;<i> &gt; Payload),
+</I>&gt;<i> &gt; &gt; &gt;&gt; &gt;     loop(Module);
+</I>&gt;<i> &gt; &gt; &gt;&gt; &gt; ...
+</I>&gt;<i> &gt; &gt; &gt;&gt; &gt; end
+</I>&gt;<i> &gt; &gt; &gt;&gt;
+</I>&gt;<i> &gt; &gt; &gt;&gt; ...hmmm, which is so simple that I can't see how it could go wrong: if
+</I>&gt;<i> &gt; &gt; &gt;&gt; you're not double acking then something else must be going on to make
+</I>&gt;<i> &gt; &gt; &gt;&gt; the broker think that it's not expecting an ack for that message,
+</I>&gt;<i> &gt; hence
+</I>&gt;<i> &gt; &gt; &gt;&gt; the error. If you're doing some sort of reject operation - either
+</I>&gt;<i> &gt; &gt; &gt;&gt; basic.nack or basic.reject on messages and you then subsequently ack
+</I>&gt;<i> &gt; one
+</I>&gt;<i> &gt; &gt; &gt;&gt; of those messages then that would also cause this error. There may be
+</I>&gt;<i> &gt; &gt; &gt;&gt; other cases as well.
+</I>&gt;<i> &gt; &gt; &gt;&gt;
+</I>&gt;<i> &gt; &gt; &gt;&gt; &gt; The amqp_client_sup can't seem to bring back the the client either
+</I>&gt;<i> &gt; and
+</I>&gt;<i> &gt; &gt; &gt;&gt; dies
+</I>&gt;<i> &gt; &gt; &gt;&gt; &gt; from the retry intensity being reached.  I've done a hefty amount of
+</I>&gt;<i> &gt; &gt; &gt;&gt; &gt; googling and can't seem to find where things could be going wrong.
+</I>&gt;<i> &gt; &gt; &gt;&gt;  Before
+</I>&gt;<i> &gt; &gt; &gt;&gt; &gt; jumping into the amqp_client code I thought I'd ask the mailing list
+</I>&gt;<i> &gt; if
+</I>&gt;<i> &gt; &gt; &gt;&gt; they
+</I>&gt;<i> &gt; &gt; &gt;&gt; &gt; have any ideas.  The only thing I can think is that there is a race
+</I>&gt;<i> &gt; &gt; &gt;&gt; &gt; condition within the client library.  I will be double checking my
+</I>&gt;<i> &gt; code
+</I>&gt;<i> &gt; &gt; &gt;&gt; to
+</I>&gt;<i> &gt; &gt; &gt;&gt; &gt; be sure it isn't sending the ack twice, but given the simplicity of
+</I>&gt;<i> &gt; the
+</I>&gt;<i> &gt; &gt; &gt;&gt; ack
+</I>&gt;<i> &gt; &gt; &gt;&gt; &gt; the only way it could is if it receives the same message (with
+</I>&gt;<i> &gt; identical
+</I>&gt;<i> &gt; &gt; &gt;&gt; &gt; delivery tag) from the amqp_client library twice.
+</I>&gt;<i> &gt; &gt; &gt;&gt;
+</I>&gt;<i> &gt; &gt; &gt;&gt; It could be a bug in the client library, but I'd be a little surprised
+</I>&gt;<i> &gt; &gt; &gt;&gt; if we're managing to duplicate messages somehow - that would be a new
+</I>&gt;<i> &gt; &gt; &gt;&gt; level of fail for us. ;) However, the fact that the entire connection
+</I>&gt;<i> &gt; &gt; &gt;&gt; dies is alarming and almost certainly a bug: PRECONDITION_FAILED is a
+</I>&gt;<i> &gt; &gt; &gt;&gt; soft error and should only tear down the channel, not the whole
+</I>&gt;<i> &gt; &gt; &gt;&gt; connection. After that, all you should have to do is create a new
+</I>&gt;<i> &gt; &gt; &gt;&gt; channel and everything else should be ok. If that's not the case
+</I>&gt;<i> &gt; please
+</I>&gt;<i> &gt; &gt; &gt;&gt; let us know.
+</I>&gt;<i> &gt; &gt; &gt;&gt;
+</I>&gt;<i> &gt; &gt; &gt;&gt; Best wishes,
+</I>&gt;<i> &gt; &gt; &gt;&gt;
+</I>&gt;<i> &gt; &gt; &gt;&gt; Matthew
+</I>&gt;<i> &gt; &gt; &gt;&gt; _______________________________________________
+</I>&gt;<i> &gt; &gt; &gt;&gt; rabbitmq-discuss mailing list
+</I>&gt;<i> &gt; &gt; &gt;&gt; <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;<i> &gt; &gt; &gt;&gt; <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>&gt;<i> &gt; &gt; &gt;&gt;
+</I>&gt;<i> &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt;
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; &gt; _______________________________________________
+</I>&gt;<i> &gt; &gt; rabbitmq-discuss mailing list
+</I>&gt;<i> &gt; &gt; <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;<i> &gt; &gt; <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt;
+</I>
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="013664.html">[rabbitmq-discuss] precondition_failed error with amqp_client	for erlang
+</A></li>
+	<LI>Next message: <A HREF="013615.html">[rabbitmq-discuss] RabbitMQ crash in production - help diagnose	from log
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#13820">[ date ]</a>
+              <a href="thread.html#13820">[ thread ]</a>
+              <a href="subject.html#13820">[ subject ]</a>
+              <a href="author.html#13820">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

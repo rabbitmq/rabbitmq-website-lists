@@ -1,0 +1,144 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] How to catch RESOURCE_LOCKED exceptions in	erlang client
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20How%20to%20catch%20RESOURCE_LOCKED%20exceptions%20in%0A%09erlang%20client&In-Reply-To=%3CAE8BB073-1908-4303-8A4B-721928F84FE8%40rabbitmq.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="029360.html">
+   <LINK REL="Next"  HREF="029365.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] How to catch RESOURCE_LOCKED exceptions in	erlang client</H1>
+    <B>Tim Watson</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20How%20to%20catch%20RESOURCE_LOCKED%20exceptions%20in%0A%09erlang%20client&In-Reply-To=%3CAE8BB073-1908-4303-8A4B-721928F84FE8%40rabbitmq.com%3E"
+       TITLE="[rabbitmq-discuss] How to catch RESOURCE_LOCKED exceptions in	erlang client">tim at rabbitmq.com
+       </A><BR>
+    <I>Fri Aug 16 09:30:17 BST 2013</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="029360.html">[rabbitmq-discuss] How to catch RESOURCE_LOCKED exceptions in erlang client
+</A></li>
+        <LI>Next message: <A HREF="029365.html">[rabbitmq-discuss] How to catch RESOURCE_LOCKED exceptions in	erlang client
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#29364">[ date ]</a>
+              <a href="thread.html#29364">[ thread ]</a>
+              <a href="subject.html#29364">[ subject ]</a>
+              <a href="author.html#29364">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi Mark,
+
+On 15 Aug 2013, at 23:28, Geib, Mark wrote:
+&gt;<i> I am trying to use the feature of creating exclusive queues in order to limit consumers to &quot;one at a time&quot; for given messages but can not see how to catch the exception I receive when the second consumer tries to declare the same queue. Everything is working as excepted but I am not sure how to prevent my gen_server from terminating. I want to catch the event, then retry, to provide a &quot;backup&quot; consumer.
+</I>&gt;<i> 
+</I>
+But isn't your second client/consumer just going to be stuck in a loop of constantly attempting a basic.consume, failing and then retrying again!? That seems like a serious waste of resources, both in the client and on the server. Worse still, it simply won't work because if the queue is exclusive, when the channel that declared it is closed, the queue will be deleted! Your second consumer will never be able to establish itself as a consumer. I guess that's probably not what you want.
+
+I would look to other means if I were you. If you're simply trying to establish a pattern of one worker per job/process type, then just use a regular supervisor to achieve this. Establish the supervisor with just one child/worker, and that child will be restarted on demand. Alternatively, if you need to start many workers that run the same code, but with different configurations (e.g., interacting with different exchanges/queues, etc) then use a simple_one_for_one supervisor.
+
+It's hard to give you more specific guidance without looking at your code, but here are some general points that might help...
+
+Firstly, if you need some kind of retry logic, then you almost always want to use supervision trees to achieve it. In the few cases that you don't - for whatever reason - then doing your own &quot;supervision&quot; of workers is best achieved using monitors.
+
+Secondly, there's no universal way to &quot;prevent a gen_server from terminating&quot;, but there are a few things that can help:
+
+1. handle &quot;exit signals&quot; generically by trapping exits in your init/1 callback and adding a handle_info/2 clause that &quot;deals with them&quot;
+
+init(_) -&gt;
+    process_flag(trap_exit, true),
+    etc....
+    {ok, State}.
+
+%% ...
+
+handle_info({'EXIT', Pid, Reason}, State) -&gt;
+    handle_exit(Pid, Reason),
+    {noreply, State}.
+
+2. handle &quot;exit signals&quot; from other processes in the same way, linking or monitoring, then dealing with exits in handle_info
+
+init(Config) -&gt;
+    {ok, Conn} = amqp_connection:start(parse_config(Config)),
+    {ok, Chan} = amqp_connection:open_channel(Conn),
+    {ok, #state{ connection = Conn, channel = Chan }}.
+
+%% ...
+
+handle_info({'EXIT', Pid, Reason}, State = #state{ channel = Chan }) when Pid == Chan -&gt;
+    report_channel_error(Pid, Reason),
+    {ok, NewChan} = amqp_connection:open_channel(State#state.connection),
+    {noreply, State#state{ channel = NewChan }}.
+
+If a synchronous method on a channel fails, an exception will be thrown to the caller. For example:
+
+{'EXIT',{{shutdown,{server_initiated_close, 405, Msg}}, _}} =
+    catch amqp_channel:subscribe(Chan2, #'basic.consume'{queue = Q}, self()).
+
+You can use erlang's try..catch..finally construct in places like this too.
+
+BTW, if you're using amqp_gen_consumer then you have now way to avoid termination, since the channel will close once the RESOURCE_LOCKED channel error arrives. If on the other hand, your gen_server creates the channel, then you can handle this as I mentioned above.
+
+In general though, I'd rethink your approach since it doesn't sound quite right to me.
+
+HTH - cheers,
+
+Tim
+
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="029360.html">[rabbitmq-discuss] How to catch RESOURCE_LOCKED exceptions in erlang client
+</A></li>
+	<LI>Next message: <A HREF="029365.html">[rabbitmq-discuss] How to catch RESOURCE_LOCKED exceptions in	erlang client
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#29364">[ date ]</a>
+              <a href="thread.html#29364">[ thread ]</a>
+              <a href="subject.html#29364">[ subject ]</a>
+              <a href="author.html#29364">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

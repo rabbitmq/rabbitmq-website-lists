@@ -1,0 +1,129 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Publish to exchange that doesn't bind to any queue in trunsaction mode
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Publish%20to%20exchange%20that%20doesn%27t%20bind%20to%20any%0A%20queue%20in%20trunsaction%20mode&In-Reply-To=%3C1372687819003-27720.post%40n5.nabble.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="028210.html">
+   <LINK REL="Next"  HREF="028204.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Publish to exchange that doesn't bind to any queue in trunsaction mode</H1>
+    <B>Haster</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Publish%20to%20exchange%20that%20doesn%27t%20bind%20to%20any%0A%20queue%20in%20trunsaction%20mode&In-Reply-To=%3C1372687819003-27720.post%40n5.nabble.com%3E"
+       TITLE="[rabbitmq-discuss] Publish to exchange that doesn't bind to any queue in trunsaction mode">haster2004 at yandex.ru
+       </A><BR>
+    <I>Mon Jul  1 15:10:19 BST 2013</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="028210.html">[rabbitmq-discuss] Publish to exchange that doesn't bind to any queue in trunsaction mode
+</A></li>
+        <LI>Next message: <A HREF="028204.html">[rabbitmq-discuss] Publish to exchange that doesn't bind to any	queue in trunsaction mode
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#28211">[ date ]</a>
+              <a href="thread.html#28211">[ thread ]</a>
+              <a href="subject.html#28211">[ subject ]</a>
+              <a href="author.html#28211">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>All magic is in function GetMethodOnChannel that is called from BasicPublish:
+
+void Channel::BasicPublish(const std::string&amp; exchange_name,
+                           const std::string&amp; routing_key,
+                           const BasicMessage::ptr_t message,
+                           bool mandatory,
+                           bool immediate)
+{
+  m_impl-&gt;CheckIsConnected();
+  amqp_channel_t channel = m_impl-&gt;GetChannel();
+
+  m_impl-&gt;CheckForError(amqp_basic_publish(m_impl-&gt;m_connection, channel,
+                       amqp_cstring_bytes(exchange_name.c_str()),
+                       amqp_cstring_bytes(routing_key.c_str()),
+                       mandatory,
+                       immediate,
+                       message-&gt;getAmqpProperties(),
+                       message-&gt;getAmqpBody()));
+
+  // If we've done things correctly we can get one of 4 things back from the
+broker
+  // - basic.ack - our channel is in confirm mode, messsage was 'dealt with'
+by the broker
+  // - basic.return then basic.ack - the message wasn't delievered, but was
+dealt with
+  // - channel.close - probably tried to publish to a non-existant exchange,
+in any case error!
+  // - connection.clsoe - something really bad happened
+  const boost::array&lt;boost::uint32_t, 2&gt; PUBLISH_ACK = { {
+AMQP_BASIC_ACK_METHOD, AMQP_BASIC_RETURN_METHOD } };
+  amqp_frame_t response;
+  m_impl-&gt;GetMethodOnChannel(channel, response, PUBLISH_ACK);
+
+  if (AMQP_BASIC_RETURN_METHOD == response.payload.method.id)
+  {
+    MessageReturnedException message_returned =
+     
+m_impl-&gt;CreateMessageReturnedException(*(reinterpret_cast&lt;amqp_basic_return_t*&gt;(response.payload.method.decoded)),
+channel);
+
+    const boost::array&lt;boost::uint32_t, 1&gt; BASIC_ACK = { {
+AMQP_BASIC_ACK_METHOD } };
+    m_impl-&gt;GetMethodOnChannel(channel, response, BASIC_ACK);
+    m_impl-&gt;ReturnChannel(channel);
+    m_impl-&gt;MaybeReleaseBuffers();
+    throw message_returned;
+  }
+
+  m_impl-&gt;ReturnChannel(channel);
+  m_impl-&gt;MaybeReleaseBuffers();
+}
+
+I will try to understand, thanks a lot !!!
+
+
+
+
+--
+View this message in context: <A HREF="http://rabbitmq.1065348.n5.nabble.com/Publish-to-exchange-that-doesn-t-bind-to-any-queue-in-trunsaction-mode-tp27706p27720.html">http://rabbitmq.1065348.n5.nabble.com/Publish-to-exchange-that-doesn-t-bind-to-any-queue-in-trunsaction-mode-tp27706p27720.html</A>
+Sent from the RabbitMQ mailing list archive at Nabble.com.
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="028210.html">[rabbitmq-discuss] Publish to exchange that doesn't bind to any queue in trunsaction mode
+</A></li>
+	<LI>Next message: <A HREF="028204.html">[rabbitmq-discuss] Publish to exchange that doesn't bind to any	queue in trunsaction mode
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#28211">[ date ]</a>
+              <a href="thread.html#28211">[ thread ]</a>
+              <a href="subject.html#28211">[ subject ]</a>
+              <a href="author.html#28211">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

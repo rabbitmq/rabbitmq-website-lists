@@ -1,0 +1,170 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Huge queues - memory alarm going off
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Huge%20queues%20-%20memory%20alarm%20going%20off&In-Reply-To=%3CCAE0Sz%3DxRrgX9tdTh8QCnWzOMKxHpEo4V-HGYQ3f--jQfvhORpw%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="025831.html">
+   <LINK REL="Next"  HREF="025834.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Huge queues - memory alarm going off</H1>
+    <B>Jerry Kuch</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Huge%20queues%20-%20memory%20alarm%20going%20off&In-Reply-To=%3CCAE0Sz%3DxRrgX9tdTh8QCnWzOMKxHpEo4V-HGYQ3f--jQfvhORpw%40mail.gmail.com%3E"
+       TITLE="[rabbitmq-discuss] Huge queues - memory alarm going off">jerryk at rbcon.com
+       </A><BR>
+    <I>Sat Mar  9 21:33:56 GMT 2013</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="025831.html">[rabbitmq-discuss] Huge queues - memory alarm going off
+</A></li>
+        <LI>Next message: <A HREF="025834.html">[rabbitmq-discuss] Huge queues - memory alarm going off
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#25833">[ date ]</a>
+              <a href="thread.html#25833">[ thread ]</a>
+              <a href="subject.html#25833">[ subject ]</a>
+              <a href="author.html#25833">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi, Tim:
+
+I've got the following going on (version 2.8.4):
+
+&gt;<i>
+</I>&gt;<i> - My consumers all stop (e.g. imagine a failure scenario / upgrade), but
+</I>&gt;<i> producers keep on producing
+</I>&gt;<i> - Queues start backing up
+</I>&gt;<i> - Memory increases with queue size
+</I>&gt;<i> - The high water mark gets hit and the node memory alarm goes off
+</I>&gt;<i>
+</I>
+So far, that's all what's supposed to happen.  The idea is that if the
+broker has a lot of messages stacking up in memory then, regardless of
+whether you asked for them to be durable or not, it will move them to the
+disk to free up RAM and avoid Erlang VM GC or allocation failure disasters
+that might occur due to RAM exhaustion.
+
+
+&gt;<i> - with this being a durable queue, I anticipated RMQ would flush to disk
+</I>&gt;<i> and free memory.
+</I>&gt;<i>
+</I>
+One thing to note:  If the broker is under severe memory pressure, the
+pushing of messages to disk will happen regardless of the queue's
+durability status (also, recall that the description *durable queue* just
+means that the queue's definition will survive a broker restart, it doesn't
+by itself guarantee anything about the queue's *contained messages*) or
+whether you published the messages with the persistent delivery mode set.
+
+
+&gt;<i>  Could someone please explain the memory overhead for messages sitting on
+</I>&gt;<i> a queue?
+</I>&gt;<i>
+</I>
+The body of the message itself, plus some bookkeeping overhead the broker
+uses to keep track of it.
+
+
+&gt;<i>  I guess there is a something in memory for each message on a queue - is
+</I>&gt;<i> there a way to work around that? (we anticipate deliberately getting into
+</I>&gt;<i> this state from time to time, when we e.g. upgrade HBase)
+</I>&gt;<i>
+</I>
+Yes, the message itself will be in memory unless it's swapped out.  Indeed,
+even if the message is swapped out due to memory pressure there's a tiny
+bit of overhead corresponding to it that lurks in the Erlang Term Service
+store that Rabbit uses...  in rare cases this latter overhead can cause
+grief on its own, if things are allowed to stay out of balance too long.
+
+As for something being in memory for each message on a queue, modulo the
+ETS bit that you can't do anything about, the ways to work around this are
+to:
+
+   - Let the broker swap messages out to disk in order to get below the
+   configured memory watermark, at which point the TCP back pressure that will
+   be stiff arming publishers will relent and they'll start publishing again
+   - Catch up on consuming your messages, perhaps by starting more
+   consumers in response to the demand
+
+- I'm kind of in a deadlock I think now as when the consumers start, they
+&gt;<i> won't ack a message until they have successfully sent a message on (it's a
+</I>&gt;<i> multihop process) but that is blocked.  Should the per connection flow
+</I>&gt;<i> control not have kicked in and blocked the producers before the whole lot
+</I>&gt;<i> just blocked?  (have I missed some setting to enable that, as the docs say
+</I>&gt;<i> it is on by default).
+</I>&gt;<i>
+</I>
+Are these consumers doing something else with the message before
+republishing it, say taking some real world action or doing something to a
+database elsewhere?  If your app design has a case where publishes could be
+blocked (say due to over eager producers, or failure or slowdown of
+consumers) you might consider doing something like making your routing
+fabric a bit richer so that virtual copies of the message might move around
+in the broker without an explicit consume/do-stuff/ack/re-publish cycle
+which, as you point out, can get jammed up if the re-publishes are being
+held.  That said, modulo the rare ETS catastrophe, the broker's default
+swapping mechanism should catch up and obviate some of the memory pressure
+that's causing the trouble.
+
+Does that make sense?
+
+BTW, there's a nice description of what various entities in Rabbit cost in
+the Manning book &quot;RabbitMQ in Action,&quot; in Chapter 11, IIRC.  Giving that a
+read will be very helpful for building intuition on what happens where,
+what it costs, etc...
+
+Best regards,
+Jerry
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20130309/63734e12/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20130309/63734e12/attachment.htm</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="025831.html">[rabbitmq-discuss] Huge queues - memory alarm going off
+</A></li>
+	<LI>Next message: <A HREF="025834.html">[rabbitmq-discuss] Huge queues - memory alarm going off
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#25833">[ date ]</a>
+              <a href="thread.html#25833">[ thread ]</a>
+              <a href="subject.html#25833">[ subject ]</a>
+              <a href="author.html#25833">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

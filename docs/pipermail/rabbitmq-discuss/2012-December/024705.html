@@ -1,0 +1,107 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Persistence and Transactions
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Persistence%20and%20Transactions&In-Reply-To=%3CD4424BBF-B980-409C-BBDB-DEDEB5222F30%40rabbitmq.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="024703.html">
+   <LINK REL="Next"  HREF="024725.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Persistence and Transactions</H1>
+    <B>Tim Watson</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Persistence%20and%20Transactions&In-Reply-To=%3CD4424BBF-B980-409C-BBDB-DEDEB5222F30%40rabbitmq.com%3E"
+       TITLE="[rabbitmq-discuss] Persistence and Transactions">tim at rabbitmq.com
+       </A><BR>
+    <I>Sat Dec 29 01:41:03 GMT 2012</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="024703.html">[rabbitmq-discuss] Persistence and Transactions
+</A></li>
+        <LI>Next message: <A HREF="024725.html">[rabbitmq-discuss] Persistence and Transactions
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#24705">[ date ]</a>
+              <a href="thread.html#24705">[ thread ]</a>
+              <a href="subject.html#24705">[ subject ]</a>
+              <a href="author.html#24705">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi CJ
+
+On 28 Dec 2012, at 18:00, CJ wrote:
+
+&gt;<i> I got the coding examples for producing and consuming transactions from this
+</I>&gt;<i> site
+</I>&gt;<i> 
+</I>&gt;<i> <A HREF="https://gist.github.com/613157">https://gist.github.com/613157</A>
+</I>&gt;<i> 
+</I>&gt;<i> In this example a txcommit is used by the producer, but not the consumer
+</I>&gt;<i> 
+</I>
+That's your choice, you can use a transaction in the consumer as well if you wish. Just remember that doing so will create a completely separate transaction which has nothing to do with the producer's transaction. The hint (about the scope of transactions) is in the fact that the producer and consumer threads in that application are using separate connections. Even if the consumer was transactional, that would be completely independent of the producer's transaction, which would continue to govern only the publication of messages. This would only cease to be the case if both producing and consuming were taking place over the same channel.
+
+&gt;<i> My questrion involves the Consumer.  I understand that a rollback is not
+</I>&gt;<i> possible on a nextDelivery (only on the sending side), and that only ACKS on
+</I>&gt;<i> consumers are transacted
+</I>&gt;<i> 
+</I>&gt;<i> I noticed that the consumer does NOT have a txcommit or a txSelect.   
+</I>&gt;<i> 
+</I>
+That's a design decision really. The point about that gist is that even if the consumer had a transaction running, that transaction would *not* interact with the producer's transaction in any way. If the producer committed then the messages would become visible to the consumer. Whether or not the consumer is using a transaction is of no relevance to the producer as transactions are scoped to a single channel.
+
+&gt;<i> So do you actually need a txcommit on a consumer since only the ACK is
+</I>&gt;<i> transacted.  Does the ACK tramsaction happen automatically without a
+</I>&gt;<i> txcommit.  
+</I>&gt;<i> 
+</I>
+No, the ACK is just handled normally because there is no transaction running for the consumer. Whether or not you want auto-ack or manual control over ACKs is up to you, but they're not transactional unless the channel is set to be so. Using transactions in a consumer provides a means to ACK received messages in a transaction context. Whether or not you want to be able to roll back consumed messages depends entirely on your application. The *common* case for this (and for transactions in AMQP in general) is, AFAICS, where the application is both publishing *and* consuming on the same channel, and wishes to be able to commit or roll back all the work of sending messages and sending ACKs for messages it has consumed as well, all in one 'bundle' as it were. For most users where the producer and consumer are decoupled, producer confirms are a better choice than transactions, although they offer different semantics.
+
+&gt;<i> To have the fullest possible persistence on a consumer, is the consumer
+</I>&gt;<i> example in the link above sufficient for my purpose, and therefore I do not
+</I>&gt;<i> need a txselect or txcommit to get the ACK of the consumer transaction to be
+</I>&gt;<i> trasacted ?
+</I>&gt;<i> 
+</I>
+I'm not really sure what you're asking here. It *sounds* like you're asking how to link the publishing and consuming parties into a single transaction, which would only work if they were running in the same application and using the same channel (and presumably the same thread). There is no way to get a publisher in App123 and a consumer in App456 to share a transaction context in that way.
+
+Also, the question of 'persistence' with regards consuming messages is a bit confusing. If you want to be able to consume and message, send an ACK for it and then change your mind, then using a transaction on the consumer's channel is a good idea. If the tx is rolled back then the broker will subsequently consider the message as 'still requiring an ACK' although it will not redeliver it. If you *do* want to use transactions in the consumer then as I said, you'll need to make the consumer's channel transactional.
+
+Hope that makes sense.
+
+Cheers,
+Tim
+</PRE>
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="024703.html">[rabbitmq-discuss] Persistence and Transactions
+</A></li>
+	<LI>Next message: <A HREF="024725.html">[rabbitmq-discuss] Persistence and Transactions
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#24705">[ date ]</a>
+              <a href="thread.html#24705">[ thread ]</a>
+              <a href="subject.html#24705">[ subject ]</a>
+              <a href="author.html#24705">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

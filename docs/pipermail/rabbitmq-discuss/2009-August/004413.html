@@ -1,0 +1,124 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Weird Crash - Recovery logic for durable	messages/queues/exchanges?
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20Weird%20Crash%20-%20Recovery%20logic%20for%20durable%0A%09messages/queues/exchanges%3F&In-Reply-To=4A7BA097.3050002%40lshift.net">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="004412.html">
+   <LINK REL="Next"  HREF="004417.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Weird Crash - Recovery logic for durable	messages/queues/exchanges?</H1>
+    <B>Darien Kindlund</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20Weird%20Crash%20-%20Recovery%20logic%20for%20durable%0A%09messages/queues/exchanges%3F&In-Reply-To=4A7BA097.3050002%40lshift.net"
+       TITLE="[rabbitmq-discuss] Weird Crash - Recovery logic for durable	messages/queues/exchanges?">darien at kindlund.com
+       </A><BR>
+    <I>Fri Aug  7 06:39:38 BST 2009</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="004412.html">[rabbitmq-discuss] Weird Crash - Recovery logic for	durable	messages/queues/exchanges?
+</A></li>
+        <LI>Next message: <A HREF="004417.html">[rabbitmq-discuss] Weird Crash - Recovery logic for durable messages/queues/exchanges?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#4413">[ date ]</a>
+              <a href="thread.html#4413">[ thread ]</a>
+              <a href="subject.html#4413">[ subject ]</a>
+              <a href="author.html#4413">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>&gt;&gt;<i> So after running RabbitMQ v1.6.0 for awhile, I've encountered a
+</I>&gt;&gt;<i> strange crash, where the server unexpectedly dies with no crash report
+</I>&gt;&gt;<i> or any applicable log information written to disk. &#160;I'm trying to see
+</I>&gt;&gt;<i> if I can replicate the issue, but in the meantime, when I recover the
+</I>&gt;&gt;<i> server, it dutifully recovers all my messages, queues, exchanges, and
+</I>&gt;&gt;<i> bindings (great!). &#160;However, once the server recovers, all the durable
+</I>&gt;&gt;<i> messages in the queues (from rabbitmqctl) are still marked as
+</I>&gt;&gt;<i> *messages_unacknowledged&quot; -- not &quot;messages_ready&quot;... To my knowledge,
+</I>&gt;&gt;<i> this means: &quot;RabbitMQ thinks there is already an AMQP channel and
+</I>&gt;&gt;<i> connection open which already has these messages -- and is simply
+</I>&gt;&gt;<i> waiting for an ACK back from this AMQP consumer.&quot; &#160;... The problem is:
+</I>&gt;&gt;<i> when RabbitMQ recovers, all AMQP channels/connections are terminated,
+</I>&gt;&gt;<i> so this assumption is clearly wrong (in this scenario).
+</I>&gt;<i>
+</I>&gt;<i> On recovery the persister requeues recovered messages. They should all be
+</I>&gt;<i> counted as 'ready' unless they are sent to a consumer, in which case they
+</I>&gt;<i> will show up as 'unacknowledged'.
+</I>
+Okay, your wording is a little vague, so I want to be crystal clear.
+Assume we have a single RabbitMQ server, with 3 consumers, where all 3
+are consuming messages off the same durable queue (with durable
+messages).  When all 3 start processing their respective messages,
+RabbitMQ marks all 3 durable messages as 'unacknowledged'.  Then,
+let's assume RabbitMQ crashes (for some reason or another).  *STICKING
+POINT: Upon crash, all 3 consumers channels and connections have
+terminated -- I assume there's no way for any of the consumers to
+&quot;reuse&quot; their existing channels/connections because RabbitMQ server
+died.*
+
+Therefore, when a sysadmin restarts RabbitMQ and the persister is
+recovered, will all 3 messages be marked 'ready' ?  Or will all 3 be
+marked 'unacknowledged' ?   Sorry to be pedantic, but your original
+reply was slightly unclear about this.
+
+&gt;<i> So what you are seeing is rather strange. Are you sure there aren't any
+</I>&gt;<i> connected consumers?
+</I>
+I'm sure there are no connected consumers -- although I assume that
+when RabbitMQ crashes, all consumer channels/connections are
+terminated as well.  For good measure, I also had to terminate and
+restart epmd... otherwise, RabbitMQ would not start up properly via
+'/etc/init.d/rabbitmq start'.  FYI, this is on a stock Ubuntu
+distribution.
+
+&gt;<i> Also, are you running rabbit as a single node, or in a cluster?
+</I>
+I'm running RabbitMQ as a single node.
+
+To test to see if these 'unacknowledged' messages could somehow get
+reset, I have:
+1) shutdown all consumer connections
+2) started up a single consumer.  Upon doing so, the consumer is NOT
+able to fetch any of the un-ack'd messages -- although any new
+messages do properly get delivered to the consumer
+3) shutdown the single consumer
+4) verified the un-ack'd messages still exist
+5) started up a single consumer... same behavior as #2
+
+As an interesting side case, is there any way to manually reset
+un-ack'd messages back into the ready state while RabbitMQ is running
+(and consumers/producers are active?).  I'm trying to avoid having to
+shutdown the RabbitMQ server and obliterate the nmesia persister log
+in order to clear out these messages.  (destroying and re-creating the
+queues isn't ideal either, since I have active consumers processing
+newer messages using these same queues).
+
+-- Darien
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="004412.html">[rabbitmq-discuss] Weird Crash - Recovery logic for	durable	messages/queues/exchanges?
+</A></li>
+	<LI>Next message: <A HREF="004417.html">[rabbitmq-discuss] Weird Crash - Recovery logic for durable messages/queues/exchanges?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#4413">[ date ]</a>
+              <a href="thread.html#4413">[ thread ]</a>
+              <a href="subject.html#4413">[ subject ]</a>
+              <a href="author.html#4413">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

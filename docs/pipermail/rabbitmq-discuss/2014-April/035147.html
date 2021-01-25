@@ -1,0 +1,187 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Possible memory leak in the management plugin
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Possible%20memory%20leak%20in%20the%20management%20plugin&In-Reply-To=%3C53457674.1040704%40rabbitmq.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="035142.html">
+   <LINK REL="Next"  HREF="035170.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Possible memory leak in the management plugin</H1>
+    <B>Simon MacMullen</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Possible%20memory%20leak%20in%20the%20management%20plugin&In-Reply-To=%3C53457674.1040704%40rabbitmq.com%3E"
+       TITLE="[rabbitmq-discuss] Possible memory leak in the management plugin">simon at rabbitmq.com
+       </A><BR>
+    <I>Wed Apr  9 17:33:56 BST 2014</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="035142.html">[rabbitmq-discuss] Possible memory leak in the management plugin
+</A></li>
+        <LI>Next message: <A HREF="035170.html">[rabbitmq-discuss] Possible memory leak in the management plugin
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#35147">[ date ]</a>
+              <a href="thread.html#35147">[ thread ]</a>
+              <a href="subject.html#35147">[ subject ]</a>
+              <a href="author.html#35147">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>On 09/04/14 16:51, Pavel wrote:
+&gt;<i> Clearly we have some memory missing: ETS tables report ~225Mb,
+</I>&gt;<i> process_info(rabbit_mgmt_db, memory) reports ~2Gb, rabbitmqctl status
+</I>&gt;<i> reports ~3.8Gb for mgmt_db.
+</I>&gt;<i>
+</I>&gt;<i> Q5: What else is included in mgmt_db size when reported by rabbitmqctl
+</I>&gt;<i> status?
+</I>
+Nothing. But ets:info(Table, memory) reports a number of words, not 
+bytes. So it needs to be multiplied by 8 (assuming a 64 bit system). 
+rabbitmqctl status does that for you, hence ~3.8Gb.
+
+&gt;<i> Running garbage collection
+</I>&gt;<i> (erlang:garbage_collect(global:whereis_name(rabbit_mgmt_db))) did instantly
+</I>&gt;<i> reduce the mgmt_db size:
+</I>&gt;<i>
+</I>&gt;<i> [<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">root at lab-rmq02</A> pmaisenovich]# /usr/sbin/rabbitmqctl status | grep mgmt_db
+</I>&gt;<i>        {mgmt_db,3853521792},
+</I>&gt;<i> [<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">root at lab-rmq02</A> pmaisenovich]# /usr/sbin/rabbitmqctl eval
+</I>&gt;<i> 'erlang:garbage_collect(global:whereis_name(rabbit_mgmt_db)).'
+</I>&gt;<i> true
+</I>&gt;<i> ...done.
+</I>&gt;<i> [<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">root at lab-rmq02</A> pmaisenovich]# /usr/sbin/rabbitmqctl status | grep mgmt_db
+</I>&gt;<i>        {mgmt_db,1804503848},
+</I>&gt;<i>
+</I>&gt;<i> And immediately cleaned up rabbit_mgmt_db memory (even too much so):
+</I>&gt;<i>
+</I>&gt;<i> {{memory,2069410400},
+</I>&gt;<i>   [{5734484,1046,205243},
+</I>&gt;<i>    {5738585,5,906},
+</I>&gt;<i>    {5742682,2006,136495},
+</I>&gt;<i>    {5746779,1,175},
+</I>&gt;<i>    {5750876,1,175},
+</I>&gt;<i>    {5754973,1,1059},
+</I>&gt;<i>    {5759070,916685,51561447},
+</I>&gt;<i>    {5763167,1819614,45509178},
+</I>&gt;<i>    {5767264,1819847,127559980}]}
+</I>&gt;<i> ...done.
+</I>&gt;<i> {{memory,5960},
+</I>&gt;<i>   [{5734484,1046,205243},
+</I>&gt;<i>    {5738585,5,906},
+</I>&gt;<i>    {5742682,2006,136495},
+</I>&gt;<i>    {5746779,1,175},
+</I>&gt;<i>    {5750876,1,175},
+</I>&gt;<i>    {5754973,1,1059},
+</I>&gt;<i>    {5759070,916685,51561447},
+</I>&gt;<i>    {5763167,1819614,45509178},
+</I>&gt;<i>    {5767264,1819847,127559980}]}
+</I>&gt;<i> ...done.
+</I>&gt;<i>
+</I>&gt;<i> Q6: In the last snapshot above process_info(rabbit_mgmt_db, memory) is much
+</I>&gt;<i> smaller than ETS numbers right below it. Are those not included in the
+</I>&gt;<i> process memory calculation?
+</I>
+No, they're not. The &quot;rabbitmqctl status&quot; output adds the process memory 
+and ETS memory together.
+
+&gt;<i> Q7: Note, that ETS table sizes didn't go down at all. Isn't GC supposed to
+</I>&gt;<i> clean those up?
+</I>
+No, the GC is only for the process memory. ETS is more like a database, 
+rows get deleted when you tell it to.
+
+&gt;<i> Furthermore, in 4 seconds after manual GC run, the
+</I>&gt;<i> process_info(rabbit_mgmt_db, memory) went up from 5960 to 783979640 and kept
+</I>&gt;<i> growing up to a certain (different to previous) limit.
+</I>
+Ouch.
+
+So I think there are two issues here:
+
+1) The combination of large numbers of exchanges / queues being 
+published to by large numbers of channels is something that the 
+management database inherently struggles with; it maintains data for all 
+those combinations, so if you have huge numbers of them, you'll have 
+huge amounts of data.
+
+Currently there's no switch to say &quot;I just want message rates per queue, 
+exchange or channel, not per combination of those things&quot;. If there 
+were, it would allow the mgmt database to cut its memory usage a lot 
+(although it would still be dealing with a lot of incoming data). So 
+your only option is to switch off message rates altogether, with 
+{force_fine_statistics, false}.
+
+2) The management database is not getting GCed enough by Erlang when it 
+is very busy. It's probable that we could do something about that, 
+although the fact that the amount of garbage goes back up so quickly is 
+alarming.
+
+So in the short term, {force_fine_statistics, false} is the best option 
+you have. In the longer term we may be able to have the mgmt plugin 
+still display some message rates at a lower cost.
+
+Cheers, Simon
+
+-- 
+Simon MacMullen
+RabbitMQ, Pivotal
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="035142.html">[rabbitmq-discuss] Possible memory leak in the management plugin
+</A></li>
+	<LI>Next message: <A HREF="035170.html">[rabbitmq-discuss] Possible memory leak in the management plugin
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#35147">[ date ]</a>
+              <a href="thread.html#35147">[ thread ]</a>
+              <a href="subject.html#35147">[ subject ]</a>
+              <a href="author.html#35147">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,146 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Forcing headers on incoming commands
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Forcing%20headers%20on%20incoming%20commands&In-Reply-To=%3C97f25a64610a22aca79fb410868183fb%40rabbitmq.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="010560.html">
+   <LINK REL="Next"  HREF="010561.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Forcing headers on incoming commands</H1>
+    <B>Rob Harrop</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Forcing%20headers%20on%20incoming%20commands&In-Reply-To=%3C97f25a64610a22aca79fb410868183fb%40rabbitmq.com%3E"
+       TITLE="[rabbitmq-discuss] Forcing headers on incoming commands">rob at rabbitmq.com
+       </A><BR>
+    <I>Thu Jan  6 10:21:43 GMT 2011</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="010560.html">[rabbitmq-discuss] Handling Undelivered messages in rabbitmq
+</A></li>
+        <LI>Next message: <A HREF="010561.html">[rabbitmq-discuss] QoS prefetch and rabbitmq-c
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#10557">[ date ]</a>
+              <a href="thread.html#10557">[ thread ]</a>
+              <a href="subject.html#10557">[ subject ]</a>
+              <a href="author.html#10557">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi Mike,
+
+On Mon, 27 Dec 2010 21:26:04 -0500, Mike Keen &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">mkeen.atl at gmail.com</A>&gt; wrote:
+&gt;<i> Hello,
+</I>&gt;<i> 
+</I>&gt;<i> I'm part of a small group working on a realtime social game powered by
+</I>&gt;<i> RabbitMQ/STOMP and run on Flash clients in the browser.
+</I>&gt;<i> 
+</I>&gt;<i> We've run into some security concerns related to exposing our STOMP port
+</I>to
+&gt;<i> the public. Specifically, we've noticed that without the &quot;exclusive:
+</I>true&quot;
+&gt;<i> header in an initial subscription (even to an anonymous queue), and the
+</I>&gt;<i> socket is dropped before the client sends a clean disconnect, the queues
+</I>&gt;<i> remain open for a pretty long time (at least a few minutes). This has
+</I>lead
+&gt;<i> to the concern that an attacker might be able to create any number of
+</I>&gt;<i> queues
+</I>&gt;<i> that could hang around and waste memory, or even lead to memory being
+</I>&gt;<i> exhausted.
+</I>
+A few things have changed in the STOMP adapter that make this a bit
+different now. 
+
+Most importantly, custom headers such as 'exclusive' are no longer
+supported. Instead, we now support destination types with set semantics.
+The support destinations are /queue/&lt;name&gt;, /topic/&lt;name&gt; and
+/exchange/&lt;name&gt;/&lt;routing_key&gt;. The /queue and /topic types are designed to
+work as closely to the corresponding types in ActiveMQ as possible.
+
+For /queue, created queues are now durable and are not exclusive. This
+means that it is a separate administration task to clean up queues. This is
+designed to match ActiveMQ.
+
+For /topic, a queue is created per SUBSCRIPTION, but only lasts for the
+duration of that subscription. That means that after all subscribers to a
+topic destination disconnect, no queues exist for that topic.
+
+I recently updated the README for this. The changes are still going
+through QA, but the relevant revision can be found here:
+<A HREF="http://hg.rabbitmq.com/rabbitmq-stomp/file/6cfb4d0f9cd9/README.md.">http://hg.rabbitmq.com/rabbitmq-stomp/file/6cfb4d0f9cd9/README.md.</A>
+
+&gt;<i> 
+</I>&gt;<i> Two questions considering the above:
+</I>&gt;<i> 
+</I>&gt;<i> 1) Is it possible to set, through the config file, to force
+</I>queue.exclusive
+&gt;<i> = true on every new queue creation on the server?
+</I>
+This isn't possible at the moment. I don't think we have any plans to
+introduce such a feature.
+
+&gt;<i> 
+</I>&gt;<i> 2) Is this a legitimate security concern? Or would a massive number of
+</I>&gt;<i> queues (all bound to a topic exchange) not be enough to cause
+</I>performance
+&gt;<i> issues?
+</I>
+Well, importantly, you can only create queues if you are an authenticated
+user, so the attacker would need to get past that hurdle first. I have a
+task to add SSL support for STOMP which will make sending credentials in
+the CONNECT header a lot safer :)
+
+Also, if you're using  /topic destinations (probably the easiest way in
+the new adapter to access topic semantics), then you would have to have a
+large number of active subscriptions in order to have a large number of
+queues. RabbitMQ handles large numbers of queues nicely, so for this to be
+a major problem, you'd need to a large number of subscriptions created on a
+topic that has a large publish volume. The subscriptions would have to be
+in ack:client mode and would need to *not* ack the messsages. Even then,
+new support in RabbitMQ 2.2.0 for handling large ack volumes means that you
+a really only limited by disk space when it comes to the ack backlog. 
+
+One possible issue is that storing transaction state for STOMP transaction
+takes up a non-trivial amount of RAM, so creating massive transactions and
+not committing them could lead to out of memory. For this reason, I can
+imagine a configuration option that allows for transaction support to be
+disabled.
+
+I hope this helps.
+
+&gt;<i> 
+</I>&gt;<i> Thanks in advance for your help.
+</I>&gt;<i> 
+</I>&gt;<i> Mike
+</I></PRE>
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="010560.html">[rabbitmq-discuss] Handling Undelivered messages in rabbitmq
+</A></li>
+	<LI>Next message: <A HREF="010561.html">[rabbitmq-discuss] QoS prefetch and rabbitmq-c
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#10557">[ date ]</a>
+              <a href="thread.html#10557">[ thread ]</a>
+              <a href="subject.html#10557">[ subject ]</a>
+              <a href="author.html#10557">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

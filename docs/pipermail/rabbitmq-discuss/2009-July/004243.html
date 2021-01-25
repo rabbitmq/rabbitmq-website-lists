@@ -1,0 +1,182 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] RabbitMQ load balancing/failover with LVS
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20RabbitMQ%20load%20balancing/failover%20with%20LVS&In-Reply-To=">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="004242.html">
+   <LINK REL="Next"  HREF="004256.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] RabbitMQ load balancing/failover with LVS</H1>
+    <B>Niko Felger</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20RabbitMQ%20load%20balancing/failover%20with%20LVS&In-Reply-To="
+       TITLE="[rabbitmq-discuss] RabbitMQ load balancing/failover with LVS">niko.felger at googlemail.com
+       </A><BR>
+    <I>Mon Jul 27 16:55:09 BST 2009</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="004242.html">[rabbitmq-discuss] Rabbit-MQ for solaris containers ?
+</A></li>
+        <LI>Next message: <A HREF="004256.html">[rabbitmq-discuss] RabbitMQ load balancing/failover with LVS
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#4243">[ date ]</a>
+              <a href="thread.html#4243">[ thread ]</a>
+              <a href="subject.html#4243">[ subject ]</a>
+              <a href="author.html#4243">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi,
+
+We have been working with a single RabbitMQ node for about a month
+now, and have been very happy with it, so we decided to add a second
+node, mainly for failover, since our load is moderate. We hooked up
+two nodes following <A HREF="http://www.rabbitmq.com/clustering.html:">http://www.rabbitmq.com/clustering.html:</A>
+
+Status of node '<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at dc1-live-mq1</A>' ...
+[{running_applications,[{rabbit,&quot;RabbitMQ&quot;,&quot;1.5.5&quot;},
+                      {mnesia,&quot;MNESIA  CXC 138 12&quot;,&quot;4.3.5&quot;},
+                      {os_mon,&quot;CPO  CXC 138 46&quot;,&quot;2.1.2.1&quot;},
+                      {sasl,&quot;SASL  CXC 138 11&quot;,&quot;2.1.5.1&quot;},
+                      {stdlib,&quot;ERTS  CXC 138 10&quot;,&quot;1.14.5&quot;},
+                      {kernel,&quot;ERTS  CXC 138 10&quot;,&quot;2.11.5&quot;}]},
+ {nodes,['<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at dc1-live-mq2</A>','<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at dc1-live-mq1</A>']},
+ {running_nodes,['<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at dc1-live-mq2</A>','<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at dc1-live-mq1</A>']}]
+...done.
+
+Status of node '<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at dc1-live-mq2</A>' ...
+[{running_applications,[{rabbit,&quot;RabbitMQ&quot;,&quot;1.5.5&quot;},
+                      {mnesia,&quot;MNESIA  CXC 138 12&quot;,&quot;4.3.5&quot;},
+                      {os_mon,&quot;CPO  CXC 138 46&quot;,&quot;2.1.2.1&quot;},
+                      {sasl,&quot;SASL  CXC 138 11&quot;,&quot;2.1.5.1&quot;},
+                      {stdlib,&quot;ERTS  CXC 138 10&quot;,&quot;1.14.5&quot;},
+                      {kernel,&quot;ERTS  CXC 138 10&quot;,&quot;2.11.5&quot;}]},
+ {nodes,['<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at dc1-live-mq2</A>','<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at dc1-live-mq1</A>']},
+ {running_nodes,['<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at dc1-live-mq1</A>','<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at dc1-live-mq2</A>']}]
+...done.
+
+When we point our clients to either of the RabbitMQ nodes directly
+everything works fine.
+
+In order to allow our clients to always point to a single host,
+regardless of which nodes are up, we set up LVS load balancing on a
+third server called 'lb1'. However, once we do this, we experience
+issues with low-volume queues. It goes roughly like this:
+
+- Consumer starts and establishes a connection to lb1.
+- lb1 forwards packets from the consumer to e.g. mq1.
+- At this point, the consumer has an established connection to lb1,
+mq1 has an established connection directly to the consumer, and
+messages published to the queue reach the consumer.
+- After ~5-10 minutes without messages published to the queue, the
+connection on the consumer goes away, and it establishes a new
+connection to lb1. mq1 at this point still has an established to
+connection to the consumer on the original port, in addition to the
+new connection. Messages published to the queue in question are now no
+longer delivered to the consumer.
+- We start another consumer, but it doesn't receive messages either.
+- After some more time, the original connection times out
+({inet_error,etimedout}), and messages get processed again, but only
+by the second consumer.
+
+It may be worth mentioning that the consumer subscribes to the queue
+with auto-ack turned off.
+
+The problem seems to be the load balancer dropping connections, but
+since we're using it successfully in a few other cases, I thought I
+could get some input on whether this is even a sensible strategy for
+doing failover for RabbitMQ, and if anyone has experience with setups
+similar to ours.
+
+Thanks!
+niko
+
+PS: We're also seeing plenty of this in the rabbit.log, repeating
+every 30 seconds:
+=ERROR REPORT==== 27-Jul-2009::16:27:24 ===
+** Generic server &lt;0.9049.9&gt; terminating
+** Last message in was {inet_async,#Port&lt;0.222&gt;,41513,{ok,#Port&lt;0.236483&gt;}}
+** When Server state == {state,{rabbit_networking,start_client,[]},
+                             #Port&lt;0.222&gt;,
+                             41513}
+** Reason for termination ==
+** {{badmatch,{error,enotconn}},
+  [{tcp_acceptor,handle_info,2},
+   {gen_server,handle_msg,6},
+   {proc_lib,init_p,5}]}
+
+&gt;<i>From rabbit-sasl.log:
+</I>=CRASH REPORT==== 27-Jul-2009::16:27:24 ===
+ crasher:
+  pid: &lt;0.9049.9&gt;
+  registered_name: []
+  error_info: {{badmatch,{error,enotconn}},
+                [{tcp_acceptor,handle_info,2},
+                 {gen_server,handle_msg,6},
+                 {proc_lib,init_p,5}]}
+  initial_call: {gen,init_it,
+                    [gen_server,
+                     &lt;0.179.0&gt;,
+                     &lt;0.179.0&gt;,
+                     tcp_acceptor,
+                     {{rabbit_networking,start_client,[]},#Port&lt;0.222&gt;},
+                     []]}
+  ancestors: ['tcp_acceptor_sup_0.0.0.0:5672',
+                &lt;0.178.0&gt;,
+                rabbit_sup,
+                &lt;0.105.0&gt;]
+  messages: []
+  links: [&lt;0.179.0&gt;,#Port&lt;0.236483&gt;]
+  dictionary: []
+  trap_exit: false
+  status: running
+  heap_size: 233
+  stack_size: 21
+  reductions: 166
+ neighbours:
+
+=SUPERVISOR REPORT==== 27-Jul-2009::16:27:24 ===
+   Supervisor: {local,
+                                         'tcp_acceptor_sup_0.0.0.0:5672'}
+   Context:    child_terminated
+   Reason:     {{badmatch,{error,enotconn}},
+                [{tcp_acceptor,handle_info,2},
+                 {gen_server,handle_msg,6},
+                 {proc_lib,init_p,5}]}
+   Offender:   [{pid,&lt;0.9049.9&gt;},
+                {name,tcp_acceptor},
+                {mfa,{tcp_acceptor,start_link,
+                                   [{rabbit_networking,start_client,[]},
+                                    #Port&lt;0.222&gt;]}},
+                {restart_type,transient},
+                {shutdown,brutal_kill},
+                {child_type,worker}]
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="004242.html">[rabbitmq-discuss] Rabbit-MQ for solaris containers ?
+</A></li>
+	<LI>Next message: <A HREF="004256.html">[rabbitmq-discuss] RabbitMQ load balancing/failover with LVS
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#4243">[ date ]</a>
+              <a href="thread.html#4243">[ thread ]</a>
+              <a href="subject.html#4243">[ subject ]</a>
+              <a href="author.html#4243">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

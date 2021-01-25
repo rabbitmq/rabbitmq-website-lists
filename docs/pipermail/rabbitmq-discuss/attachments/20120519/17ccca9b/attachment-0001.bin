@@ -1,0 +1,77 @@
+#!/usr/bin/perl
+
+my $host = 'localhost';
+my $user = 'guest';
+my $pass = 'guest';
+
+# This script send burst of small messages as fast as possible.
+# Unless specified otherwise, it sends 10 bursts of 10000 messages of 1 KB.
+#
+# Using the management console, inspect the Ready messages of queue /stomp_bug
+#
+# The expected progression is:  10000 ... 20000 ... 30000 ... 40000 ... 
+# But if CPU is maxed, we get:   9999 ... 19998 ... 29997 ... 39996 ...     
+
+use strict;
+use warnings;
+use IO::Socket::INET;
+use Getopt::Long;
+
+my ($count, $size, $burst);
+
+GetOptions(
+    "count=i"  => \$count,   # -c, --count
+    "size=f"   => \$size,    # -s, --size
+    "burst=i"  => \$burst,   # -b, --burst 
+) or exit;
+
+$count = 10000 unless defined $count;
+$size  = 1     unless defined $size;
+$burst = 10    unless defined $burst;
+
+print "Sending $burst bursts of $count messages of $size KB\n";
+
+for (1..$burst) {
+
+    my $sock = IO::Socket::INET->new(
+        Proto     => 'tcp',
+        PeerAddr  => $host,
+        PeerPort  => 61613,
+    );
+
+    die "Can't connect to RabbitMQ: $!" unless $sock;
+
+    my $connect = "CONNECT\n"        .
+                  "login:$user\n"    .
+                  "passcode:$pass\n" .
+                  "\n"               .
+                  "\x00"             ;
+
+    # syswrite bypasses buffered IO
+    my $written_bytes = syswrite( $sock, $connect );
+    die unless ($written_bytes == length $connect);
+
+    sleep 1;
+
+    my $queue = '/queue/stomp_bug';
+    my $body = 'X' x ($size * 1000);
+    my $body_len = length $body;
+
+    my $msg = "SEND\n"                     .
+              "destination:$queue\n"       .
+              "content-length:$body_len\n" .
+              "\n"                         .
+              $body                        .
+              "\x00"                       ;
+
+    # Build a chunk of $count messages
+    my $write_buffer = $msg x $count;
+
+    print "Sending $count messages of $size KB\n";
+    $written_bytes = syswrite( $sock, $write_buffer );
+    die unless ($written_bytes == length $write_buffer);
+
+    sleep 9;
+
+    close $sock;
+}    

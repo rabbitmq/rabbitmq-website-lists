@@ -1,0 +1,185 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Unofficial guide to AMQP 1.0 PR3
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20Unofficial%20guide%20to%20AMQP%201.0%20PR3&In-Reply-To=">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="007073.html">
+   <LINK REL="Next"  HREF="007065.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Unofficial guide to AMQP 1.0 PR3</H1>
+    <B>Michael Bridgen</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20Unofficial%20guide%20to%20AMQP%201.0%20PR3&In-Reply-To="
+       TITLE="[rabbitmq-discuss] Unofficial guide to AMQP 1.0 PR3">mikeb at lshift.net
+       </A><BR>
+    <I>Wed May  5 23:38:18 BST 2010</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="007073.html">[rabbitmq-discuss] Unbinding when not bound
+</A></li>
+        <LI>Next message: <A HREF="007065.html">[rabbitmq-discuss] Unofficial guide to AMQP 1.0 PR3
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#7056">[ date ]</a>
+              <a href="thread.html#7056">[ thread ]</a>
+              <a href="subject.html#7056">[ subject ]</a>
+              <a href="author.html#7056">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>All,
+
+I'd like to second Alexis's request for eyes on the new AMQP 1.0 spec 
+(&quot;PR3&quot;).
+
+To help out, here is a brief guide to the spec, with reference to the 
+AMQP 0-8 implemented in RabbitMQ.  I've left out a lot of details, so I 
+encourage everyone to read the spec in depth, and simply use this guide 
+as a map of the territory to get started.
+
+I'll *emphasise* anything that's a 1.0 term, and leave 0-8 terms in roman.
+
+Book I Messaging Model
+
+The core AMQP 1.0 spec abstracts, to a large extent, away from the 
+purely client-broker model of previous specs.  Since we're referring to 
+0-8, take *Container* or &quot;peer&quot; (and other synonyms) to mean Broker or 
+Application + Client library, but bear in mind that it's aimed at 
+something more general.
+
+A *Node* is something that's addressed in a *Container*.  For a broker 
+that would be an exchange or queue.  For an application, that's a 
+consumer or (oddly, in 0-8) a publisher.
+
+*Links* are a generalisation of a publication or consumption 
+relationship between *Nodes*.  So on the consuming side, i.e., with 
+basic.consume, this has a queue name (addressing a queue) at one end and 
+a consumer tag at the other (addressing, probably, some kind of buffer 
+from which the application will retrieve messages).
+
+In 0-8, there's no declaration of a publication relation, one just 
+mentions the target in the basic.publish method (or not, in the case of 
+the default exchange).
+
+In PR3, publication is treated as symmetric to consumption.
+
+*Credit* is like a combination of channel.flow and basic.qos.  I'll come 
+back to it later.
+
+For *Sessions* think channels.  One difference is that things aren't 
+necessarily scoped to *session* lifetimes; in particular, *Links* can be 
+resumed after a connection drop.
+
+Book II Data types
+
+This represents something more ambitious than the codec in 0-8; it is a 
+data type system as well.  But for the purpose of this guide, it's the 
+codec.
+
+Book III Transport
+
+Connections and framing are much the same as they are in 0-8.
+
+This section talks about *channels*, but doesn't mean 0-8 channels, 
+instead it's more like a &quot;session handle&quot;.  *Sessions* are opened by 
+saying &quot;I'm going start a session called xyz, I'll be speaking on 
+channel 4&quot; and hearing back &quot;ok, I'll talk about xyz on channel 7&quot; -- so 
+each party now can use a number to refer to the *session*.
+
+*Transfer* is used in the place of both basic.publish (which clients 
+use) and basic.deliver (which clients receive), because they both happen 
+over a *link*.
+
+Unlike 0-8, publishing can be acked (though this may not be required) -- 
+a *link endpoint* (i.e., the state of the *link* kept in the broker and 
+in the client) maintains a replay buffer, and can resend messages that 
+haven't been acked.  Similarly, the receiving *link endpoint* can keep a 
+deduplication filter.  *Disposition* is used to report the state of 
+messages, e.g., &quot;consider this acknowledged&quot;.
+
+Resuming *links* is something like what basic.recover tries to achieve, 
+resending messages that aren't known to have been processed.
+
+Flow control acts like a more fine-grained channel.flow for publishers, 
+and like basic.qos for consumers; in each case, the receiving side 
+issues *credit*, which the sending side uses up by transferring 
+messages.  To do something like a basic.get, a consumer issues a single 
+unit of *credit*, and waits for the single message to come in.
+
+Book IV Messaging
+
+In 0-8, exchanges route messages to all matching bindings, while queues 
+deliver messages to only one consumer.  In PR3, *non-destructive links* 
+convey messages while leaving them available for other links (like 
+exchanges do), and *destructive links* acquire messages and so make them 
+unavailable for other links (like queues do).  In principle these can be 
+mixed.
+
+Both kinds of *links* can have *filters*, which are like exchange types 
+in addition to binding keys, in that they each specify an algorithm and 
+the particulars; a bit like if bindings could be &quot;topic:ticker.nyse.*&quot;.
+
+Book V Transactions
+
+In PR3, transactions are decoupled from *sessions*, which is unlike 0-8 
+in which the transactional behaviour is determined per channel.
+
+Transactions can also cover publication, message acknowledgement (or 
+rejection), /and/ deliveries, unlike 0-8 in which publication and 
+acknowledgement only are covered.
+
+Book VI Security
+
+TLS is negotiated after a special protocol header is sent over the 
+normal AMQP port 5672, instead of being established first on a different 
+port as in RabbitMQ.
+
+SASL does much the same thing, using a special protocol header then 
+negotiation, and replaces in part the 
+connection.{start,start-ok,secure,secure-ok} methods in 0-8.
+
+
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="007073.html">[rabbitmq-discuss] Unbinding when not bound
+</A></li>
+	<LI>Next message: <A HREF="007065.html">[rabbitmq-discuss] Unofficial guide to AMQP 1.0 PR3
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#7056">[ date ]</a>
+              <a href="thread.html#7056">[ thread ]</a>
+              <a href="subject.html#7056">[ subject ]</a>
+              <a href="author.html#7056">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,201 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Making sure a message gets to every consumer
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Making%20sure%20a%20message%20gets%20to%20every%20consumer&In-Reply-To=%3CAANLkTi%3DfdgwKizYDcmQ%3DP%3D-xGgbn9ajc2fBh-RX05O%3Ds%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="010907.html">
+   <LINK REL="Next"  HREF="010897.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Making sure a message gets to every consumer</H1>
+    <B>Dan Tenenbaum</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Making%20sure%20a%20message%20gets%20to%20every%20consumer&In-Reply-To=%3CAANLkTi%3DfdgwKizYDcmQ%3DP%3D-xGgbn9ajc2fBh-RX05O%3Ds%40mail.gmail.com%3E"
+       TITLE="[rabbitmq-discuss] Making sure a message gets to every consumer">dtenenba at fhcrc.org
+       </A><BR>
+    <I>Tue Jan 25 18:22:44 GMT 2011</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="010907.html">[rabbitmq-discuss] Low message publish throughput
+</A></li>
+        <LI>Next message: <A HREF="010897.html">[rabbitmq-discuss] Making sure a message gets to every consumer
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#10896">[ date ]</a>
+              <a href="thread.html#10896">[ thread ]</a>
+              <a href="subject.html#10896">[ subject ]</a>
+              <a href="author.html#10896">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>On Mon, Jan 24, 2011 at 3:17 PM, Matthias Radestock
+&lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">matthias at rabbitmq.com</A>&gt;wrote:
+
+&gt;<i> Sam Duncan wrote:
+</I>&gt;<i>
+</I>&gt;&gt;<i> If you use a topic exchange and create a queue for each consumer, you get
+</I>&gt;&gt;<i> a copy of each message in each queue filtered by your queue bindings.
+</I>&gt;&gt;<i>
+</I>&gt;<i>
+</I>I tried this, but it still didn't seem to work.
+
+
+&gt;<i>
+</I>&gt;<i> A direct exchange would probably work too, unless you need bindings with
+</I>&gt;<i> wildcards.
+</I>&gt;<i>
+</I>&gt;<i> If you haven't done so already, I recommend reading
+</I>&gt;<i> <A HREF="http://www.rabbitmq.com/tutorial-three-python.html">http://www.rabbitmq.com/tutorial-three-python.html</A>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>I have read this, thanks.
+
+Here is an attempt that uses two fanout exchanges and two queues, one bound
+to each exchange with '#'. You would think (well, I would think) that any
+message sent to either of these fanout exchanges is going to go to every
+consumer of every queue bound to the appropriate exchange.
+
+However, what happens in practice is only one receiver at a time gets a
+message.
+
+Fire up two (or more) instances of app2.py and then run app1.py (which
+currently just sends a message and exits). How can I change this so that all
+the instances of app2.py receive all messages sent through the
+'from_web_exchange'?
+
+app1.py:
+#!/usr/bin/env python
+import pika
+
+connection = pika.AsyncoreConnection(pika.ConnectionParameters(
+        host='localhost'))
+channel = connection.channel()
+
+
+from_web_exchange =
+channel.exchange_declare(exchange=&quot;from_web_exchange&quot;,type=&quot;fanout&quot;)
+from_worker_exchange =
+channel.exchange_declare(exchange=&quot;from_worker_exchange&quot;, type='fanout')
+
+from_builders_queue = channel.queue_declare(queue='frombuilders',
+auto_delete=True)
+from_web_queue = channel.queue_declare(queue='fromweb', auto_delete=True)
+channel.queue_bind(exchange='from_web_exchange', queue=from_web_queue.queue,
+routing_key=&quot;#&quot;)
+channel.queue_bind(exchange='from_worker_exchange',
+queue=from_builders_queue.queue, routing_key=&quot;#&quot;)
+
+channel.basic_publish(exchange='from_web_exchange',
+                      routing_key='does_it_matter',
+                      body='Hello World!')
+print &quot; [x] Sent 'Hello World!'&quot;
+connection.close()
+
+app2.py:
+#!/usr/bin/env python
+import pika
+import sys
+
+connection = pika.AsyncoreConnection(pika.ConnectionParameters(
+        host='localhost'))
+channel = connection.channel()
+
+
+
+from_web_exchange =
+channel.exchange_declare(exchange=&quot;from_web_exchange&quot;,type=&quot;fanout&quot;)
+from_worker_exchange =
+channel.exchange_declare(exchange=&quot;from_worker_exchange&quot;, type='fanout')
+
+from_builders_queue = channel.queue_declare(queue='frombuilders',
+auto_delete=True)
+from_web_queue = channel.queue_declare(queue='fromweb', auto_delete=True)
+channel.queue_bind(exchange='from_web_exchange', queue=from_web_queue.queue,
+routing_key=&quot;#&quot;)
+channel.queue_bind(exchange='from_worker_exchange',
+queue=from_builders_queue.queue, routing_key=&quot;#&quot;)
+
+
+#channel.queue_declare(queue='hello')
+
+print ' [*] Waiting for messages. To exit press CTRL+C'
+
+arg = &quot;No-arg&quot;
+#print len(sys.argv)
+if (len(sys.argv) == 2):
+    arg = sys.argv[1]
+
+
+def callback(ch, method, properties, body):
+    print &quot; [x] Received %r&quot; % (body,)
+    channel.basic_publish(exchange='from_worker_exchange',
+                          routing_key=&quot;#&quot;, # key.frombuilders
+                          body= arg + &quot; python approves of &quot; + body)
+
+
+channel.basic_consume(callback,
+                      queue=from_web_queue.queue,
+                      no_ack=True)
+
+pika.asyncore_loop()
+
+
+Thanks in advance,
+Dan
+
+Regards,
+&gt;<i>
+</I>&gt;<i> Matthias.
+</I>&gt;<i>
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20110125/3b5ecbc6/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20110125/3b5ecbc6/attachment.htm</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="010907.html">[rabbitmq-discuss] Low message publish throughput
+</A></li>
+	<LI>Next message: <A HREF="010897.html">[rabbitmq-discuss] Making sure a message gets to every consumer
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#10896">[ date ]</a>
+              <a href="thread.html#10896">[ thread ]</a>
+              <a href="subject.html#10896">[ subject ]</a>
+              <a href="author.html#10896">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

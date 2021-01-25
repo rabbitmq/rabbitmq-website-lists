@@ -1,0 +1,166 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Multi-threaded Dispatch in Java Client
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Multi-threaded%20Dispatch%20in%20Java%20Client&In-Reply-To=%3C29868134.post%40talk.nabble.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="009237.html">
+   <LINK REL="Next"  HREF="009303.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Multi-threaded Dispatch in Java Client</H1>
+    <B>darr</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Multi-threaded%20Dispatch%20in%20Java%20Client&In-Reply-To=%3C29868134.post%40talk.nabble.com%3E"
+       TITLE="[rabbitmq-discuss] Multi-threaded Dispatch in Java Client">darren_gilroy at yahoo.com
+       </A><BR>
+    <I>Sat Oct  2 21:55:31 BST 2010</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="009237.html">[rabbitmq-discuss] Multi-threaded Dispatch in Java Client
+</A></li>
+        <LI>Next message: <A HREF="009303.html">[rabbitmq-discuss] Multi-threaded Dispatch in Java Client
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#9267">[ date ]</a>
+              <a href="thread.html#9267">[ thread ]</a>
+              <a href="subject.html#9267">[ subject ]</a>
+              <a href="author.html#9267">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>
+<A HREF="http://bitbucket.org/robharrop/rabbitmq-java-client/changeset/ea463bbd4871">http://bitbucket.org/robharrop/rabbitmq-java-client/changeset/ea463bbd4871</A>
+That's the commit I'm referencing.  I hope it's the right one.
+
+It looks like you're breaking the contract of Consumer a little bit when you
+move this off of the Connection's thread (since that's what's documented). 
+This is a Good Thing, because, as you note, implementations of consumer can
+now call blocking methods on Connection and Channel.  However, this has a
+down side in that only some consumers are permitted to call blocking methods
+-- those that use DispatchingConsumer.  Other consumers are guaranteed to
+have their methods called from the Connection thread.
+
+So this is a bit of extra complexity for implementations of Consumer to
+consider.  Given that implementors of Consumer already need to think of
+these things, you might re-evaluate the idea that consumers require all of
+their methods to be called from a single thread.  The mechanics of making a
+consumer thread-safe seem very manageable.  There's not a lot of interaction
+between the methods and very little state.
+
+However, if you share my concern about breaking the contract of Consumer,
+you could introduce another interface (ConcurrentConsumer) which specifies
+exactly the requirements of its implementations and modify
+DispachingConsumer to accept only ConcurrentConsumer.
+
+As for the possibility of ConnectionFactory.setDispatchThreadCount(int), I
+think if I set that to some value greater than one, and had only a single
+consumer, I would expect handleDelivery to be called from multiple threads. 
+I think we might be safer making DispatchingConsumer the sole party
+responsible for these things and it can accept an Executor on construction.
+Then the user can decide if all consumers can safely share the same set of
+threads, or if they need some other behavior.
+
+What do you think?
+
+Thanks,
+Darren.
+
+
+Rob Harrop-5 wrote:
+&gt;<i> 
+</I>&gt;<i> Recently I pushed branch bug18384 that changes the way callbacks are sent
+</I>&gt;<i> to Consumer implementations.
+</I>&gt;<i> 
+</I>&gt;<i> Following this change, the Connection maintains a dispatch thread that is
+</I>&gt;<i> used to send callbacks to the Consumers. This frees Consumers call
+</I>&gt;<i> blocking methods on the Connection and Channel.
+</I>&gt;<i> 
+</I>&gt;<i> A question came up on Twitter about making this configurable, allowing for
+</I>&gt;<i> a custom Executor to be plugged into the ConnectionFactory. I wanted to
+</I>&gt;<i> outline why this is complicated, discuss a possible implementation and see
+</I>&gt;<i> if there is much interest.
+</I>&gt;<i> 
+</I>&gt;<i> First off, we should establish that each Consumer should only receive
+</I>&gt;<i> callbacks in a single thread. If this is not the case, then chaos will
+</I>&gt;<i> ensue and Consumers will need to worry about their own thread safety
+</I>&gt;<i> beyond that of initialisation safety.
+</I>&gt;<i> 
+</I>&gt;<i> With only a single dispatch thread for all Consumers, this Consumer-Thread
+</I>&gt;<i> pairing is easy honoured.
+</I>&gt;<i> 
+</I>&gt;<i> When we introduce multiple threads, we have to ensure that each Consumer
+</I>&gt;<i> is paired with only one thread. When using the Executor abstraction, this
+</I>&gt;<i> prevents each callback dispatch from being wrapped up in a Runnable and
+</I>&gt;<i> sent to Executor, because you cannot guarantee which thread will be used.
+</I>&gt;<i> 
+</I>&gt;<i> To get around this, the Executor can be set to run 'n' long-running tasks
+</I>&gt;<i> (n being the number of threads in the Executor). Each of these tasks pulls
+</I>&gt;<i> dispatch instructions off a queue and executes them. Each Consumer is
+</I>&gt;<i> paired with one dispatch instruction queue, probably assigned on a
+</I>&gt;<i> round-robin basis. This is not too complicated and will provide simple
+</I>&gt;<i> balancing of dispatch load across the threads in the Executor.
+</I>&gt;<i> 
+</I>&gt;<i> Now, there are still some problems:
+</I>&gt;<i> 
+</I>&gt;<i> 1. The number of threads in an Executor is not necessarily fixed (as with
+</I>&gt;<i> ThreadPoolExecutor).
+</I>&gt;<i> 2. There is no way, via Executor or ExecutorService to find out how many
+</I>&gt;<i> threads there are. Thus, we cannot know how many dispatch instruction
+</I>&gt;<i> queues to create.
+</I>&gt;<i> 
+</I>&gt;<i> However, we can certainly introduce a
+</I>&gt;<i> ConnectionFactory.setDispatchThreadCount(int). Behind the scenes this will
+</I>&gt;<i> create an Executors.newFixedThreadPool() and the correct number of
+</I>&gt;<i> dispatch queues and dispatch tasks.
+</I>&gt;<i> 
+</I>&gt;<i> I'm interested in hearing if anyone thinks I'm overlooking some simpler
+</I>&gt;<i> way of solving this, and indeed if this is even worth solving.
+</I>&gt;<i> 
+</I>&gt;<i> Regards,
+</I>&gt;<i> 
+</I>&gt;<i> Rob
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>
+-- 
+View this message in context: <A HREF="http://old.nabble.com/Multi-threaded-Dispatch-in-Java-Client-tp29860178p29868134.html">http://old.nabble.com/Multi-threaded-Dispatch-in-Java-Client-tp29860178p29868134.html</A>
+Sent from the RabbitMQ mailing list archive at Nabble.com.
+
+</PRE>
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="009237.html">[rabbitmq-discuss] Multi-threaded Dispatch in Java Client
+</A></li>
+	<LI>Next message: <A HREF="009303.html">[rabbitmq-discuss] Multi-threaded Dispatch in Java Client
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#9267">[ date ]</a>
+              <a href="thread.html#9267">[ thread ]</a>
+              <a href="subject.html#9267">[ subject ]</a>
+              <a href="author.html#9267">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,143 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] [BUG] Erlang RabbitMQ client requires	installed server code
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20%5BBUG%5D%20Erlang%20RabbitMQ%20client%20requires%0A%09installed%20server%20code&In-Reply-To=6c2563b20809062356k1f492631m4b62e4a7e72ca9f9%40mail.gmail.com">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001369.html">
+   <LINK REL="Next"  HREF="001362.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] [BUG] Erlang RabbitMQ client requires	installed server code</H1>
+    <B>Ben Hood</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20%5BBUG%5D%20Erlang%20RabbitMQ%20client%20requires%0A%09installed%20server%20code&In-Reply-To=6c2563b20809062356k1f492631m4b62e4a7e72ca9f9%40mail.gmail.com"
+       TITLE="[rabbitmq-discuss] [BUG] Erlang RabbitMQ client requires	installed server code">0x6e6562 at gmail.com
+       </A><BR>
+    <I>Sun Sep  7 09:33:25 BST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001369.html">[rabbitmq-discuss] [BUG] Erlang RabbitMQ client requires	installed server code
+</A></li>
+        <LI>Next message: <A HREF="001362.html">[rabbitmq-discuss] [BUG] Erlang RabbitMQ client requires installed server code
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1360">[ date ]</a>
+              <a href="thread.html#1360">[ thread ]</a>
+              <a href="subject.html#1360">[ subject ]</a>
+              <a href="author.html#1360">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi Edwin,
+
+On Sun, Sep 7, 2008 at 7:56 AM, Edwin Fine
+&lt;<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss_efine at usa.net</A>&gt; wrote:
+&gt;<i> I had a surprise when trying to use the Erlang client on a node on which
+</I>&gt;<i> RabbitMQ Server was not installed.
+</I>
+Opening up this discussion on a friendly note :-) , the README does
+state that you need to install the Rabbit server for the client.
+
+&gt;<i> A network client should not require server code to be installed on the same
+</I>&gt;<i> node. This is certainly true of other clients I have used.
+</I>&gt;<i>
+</I>&gt;<i> On further investigation, I found a number of direct calls and references to
+</I>&gt;<i> an installed server:
+</I>
+This is code reuse :-)
+
+A number of design considerations went into the Erlang client:
+
+- Reuse the codec handling facilities that were already implemented in
+the server;
+- Implement a plain jane TCP based AMQP wire client in Erlang using
+the principles that were known to work from the server;
+- Provide a an embedded client that offers the same AMQP based API as
+the TCP based client - effectively swap out networking and codec
+marshalling for sending native Erlang messages, but keep it
+transparent to the client. The use case for this is for colocated
+client applications for efficiencies' sake that are not dependent on
+the native Rabbit API, which could change over time.
+
+To implement the third point, we had to generalize the channel concept
+in the server to provide a coarse grained interface that allows the
+client to implemented as an inversion of the server.
+
+The approach that was taken for the direct client was also taken for
+the TCP client, in order to keep things consistent and to benefit from
+proven design principles.
+
+Also, from a maintainance perspective, there are a lot of benefits
+from re-using tested server code.
+
+Hence you will notice many dependencies on the server code base.
+
+&gt;<i> amqp_channel.erl:-include_lib(&quot;rabbitmq_server/include/rabbit_framing.hrl&quot;).
+</I>&gt;<i> amqp_util.erl:-include_lib(&quot;rabbitmq_server/include/rabbit_framing.hrl&quot;).
+</I>.......
+&gt;<i> I left out the direct driver modules because by definition they need to be
+</I>&gt;<i> on the same node.
+</I>
+True.
+
+&gt;<i> I respectfully suggest that the above RabbitMQ server modules, and their
+</I>&gt;<i> dependencies, be bundled with the Erlang client. Ideally, I would think it
+</I>&gt;<i> would be best perhaps to put them a separate Erlang library application
+</I>&gt;<i> (maybe &quot;rabbitmq_common&quot;) that is used both by the server and the Erlang
+</I>&gt;<i> client.
+</I>
+When suggesting this, you don't have to be respect, because it is
+obviously a very good idea :-)
+
+In fact, when we wrote the first version of the client, we did think
+about breaking out the commonalities between the server and the client
+into a separate common module. We didn't go down that route to begin
+with because we wanted to see how the client would work and to get
+feedback from people using it. We thought it would be a better idea to
+get the code out in a usable state rather than put lots of effort into
+packaging something that people may not even want to use.
+
+However, now it has become apparent that there is interest in a client
+for Erlang, so it is now time to promote the client's status from
+experimental to an officially supported package. This should include
+proper packaging, documentation and the resolution of some minor
+outstanding issues.
+
+&gt;<i> In addition to that, the include_lib(&quot;rabbitmq_server/include/xxx.hrl&quot;)
+</I>&gt;<i> statements prevent one from even compiling the client unless the server is
+</I>&gt;<i> installed and this should be changed to use the common library app. I was
+</I>&gt;<i> forced to copy the include files and make a dummy rabbitmq_server
+</I>&gt;<i> application to be able to compile the client on a different node to the
+</I>&gt;<i> server.
+</I>
+Yes, this is a drawback. I see you've written a follow up mail, so I
+will go into more details when replying to that.
+
+Ben
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001369.html">[rabbitmq-discuss] [BUG] Erlang RabbitMQ client requires	installed server code
+</A></li>
+	<LI>Next message: <A HREF="001362.html">[rabbitmq-discuss] [BUG] Erlang RabbitMQ client requires installed server code
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1360">[ date ]</a>
+              <a href="thread.html#1360">[ thread ]</a>
+              <a href="subject.html#1360">[ subject ]</a>
+              <a href="author.html#1360">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

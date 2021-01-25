@@ -1,0 +1,145 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Channel crashes after basic.cancel_ok.
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20Channel%20crashes%20after%20basic.cancel_ok.&In-Reply-To=94602FAF-4F50-4046-9FE2-11FD32094C9E%40gmail.com">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000826.html">
+   <LINK REL="Next"  HREF="000828.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Channel crashes after basic.cancel_ok.</H1>
+    <B>Edwin Fine</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20Channel%20crashes%20after%20basic.cancel_ok.&In-Reply-To=94602FAF-4F50-4046-9FE2-11FD32094C9E%40gmail.com"
+       TITLE="[rabbitmq-discuss] Channel crashes after basic.cancel_ok.">rabbitmq-discuss_efine at usa.net
+       </A><BR>
+    <I>Mon May 12 20:56:59 BST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000826.html">[rabbitmq-discuss] Channel crashes after basic.cancel_ok.
+</A></li>
+        <LI>Next message: <A HREF="000828.html">[rabbitmq-discuss] Channel crashes after basic.cancel_ok.
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#827">[ date ]</a>
+              <a href="thread.html#827">[ thread ]</a>
+              <a href="subject.html#827">[ subject ]</a>
+              <a href="author.html#827">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Ben,
+
+I was monitoring my running system, and unless I am mistaken, it looks as if
+amqp_network_connection:reader_loop/4 has a non-tail recursive call, which
+is making it eat stack and heap like there's no tomorrow. There's a call to
+gen_tcp:close(Sock) at the end of the function. I suggest you move this to
+the last line of start_reader as shown:
+
+start_reader(Sock, FramingPid) -&gt;
+    process_flag(trap_exit, true),
+    put({channel, 0},{chpid, FramingPid}),
+    {ok, Ref} = prim_inet:async_recv(Sock, 7, -1),
+    reader_loop(Sock, undefined, undefined, undefined),
+*    gen_tcp:close(Sock).*
+
+reader_loop(Sock, Type, Channel, Length) -&gt;
+    receive
+        {inet_async, Sock, _, {ok, &lt;&lt;Payload:Length/binary,?FRAME_END&gt;&gt;} }
+-&gt;
+            case handle_frame(Type, Channel, Payload) of
+                closed_ok -&gt;
+                    ok;
+                _ -&gt;
+                    {ok, Ref} = prim_inet:async_recv(Sock, 7, -1),
+                    reader_loop(Sock, undefined, undefined, undefined)
+            end;
+        {inet_async, Sock, _, {ok, &lt;&lt;_Type:8,_Channel:16,PayloadSize:32&gt;&gt;}}
+-&gt;
+            {ok, Ref} = prim_inet:async_recv(Sock, PayloadSize + 1, -1),
+            reader_loop(Sock, _Type, _Channel, PayloadSize);
+        {inet_async, Sock, Ref, {error, Reason}} -&gt;
+            io:format(&quot;Have a look into this one: ~p~n&quot;,[Reason]);
+        {heartbeat, Heartbeat} -&gt;
+            rabbit_heartbeat:start_heartbeat(Sock, Heartbeat),
+            reader_loop(Sock, Type, Channel, Length);
+        {ChannelPid, ChannelNumber} -&gt;
+            start_framing_channel(ChannelPid, ChannelNumber),
+            reader_loop(Sock, Type, Channel, Length);
+        timeout -&gt;
+            io:format(&quot;Reader (~p) received timeout from heartbeat, exiting
+~n&quot;);
+        {'EXIT', Pid, Reason} -&gt;
+            [H|T] = get_keys({chpid,Pid}),
+            erase(H),
+            reader_loop(Sock, Type, Channel, Length);
+        Other -&gt;
+            io:format(&quot;Other ~p~n&quot;,[Other])
+    end,
+*    gen_tcp:close(Sock). %% Non-tail recursive call*
+
+
+On Mon, May 12, 2008 at 2:07 PM, Ben Hood &lt;<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">0x6e6562 at gmail.com</A>&gt; wrote:
+
+&gt;<i> Ed,
+</I>&gt;<i> On 10 May 2008, at 01:02, Edwin Fine wrote:
+</I>&gt;<i>
+</I>&gt;<i> Thanks, Ben, I will take a look and give you some feedback.
+</I>&gt;<i>
+</I>&gt;<i> In the meantime, I have done the following:
+</I>&gt;<i>
+</I>&gt;<i>    - Changed my consumer code (I use the term &quot;consumer&quot; loosely as
+</I>&gt;<i>    &quot;anything that eats the output of a producer&quot;) to use basic.get instead of
+</I>&gt;<i>    basic.consume. Actually, it's set up so that I can select basic.get or
+</I>&gt;<i>    basic.consume behavior at run-time. I didn't want to throw away working
+</I>&gt;<i>    basic.consume code :)
+</I>&gt;<i>    - Changed the process that creates consumers so that it now creates
+</I>&gt;<i>    one channel per consumer. Previously, there was one channel only for all
+</I>&gt;<i>    consumers. One-channel-per-consumer was the only way I could get the code to
+</I>&gt;<i>    work with the network client; in the one-channel scenario I was getting back
+</I>&gt;<i>    responses to messages destined for different consumers. I assume that with
+</I>&gt;<i>    your changes I will be able to again use one channel for all consumers.
+</I>&gt;<i>    - I tested with 50 queues (each with its own consumer and channel)
+</I>&gt;<i>    and it seemed reasonably performant, even with the get. I need to try a
+</I>&gt;<i>    full-blast test soon.
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> I have now commited fix 2 of 3 to the mtn repo which addresses the issue
+</I>&gt;<i> of not being able to subscribe concurrently. So the 2 issues you mention
+</I>&gt;<i> here should be addressed.
+</I>&gt;<i>
+</I>&gt;<i> The outstanding issue is to close the writer down properly in the network
+</I>&gt;<i> case.
+</I>&gt;<i>
+</I>&gt;<i> HTH,
+</I>&gt;<i>
+</I>&gt;<i> Ben
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: <A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20080512/bd6ca729/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20080512/bd6ca729/attachment.htm</A> 
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000826.html">[rabbitmq-discuss] Channel crashes after basic.cancel_ok.
+</A></li>
+	<LI>Next message: <A HREF="000828.html">[rabbitmq-discuss] Channel crashes after basic.cancel_ok.
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#827">[ date ]</a>
+              <a href="thread.html#827">[ thread ]</a>
+              <a href="subject.html#827">[ subject ]</a>
+              <a href="author.html#827">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

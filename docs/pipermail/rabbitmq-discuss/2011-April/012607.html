@@ -1,0 +1,210 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Message Aggregating Queue
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Message%20Aggregating%20Queue&In-Reply-To=%3CBANLkTimKVxr6m5ipg-i%3D5uSboB61hWXnqw%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="012604.html">
+   <LINK REL="Next"  HREF="012595.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Message Aggregating Queue</H1>
+    <B>Alexis Richardson</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Message%20Aggregating%20Queue&In-Reply-To=%3CBANLkTimKVxr6m5ipg-i%3D5uSboB61hWXnqw%40mail.gmail.com%3E"
+       TITLE="[rabbitmq-discuss] Message Aggregating Queue">alexis at rabbitmq.com
+       </A><BR>
+    <I>Thu Apr 28 15:09:32 BST 2011</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="012604.html">[rabbitmq-discuss] Message Aggregating Queue
+</A></li>
+        <LI>Next message: <A HREF="012595.html">[rabbitmq-discuss] Cluster, shovel, how to accomplish this scenario?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#12607">[ date ]</a>
+              <a href="thread.html#12607">[ thread ]</a>
+              <a href="subject.html#12607">[ subject ]</a>
+              <a href="author.html#12607">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Jason
+
+As Irmo points out you could take Tim's approach further and &quot;have the
+consumer do the filtering itself by storing all messages in a key
+value store and empty this based on a ordered queue of ids to process&quot;
+
+To that end try pumping the messages you want to cache into Redis.
+Cc'ing the author.
+
+alexis
+
+
+On Thu, Apr 28, 2011 at 2:29 PM, Jason Zaugg &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">jzaugg at gmail.com</A>&gt; wrote:
+&gt;<i> On Thu, Apr 28, 2011 at 3:01 PM, Alexis Richardson &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">alexis at rabbitmq.com</A>&gt; wrote:
+</I>&gt;&gt;<i> On Thu, Apr 28, 2011 at 1:54 PM, Jason Zaugg &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">jzaugg at gmail.com</A>&gt; wrote:
+</I>&gt;&gt;&gt;<i> Another requirement I should make explicit: we have a single consumer
+</I>&gt;&gt;&gt;<i> reading the stream of price updates for all stocks; and it should
+</I>&gt;&gt;&gt;<i> process them the order. That is, we don't want to 'UBS' to move to the
+</I>&gt;&gt;&gt;<i> back of the queue if it updates before the previous message is
+</I>&gt;&gt;&gt;<i> processed. So a data structure like as LinkedHashMap would be needed
+</I>&gt;&gt;&gt;<i> for the custom queue proposed by Alvaro.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> I'm confused. &#160;Would this stream contain exactly one price per ticker
+</I>&gt;&gt;<i> symbol? &#160;If so then why does it have to be a stream and not a set? &#160;If
+</I>&gt;&gt;<i> it must be a stream with multiple values per ticker, then just use
+</I>&gt;&gt;<i> direct exchanges and one queue for the full stream.
+</I>&gt;<i>
+</I>&gt;<i> We have one stream of market data updates being fed to a consumer (or
+</I>&gt;<i> a pool of consumers) that need to keep up with the updates. But we
+</I>&gt;<i> know something about these messages: a newer update for a stock
+</I>&gt;<i> obsoletes any unprocessed updates for the same stock. We can provide
+</I>&gt;<i> the unique ID as a routing key/header/... . We want to exploit this
+</I>&gt;<i> fact to ensure that the memory usage of the broker is bounded by the
+</I>&gt;<i> number of stocks rather than the number of unprocessed ticket; to
+</I>&gt;<i> avoid unnecessary work in the Consumer; and to improve latency.
+</I>&gt;<i>
+</I>&gt;<i> I don't want to make too many assumptions about what configuration of
+</I>&gt;<i> exchange(s) and queue(s) is required (largely because my knowledge of
+</I>&gt;<i> Rabbit is a little bit thin).
+</I>&gt;<i>
+</I>&gt;<i> Here's how I'd do this in code (uncompiled and ignoring thread safety)
+</I>&gt;<i>
+</I>&gt;<i> case class Ticker(name: String)
+</I>&gt;<i> case class PriceUpdate(ticker: Ticker, price: Double)
+</I>&gt;<i> class Ref[T](var value: T)
+</I>&gt;<i> val queue = new mutable.LinkedHashMap[Ticker, Ref[Message]]
+</I>&gt;<i>
+</I>&gt;<i> def enqueue(update: PriceUpdate) {
+</I>&gt;<i> &#160;queue.get(update.ticker) match {
+</I>&gt;<i> &#160; &#160;case Some(ref) =&gt; ref.value = update
+</I>&gt;<i> &#160; &#160;case None =&gt; queue += (update.ticker, new Ref(update)
+</I>&gt;<i> }
+</I>&gt;<i>
+</I>&gt;<i> def dequeue: Option[PriceUpdate] = {
+</I>&gt;<i> &#160;queue.reverseIterator.headOption {
+</I>&gt;<i> &#160; &#160; &#160;case Some((ticker, ref)) =&gt;
+</I>&gt;<i> &#160; &#160; &#160; &#160; queue.remove(ticker)
+</I>&gt;<i> &#160; &#160; &#160; &#160; Some(ref.value)
+</I>&gt;<i> &#160; &#160; &#160;case None =&gt;
+</I>&gt;<i> &#160; &#160; &#160; &#160; None
+</I>&gt;<i> &#160;}
+</I>&gt;<i>
+</I>&gt;<i> enqueue(PriceUpdate(Ticker(&quot;UBS&quot;), 12.30)
+</I>&gt;<i> enqueue(PriceUpdate(Ticker(&quot;ABB&quot;), 22.30))
+</I>&gt;<i> enqueue(PriceUpdate(Ticker(&quot;UBS&quot;), 12.28))
+</I>&gt;<i> assert(dequeue == Some(PriceUpdate(Ticker(&quot;UBS&quot;), 12.28))
+</I>&gt;<i> assert(dequeue == Some(PriceUpdate(Ticker(&quot;ABB&quot;), 12.38))
+</I>&gt;<i> assert(dequeue == None)
+</I>&gt;<i>
+</I>&gt;&gt;<i> Are you sure you wouldn't be better off using a cache?
+</I>&gt;<i>
+</I>&gt;<i> Could you elaborate on this option?
+</I>&gt;<i>
+</I>&gt;<i> Thanks for all your advice so far,
+</I>&gt;<i>
+</I>&gt;<i> -jason
+</I>&gt;<i>
+</I></PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="012604.html">[rabbitmq-discuss] Message Aggregating Queue
+</A></li>
+	<LI>Next message: <A HREF="012595.html">[rabbitmq-discuss] Cluster, shovel, how to accomplish this scenario?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#12607">[ date ]</a>
+              <a href="thread.html#12607">[ thread ]</a>
+              <a href="subject.html#12607">[ subject ]</a>
+              <a href="author.html#12607">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

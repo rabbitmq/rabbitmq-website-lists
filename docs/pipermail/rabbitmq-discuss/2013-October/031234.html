@@ -1,0 +1,177 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] AlreadyClosedException always sets hardError and initiatedByApplication to true
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20AlreadyClosedException%20always%20sets%20hardError%0A%20and%20initiatedByApplication%20to%20true&In-Reply-To=%3CCA%2Bes_-yf4_zQtTKTmuqbrUnWtKbLX9kXPxDGYRSYAg3OL6uT3Q%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="031232.html">
+   <LINK REL="Next"  HREF="031268.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] AlreadyClosedException always sets hardError and initiatedByApplication to true</H1>
+    <B>Jonathan Halterman</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20AlreadyClosedException%20always%20sets%20hardError%0A%20and%20initiatedByApplication%20to%20true&In-Reply-To=%3CCA%2Bes_-yf4_zQtTKTmuqbrUnWtKbLX9kXPxDGYRSYAg3OL6uT3Q%40mail.gmail.com%3E"
+       TITLE="[rabbitmq-discuss] AlreadyClosedException always sets hardError and initiatedByApplication to true">jhalterman at gmail.com
+       </A><BR>
+    <I>Tue Oct 22 17:07:59 BST 2013</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="031232.html">[rabbitmq-discuss] AlreadyClosedException always sets hardError	and initiatedByApplication to true
+</A></li>
+        <LI>Next message: <A HREF="031268.html">[rabbitmq-discuss] AlreadyClosedException always sets hardError	and initiatedByApplication to true
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#31234">[ date ]</a>
+              <a href="thread.html#31234">[ thread ]</a>
+              <a href="subject.html#31234">[ subject ]</a>
+              <a href="author.html#31234">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Comments below:
+
+
+On Tue, Oct 22, 2013 at 7:46 AM, Steve Powell &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">steve at rabbitmq.com</A>&gt; wrote:
+
+&gt;<i> On 22 Oct 2013, at 11:42, Steve Powell &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">steve at rabbitmq.com</A>&gt; wrote:
+</I>&gt;<i>
+</I>&gt;<i> Issuing a 'real work' call after closing the channel, like
+</I>&gt;<i> channel.basicConsume(), throws an AlreadyClosedException, claiming that
+</I>&gt;<i> the connection is closed, but conn.isOpen() still returns true.
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> Well, it appears that the AlreadyClosedException produces the &quot;clean
+</I>&gt;<i> connection shutdown&quot; string when it is a hard error (which is correct). It
+</I>&gt;<i> is called by the (internal) 'channel.ensureIsOpen()' method (typically,
+</I>&gt;<i> if we are about to communicate across the channel).  But the reference in
+</I>&gt;<i> the exception is then to a Channel,
+</I>&gt;<i>
+</I>
+This is the workaround I've been using to determine if a Channel was closed
+versus a Connection - by looking at what type the reference is.
+
+
+&gt;<i> and although the exception implies that the connection has been closed, it
+</I>&gt;<i> hasn't.  This appears to contradict the hard error flag: which is supposed
+</I>&gt;<i> to mean the *connection* is closed.
+</I>&gt;<i>
+</I>&gt;<i> I guess this means that the bug is *the connection isn't closed by the
+</I>&gt;<i> application initiated call to a closed channel.*
+</I>&gt;<i>
+</I>&gt;<i> You could argue this particular channel error doesn't violate the
+</I>&gt;<i> protocol, so there is no reason to suppose that the connection would (or
+</I>&gt;<i> should) be closed, so it shouldn't be a hard error.  [The code comments
+</I>&gt;<i> imply that hardError==true implies that getReference() returns a
+</I>&gt;<i> Connection object, which is actually *not* true anyway.]
+</I>&gt;<i>
+</I>&gt;<i> As this thread stated right at the beginning (see subject), there is no
+</I>&gt;<i> provision in the code for issuing an AlreadyClosedException without it
+</I>&gt;<i> being a hard error.  If we could do this, the meaning of hardError would be
+</I>&gt;<i> preserved.
+</I>&gt;<i>
+</I>&gt;<i> As in the case of referring to a consumer that the client has no record
+</I>&gt;<i> of, the client code can often determine if the channel is already closed,
+</I>&gt;<i> and *not* risk any protocol violations before throwing the exception.  In
+</I>&gt;<i> these cases, it ought not to be a hard error: the connection can remain
+</I>&gt;<i> unaffected.
+</I>&gt;<i>
+</I>
+That would be ideal, if an AlreadyClosedException due to an invocation
+against a closed Channel did not result in a Connection closure. The reason
+is (as we've been discussing in a separate thread: Channel.basicPublish to
+a non-existent exchange...) sometimes the client receives an
+AlreadyClosedException *before* they are ever notified that the Channel was
+closed. This happens if you're doing rapid basicPublish calls to a
+non-existent exchange. Eventually basicPublish fails with an
+AlreadyClosedException, but this often occurs before the Channel's
+ShutdownListener is called. So the client has no fair way of avoiding the
+AlreadyClosedException.
+
+So from my perspective, there are a few things I'd prefer to see out of all
+this:
+
+- That AlreadyClosedExceptions be allowed to represent channels that were
+already closed (as seems to be the case with the reference being set to a
+Channel).
+- That an invocation against a Channel that has already been closed does
+not result in the Connection being closed (as seems to be the case).
+- That AlreadyClosedExceptions include the Method that originally cased the
+closure as the shutdown reason (if any), such as 404. This would allow me
+to determine why a basicPublish fails.
+
+Cheers,
+Jonathan
+
+
+&gt;<i>
+</I>&gt;<i>   Steve Powell  [*Cell*: +44-7815-838-558] [RabbitMQ&lt;<A HREF="http://www.rabbitmq.com/">http://www.rabbitmq.com/</A>&gt;
+</I>&gt;<i> ,* *Pivotal &lt;<A HREF="http://gopivotal.com/">http://gopivotal.com/</A>&gt;]
+</I>&gt;<i> *&#8220;L&#8217;enfer, c&#8217;est les autres.&#8221; *Sartre
+</I>&gt;<i>
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20131022/c71cf200/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20131022/c71cf200/attachment.htm</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="031232.html">[rabbitmq-discuss] AlreadyClosedException always sets hardError	and initiatedByApplication to true
+</A></li>
+	<LI>Next message: <A HREF="031268.html">[rabbitmq-discuss] AlreadyClosedException always sets hardError	and initiatedByApplication to true
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#31234">[ date ]</a>
+              <a href="thread.html#31234">[ thread ]</a>
+              <a href="subject.html#31234">[ subject ]</a>
+              <a href="author.html#31234">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

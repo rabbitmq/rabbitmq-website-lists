@@ -1,0 +1,123 @@
+# HG changeset patch
+# User "Scott Brooks <scott.brooks@epicadvertising.com>"
+# Date 1249394932 14400
+# Branch epic
+# Node ID ebe03a5bf60d73adb8af58f130c06aa6272b7d4e
+# Parent  d522704ccd77296559fd5b9e233c8f86547f7938
+Upgrade lib_amqp to take options when defining queues and exchanges.
+
+Allows you to override values in a record.
+
+diff -r d522704ccd77 -r ebe03a5bf60d src/amqp_util.erl
+--- a/src/amqp_util.erl	Fri Jul 24 11:39:39 2009 +0100
++++ b/src/amqp_util.erl	Tue Aug 04 10:08:52 2009 -0400
+@@ -30,13 +30,47 @@
+ 
+ -export([message_payload/1]).
+ -export([binary/1]).
+--export([basic_properties/0, protocol_header/0]).
++-export([basic_properties/0, durable_properties/0, protocol_header/0]).
++-export([set_options/2]).
++
++durable_properties() ->
++    #'P_basic'{content_type = <<"application/octet-stream">>,
++               delivery_mode = 2,
++               priority = 0}.
+ 
+ basic_properties() ->
+     #'P_basic'{content_type = <<"application/octet-stream">>,
+                delivery_mode = 1,
+                priority = 0}.
+ 
++set_options(Record, Options) when is_record(Record, 'exchange.declare') ->
++    Fields = record_info(fields, 'exchange.declare'),
++    Defaults = tuple_to_list(Record),
++
++    BuildRecord = fun(Name, Index) ->
++        Out = case lists:keysearch(Name, 1, Options) of
++            {value, Tuple} -> {_,Value} = Tuple, Value;
++            false -> lists:nth(Index+1, Defaults)
++        end,
++        {Out, Index+1}
++    end,
++    {Out,_} = lists:mapfoldl(BuildRecord, 1, Fields),
++    list_to_tuple(lists:append([['exchange.declare'], Out]));
++
++set_options(Record, Options) when is_record(Record, 'queue.declare') ->
++    Fields = record_info(fields, 'queue.declare'),
++    Defaults = tuple_to_list(Record),
++
++    BuildRecord = fun(Name, Index) ->
++        Out = case lists:keysearch(Name, 1, Options) of
++            {value, Tuple} -> {_,Value} = Tuple, Value;
++            false -> lists:nth(Index+1, Defaults)
++        end,
++        {Out, Index+1}
++    end,
++    {Out,_} = lists:mapfoldl(BuildRecord, 1, Fields),
++    list_to_tuple(lists:append([['queue.declare'], Out])).
++
+ protocol_header() ->
+     <<"AMQP", 1, 1, ?PROTOCOL_VERSION_MAJOR, ?PROTOCOL_VERSION_MINOR>>.
+ 
+diff -r d522704ccd77 -r ebe03a5bf60d src/lib_amqp.erl
+--- a/src/lib_amqp.erl	Fri Jul 24 11:39:39 2009 +0100
++++ b/src/lib_amqp.erl	Tue Aug 04 10:08:52 2009 -0400
+@@ -40,15 +40,29 @@
+ start_connection(Host, Port) ->
+     amqp_connection:start_network("guest", "guest", Host, Port).
+ 
++start_connection_link(Host, Port) ->
++    amqp_connection:start_network_link("guest", "guest", Host, Port).
++
++start_connection_link(Host, Port, Username, Password) ->
++    amqp_connection:start_network_link(Username, Password, Host, Port).
++
++start_connection_link(Host, Port, Username, Password, Vhost) ->
++    BinVhost = list_to_binary(Vhost),
++    amqp_connection:start_network_link(Username, Password, Host, Port, BinVhost).
++
+ start_channel(Connection) ->
+     amqp_connection:open_channel(Connection).
+ 
+ declare_exchange(Channel, X) ->
+     declare_exchange(Channel, X, <<"direct">>).
+ 
+-declare_exchange(Channel, X, Type) ->
++declare_exchange(Channel, X, Type) when is_binary(Type) ->
+     ExchangeDeclare = #'exchange.declare'{exchange = X,
+                                           type = Type},
++    amqp_channel:call(Channel, ExchangeDeclare);
++
++declare_exchange(Channel, X, Options) when is_list(Options) ->
++    ExchangeDeclare = amqp_util:set_options(#'exchange.declare'{exchange=X}, Options),
+     amqp_channel:call(Channel, ExchangeDeclare).
+ 
+ delete_exchange(Channel, X) ->
+@@ -177,6 +191,10 @@
+     QueueDeclare = #'queue.declare'{queue = Q},
+     declare_queue(Channel, QueueDeclare).
+ 
++declare_queue(Channel, Q, Options) when is_list(Options) ->
++    QueueDeclare = amqp_util:set_options(#'queue.declare'{queue=Q}, Options),
++    declare_queue(Channel, QueueDeclare).
++
+ %% Creates a queue that is exclusive and auto-delete
+ declare_private_queue(Channel) ->
+     declare_queue(Channel, #'queue.declare'{exclusive = true,
+diff -r d522704ccd77 -r ebe03a5bf60d test/test_util.erl
+--- a/test/test_util.erl	Fri Jul 24 11:39:39 2009 +0100
++++ b/test/test_util.erl	Tue Aug 04 10:08:52 2009 -0400
+@@ -482,3 +482,12 @@
+     {A, B, C} = now(),
+     <<A:32, B:32, C:32>>.
+ 
++set_options_test() ->
++	DefaultExchange = #'exchange.declare'{},
++	ExpandedExchange = amqp_util:set_options(DefaultExchange, []),
++	?assertEqual(DefaultExchange, ExpandedExchange),
++
++	SomeOptionsSet = #'exchange.declare'{ticket=4, exchange= <<"something">>, type = <<"fanout">>, durable=true},
++	ExpandedOptions = amqp_util:set_options(DefaultExchange, [{ticket,4}, {exchange, <<"something">>}, {type, <<"fanout">>}, {durable,true}]),
++	?assertEqual(SomeOptionsSet, ExpandedOptions).
++

@@ -1,0 +1,210 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Newbie - using rabbitmq-c
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Newbie%20-%20using%20rabbitmq-c&In-Reply-To=%3CCAAt2poJte%2BB0jZCz7WPsiFxPvAWTnhfku2jR8koMnw-HviUQEg%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="020526.html">
+   <LINK REL="Next"  HREF="020528.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Newbie - using rabbitmq-c</H1>
+    <B>Alan Antonuk</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Newbie%20-%20using%20rabbitmq-c&In-Reply-To=%3CCAAt2poJte%2BB0jZCz7WPsiFxPvAWTnhfku2jR8koMnw-HviUQEg%40mail.gmail.com%3E"
+       TITLE="[rabbitmq-discuss] Newbie - using rabbitmq-c">alan.antonuk at gmail.com
+       </A><BR>
+    <I>Fri Jun  8 15:52:19 BST 2012</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="020526.html">[rabbitmq-discuss] Newbie - using rabbitmq-c
+</A></li>
+        <LI>Next message: <A HREF="020528.html">[rabbitmq-discuss] opportunity to help out with openstack
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#20527">[ date ]</a>
+              <a href="thread.html#20527">[ thread ]</a>
+              <a href="subject.html#20527">[ subject ]</a>
+              <a href="author.html#20527">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Unfortunately the API for rabbitmq-c is rather low-level when it comes to
+reading messages from the broker, so when using amqp_basic_get() or
+amqp_basic_consume(), you will have to deal with reading individual frames
+to read the header and message body.
+
+Off the top of my head here's what you'd need to read a message off the
+wire using amqp_basic_get() (Note: this is off the top of my head, and
+doesn't deal with error handling well (just returns).  This is also using
+basic.get - which is a synchronous method of getting messages. For anything
+non-trivial, you probably want use amqp_basic_consume.
+
+  amqp_rpc_reply_t reply =
+    amqp_basic_get(
+      connection,
+      1, /* channel id */
+      amqp_cstring_bytes(&quot;queue name&quot;),
+      0); /* no_ack, the message will automatically be acked as its
+delievered */
+
+  if (reply.reply_type != AMQP_RESPONSE_NORMAL)
+    return; /* bad reponse from broker */
+
+  if (reply.reply.id == AMQP_BASIC_GET_EMPTY_METHOD)
+    return; /* no messages in the queue to get */
+
+  /* Read the header (1 frame) and the body (1 + x frames) */
+
+  size_t body_remaining;
+  amqp_frame_t frame;
+
+  int res = amqp_simple_wait_frame(connection, &amp;frame);
+  if (res != 0)
+    return; /* failure waiting for frame */
+  if (frame.frame_type != AMQP_FRAME_HEADER)
+    return; /* expecting AMQP_FRAME_HEADER type of frame */
+
+  /* This memory is valid until you call amqp_maybe_release_buffers() */
+  amqp_basic_properties_t *props =
+    (amqp_basic_properties_t*)frame.payload.properties.decoded;
+  body_remaining = frame.payload.properties.body_size;
+
+  char* body = malloc(body_remaining);
+  char* current_body_ptr = body;
+
+  while (body_remaining)
+  {
+    res = amqp_simple_wait_frame(connection, &amp;frame);
+    if (res != 0)
+      return; /* failure waiting for frame */
+    if (frame.frame_type != AMQP_FRAME_BODY)
+      return; /* expecting AMQP_BODY_HEADER */
+    memcpy(current_body_ptr, frame.payload.body_fragment.bytes,
+frame.payload.body_fragment.len);
+
+    current_body_ptr += frame.payload.body_fragment.len;
+    body_remaining -= frame.payload.body_fragment.len;
+  }
+
+
+HTH
+-Alan
+
+On Fri, Jun 8, 2012 at 9:19 AM, Mike Aubury &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">mike at aubit.com</A>&gt; wrote:
+
+&gt;<i> Hi, sorry for such a simple question...
+</I>&gt;<i> I had written some interface code in C using openAMQ - but I've now
+</I>&gt;<i> realised that looks like its been canned - so I'm looking at porting to
+</I>&gt;<i> something else...
+</I>&gt;<i>
+</I>&gt;<i> I can get my head around putting stuff into the exchanges/queues etc* *(amq_basic_publish)
+</I>&gt;<i> from this code :
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>   char *messagebody=&quot;Hello World&quot;;
+</I>&gt;<i>   ...
+</I>&gt;<i>     amqp_basic_properties_t props;
+</I>&gt;<i>     props._flags = AMQP_BASIC_CONTENT_TYPE_FLAG |
+</I>&gt;<i> AMQP_BASIC_DELIVERY_MODE_FLAG;
+</I>&gt;<i>     props.content_type = amqp_cstring_bytes(&quot;text/plain&quot;);
+</I>&gt;<i>     props.delivery_mode = 2; /* persistent delivery mode */
+</I>&gt;<i>     die_on_error(amqp_basic_publish(conn,
+</I>&gt;<i>                                     1,
+</I>&gt;<i>                                     amqp_cstring_bytes(exchange),
+</I>&gt;<i>                                     amqp_cstring_bytes(routingkey),
+</I>&gt;<i>                                     0,
+</I>&gt;<i>                                     0,
+</I>&gt;<i>                                     &amp;props,
+</I>&gt;<i>                                     amqp_cstring_bytes(messagebody)),
+</I>&gt;<i>                  &quot;Publishing&quot;);
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> but pulling data off is escaping me atm..
+</I>&gt;<i>
+</I>&gt;<i> Whats the **simplest way** of getting that data, as a full string I can
+</I>&gt;<i> then process ?
+</I>&gt;<i> (All the examples seem to do strange things with frames/frame headers etc)
+</I>&gt;<i> ..
+</I>&gt;<i>
+</I>&gt;<i> Ideally - I want to replace my existing :
+</I>&gt;<i>
+</I>&gt;<i> #define BUFFSIZE 10000
+</I>&gt;<i>  char message_text[BUFFSIZE];
+</I>&gt;<i>
+</I>&gt;<i>  content = amq_client_session_basic_arrived (session);
+</I>&gt;<i>  message_size = amq_content_basic_get_body (content,
+</I>&gt;<i>                                              (byte *)
+</I>&gt;<i>                                              message_text,
+</I>&gt;<i>                                              sizeof (message_text));
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> and - so far I've only got as far as :
+</I>&gt;<i>
+</I>&gt;<i>    #define BUFFSIZE 10000
+</I>&gt;<i>    char message_text[BUFFSIZE];
+</I>&gt;<i>
+</I>&gt;<i>    amqp_simple_wait_frame(conn, &amp;frame);
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> ;)
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> Any help, or pointers to some documentation would be much appreciated !
+</I>&gt;<i>
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20120608/8df79418/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20120608/8df79418/attachment.htm</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="020526.html">[rabbitmq-discuss] Newbie - using rabbitmq-c
+</A></li>
+	<LI>Next message: <A HREF="020528.html">[rabbitmq-discuss] opportunity to help out with openstack
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#20527">[ date ]</a>
+              <a href="thread.html#20527">[ thread ]</a>
+              <a href="subject.html#20527">[ subject ]</a>
+              <a href="author.html#20527">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

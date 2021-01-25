@@ -1,0 +1,135 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Fw: high availability solutions?
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Fw%3A%20high%20availability%20solutions%3F&In-Reply-To=%3C20110617084501.GA2532%40rabbitmq.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="013309.html">
+   <LINK REL="Next"  HREF="013313.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Fw: high availability solutions?</H1>
+    <B>Matthew Sackman</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Fw%3A%20high%20availability%20solutions%3F&In-Reply-To=%3C20110617084501.GA2532%40rabbitmq.com%3E"
+       TITLE="[rabbitmq-discuss] Fw: high availability solutions?">matthew at rabbitmq.com
+       </A><BR>
+    <I>Fri Jun 17 09:45:02 BST 2011</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="013309.html">[rabbitmq-discuss] Fw: high availability solutions?
+</A></li>
+        <LI>Next message: <A HREF="013313.html">[rabbitmq-discuss] Fw: high availability solutions?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#13311">[ date ]</a>
+              <a href="thread.html#13311">[ thread ]</a>
+              <a href="subject.html#13311">[ subject ]</a>
+              <a href="author.html#13311">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi Jason,
+
+On Thu, Jun 16, 2011 at 12:24:27PM -0600, Jason J. W. Williams wrote:
+&gt;<i> * The fact that messages in a transactions published to a mirrored
+</I>&gt;<i> queue are silently dropped is inevitably setting up a customer to lose
+</I>&gt;<i> messages when they forget about that property. Why not error out the
+</I>&gt;<i> transaction so the problem is actively in their face, or at least give
+</I>&gt;<i> it a best effort?
+</I>
+I wouldn't worry - we'll likely be dropping support for transactions
+completely soon so any attempt to use tx.* will result in at least a
+channel error.
+
+&gt;<i> * If publishes are parallel to the master queue and it's slaves, how
+</I>&gt;<i> are consumes and other actions that are slaved serially off the master
+</I>&gt;<i> able to keep the slaves in sync since you're mixing parallel ops with
+</I>&gt;<i> serial ones?
+</I>
+Consumers are never aware of the slaves. They talk only to the master,
+using Erlang's normal inter-node messaging.
+
+Whilst publishes go in parallel to all mirrors, there are race
+conditions there, thus the master informs the slaves of what order the
+publishes should be accepted in. The _only_ reason that publishes go to
+slaves as well as the master from publishing channels is so that in the
+event of the death of the master, there is no window in which msgs can
+be lost.
+
+&gt;<i> * If consumers are going to be considered disconnected, why aren't
+</I>&gt;<i> they actually disconnected so they can use their assumptions about
+</I>&gt;<i> lost connections to assume acknowledgements in flight were lost etc
+</I>&gt;<i> (and re-use app logic they already have)?
+</I>
+It's far better to use the consumer cancel notification that we added -
+much lighter-weight. If we closed the channel, then there would be other
+consequences - for example, that channel could be consuming from dozens
+of queues. By closing it, all outstanding non-acked msgs from all those
+other queues would now have to be needlessly requeued.
+
+&gt;<i> * The lack of synchronization for new Q slaves is a bummer,
+</I>&gt;<i> particularly in the case where a rejoining slave tosses it's durable
+</I>&gt;<i> messages regardless of whether those message have actually been
+</I>&gt;<i> consumed. It seems like there should be a history log shared across
+</I>&gt;<i> the masters and slaves so a rejoining slave can sync up off the master
+</I>&gt;<i> and reconcile it's durable contents.
+</I>
+That'll be fixed eventually.
+
+&gt;<i> * Why do mirror slaves have to be specified by node name, rather than
+</I>&gt;<i> just passing a &quot;numCopies=X&quot; to the queue on creation and letting the
+</I>&gt;<i> cluster handle the distribution? It seems to be shifting complexity to
+</I>&gt;<i> the client that should be in the cluster which has the best knowledge
+</I>&gt;<i> of how many members exist and other internals.
+</I>
+We all agree that leaking details of the cluster to the clients is very
+likely not what's wanted in most cases, especially node names. However,
+the numCopies is far too inflexible. There are a number of suggestions
+in this area and they will be implemented in the future. However, there
+are genuine reasons why a client may want to control precisely which
+nodes get mirrors on them, or rather, why Rabbit may not be best placed
+to decide which nodes.
+
+Yes, Rabbit could start doing load monitoring and all that jazz, but for
+example, one thing it's not aware of is whether it's in a virtualised
+environment. It seems to me quite reasonable to want to ensure that your
+mirrors will not end up on nodes that are actually on the same physical
+machine, albeit different guests - if they do, then you're hardly
+protecting your queues from spectacular hardware failure.
+
+So yes, none of us like the specification of node names. However, I'm
+keen to ensure any replacement offers, does not preclude the same level
+of flexibility. Yes - all sorts of better layers of indirection and
+abstraction would make this more pleasant. But ultimately, I do want to
+ensure we don't lose this ability.
+
+FWIW, discussion about mirror specification is why this work did not
+make it into 2.5.0.
+
+Matthew
+</PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="013309.html">[rabbitmq-discuss] Fw: high availability solutions?
+</A></li>
+	<LI>Next message: <A HREF="013313.html">[rabbitmq-discuss] Fw: high availability solutions?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#13311">[ date ]</a>
+              <a href="thread.html#13311">[ thread ]</a>
+              <a href="subject.html#13311">[ subject ]</a>
+              <a href="author.html#13311">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

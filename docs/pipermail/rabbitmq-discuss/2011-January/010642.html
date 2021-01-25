@@ -1,0 +1,171 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Strange RabbitMQ management plugin error!
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Strange%20RabbitMQ%20management%20plugin%20error%21&In-Reply-To=%3CAANLkTimCOJvetLnLD6kdFyTttcSFnpu2TzRm0dZady41%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="010640.html">
+   <LINK REL="Next"  HREF="010614.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Strange RabbitMQ management plugin error!</H1>
+    <B>Ciprian Dorin Craciun</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Strange%20RabbitMQ%20management%20plugin%20error%21&In-Reply-To=%3CAANLkTimCOJvetLnLD6kdFyTttcSFnpu2TzRm0dZady41%40mail.gmail.com%3E"
+       TITLE="[rabbitmq-discuss] Strange RabbitMQ management plugin error!">ciprian.craciun at gmail.com
+       </A><BR>
+    <I>Wed Jan 12 17:21:43 GMT 2011</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="010640.html">[rabbitmq-discuss] Strange RabbitMQ management plugin error!
+</A></li>
+        <LI>Next message: <A HREF="010614.html">[rabbitmq-discuss] Implementing a &quot;processing&quot; queue with message	expiry
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#10642">[ date ]</a>
+              <a href="thread.html#10642">[ thread ]</a>
+              <a href="subject.html#10642">[ subject ]</a>
+              <a href="author.html#10642">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>On Wed, Jan 12, 2011 at 17:21, Simon MacMullen &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">simon at rabbitmq.com</A>&gt; wrote:
+&gt;<i> On 11/01/11 18:48, Ciprian Dorin Craciun wrote:
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> &#160; &#160; I don't see any errors displayed from the management plugin. It
+</I>&gt;&gt;<i> just says that it started the web server, serving the usual URL.
+</I>&gt;&gt;<i> &#160; &#160; I've also tried to set both the `force_fine_statistics` and
+</I>&gt;&gt;<i> `collect_statistics` but they don't seem to have any effect.
+</I>&gt;<i>
+</I>&gt;<i> I had a play with your run_rabbit script and I found the problem.
+</I>
+    Thank you for your time and effort!
+
+
+&gt;<i> RabbitMQ has the concept of a boot step - part of the startup process of the
+</I>&gt;<i> rabbit application. These are the things like
+</I>&gt;<i>
+</I>&gt;<i> &quot;starting xyz &#160; &#160; &#160; &#160; &#160; &#160; &#160; &#160; &#160; &#160; &#160; &#160; &#160; &#160; &#160; &#160; &#160; &#160; &#160; &#160; &#160;...done&quot;
+</I>&gt;<i>
+</I>&gt;<i> that appear on stdout during startup.
+</I>
+    I've seen these boot steps -- both in `rabbit.erl` and in
+`rabbit.script`, and I've tried to mirror them (this is how I've got
+the `application:run(...)` order), but -- as I'm not that accustomed
+with the OTP environment -- I thought that I don't need to explicitly
+load the application before starting any of them... So it seems that
+this was a very bad assumption. :)
+
+
+&gt;<i> Some plugins, including rabbit_management_agent need to insert boot steps
+</I>&gt;<i> into the rabbit app (as well as being their own apps).
+</I>&gt;<i> rabbit_management_agent does this in order to collect the statistics it's
+</I>&gt;<i> asked for.
+</I>&gt;<i>
+</I>&gt;<i> The way this works is that when rabbit starts up it looks for boot steps in
+</I>&gt;<i> all *loaded* applications. Our boot script loads all applications, then
+</I>&gt;<i> starts them. So you need to as well:
+</I>
+    Aha. Got it now.
+
+
+&gt;<i> ~~~~
+</I>&gt;<i> -module (run_rabbit).
+</I>&gt;<i>
+</I>&gt;<i> -export ([run/0]).
+</I>&gt;<i>
+</I>&gt;<i> run () -&gt;
+</I>&gt;<i> &#160; &#160;Apps1 = [sasl, os_mon, mnesia, inets, crypto, mochiweb,
+</I>&gt;<i> &#160; &#160; &#160; &#160; &#160; &#160; rabbit_mochiweb],
+</I>&gt;<i> &#160; &#160;Apps2 = [rabbit, amqp_client, rabbit_management_agent, webmachine,
+</I>&gt;<i> &#160; &#160; &#160; &#160; &#160; &#160; rabbit_management],
+</I>&gt;<i>
+</I>&gt;<i> &#160; &#160;[ok = application:load(A) || A &lt;- Apps1 ++ Apps2],
+</I>&gt;<i>
+</I>&gt;<i> &#160; &#160;[ok = application:start(A, permanent) || A &lt;- Apps1],
+</I>&gt;<i> &#160; &#160;ok = rabbit:prepare(),
+</I>&gt;<i> &#160; &#160;[ok = application:start(A, permanent) || A &lt;- Apps2],
+</I>&gt;<i>
+</I>&gt;<i> &#160; &#160;ok = timer:sleep(120 * 1000),
+</I>&gt;<i> &#160; &#160;ok = init:stop(),
+</I>&gt;<i> &#160; &#160;ok.
+</I>&gt;<i> ~~~~
+</I>
+    Works perfectly. :)
+
+
+&gt;&gt;&gt;<i> Also, why have you done this? What problem is it solving?
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i> Cheers, Simon
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> &#160; &#160; Good question. :) We'll I'm trying to &quot;embed&quot; RabbitMQ into
+</I>&gt;&gt;<i> another Erlang application -- a web server that instead of handling
+</I>&gt;&gt;<i> the requests it just puts them on a queue, and waits for the response
+</I>&gt;&gt;<i> (the same pattern as in the rpc module is doing). I intend to use
+</I>&gt;&gt;<i> `amqp_client` in with the `direct` connector. I've seen that there is
+</I>&gt;&gt;<i> a similar project but for SMTP -- `rabbitmq-smtp`.
+</I>&gt;<i>
+</I>&gt;<i> I think rabbitmq-smtp is just a regular plugin. You might want to consider
+</I>&gt;<i> doing the same thing - turning things inside out so that your web server is
+</I>&gt;<i> running as a RabbitMQ plugin. This is more or less exactly what the
+</I>&gt;<i> management plugin does.
+</I>
+    Yes, I've though about this possibility of writing an RabbitMQ
+plugin. In fact from my development point of view not much should
+change, except maybe only the way I bootstrap the whole application.
+
+    But when I decided to &quot;embed&quot; RabbitMQ into my web server (which
+is actually one of either Misultin, Mochiweb or inets, I've not
+decided yet), I planed that in the end, the web server shall use a
+dedicated RabbitMQ instance, but for testing and quick deployment
+purposes, I've decided to also (optionally) provide an embed RabbitMQ
+instance.
+
+
+&gt;<i> Or you can continue on your current path, but the extent to which we don't
+</I>&gt;<i> support running RabbitMQ this way is quite high :)
+</I>&gt;<i>
+</I>&gt;<i> Cheers, Simon
+</I>
+    I'm perfectly aware that the way I'm doing things right now,
+incurs the risk of not being able to one day upgrade to a later
+RabbitMQ which breaks this startup style. But embedding RabbitMQ is
+too tenting right now. :)
+
+    So once again thank you for taking time to help me!
+
+    Ciprian.
+
+
+    P.S.: I promise I'll return the favor by releasing the code of the
+HTTP gateway -- maybe also as a RabbitMQ plugin. (It's part of an
+European funded research project ( www.mosaic-cloud.eu ), and RabbitMQ
+has a central role in the whole thing. :) )
+</PRE>
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="010640.html">[rabbitmq-discuss] Strange RabbitMQ management plugin error!
+</A></li>
+	<LI>Next message: <A HREF="010614.html">[rabbitmq-discuss] Implementing a &quot;processing&quot; queue with message	expiry
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#10642">[ date ]</a>
+              <a href="thread.html#10642">[ thread ]</a>
+              <a href="subject.html#10642">[ subject ]</a>
+              <a href="author.html#10642">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

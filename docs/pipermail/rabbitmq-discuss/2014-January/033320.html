@@ -1,0 +1,187 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Behaviour of Federated Queues
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Behaviour%20of%20Federated%20Queues&In-Reply-To=%3C52E28618.8010905%40one.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="033317.html">
+   <LINK REL="Next"  HREF="033356.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Behaviour of Federated Queues</H1>
+    <B>Josh West</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Behaviour%20of%20Federated%20Queues&In-Reply-To=%3C52E28618.8010905%40one.com%3E"
+       TITLE="[rabbitmq-discuss] Behaviour of Federated Queues">jsw at one.com
+       </A><BR>
+    <I>Fri Jan 24 15:26:16 GMT 2014</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="033317.html">[rabbitmq-discuss] Behaviour of Federated Queues
+</A></li>
+        <LI>Next message: <A HREF="033356.html">[rabbitmq-discuss] Behaviour of Federated Queues
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#33320">[ date ]</a>
+              <a href="thread.html#33320">[ thread ]</a>
+              <a href="subject.html#33320">[ subject ]</a>
+              <a href="author.html#33320">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>On 01/24/2014 07:20 AM, Simon MacMullen wrote:
+&gt;<i>
+</I>&gt;&gt;<i> I have noticed that if I create a queue on broker1 with name
+</I>&gt;&gt;<i> &quot;broker1.foo.bar&quot; (for example), the queue is automatically created on
+</I>&gt;&gt;<i> broker2 and broker3.  Should this occur?  Or should federation only
+</I>&gt;&gt;<i> create the queue on upstream brokers when needed (ad-hoc)?
+</I>&gt;<i>
+</I>&gt;<i> It should occur. I'm not sure when 'needed' would be; when you publish 
+</I>&gt;<i> to it?
+</I>&gt;<i>
+</I>&gt;<i> If your aim is to make sure that you can publish anywhere and have the 
+</I>&gt;<i> publishing application determine which node the message ends up on, 
+</I>&gt;<i> you might find that exchange federation works better for you; have a 
+</I>&gt;<i> single federated exchange and bind (unfederated) queues to it with 
+</I>&gt;<i> routing keys like broker1.*.
+</I>
+Yeah, this is a good idea.  This is actually the first route I 
+attempted.  The issue I ran into was attempting RPC across federation -- 
+where the callback queue may not be propagated in time.  Using federated 
+queues solved the problem as long as the RPC callback queue begins with 
+brokerN, where brokerN is the original caller.  This way I don't need to 
+wait for the asynchronous federation.  The RPC server creates the 
+reply_to queue on their end and of course the RPC client has also 
+created that callback queue. As long as the names match up, whenever the 
+async federation takes place, the message(s) in the callback queue on 
+the RPC server side will zip on over to the callback queue on the RPC 
+client side.  Very cool stuff :-)
+
+&gt;<i>
+</I>&gt;&gt;<i> 2. When queues are created with the Auto Delete parameter, that
+</I>&gt;&gt;<i> parameter is of course properly propagated.  But say a client puts a
+</I>&gt;&gt;<i> message into the queue &quot;broker1.foo.bar&quot; on broker2 and say a client
+</I>&gt;&gt;<i> retrieves the message from that same queue on broker1.  The Auto Delete
+</I>&gt;&gt;<i> parameter behaviour would be triggered and the queue is then deleted
+</I>&gt;&gt;<i> from broker1 and broker2 (upon client disconnection). But... Since
+</I>&gt;&gt;<i> nobody has ever put any messages into the queue &quot;broker1.foo.bar&quot;
+</I>&gt;&gt;<i> residing on broker3, the queue will remain defined possibly 
+</I>&gt;&gt;<i> indefinitely.
+</I>&gt;<i>
+</I>&gt;<i> That's not how autodelete works - queues autodelete when their last 
+</I>&gt;<i> consumer goes away, regardless of whether messages have been published 
+</I>&gt;<i> to them.
+</I>&gt;<i>
+</I>&gt;<i> So I see this working correctly - when a consumer consumes from 
+</I>&gt;<i> broker1.foo.bar on broker1, that consumer gets propagated to 
+</I>&gt;<i> broker1.foo.bar on broker3. When the consumer is cancelled, cancel is 
+</I>&gt;<i> also propagated and both queues delete.
+</I>
+I would think this would be the case.  But I believe I have found a 
+situation where this is only happening properly 80% of the time.
+
+I have modified the RPC code example from the rabbitmq tutorial. The 
+modifications are such that the RPC server will also define the queue on 
+their end with queue_declare().  Additionally, the RPC client chooses an 
+explicit name for the RPC callback queue instead of an automatically 
+assigned one.  The naming format is &lt;broker&gt;.&lt;uuid&gt; (e.g. 
+broker2.3e815ef7-1322-49f1-8ca8-14118b4308df) if the RPC client is 
+making the request from broker2.  If I run the RPC client 100 times, the 
+code works all 100 times.  However keep in mind that there are 3 brokers 
+in the federation scheme here, but broker1 and broker2 are the only ones 
+communicating in this RPC example.  The &lt;broker&gt;.&lt;uuid&gt; queues are still 
+declared/propagated over to broker3.  But only 80% of the time are the 
+deletions also propagated.  Thus if I run the RPC client 100 times, with 
+broker2 making an RPC fib(n) request to a server running on broker1, the 
+RPC callback queue remains on broker3 20% of the time and is never deleted.
+
+&gt;<i>
+</I>&gt;<i> However, I think there is the opposite problem around auto-delete and 
+</I>&gt;<i> queue federation - since the federation mechanism controls message 
+</I>&gt;<i> flow by consuming and cancelling from the upstream, it could cause 
+</I>&gt;<i> federated autodelete queues to delete themselves too early.
+</I>
+Interesting.
+
+&gt;<i>
+</I>&gt;<i> I'm not sure what, if anything, can be done about that. It might be 
+</I>&gt;<i> that autodelete and queue federation just don't work well together.
+</I>&gt;<i>
+</I>
+It may be more than an issue just with auto delete.  It looks like 
+deletions themselves may not be propagated at all.  For example:
+
+
+#!/usr/bin/python
+
+import pika
+
+credentials = pika.PlainCredentials(&quot;guest&quot;, &quot;guest&quot;)
+conn_params = pika.ConnectionParameters(&quot;localhost&quot;, credentials = 
+credentials)
+connection  = pika.BlockingConnection(conn_params)
+channel     = connection.channel()
+
+for i in range(1,100):
+         queue = &quot;broker1.queue.%i&quot; % (i)
+         channel.queue_declare(queue=queue, auto_delete=True)
+         channel.queue_delete(queue=queue)
+
+channel.close()
+connection.close()
+
+
+While the queues are deleted from broker1, they still remain on broker2 
+and broker3 :-(
+
+Josh West
+One.com - <A HREF="http://www.one.com">http://www.one.com</A>
+
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="033317.html">[rabbitmq-discuss] Behaviour of Federated Queues
+</A></li>
+	<LI>Next message: <A HREF="033356.html">[rabbitmq-discuss] Behaviour of Federated Queues
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#33320">[ date ]</a>
+              <a href="thread.html#33320">[ thread ]</a>
+              <a href="subject.html#33320">[ subject ]</a>
+              <a href="author.html#33320">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

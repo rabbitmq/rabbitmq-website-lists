@@ -1,0 +1,137 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Load balancing with multiple consumers on a	single queue
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20Load%20balancing%20with%20multiple%20consumers%20on%0A%20a%09single%20queue&In-Reply-To=b307b5520807312117v2c66f62br9d8371eb1fcec808%40mail.gmail.com">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001118.html">
+   <LINK REL="Next"  HREF="001117.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Load balancing with multiple consumers on a	single queue</H1>
+    <B>Tony Garnock-Jones</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20Load%20balancing%20with%20multiple%20consumers%20on%0A%20a%09single%20queue&In-Reply-To=b307b5520807312117v2c66f62br9d8371eb1fcec808%40mail.gmail.com"
+       TITLE="[rabbitmq-discuss] Load balancing with multiple consumers on a	single queue">tonyg at lshift.net
+       </A><BR>
+    <I>Fri Aug  1 08:52:22 BST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001118.html">[rabbitmq-discuss] Load balancing with multiple consumers on a	single queue
+</A></li>
+        <LI>Next message: <A HREF="001117.html">[rabbitmq-discuss] introductory slides for RabbitMQ and AMQP
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1119">[ date ]</a>
+              <a href="thread.html#1119">[ thread ]</a>
+              <a href="subject.html#1119">[ subject ]</a>
+              <a href="author.html#1119">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi Nathan,
+
+Nathan Oorloff wrote:
+&gt;<i> the client library gets a basic_deliver 
+</I>&gt;<i> instead of the basic_cancel_ok it expected.
+</I>
+Yep: this is because until you hear the cancel-ok from the server, you 
+can't assume the server has heard the cancel request yet. The delivery 
+could have already been in flight at the time the cancel was sent by the 
+client.
+
+There are only a very few kinds of &quot;method&quot; than can appear unsolicited 
+from the server on a fully-established channel: channel.close, 
+basic.return and basic.deliver. A client library has to be prepared to 
+receive these at any time, even when it's waiting for a reply to a 
+synchronous method request it sent earlier.
+
+&gt;<i> I edited the library to not 
+</I>&gt;<i> error in this instance and to ignore messages after the cancel had been 
+</I>&gt;<i> sent
+</I>
+Better would be to deliver messages to the application until the 
+cancel-ok is received. The server does consider these to be legitimate 
+deliveries, and it is waiting (if noack wasn't enabled) for your 
+acknowledgement of them.
+
+&gt;<i> however when I start the consume again I have a client waiting for 
+</I>&gt;<i> a message to finish getting delivered it seems which never happens. 
+</I>
+I don't understand what you mean here.
+
+&gt;<i> Tonyg (on irc) said for the cancel to work properly I'd probably have to 
+</I>&gt;<i> cancel the channel/connection rather than just doing a basic_cancel. 
+</I>
+If by &quot;properly&quot;, you mean requeueing any unacknowledged deliveries on 
+the channel, so that they can be redelivered to the same or a different 
+channel, yes (another options is to use basic.recover).
+
+Cancelling a consumer does not affect any of the deliveries that were 
+sent your way during the lifetime of the consumer: in order to let the 
+server know that you don't want them, you need to reject, recover, or 
+close the channel.
+
+&gt;<i> I might give &quot;recover&quot; a test. At first glance it looks like I should 
+</I>&gt;<i> run it after I've ack'd the message I'm about to process and issued the 
+</I>&gt;<i> cancel?
+</I>
+&quot;recover&quot; is not very well defined in 0-8, because it lacks a 
+corresponding &quot;recover-ok&quot; which would tell the issuing client where the 
+boundary between deliveries pre-recover and deliveries post-recover 
+sits. To work around this problem, I would
+
+  - acknowledge any of the deliveries I've heard about that I want
+    to keep (this step can be done at any time prior to the sending of
+    the basic.recover command)
+
+  - cancel ALL consumers on the channel concerned, and wait for the
+    corresponding cancel-ok messages to arrive. This gives a guarantee
+    that no more basic.delivers will appear before you issue the recover,
+    so you know exactly what's going on.
+
+  - in the client, discard any record of any outstanding unprocessed,
+    unacknowledged deliveries: essentially, give yourself a clean slate
+
+  - issue the basic.recover
+
+  - start consumers at your leisure
+
+Painful. Then again, basic.recover does seem like kind of an unusual 
+thing to want to do -- perhaps those cases where its use is required are 
+&quot;bad code smells&quot; indicating weaknesses in the main part of the AMQP 
+protocol?
+
+By the way, thanks to all the participants in this thread so far. It's 
+exactly these kinds of use-cases and discussions that will help make 
+AMQP (and its implementations) rock-solid.
+
+Regards,
+   Tony
+
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001118.html">[rabbitmq-discuss] Load balancing with multiple consumers on a	single queue
+</A></li>
+	<LI>Next message: <A HREF="001117.html">[rabbitmq-discuss] introductory slides for RabbitMQ and AMQP
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1119">[ date ]</a>
+              <a href="thread.html#1119">[ thread ]</a>
+              <a href="subject.html#1119">[ subject ]</a>
+              <a href="author.html#1119">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

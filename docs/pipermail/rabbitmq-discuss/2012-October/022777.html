@@ -1,0 +1,134 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] RabbitMQ QueueingConsumer possible memory leak
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20RabbitMQ%20QueueingConsumer%20possible%20memory%0A%20leak&In-Reply-To=%3C506ABF0A.8010109%40rabbitmq.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="022775.html">
+   <LINK REL="Next"  HREF="022776.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] RabbitMQ QueueingConsumer possible memory leak</H1>
+    <B>Simon MacMullen</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20RabbitMQ%20QueueingConsumer%20possible%20memory%0A%20leak&In-Reply-To=%3C506ABF0A.8010109%40rabbitmq.com%3E"
+       TITLE="[rabbitmq-discuss] RabbitMQ QueueingConsumer possible memory leak">simon at rabbitmq.com
+       </A><BR>
+    <I>Tue Oct  2 11:16:42 BST 2012</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="022775.html">[rabbitmq-discuss] RabbitMQ QueueingConsumer possible memory leak
+</A></li>
+        <LI>Next message: <A HREF="022776.html">[rabbitmq-discuss] Two questions about AMQP protocol's	marshalling/unmarshalling
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#22777">[ date ]</a>
+              <a href="thread.html#22777">[ thread ]</a>
+              <a href="subject.html#22777">[ subject ]</a>
+              <a href="author.html#22777">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Bear in mind that the QueueingConsumer is there to buffer messages in 
+the client before you call nextDelivery().
+
+You haven't told the broker to limit the number of unacked messages to 
+send you, so it hasn't. I suspect therefore the broker is sending you 
+messages faster than you are calling nextDelivery() - and they're 
+getting stored in your LinkedBlockingQueue.
+
+A solution is to invoke Channel.basicQos(number), and use explicit acks.
+
+Cheers, Simon
+
+On 02/10/12 10:03, Arthur Embleton wrote:
+&gt;<i> I have the following code to declare a queue:
+</I>&gt;<i>
+</I>&gt;<i> Connection connection = RabbitConnection.getConnection();
+</I>&gt;<i> Channel channel = connection.createChannel();
+</I>&gt;<i> channel.queueDeclare(getQueueName(), false, false, false, null);
+</I>&gt;<i> consumer = new QueueingConsumer(channel);
+</I>&gt;<i> channel.basicConsume(getQueueName(), true,consumer);
+</I>&gt;<i>
+</I>&gt;<i> and the following to get the next Delivery object and process it:
+</I>&gt;<i>
+</I>&gt;<i> Delivery delivery = null;
+</I>&gt;<i> T queue = null;
+</I>&gt;<i>
+</I>&gt;<i> //loop over, continuously retrieving messages
+</I>&gt;<i> while(true) {
+</I>&gt;<i>
+</I>&gt;<i> try {
+</I>&gt;<i> delivery = consumer.nextDelivery();
+</I>&gt;<i> queue = deserialise(delivery.getBody());
+</I>&gt;<i>
+</I>&gt;<i> process(queue);
+</I>&gt;<i>
+</I>&gt;<i> } catch (ShutdownSignalException e) {
+</I>&gt;<i> logger.warn(&quot;Shutodwon signal received.&quot;);
+</I>&gt;<i> break;
+</I>&gt;<i> } catch (ConsumerCancelledException e) {
+</I>&gt;<i> logger.warn(&quot;Consumer cancelled exception: {}&quot;,e.getMessage());
+</I>&gt;<i> break;
+</I>&gt;<i> } catch (InterruptedException e) {
+</I>&gt;<i> logger.warn(&quot;Interuption exception: {}&quot;, e);
+</I>&gt;<i> break;
+</I>&gt;<i> }
+</I>&gt;<i> }
+</I>&gt;<i>
+</I>&gt;<i> If I run this with a queue containing a large number of objects, after
+</I>&gt;<i> approximatelly 2.7 million objects I get an out of memory exception. I
+</I>&gt;<i> found this originally by running it over night with data going in from
+</I>&gt;<i> JMeter at a rate ~90/s which at first it is consuming without any
+</I>&gt;<i> trouble, but in the morning I noticed a large number in RabbitMQ and an
+</I>&gt;<i> out of memory exception on the consumer. I ran it up again and used the
+</I>&gt;<i> Eclipse Memory Analyzer to determine where this memory was being used.
+</I>&gt;<i>  From this I can see that the java.util.concurrent.LinkedBlockingQueue
+</I>&gt;<i> that is referenced by com.rabbitmq.client.QueueingConsumer is growing
+</I>&gt;<i> and growing until it runs out of memory.
+</I>&gt;<i>
+</I>&gt;<i> Do I need to do anything to tell Rabbit to release resources?
+</I>&gt;<i>
+</I>&gt;<i> I could increase the heap size but I'm concerned that this is just a
+</I>&gt;<i> short term fix and there might be something in my code that could bite
+</I>&gt;<i> me with a memory leak a few months into production deployment.
+</I>&gt;<i>
+</I>&gt;<i> I have also posted this to StackOverflow:
+</I>&gt;<i> <A HREF="http://stackoverflow.com/questions/12687368/rabbitmq-queueingconsumer-possible-memory-leak">http://stackoverflow.com/questions/12687368/rabbitmq-queueingconsumer-possible-memory-leak</A>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>
+
+-- 
+Simon MacMullen
+RabbitMQ, VMware
+</PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="022775.html">[rabbitmq-discuss] RabbitMQ QueueingConsumer possible memory leak
+</A></li>
+	<LI>Next message: <A HREF="022776.html">[rabbitmq-discuss] Two questions about AMQP protocol's	marshalling/unmarshalling
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#22777">[ date ]</a>
+              <a href="thread.html#22777">[ thread ]</a>
+              <a href="subject.html#22777">[ subject ]</a>
+              <a href="author.html#22777">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

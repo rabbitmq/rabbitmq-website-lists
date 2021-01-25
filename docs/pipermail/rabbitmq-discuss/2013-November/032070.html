@@ -1,0 +1,159 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] SSL connection - ASN1 error
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20SSL%20connection%20-%20ASN1%20error&In-Reply-To=%3CABBDC9D7002EB54AB98BA60DA16D26934295CDB0%40FR44EX3003.global.ds.honeywell.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="031992.html">
+   <LINK REL="Next"  HREF="031900.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] SSL connection - ASN1 error</H1>
+    <B>Skorepa, Michal</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20SSL%20connection%20-%20ASN1%20error&In-Reply-To=%3CABBDC9D7002EB54AB98BA60DA16D26934295CDB0%40FR44EX3003.global.ds.honeywell.com%3E"
+       TITLE="[rabbitmq-discuss] SSL connection - ASN1 error">Michal.Skorepa at Honeywell.com
+       </A><BR>
+    <I>Fri Nov 22 09:53:39 GMT 2013</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="031992.html">[rabbitmq-discuss] SSL connection - ASN1 error
+</A></li>
+        <LI>Next message: <A HREF="031900.html">[rabbitmq-discuss] Subscribing an Exchange with RabbitHub
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#32070">[ date ]</a>
+              <a href="thread.html#32070">[ thread ]</a>
+              <a href="subject.html#32070">[ subject ]</a>
+              <a href="author.html#32070">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hello Tim,
+
+Yes, I am sure it is pointing to the correct certificates. The swim_cm_connector module is really simple.
+Here is a relevant fragment of the code:
+
+------------------------------------------------------------------------------------------------------------------
+-module(swim_cm_connector).
+-include_lib(&quot;amqp_client/include/amqp_client.hrl&quot;).
+-compile([{parse_transform, lager_transform}]).
+-behaviour(gen_server).
+
+.
+.
+.
+
+handle_info({connect, CoS}, State) -&gt;
+	lager:notice(&quot;Connector connecting on CoS ~p.  Connector PID: ~p&quot;, [CoS, self()]),
+	ConnectionParamsBasic = #amqp_params_network{host = swim_cm_tools:set_broker(),
+												port = swim_cm_tools:set_port(),
+												virtual_host = swim_cm_tools:set_vhost(),
+												username = swim_cm_tools:set_username(),
+												password = swim_cm_tools:set_password(),
+												heartbeat = swim_cm_tools:set_heartbeat(),
+												socket_options = [{tos, swim_cm_tools:set_tos(CoS)}]},
+	lager:notice(&quot;SSL: ~p&quot;, [application:get_env(ssl)]),
+	case application:get_env(ssl) of
+		{ok, true} -&gt;
+			lager:notice(&quot;SSL enabled. Setting SSL parameters.&quot;),
+			ConnectionParams = ConnectionParamsBasic#amqp_params_network{ssl_options = [{cacertfile, swim_cm_tools:set_cacertfile()},
+																						{certfile, swim_cm_tools:set_certfile()},
+																						{keyfile, swim_cm_tools:set_key()},
+																						{verify, swim_cm_tools:set_verify()},
+																						{fail_if_no_peer_cert, swim_cm_tools:set_no_peer_cert()}]};
+		_ -&gt;
+			lager:notice(&quot;SSL disabled. Setting basic parameters.&quot;),
+			ConnectionParams = ConnectionParamsBasic
+	end,
+	lager:debug(&quot;Connection parameters: ~p.&quot;, [ConnectionParams]),
+	try amqp_connection:start(ConnectionParams) of
+		{ok, Conn_ID} -&gt;
+			lager:notice(&quot;Connection setup for CoS ~p successful. Target broker: ~p&quot;, [CoS, ConnectionParams#amqp_params_network.host]),
+			gen_server:cast({global, swim_conn_serv}, {connected, CoS, Conn_ID}),
+			lager:info(&quot;Work is done, shutting down the connector for CoS ~p.&quot;, [CoS]),
+			{stop, normal, State};
+		{error, Error} -&gt;
+			lager:error(&quot;Connection setup error: ~p&quot;, [Error]),
+			case application:get_env(reconnect_interval) of
+				{ok, Timeout} -&gt;
+					ok;
+				undefined -&gt;
+					Timeout = 5000
+			end,
+			lager:info(&quot;Connection setup ERROR. Repeating connection setup after: ~p seconds...&quot;, [Timeout / 1000]),
+			{noreply, {connect, CoS}, Timeout}
+	catch
+		Exception:Reason -&gt; 
+			lager:error(&quot;Exception caught in connection setup for CoS ~p.~n Exception: ~p~n Reason: ~p&quot;, [CoS, Exception, Reason]),
+			{stop, exception, State}
+	end;
+
+------------------------------------------------------------------------------------------------------------------
+
+
+I am sure the code is correct. It runs perfectly fine on Debian systems. But is throws the error when I run it on a custom built Openembedded system (Yocto/Poky project) which is hosted on a Gumstix platform. There might be maybe something missing in the system or something might not be cross-compiled correctly but I have no idea what it might be or how to test it.
+
+Thank you for any help!
+
+Michal
+
+
+
+
+
+
+
+
+-----Original Message-----
+From: <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss-bounces at lists.rabbitmq.com</A> [mailto:<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss-bounces at lists.rabbitmq.com</A>] On Behalf Of Tim Watson
+Sent: 18. listopadu 2013 11:33
+To: Discussions about RabbitMQ
+Subject: Re: [rabbitmq-discuss] SSL connection - ASN1 error
+
+Hi Michal,
+
+What does this swim_cm_connector module look like? Are you sure it's pointing to the correct certificates when establishing the connection?
+
+Cheers,
+Tim
+_______________________________________________
+rabbitmq-discuss mailing list
+<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</PRE>
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="031992.html">[rabbitmq-discuss] SSL connection - ASN1 error
+</A></li>
+	<LI>Next message: <A HREF="031900.html">[rabbitmq-discuss] Subscribing an Exchange with RabbitHub
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#32070">[ date ]</a>
+              <a href="thread.html#32070">[ thread ]</a>
+              <a href="subject.html#32070">[ subject ]</a>
+              <a href="author.html#32070">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

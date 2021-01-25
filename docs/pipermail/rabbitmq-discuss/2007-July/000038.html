@@ -1,0 +1,148 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Multiple consumers
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20Multiple%20consumers&In-Reply-To=269388e30707090813ld16c239rbc1a8e1f90a155ce%40mail.gmail.com">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000034.html">
+   <LINK REL="Next"  HREF="000039.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Multiple consumers</H1>
+    <B>Matthias Radestock</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20Multiple%20consumers&In-Reply-To=269388e30707090813ld16c239rbc1a8e1f90a155ce%40mail.gmail.com"
+       TITLE="[rabbitmq-discuss] Multiple consumers">matthias at lshift.net
+       </A><BR>
+    <I>Mon Jul  9 16:56:26 BST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000034.html">[rabbitmq-discuss] Multiple consumers
+</A></li>
+        <LI>Next message: <A HREF="000039.html">[rabbitmq-discuss] Multiple consumers
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#38">[ date ]</a>
+              <a href="thread.html#38">[ thread ]</a>
+              <a href="subject.html#38">[ subject ]</a>
+              <a href="author.html#38">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Ben,
+
+&quot;Ben Hood&quot; &lt;<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">0x6e6562 at gmail.com</A>&gt; writes:
+
+&gt;&gt;<i> Are you referring to the queue API that is used by the management
+</I>&gt;&gt;<i> service? In that case, yes, in essence you have similar design
+</I>&gt;&gt;<i> choices there on how to process the 'deliver' messages sent to the
+</I>&gt;&gt;<i> native queue process. Be aware though that with this API you are
+</I>&gt;&gt;<i> implementing a *queue*, not a *client*. So, for example, you end up
+</I>&gt;&gt;<i> blocking the channel process through which the message was sent until
+</I>&gt;&gt;<i> you return from the 'deliver' call.
+</I>&gt;<i>
+</I>&gt;<i> Thanks for pointing this out. When you say that, do you mean the
+</I>&gt;<i> defining a queue using the pseudo_queue method is implementing a queue
+</I>&gt;<i> rather than a client, e.g.
+</I>&gt;<i>
+</I>&gt;<i> Queue = rabbit_amqqueue:pseudo_queue(RealmName, QueueName, self())
+</I>
+Correct.
+
+&gt;<i> Can I avoid this blocking by using the rabbit_amqqueue:basic_consume()
+</I>&gt;<i> method instead?
+</I>
+You could use a real queue instead of a pseudo queue, and, yes, then you
+can use rabbit_amqqueue:basic_consume to consume messages. That requires
+that your code implements the rabbit_writer message interface instead.
+
+&gt;<i> Basically I have a remote consumers using the Java API and I have
+</I>&gt;<i> implemented business services in Erlang, which has the *luxury* of
+</I>&gt;<i> being able to call the API without having to frame methods and send
+</I>&gt;<i> stuff over a wire. So I think it quite good to just be able to use the
+</I>&gt;<i> asynchronous processing capabilities of the actual exchange.
+</I>&gt;<i> Furthermore, if use Erlang on the server side, I don't need to worry
+</I>&gt;<i> about concurrency issues and limitations that you would do in Java
+</I>&gt;<i> (please correct me if I'm wrong).
+</I>
+All sounds perfectly sensible.
+
+&gt;&gt;<i> Several people have asked whether there is an Erlang client for AMQP,
+</I>&gt;&gt;<i> i.e. an Erlang API that implements the client portion of the
+</I>&gt;&gt;<i> protocol. There currently isn't, but it is definitely something we'd
+</I>&gt;&gt;<i> like to see developed. Contributions are welcome. Such a client would
+</I>&gt;&gt;<i> present a relatively stable and interoperable API for Erlang code
+</I>&gt;&gt;<i> wanting to use AMQP. It could also be designed in a way that allows the
+</I>&gt;&gt;<i> framing to be bypassed when talking to RabbitMQ.
+</I>&gt;<i>
+</I>&gt;<i> Have you got any pointers as to how to go about this? I mean, would
+</I>&gt;<i> you just define
+</I>&gt;<i>
+</I>&gt;<i> a) The data structures as part of the interface spec (i.e. the
+</I>&gt;<i> rabbit.hrl header file)
+</I>&gt;<i> b) Methods to be exposed to client, e.g. openChannel0, openChannelN,
+</I>&gt;<i> accessRequest, basicConsume, basicPublish, etc
+</I>&gt;<i> c) Then implement these exported functions by sending the appropriate
+</I>&gt;<i> messages to the appropriate internal servers?
+</I>
+TBH, we haven't given this much thought yet. I have dug out a response
+to an earlier email on the subject, sent before this list existed:
+
+&lt;quote&gt;
+If you want to build a proper AMQP client that implements the protocol
+and is thus able to communicate with other AMQP-compliant brokers, you
+have several options.
+
+One approach would be to use our current framing code (auto-generated
+from the protocol specification XML document) as the core, and refactor
+the reader/writer state machines from rabbit_reader and rabbit_writer
+into a generic AMQP peer library that could be used efficiently by both
+a client and a broker implementation. This is most likely the approach
+we will be taking.
+
+Alternatively, you could build a fresh reader/writer state machine
+specifically for client work. This would have the advantage of exposing
+any AMQP-client-specific requirements that could then be refactored into
+a common transport library at a later date.
+&lt;/quote&gt;
+
+The above doesn't address the idea of bypassing the framing when the
+Erlang client talks to RabbitMQ. I reckon that could be accomplished by
+some further refactoring of reader/writer/channel, to separate out the
+transport specific bits. We'll need to do that at some point anyway in
+order to implement other transports, like SCTP.
+
+One thing to be aware of is that this area of the code will be revised
+quite heavily when we implement AMQP 0-10.
+
+
+Regards,
+
+
+Matthias.
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000034.html">[rabbitmq-discuss] Multiple consumers
+</A></li>
+	<LI>Next message: <A HREF="000039.html">[rabbitmq-discuss] Multiple consumers
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#38">[ date ]</a>
+              <a href="thread.html#38">[ thread ]</a>
+              <a href="subject.html#38">[ subject ]</a>
+              <a href="author.html#38">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

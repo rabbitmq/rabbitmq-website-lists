@@ -1,0 +1,157 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] questions about RabbitMQ linear scalability
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20questions%20about%20RabbitMQ%20linear%20scalability&In-Reply-To=%3CA842478B-8993-4C1A-ACCF-96897EBB8E24%40rabbitmq.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="029542.html">
+   <LINK REL="Next"  HREF="029692.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] questions about RabbitMQ linear scalability</H1>
+    <B>Tim Watson</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20questions%20about%20RabbitMQ%20linear%20scalability&In-Reply-To=%3CA842478B-8993-4C1A-ACCF-96897EBB8E24%40rabbitmq.com%3E"
+       TITLE="[rabbitmq-discuss] questions about RabbitMQ linear scalability">tim at rabbitmq.com
+       </A><BR>
+    <I>Wed Aug 28 10:57:08 BST 2013</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="029542.html">[rabbitmq-discuss] questions about RabbitMQ linear scalability
+</A></li>
+        <LI>Next message: <A HREF="029692.html">[rabbitmq-discuss] questions about RabbitMQ linear scalability
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#29646">[ date ]</a>
+              <a href="thread.html#29646">[ thread ]</a>
+              <a href="subject.html#29646">[ subject ]</a>
+              <a href="author.html#29646">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Junius,
+
+On 23 Aug 2013, at 03:14, Junius Wang wrote:
+&gt;<i> Before every test ( after a new RabbitMQ node added/removed to the cluster):
+</I>&gt;<i> 1).we reset the policy to &quot;exactly&quot; on 2 nodes. 2). declared 10 queues using
+</I>&gt;<i> rabbitmqctl and force them distributed evenly on all nodes.  e.g.in a 2 node
+</I>&gt;<i> cluster,5 queues resides on rabbit1, another 5 resides on rabbit2. 3-3-4 for
+</I>&gt;<i> 3 node cluster ,3-3-2-2 for 4 node cluster.   3) declare a 'topic&quot; exchange
+</I>&gt;<i> 4) binding the 10 queues to the exchange with 10 different routing keys.
+</I>&gt;<i> Publishers publish messages with the 10 routing keys by turns. Thus all
+</I>&gt;<i> queues receive the same number of messages.  
+</I>&gt;<i> Is the number of queues large enough?  we can declare more queues in test
+</I>&gt;<i> but I don't think there will be too many queues in production.  
+</I>&gt;<i> 
+</I>
+Let's re-visit the point Michael made about adding more queues:
+
+&quot;the way you extend capacity with RabbitMQ is by adding nodes and using more queues&quot;
+
+In any messaging system where queues exhibit FIFO behaviour, each queue is a concurrency bottleneck, because it can handle only 1 message at a time. If the queue handled more than 1 inbound message at a time, it would not be possible to enforce the FIFO characteristics, since without some kind of concurrency control the ordering would be non-deterministic. The question of whether or not the number of queues is &quot;large enough&quot; is application specific. Where you need FIFO ordering, you'll want a single queue. Where you are processing messages separately and/or do not require ordering (e.g., between messages of different &quot;types&quot;) then you can use separate queues: this is a design choice that only you can make. The point Michael made is that the more queues you shove messages into, the better the concurrency will be, which in turn may yield performance benefits in terms of throughput.
+
+As to the point about &quot;adding nodes&quot; - a single RabbitMQ node has a finite processing capacity, dependent on available operating system resources and client usage patterns. If you work out the maximum capacity &quot;n&quot; of a single node in your application, where the combination of available system resources and application load on the broker is at its peak, then by adding a second node, you might increase the system's overall capacity to something close to 2n. There are important caveats here though, as Michael has already pointed out: clients can connect to any node in a cluster, but if the queue with which they're communicating resides on another node, messages (both in and out of the broker) must be transmitted between nodes.
+
+&gt;<i> publishers connect to the cluster via load balancer(AWS ELB) as well as
+</I>&gt;<i> consumers, they don't know to which node they are connect.  So we may not
+</I>&gt;<i> decrease the intra-cluster traffic. But  we can try some high bandwidth
+</I>&gt;<i> instances. Does this help?
+</I>
+Increased bandwidth might be helpful, but the points Michael made will still stand. There is always going to be &quot;some&quot; additional overhead due to inter-node communications, because network latency is the dominating factor here. Think about a classic 2-tier application: the biggest &quot;cost&quot; is usually communicating with the backend (e.g., a database or some such), and *that* cost is due to the network round trips more often than not.
+
+&gt;<i> Another question is that we will have a queue with lots of messages
+</I>&gt;<i> handled, perhaps 5000/sec(size of 2K), which is about 90% of the total
+</I>&gt;<i> messages handled by the cluster.  It's hard for us to split it into multiple
+</I>&gt;<i> queues, it's really a big design change which we try to avoid. From your
+</I>&gt;<i> comments, even if messages are synchronized on only 2 nodes , hardly we can
+</I>&gt;<i> get linear scaling , right?
+</I>
+That's correct. The queue must handle messages in FIFO order and has an upper bound on how fast it can receive from and/or deliver messages to its clients.
+
+&gt;<i> If so, is the network traffic the major factor impacting the performance? If so ,we can try some high bandwidth instances
+</I>&gt;<i> or using AWS instance group. Hopes that will get better performance.
+</I>
+Yes and no. If the clients interacting with the queue are connected to another node, then the cost of inter-node traffic will have an impact. A equally important potential cost you must be aware of though, is that of mirroring the queue across even two cluster nodes. When a queue is mirrored, the master queue process cannot take full responsibility for a message until that message has been accepted by all replicas. Even if the mirroring policy is set to &quot;exactly 2 nodes&quot;, this still means that a message delivered to the queue on node-1 must also be transmitted to node-2. If the message is 'persistent', then both nodes must flush to disk. If confirms are in use, no confirm can be issued until both nodes have received the message, flushed it to disk and the master *knows* that this has taken place. That's a lot of work per-message.
+
+So as Michael said, HA/Mirroring is not a feature that helps performance - it is a feature that increases resiliency in case of node failures. Adding bandwidth is only part of the story. Even with more bandwidth, there is still going to be higher latency, not only because of the amount of inter-node traffic, but also because each node has to complete some work in order to keep the replicas in sync.
+
+I would suggest that you look very hard at that &quot;queue with lots of messages handled&quot; and see if you can split it up. Imagine if you were writing to a database and you had this one giant table that almost every transaction had to write to. This would become a bottleneck quickly and you'd look to split it up if possible, or if not then at least to partition it based on suitable indexes. We don't have a feature for &quot;partitioning a queue over multiple nodes&quot; yet, so you'll have to think about partitioning the messages yourself. If you can do that, and therefore increase the number of queues that are able to concurrently handle messages, you should get a decent performance increase.
+
+HTH.
+
+Tim
+
+&gt;<i> 
+</I>&gt;<i> -----Original Message-----
+</I>&gt;<i> From: <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss-bounces at lists.rabbitmq.com</A>
+</I>&gt;<i> [mailto:<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss-bounces at lists.rabbitmq.com</A>] On Behalf Of Michael
+</I>&gt;<i> Klishin
+</I>&gt;<i> Sent: Thursday, August 22, 2013 4:56 PM
+</I>&gt;<i> To: Discussions about RabbitMQ
+</I>&gt;<i> Subject: Re: [rabbitmq-discuss] questions about RabbitMQ linear scalability
+</I>&gt;<i> 
+</I>&gt;<i> Junius Wang:
+</I>&gt;<i> 
+</I>&gt;&gt;<i> 1.       The throughput of two node cluster is 50%-60% worse than a single
+</I>&gt;<i> node broker.
+</I>&gt;<i> 
+</I>&gt;<i> With mirroring, messages have to be copied to multiple (N or, depending on
+</I>&gt;<i> configuration, even all) nodes in the cluster. That obviously takes more
+</I>&gt;<i> time than not copying anything.
+</I>&gt;<i> 
+</I>&gt;&gt;<i> 2.       Adding more node did have improvement on throughput but we only
+</I>&gt;<i> got 25% improvement(throughput of 3 node cluster is 25% better than 2 node
+</I>&gt;<i> cluster. 4 node cluster is 25% better than 3 node cluster too). What we
+</I>&gt;<i> expected is a 45-degree line, that means when 2 nodes are used the
+</I>&gt;<i> throughput is double. With 3 nodes, then triple.
+</I>&gt;<i> 
+</I>&gt;<i> You are not providing any details about your workload but the way you extend
+</I>&gt;<i> capacity with RabbitMQ is by adding nodes and using more queues. Queue
+</I>&gt;<i> mirroring is an HA feature, which means copying more data across the
+</I>&gt;<i> cluster.
+</I>&gt;<i> 
+</I>&gt;<i> Maximum throughput and highest availability are largely at odds with each
+</I>&gt;<i> other, so you need to
+</I>&gt;<i> 
+</I>&gt;<i> 1. Use multiple queues (and the number should grow with the number of nodes)
+</I>&gt;<i> 2. Choose what queues to mirror. Likely not all queues are equally important
+</I>&gt;<i> to your system, so you can make some of them non-HA.
+</I>&gt;<i> 3. Configure mirroring to, say, 2 nodes instead of &quot;all&quot;.
+</I>&gt;<i> 4. If you know what node is the master for a particular queue (e.g. was
+</I>&gt;<i> declared on that node),
+</I>&gt;<i>     make your clients connect there. It will decrease intra-cluster
+</I>&gt;<i> traffic.
+</I>&gt;<i> --
+</I>&gt;<i> MK
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>
+</PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="029542.html">[rabbitmq-discuss] questions about RabbitMQ linear scalability
+</A></li>
+	<LI>Next message: <A HREF="029692.html">[rabbitmq-discuss] questions about RabbitMQ linear scalability
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#29646">[ date ]</a>
+              <a href="thread.html#29646">[ thread ]</a>
+              <a href="subject.html#29646">[ subject ]</a>
+              <a href="author.html#29646">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

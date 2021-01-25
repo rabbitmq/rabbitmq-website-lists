@@ -1,0 +1,186 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] ssl handshake failure
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20ssl%20handshake%20failure&In-Reply-To=%3CB855D678E23BB94F9DE9D3B21C96081F2003821ED2%40MX21A.corp.emc.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="035589.html">
+   <LINK REL="Next"  HREF="035611.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] ssl handshake failure</H1>
+    <B>Smithnosky, Jesse</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20ssl%20handshake%20failure&In-Reply-To=%3CB855D678E23BB94F9DE9D3B21C96081F2003821ED2%40MX21A.corp.emc.com%3E"
+       TITLE="[rabbitmq-discuss] ssl handshake failure">Jesse.Smithnosky at emc.com
+       </A><BR>
+    <I>Tue Apr 29 01:37:35 BST 2014</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="035589.html">[rabbitmq-discuss] Why Unacked messages - I couldn't get messages
+</A></li>
+        <LI>Next message: <A HREF="035611.html">[rabbitmq-discuss] ssl handshake failure
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#35594">[ date ]</a>
+              <a href="thread.html#35594">[ thread ]</a>
+              <a href="subject.html#35594">[ subject ]</a>
+              <a href="author.html#35594">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi All,
+
+I am trying to connect from one broker to another using SSL.  I am using these instructions&lt;<A HREF="https://www.rabbitmq.com/ssl.html">https://www.rabbitmq.com/ssl.html</A>&gt; as my primary guide.  I have three certificates/keys involved:
+
+
+(1)    client_ec_cert.pem (the client's public key)
+
+(2)    client_ec_pri_key.pem(the client's private key)
+
+(3)    root_ec_cert.pm (the authoritative certificate)
+
+First of all, note that we are using Elliptic curve&lt;<A HREF="http://en.wikipedia.org/wiki/Elliptic_curve_cryptography">http://en.wikipedia.org/wiki/Elliptic_curve_cryptography</A>&gt; certs and keys.  I wouldn't have thought that would be a problem, but at this point I am not ruling anything out.
+
+I converted the .pem files from (1) and (3) to .der format using a command from this guide&lt;<A HREF="https://www.sslshopper.com/ssl-converter.html">https://www.sslshopper.com/ssl-converter.html</A>&gt; of the following form:
+
+Convert PEM to DER
+
+openssl x509 -outform der -in certificate.pem -out certificate.der
+I then successfully imported these two .der files into my keystore using a command that looks like this (except with the correct file names and paths, etc).
+
+# keytool -import -alias server1 -file /path/to/server/cert.der -keystore /path/to/rabbitstore
+
+This completed with no errors.
+
+For some reason, however, I was unable to convert the private key in (2) in such fashion, and had to do something like this:
+
+openssl pkcs12 -export -in client_ec_cert.pem -inkey client_ec_pri_key.pem &gt; client.p12
+
+I tried several versions of this conversion, and successfully imported a few of the results into my keystore.  Each time, however, my java code results in a javax.net.ssl.SSLHandshakeException.
+
+public final boolean declareBrmExchangesAndQueuesSSL(String brmHostname)
+  {
+    try
+    {
+      char [] keyPassphrase = &quot;password&quot;.toCharArray();
+      KeyStore ks = KeyStore.getInstance(&quot;PKCS12&quot;);
+      ks.load(new FileInputStream(&quot;/etc/rabbitmq/client.p12&quot;), keyPassphrase);
+      KeyManagerFactory kmf = KeyManagerFactory.getInstance(&quot;SunX509&quot;);
+      kmf.init(ks, keyPassphrase);
+
+      char[] trustPassphrase = keyPassphrase;
+      KeyStore tks = KeyStore.getInstance(&quot;JKS&quot;);
+      tks.load(new FileInputStream(&quot;/usr/local/avamar/lib/avamar_keystore&quot;), trustPassphrase);
+      TrustManagerFactory tmf = TrustManagerFactory.getInstance(&quot;SunX509&quot;);
+      tmf.init(tks);
+
+      SSLContext context = SSLContext.getInstance(&quot;SSLv3&quot;);
+      context.init(kmf.getKeyManagers(), tmf.getTrustManagers(), new SecureRandom());
+
+      ConnectionFactory factory = new ConnectionFactory();
+      factory.setHost(brmHostname);
+      factory.setPort(5671);
+      factory.useSslProtocol(context);
+
+      Connection conn = factory.newConnection();
+      Channel channel = conn.createChannel();
+
+      //rest of code omitted...failure happens right here.
+
+    }
+    catch (IOException e)
+    {
+      e.printStackTrace();
+      log.log(Level.WARNING, e.getMessage());
+      return false;
+    }
+    catch (KeyManagementException e)
+    {
+      e.printStackTrace();
+      log.log(Level.WARNING, e.getMessage());
+      return false;
+    }
+    catch (NoSuchAlgorithmException e)
+    {
+      e.printStackTrace();
+      log.log(Level.WARNING, e.getMessage());
+      return false;
+    }
+    catch (CertificateException e)
+    {
+      e.printStackTrace();
+      log.log(Level.WARNING, e.getMessage());
+      return false;
+    }
+    catch (KeyStoreException e)
+    {
+      e.printStackTrace();
+      log.log(Level.WARNING, e.getMessage());
+      return false;
+    } catch (UnrecoverableKeyException e)
+    {
+      e.printStackTrace();
+      log.log(Level.WARNING, e.getMessage());
+      return false;
+    }
+    return true;
+  }
+
+Am I doing anything obviously incorrectly?  I also attempted adding the server's public key to my client's keystore, but the result was the same.  Any help would be greatly appreciated.
+
+Thanks,
+Jesse Smithnosky
+
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20140428/fb53a658/attachment.html">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20140428/fb53a658/attachment.html</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="035589.html">[rabbitmq-discuss] Why Unacked messages - I couldn't get messages
+</A></li>
+	<LI>Next message: <A HREF="035611.html">[rabbitmq-discuss] ssl handshake failure
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#35594">[ date ]</a>
+              <a href="thread.html#35594">[ thread ]</a>
+              <a href="subject.html#35594">[ subject ]</a>
+              <a href="author.html#35594">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

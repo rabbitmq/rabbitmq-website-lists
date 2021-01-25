@@ -1,0 +1,156 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] RabbitMQ 1.7 and persistence limit?
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20RabbitMQ%201.7%20and%20persistence%20limit%3F&In-Reply-To=20091013120300.GB20572%40mrnibble.lshift.net">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="005147.html">
+   <LINK REL="Next"  HREF="005121.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] RabbitMQ 1.7 and persistence limit?</H1>
+    <B>Lynton Grice</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20RabbitMQ%201.7%20and%20persistence%20limit%3F&In-Reply-To=20091013120300.GB20572%40mrnibble.lshift.net"
+       TITLE="[rabbitmq-discuss] RabbitMQ 1.7 and persistence limit?">lynton.grice at logosworld.com
+       </A><BR>
+    <I>Tue Oct 13 13:15:46 BST 2009</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="005147.html">[rabbitmq-discuss] RabbitMQ 1.7 and persistence limit?
+</A></li>
+        <LI>Next message: <A HREF="005121.html">[rabbitmq-discuss] RabbitMQ 1.7 and persistence limit?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#5120">[ date ]</a>
+              <a href="thread.html#5120">[ thread ]</a>
+              <a href="subject.html#5120">[ subject ]</a>
+              <a href="author.html#5120">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi Matthew,
+
+Thanks for the detailed response, and I really look forward to what the
+persister will be doing in future releases, sounds great.
+
+The SYNC transactions are not my concern, I do not really mind if those
+messages get lost, it is the ASYNC ones that I want 100% guarantee they will
+never get lost.
+
+You said &quot; With the persister in 1.7, messages are kept in RAM but are also
+written out to disk.&quot; - are the messages written to disk by default as well?
+As in the choice between &quot;ram_copies&quot;, &quot;disk_copies&quot; and &quot;disc_only_copies&quot;?
+Or are the messages simple written anyway in the 1.7 persister?
+
+Using transactions sounds like the answer for me for now, thanks.
+
+Last question: Do you ever forsee a day when there is no 2GB limit to DETS?
+
+Thanks again ;-)
+
+Lynton
+
+-----Original Message-----
+From: Matthew Sackman [mailto:<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">matthew at lshift.net</A>] 
+Sent: 13 October 2009 02:03 PM
+To: Lynton Grice
+Subject: Re: [rabbitmq-discuss] RabbitMQ 1.7 and persistence limit?
+
+Hi Lynton,
+
+Please keep rabbitmq-discuss copied in unless you have specific reason
+not to, that way others can benefit from discussions.
+
+On Tue, Oct 13, 2009 at 01:36:28PM +0200, Lynton Grice wrote:
+&gt;<i> Forgive me if I am wrong here but in my case I want the stuff to happily
+</I>&gt;<i> survive a system crash ..so:
+</I>&gt;<i> 
+</I>&gt;<i> - &quot;ram_copies&quot; - in a system crash the messages will be lost
+</I>&gt;<i> - &quot;disc_copies&quot; - much better with the ETS and disk_log stuff BUT still
+</I>the
+&gt;<i> *possibility* that message that are ONLY in ETS tables will get &quot;lost&quot; on
+</I>a
+&gt;<i> server crash
+</I>
+Yes, there is the possibility that mnesia dirty operations will be lost,
+but provided you use sync_transactions, you still get the guarantee that
+they've been written to disk. The main gain from keeping stuff in RAM is
+for speed of lookups, and also writes can be batched in some places.
+
+&gt;<i> - &quot;disc_only_copies&quot; - although probably a little slower that the &quot;memory
+</I>&gt;<i> messaging&quot;, this is the one I like, but it does have the 2GB limit ;-(
+</I>
+Oh, dets is *very* slow indeed. In fact it's awful - I've never seen
+dets drive a disk at above 10MB/s. The new persister can easily generate
+enough IO in sensible patterns to be able to totally saturate disk
+bandwidth - 70+MB/s sustained is very achievable.
+
+&gt;<i> You say &quot; The persister in 1.7 keeps all messages in memory...&quot; - then may
+</I>I
+&gt;<i> ask a stupid question, what happens if you have 10 000 message with the
+</I>new
+&gt;<i> persister in memory and the server bounces?
+</I>
+Hang on, what I'm referring to by the &quot;new&quot; persister, is the persister
+that we're in the process of developing and is not in 1.7. With the
+persister in 1.7, messages are kept in RAM but are also written out to
+disk. If you exhaust RAM then yes, you will blow up RabbitMQ, though
+RabbitMQ does try quite hard these days to use flow control to stop
+producers when RAM gets really tight, so it should be reasonably
+resiliant. However, see, eg Brian Whitman's post:
+<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/2009-October/005095.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/2009-October/005095.htm</A>
+l
+Here, he is talking about a very experimental version of the new,
+unreleased persister, which demonstrates that it is able to scale vastly
+beyond the amount of available RAM now.
+
+&gt;<i> I am a HUGE RabbitMQ fan, I am just trying to see how safe these &quot;memory
+</I>&gt;<i> messages&quot; really are from System failure?
+</I>
+Pretty much the only way of guaranteeing that a message has been sent to
+disk and stored safely is to put the channel in transactional mode and
+do a commit. When you get back the commit-ok, you know it's either
+already been delivered to a client and acknowledged, or that it's been
+written to disk. In all other cases, there are very few hard guarantees
+offered - writing a persistent message to a queue without using
+transactions means that there will be a window after the client has
+published the message during which the message has not been fsync'd on
+disk and at that point, a crash *may* result in messages being lost. As
+ever, it's a tradeoff - if you use transactions, the extra fsync's all
+over the place will hurt performance quite badly, but you get guarantees
+that you otherwise wouldn't get.
+
+What we tend to recommend is that you really think about how much
+message loss you can cope with - most applications can cope with, say, a
+minute's worth of messages being lost in the event of system failure as
+it's possible the messages can be regenerated through other means.
+
+Matthew
+
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="005147.html">[rabbitmq-discuss] RabbitMQ 1.7 and persistence limit?
+</A></li>
+	<LI>Next message: <A HREF="005121.html">[rabbitmq-discuss] RabbitMQ 1.7 and persistence limit?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#5120">[ date ]</a>
+              <a href="thread.html#5120">[ thread ]</a>
+              <a href="subject.html#5120">[ subject ]</a>
+              <a href="author.html#5120">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

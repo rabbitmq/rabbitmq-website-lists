@@ -1,0 +1,311 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] RabbitMQ broker crashing under heavy load	with mirrored queues
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20RabbitMQ%20broker%20crashing%20under%20heavy%20load%0A%09with%20mirrored%20queues&In-Reply-To=%3C03877dc9-66c8-473b-a99a-6f8c8bf4bb59%40d10g2000vbh.googlegroups.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="017279.html">
+   <LINK REL="Next"  HREF="017289.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] RabbitMQ broker crashing under heavy load	with mirrored queues</H1>
+    <B>Venkat</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20RabbitMQ%20broker%20crashing%20under%20heavy%20load%0A%09with%20mirrored%20queues&In-Reply-To=%3C03877dc9-66c8-473b-a99a-6f8c8bf4bb59%40d10g2000vbh.googlegroups.com%3E"
+       TITLE="[rabbitmq-discuss] RabbitMQ broker crashing under heavy load	with mirrored queues">vveludan at gmail.com
+       </A><BR>
+    <I>Tue Jan 10 23:13:15 GMT 2012</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="017279.html">[rabbitmq-discuss] RabbitMQ broker crashing under heavy load	with mirrored queues
+</A></li>
+        <LI>Next message: <A HREF="017289.html">[rabbitmq-discuss] RabbitMQ broker crashing under heavy load	with mirrored queues
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#17285">[ date ]</a>
+              <a href="thread.html#17285">[ thread ]</a>
+              <a href="subject.html#17285">[ subject ]</a>
+              <a href="author.html#17285">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi Steve please find the following:
+
+&gt;<i> If you are lucky (and it appears that you are, or else you are
+</I>&gt;<i> using auto acknowledgements) then none of the acknowledgements are lost
+</I>&gt;<i> (or none are required!).
+</I>In my queue consumer there is no acknowledgeMode set.
+SimpleMessageListenerContainer sets the acknowledgeMode as AUTO as
+default if it is not set.
+In other words auto acknowledgment is used.
+
+&gt;<i>If they do not resend, then this could be the source of the lost messages
+</I>&gt;<i> they were not sent in the first place.
+</I>The producer may have been connected to crashed Node.
+I have seen two AmqpExceptions in the log.
+I didn't have logic in my producer code to resend the message on
+AmqpException.
+In the catch block I have added the code to resend the message as
+follows:
+	@Override
+	public void convertAndSend(final Object message)  {
+		MessageProperties props = null;
+		try {
+			props = new MessageProperties();
+			props.setDeliveryMode(MessageDeliveryMode.PERSISTENT);   //setting
+delivery mode as PERSISTENT
+			send(getMessageConverter().toMessage(message, props));
+
+		} catch (AmqpException amqpe) {
+			send(getMessageConverter().toMessage(message, props));
+		}
+	}
+
+
+
+After adding the code to resend message on exception, I have rerun the
+test.
+This time there were no messages lost. All 20K messages were
+processed.
+[<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">ecloud at t-3</A> log]$ grep Thread-0 central-log.log | wc -l
+2000
+[<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">ecloud at t-3</A> log]$ grep Thread-1 central-log.log | wc -l
+2000
+[<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">ecloud at t-3</A> log]$ grep Thread-2 central-log.log | wc -l
+2000
+[<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">ecloud at t-3</A> log]$ grep Thread-3 central-log.log | wc -l
+2000
+[<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">ecloud at t-3</A> log]$ grep Thread-4 central-log.log | wc -l
+2000
+[<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">ecloud at t-3</A> log]$ grep Thread-5 central-log.log | wc -l
+2000
+[<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">ecloud at t-3</A> log]$ grep Thread-6 central-log.log | wc -l
+2000
+[<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">ecloud at t-3</A> log]$ grep Thread-7 central-log.log | wc -l
+2000
+[<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">ecloud at t-3</A> log]$ grep Thread-8 central-log.log | wc -l
+2000
+[<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">ecloud at t-3</A> log]$ grep Thread-9 central-log.log | wc -l
+2000
+
+&gt;<i>This is interesting, too. Can you supply us with the complete output from
+</I>&gt;<i>rabbitmqctl status for both nodes, and explain exactly what you mean by
+</I>&gt;<i>'run rabbitmqctl on NodeA'?
+</I>
+I meant running report.
+This time I have captured all the details.
+In the beginning of the test I had only node t-2.
+Running report command worked fine on t-2 node.
+
+Then I joined t-4 node to the cluster as follows:
+
+/usr/lib/rabbitmq/lib/rabbitmq_server-2.7.1/sbin/rabbitmqctl stop_app
+/usr/lib/rabbitmq/lib/rabbitmq_server-2.7.1/sbin/rabbitmqctl reset
+/usr/lib/rabbitmq/lib/rabbitmq_server-2.7.1/sbin/rabbitmqctl cluster
+<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at t-2</A> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at t-4</A>
+
+Then I ran report command on t-2. Following is the error displayed:
+[<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">ecloud at t-2</A> vv]$  /usr/lib/rabbitmq/lib/rabbitmq_server-2.7.1/sbin/
+rabbitmqctl report &gt; /home/ecloud/vv/rep3.txt
+Error: unable to connect to node '<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at t-2</A>': nodedown
+diagnostics:
+- nodes and their ports on t-2: [{rabbit,19667},
+                                       {rabbitmqctl28789,44074}]
+- current node: '<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmqctl28789 at t-2</A>'
+- current node home dir: /home/ecloud
+- current node cookie hash: VLhPX0Ti0bNE//tFwfQQGA==
+
+ I ran status command on t-2 node:
+
+[<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">ecloud at t-2</A> vv]$ /usr/lib/rabbitmq/lib/rabbitmq_server-2.7.1/sbin/
+rabbitmqctl -n <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at t-2</A> status
+
+Status of node '<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at t-2</A>' ...
+[{pid,28188},
+ {running_applications,[{rabbit,&quot;RabbitMQ&quot;,&quot;2.7.1&quot;},
+                        {mnesia,&quot;MNESIA  CXC 138 12&quot;,&quot;4.4.19&quot;},
+                        {os_mon,&quot;CPO  CXC 138 46&quot;,&quot;2.2.6&quot;},
+                        {sasl,&quot;SASL  CXC 138 11&quot;,&quot;2.1.9.4&quot;},
+                        {stdlib,&quot;ERTS  CXC 138 10&quot;,&quot;1.17.4&quot;},
+                        {kernel,&quot;ERTS  CXC 138 10&quot;,&quot;2.14.4&quot;}]},
+ {os,{unix,linux}},
+ {erlang_version,&quot;Erlang R14B03 (erts-5.8.4) [source] [64-bit] [rq:1]
+[async-threads:30] [kernel-poll:true]\n&quot;},
+ {memory,[{total,60196864},
+          {processes,10386136},
+          {processes_used,10379416},
+          {system,49810728},
+          {atom,1122009},
+          {atom_used,1117604},
+          {binary,69968},
+          {code,11235581},
+          {ets,793680}]},
+ {vm_memory_high_watermark,0.39999999962067656},
+ {vm_memory_limit,843607244}]
+...done.
+
+Following is after running status command on t-4 node:
+[<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">ecloud at t-4</A> ~]$ /usr/lib/rabbitmq/lib/rabbitmq_server-2.7.1/sbin/
+rabbitmqctl -n <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at t-4</A> status
+Status of node '<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at t-4</A>' ...
+[{pid,22424},
+ {running_applications,[{rabbit,&quot;RabbitMQ&quot;,&quot;2.7.1&quot;},
+                        {os_mon,&quot;CPO  CXC 138 46&quot;,&quot;2.2.6&quot;},
+                        {mnesia,&quot;MNESIA  CXC 138 12&quot;,&quot;4.4.19&quot;},
+                        {sasl,&quot;SASL  CXC 138 11&quot;,&quot;2.1.9.4&quot;},
+                        {stdlib,&quot;ERTS  CXC 138 10&quot;,&quot;1.17.4&quot;},
+                        {kernel,&quot;ERTS  CXC 138 10&quot;,&quot;2.14.4&quot;}]},
+ {os,{unix,linux}},
+ {erlang_version,&quot;Erlang R14B03 (erts-5.8.4) [source] [64-bit] [smp:
+4:4] [rq:4]
+ [async-threads:30] [kernel-poll:true]\n&quot;},
+ {memory,[{total,68521368},
+          {processes,10537392},
+          {processes_used,10500904},
+          {system,57983976},
+          {atom,1125249},
+          {atom_used,1122051},
+          {binary,3123584},
+          {code,11235605},
+          {ets,2940008}]},
+ {vm_memory_high_watermark,0.3999999994293313},
+ {vm_memory_limit,420559257}]
+...done.
+
+
+Thanks
+Venkat
+
+
+
+
+On Jan 10, 11:27&#160;am, Steve Powell &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">st... at rabbitmq.com</A>&gt; wrote:
+&gt;<i> Hi Venkat,
+</I>&gt;<i>
+</I>&gt;<i> I'm glad things are better under 2.7.1.
+</I>&gt;<i>
+</I>&gt;<i> &gt; I have one question, referring <A HREF="tohttp://www.rabbitmq.com/ha.html:">tohttp://www.rabbitmq.com/ha.html:</A>
+</I>&gt;<i> &gt;&gt; As a result of the requeuing, clients that re-consume from the queue
+</I>&gt;<i> &gt;&gt; must be aware that they are likely to subsequently receive messages
+</I>&gt;<i> &gt;&gt; that they have seen previously
+</I>&gt;<i>
+</I>&gt;<i> This is an accurate quote, and is still true. &#160;Acknowledgements are only sent
+</I>&gt;<i> to the master and then copied to the slaves, so the slaves might not know
+</I>&gt;<i> about some of them if the master goes down before some acknowledgements can
+</I>&gt;<i> be forwarded. &#160;If you are lucky (and it appears that you are, or else you are
+</I>&gt;<i> using auto acknowledgements) then none of the acknowledgements are lost
+</I>&gt;<i> (or none are required!).
+</I>&gt;<i>
+</I>&gt;<i> &gt; You notice that there are two lines displaying 1999, this is because
+</I>&gt;<i> &gt; two messages were lost. Otherwise you see 2000 messages processed
+</I>&gt;<i> &gt; from each thread.
+</I>&gt;<i>
+</I>&gt;<i> &gt; From this, does it mean that I don't have to worry about duplicate
+</I>&gt;<i> &gt; messages due to requeing?
+</I>&gt;<i>
+</I>&gt;<i> No, it doesn't mean that. If you have explicit acknowledgements by your
+</I>&gt;<i> consumers, then when the master fails the slave may redeliver some messages
+</I>&gt;<i> that were acknowledged, as well as the ones that weren't.
+</I>&gt;<i>
+</I>&gt;<i> What interests me is the messages that are lost. If I understand it
+</I>&gt;<i> correctly, messages are published to the master and all the slaves
+</I>&gt;<i> simultaneously, so the failure of the master shouldn't lose any messages.
+</I>&gt;<i>
+</I>&gt;<i> Having said that, you haven't said to which broker your test apps connect.
+</I>&gt;<i> If they were connected to the master at the time, then what do they do when
+</I>&gt;<i> the master fails? &#160;Do they automatically reconnect (I presume this is in
+</I>&gt;<i> the tests' logs)? Do they resend the last message (which will have failed
+</I>&gt;<i> because the connection will have been dropped)?
+</I>&gt;<i>
+</I>&gt;<i> If they do not resend, then this could be the source of the lost messages
+</I>&gt;<i> -- they were not sent in the first place.
+</I>&gt;<i>
+</I>&gt;<i> Please can you explain just a little more about the test thread connection
+</I>&gt;<i> history, and to which broker they are connected? &#160;I would expect that, if
+</I>&gt;<i> they are connected to the slave, then you won't see any lost messages in
+</I>&gt;<i> this test scenario.
+</I>&gt;<i>
+</I>&gt;<i> &gt; I assuming that HA Proxy
+</I>&gt;<i> &gt; was not quick enough to detect about the Crashed Node A and thus those
+</I>&gt;<i> &gt; 2/3 messages were routed to crashed NodeA. Please correct me if I am
+</I>&gt;<i> &gt; wrong.
+</I>&gt;<i>
+</I>&gt;<i> I don't think this is the problem, as messages are published to all the
+</I>&gt;<i> brokers mirroring the queue.
+</I>&gt;<i>
+</I>&gt;<i> &gt; The other thing that I just wanted to bring it to your attention (it
+</I>&gt;<i> &gt; doesn't bother me). It is as follows:
+</I>&gt;<i> &gt; I have NodeA in the beginning of the cluster then I join NodeB to the
+</I>&gt;<i> &gt; cluster.
+</I>&gt;<i> &gt; If I run rabbitmqctl report on NodeA, it throws an error saying that
+</I>&gt;<i> &gt; NodeA is down (when it is really not down). But it works fine on
+</I>&gt;<i> &gt; NodeB.
+</I>&gt;<i>
+</I>&gt;<i> This is interesting, too. Can you supply us with the complete output from
+</I>&gt;<i> rabbitmqctl status for both nodes, and explain exactly what you mean by
+</I>&gt;<i> 'run rabbitmqctl on NodeA'?
+</I>&gt;<i>
+</I>&gt;<i> Thank you for reporting these issues.
+</I>&gt;<i>
+</I>&gt;<i> Steve Powell &#160;(a curious bunny)
+</I>&gt;<i> ----------some more definitions from the SPD----------
+</I>&gt;<i> avoirdupois (phr.) 'Would you like peas with that?'
+</I>&gt;<i> distribute (v.) To denigrate an award ceremony.
+</I>&gt;<i> definite (phr.) 'It's hard of hearing, I think.'
+</I>&gt;<i> modest (n.) The most mod.
+</I>&gt;<i>
+</I>&gt;<i> On 9 Jan 2012, at 23:39, Venkat wrote:
+</I>&gt;<i>
+</I>&gt;<i> &gt; Hi Steve I have run some tests using RabbitMQ 2.7.1 please find the
+</I>&gt;<i> &gt; following:
+</I>&gt;<i>
+</I>&gt;<i> ...(elided)
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-disc... at lists.rabbitmq.comhttps</A>://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss
+</I></PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="017279.html">[rabbitmq-discuss] RabbitMQ broker crashing under heavy load	with mirrored queues
+</A></li>
+	<LI>Next message: <A HREF="017289.html">[rabbitmq-discuss] RabbitMQ broker crashing under heavy load	with mirrored queues
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#17285">[ date ]</a>
+              <a href="thread.html#17285">[ thread ]</a>
+              <a href="subject.html#17285">[ subject ]</a>
+              <a href="author.html#17285">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

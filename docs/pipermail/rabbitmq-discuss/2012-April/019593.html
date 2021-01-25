@@ -1,0 +1,136 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Identifying TCP Listeners.
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Identifying%20TCP%20Listeners.&In-Reply-To=%3C4F8D50AD.5060508%40rabbitmq.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="019589.html">
+   <LINK REL="Next"  HREF="019469.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Identifying TCP Listeners.</H1>
+    <B>Matthias Radestock</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Identifying%20TCP%20Listeners.&In-Reply-To=%3C4F8D50AD.5060508%40rabbitmq.com%3E"
+       TITLE="[rabbitmq-discuss] Identifying TCP Listeners.">matthias at rabbitmq.com
+       </A><BR>
+    <I>Tue Apr 17 12:14:53 BST 2012</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="019589.html">[rabbitmq-discuss] Identifying TCP Listeners.
+</A></li>
+        <LI>Next message: <A HREF="019469.html">[rabbitmq-discuss] Identifying TCP Listeners.
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#19593">[ date ]</a>
+              <a href="thread.html#19593">[ thread ]</a>
+              <a href="subject.html#19593">[ subject ]</a>
+              <a href="author.html#19593">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Adam,
+
+On 17/04/12 11:10, Adam Tauno Williams wrote:
+&gt;&gt;<i> export ERL_EPMD_DIST_BIND=172.0.0.1
+</I>&gt;<i>
+</I>&gt;<i> This variable doesn't effect what ports are opened.
+</I>
+Serves me right for believing what it says on the internet. The correct 
+env var is ERL_EPMD_ADDRESS. Apologies.
+
+&gt;<i> I added &quot;. /etc/sysconfig/rabbitmq&quot; to the startup file and that file
+</I>&gt;<i> contains:
+</I>&gt;<i>
+</I>&gt;<i> export ERL_EPMD_DIST_BIND=127.0.0.1
+</I>&gt;<i>
+</I>&gt;<i> Something&amp;  Erlang still opens all interfaces:
+</I>&gt;<i>
+</I>&gt;<i> tcp  0.0.0.0:4369       0.0.0.0:*   LISTEN      32571/epmd
+</I>&gt;<i> tcp  127.0.0.1:55672    0.0.0.0:*   LISTEN      32603/beam.smp
+</I>&gt;<i> tcp  0.0.0.0:52445      0.0.0.0:*   LISTEN      32603/beam.smp
+</I>&gt;<i> tcp  127.0.0.1:5672     0.0.0.0:*   LISTEN      32603/beam.smp
+</I>&gt;<i>
+</I>&gt;<i> The config has managed to restric rabbit's service as well as the
+</I>&gt;<i> management interface.
+</I>&gt;<i>
+</I>&gt;<i> rabbitmq-server-2.7.0-1.suse.noarch
+</I>&gt;<i> Linux 3.1.0-1.2-desktop
+</I>&gt;<i>
+</I>&gt;<i> workstation:~ # cat /etc/rabbitmq/rabbitmq.config
+</I>&gt;<i> [
+</I>&gt;<i>    {rabbit,        {tcp_listeners,               [{'127.0.0.1',5672}]},
+</I>&gt;<i>                    {collect_statistics_interval, 10000} ] },
+</I>&gt;<i>    {rabbitmq_management,  [ {http_log_dir,   &quot;/tmp/rabbit-mgmt&quot;} ] },
+</I>&gt;<i>    {rabbitmq_management_agent, [ {force_fine_statistics, true} ] },
+</I>&gt;<i>    {rabbitmq_mochiweb, [ {listeners, [{mgmt, [{port, 55672},
+</I>&gt;<i>                                               {ip, &quot;127.0.0.1&quot;}]}]},
+</I>&gt;<i>                          {default_listener, [{port, 60000} ] } ] }
+</I>&gt;<i> ].
+</I>
+The above cannot possibly be the config file that is actually being used 
+since it is syntactically invalid and causes rabbit to fail to start.
+
+Anyway, here's what I did to affect an address change. Please follow 
+these steps EXACTLY...
+
+1) stop any running rabbit and other erlang processes. Verify this by 
+checking that there are no beam.smp processes left running.
+
+2) stop any running epmd processes with 'epmd -kill'. Verify this by 
+checking that there are no epmd processes left running.
+
+3) put the following in /etc/rabbitmq/rabbitmq.config
+
+[{kernel, [{inet_dist_use_interface, {127,0,0,1}}]},
+  {rabbit, [{tcp_listeners, [{&quot;127.0.0.1&quot;, 5672}]}]},
+  {rabbitmq_mochiweb, [{listeners, [{mgmt, [{ip, &quot;127.0.0.1&quot;},
+                                            {port, 55672}]}]}]}].
+
+4) put the following in /etc/rabbitmq/rabbitmq-env.conf
+
+export ERL_EPMD_ADDRESS=127.0.0.1
+
+5) start rabbit
+
+6) verify that the config file has been read by inspecting the startup log
+
+7) check what interfaces are being listened on
+
+$ sudo netstat -lpn | grep epmd
+tcp  0  0 127.0.0.1:4369   0.0.0.0:*  LISTEN  716/epmd
+$ sudo netstat -lpn | grep beam
+tcp  0  0 127.0.0.1:45011  0.0.0.0:*  LISTEN  702/beam.smp
+tcp  0  0 127.0.0.1:55672  0.0.0.0:*  LISTEN  702/beam.smp
+tcp  0  0 127.0.0.1:5672   0.0.0.0:*  LISTEN  702/beam.smp
+
+
+Regards,
+
+Matthias.
+</PRE>
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="019589.html">[rabbitmq-discuss] Identifying TCP Listeners.
+</A></li>
+	<LI>Next message: <A HREF="019469.html">[rabbitmq-discuss] Identifying TCP Listeners.
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#19593">[ date ]</a>
+              <a href="thread.html#19593">[ thread ]</a>
+              <a href="subject.html#19593">[ subject ]</a>
+              <a href="author.html#19593">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

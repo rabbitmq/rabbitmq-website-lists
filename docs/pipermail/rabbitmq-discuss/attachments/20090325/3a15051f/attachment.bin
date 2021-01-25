@@ -1,0 +1,67 @@
+diff --git a/src/rabbit_exchange.erl b/src/rabbit_exchange.erl
+index 925c335..17e7248 100644
+--- a/src/rabbit_exchange.erl
++++ b/src/rabbit_exchange.erl
+@@ -52,6 +52,7 @@
+ -import(lists).
+ -import(qlc).
+ -import(regexp).
++-import(random).
+ 
+ %%----------------------------------------------------------------------------
+ 
+@@ -145,6 +146,8 @@ check_type(<<"direct">>) ->
+     direct;
+ check_type(<<"topic">>) ->
+     topic;
++check_type(<<"srand">>) ->
++    srand;
+ check_type(T) ->
+     rabbit_misc:protocol_error(
+       command_invalid, "invalid exchange type '~s'", [T]).
+@@ -252,18 +255,26 @@ route(#exchange{name = Name, type = topic}, RoutingKey) ->
+                         topic_matches(BindingKey, RoutingKey)]
+       end);
+ 
++route(X = #exchange{type = srand}, RoutingKey) ->
++    rabbit_log:debug("exchange = srand, key = ~p~n", [RoutingKey]),
++    Qs = case route_internal(X, RoutingKey) of
++             [] -> [select_queue(X, RoutingKey)];
++             Queues -> Queues
++         end,
++    lookup_qpids(Qs);
++
+ route(X = #exchange{type = fanout}, _) ->
+-    route_internal(X, '_');
++    lookup_qpids(route_internal(X, '_'));
+ 
+ route(X = #exchange{type = direct}, RoutingKey) ->
+-    route_internal(X, RoutingKey).
++    lookup_qpids(route_internal(X, RoutingKey)).
+ 
+ route_internal(#exchange{name = Name}, RoutingKey) ->
+     MatchHead = #route{binding = #binding{exchange_name = Name,
+                                           queue_name = '$1',
+                                           key = RoutingKey,
+                                           _ = '_'}},
+-    lookup_qpids(mnesia:dirty_select(route, [{MatchHead, [], ['$1']}])).
++    mnesia:dirty_select(route, [{MatchHead, [], ['$1']}]).
+ 
+ lookup_qpids(Queues) ->
+     sets:fold(
+@@ -274,6 +285,15 @@ lookup_qpids(Queues) ->
+               end
+       end, [], sets:from_list(Queues)).
+ 
++select_queue(X = #exchange{name = Name}, RoutingKey) ->
++    case route_internal(X, '_') of
++        [] -> [];
++        Queues -> Q = lists:nth(random:uniform(length(Queues)), Queues),
++                  rabbit_log:debug("queue = ~p~n", [Q]),
++                  add_binding(Name, Q, RoutingKey, []),
++                  Q
++    end.
++
+ %% TODO: Should all of the route and binding management not be
+ %% refactored to its own module, especially seeing as unbind will have
+ %% to be implemented for 0.91 ?

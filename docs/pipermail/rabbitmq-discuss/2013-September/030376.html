@@ -1,0 +1,149 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Channel best practices
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Channel%20best%20practices&In-Reply-To=%3C16EDE7BF-A4A7-4EA5-9864-60D2E8ED2591%40rabbitmq.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="030346.html">
+   <LINK REL="Next"  HREF="030378.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Channel best practices</H1>
+    <B>Steve Powell</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Channel%20best%20practices&In-Reply-To=%3C16EDE7BF-A4A7-4EA5-9864-60D2E8ED2591%40rabbitmq.com%3E"
+       TITLE="[rabbitmq-discuss] Channel best practices">spowell at gopivotal.com
+       </A><BR>
+    <I>Tue Sep 24 10:57:04 BST 2013</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="030346.html">[rabbitmq-discuss] Channel best practices
+</A></li>
+        <LI>Next message: <A HREF="030378.html">[rabbitmq-discuss] Channel best practices
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#30376">[ date ]</a>
+              <a href="thread.html#30376">[ thread ]</a>
+              <a href="subject.html#30376">[ subject ]</a>
+              <a href="author.html#30376">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>(Previous message sent before finalisation -- please ignore it.)
+
+Sorry to butt in, but I wanted to clarify a few things (about the Java client):
+
+There is no &#8216;rule&#8217; &#8220;you shouldn&#8217;t share a channel between threads&#8221;.  It is (good) advice, though.
+
+It is not true that &#8220;basic.deliver will be called on the client library&#8217;s internal message loop thread&#8221;, handleDelivery is called on a Consumer callback thread.
+
+It is fine to call ack from a Consumer.handleDelivery method, and it is OK to call any other channel method, but it is hard to program multi-thread control of a channel without getting into serious difficulties.
+
+Some channel commands don't wait for a response, and some do.  If you are waiting for a response then your application thread is waiting (blocked). If you issue a second command that wants to wait for a response, the Java Client will block the second thread until the response has returned from the first.  This is thread-safe, and as designed.  However, there is no serialisation of these requests: if many simultaneously issue commands, they may execute in any order.  The state of the channel each command sees is therefore not predictable, and so the application threads need to cope with potential failures and reorderings.
+
+Even commands that don't expect a response can interfere with another thread's commands by changing the state of the channel, so it is quite important that the application threads know what each other are doing.
+
+Issuing acks from many threads runs the risk of a double ack (acking the same message twice), which is a protocol error.  Multi-acks suffer from the same problem.
+
+I refer you to the following sections on the Java Client API documentation page (<A HREF="http://www.rabbitmq.com/api-guide.html">http://www.rabbitmq.com/api-guide.html</A>):
+&gt;<i> Channel thread-safety
+</I>&gt;<i> Channel instances are safe for use by multiple threads. Requests into aChannel are serialized, with only one thread being able to run a command on the Channel at a time. Even so, applications should prefer using a Channel per thread instead of sharing the same Channel across multiple threads.
+</I>&gt;<i> 
+</I>and, in the following section:
+&gt;<i> Callbacks to Consumers are dispatched on a thread separate from the thread managed by the Connection. This means that Consumers can safely call blocking methods on the Connection or Channel, such asqueueDeclare, txCommit, basicCancel or basicPublish.
+</I>&gt;<i> 
+</I>&gt;<i> Each Channel has its own dispatch thread. For the most common use case of one Consumer per Channel, this means Consumers do not hold up other Consumers. If you have multiple Consumers per Channel be aware that a long-running Consumer may hold up dispatch of callbacks to other Consumers on that Channel.
+</I>&gt;<i> 
+</I>If you are interested&#8230;.  (background info):
+
+It used to be the case that the consumer callbacks (e.g. handleDelivery) executed on the Connection thread. (This is no longer true&#8212;see below.) This meant it was quite dangerous to issue channel commands in a callback method:  the same thread that listened for frames from the server, might block waiting for a response from a channel command.  Deadlock.
+
+The basic.ack command was alright, because there is no response waited for (and any other command which doesn&#8217;t have a protocol response is fine, too).  However, many applications tried to issue channel commands (like declareQueue or createChannel) which did expect responses, so they ran into trouble.
+
+To obviate this problem, the QueueingConsumer was created: this essentially does all the necessary things in the callback to receive the message, puts it in a (communicating, thread-safe) Java queue, and returns.  The message can then be obtained from the Java queue by any other thread, including the original application thread.  If channel commands are subsequently issued they cannot block the Connection thread.
+
+Issuing channel commands from more than one thread ran the risk of issuing a command requiring a response (a &#8216;synchronous&#8217; command) while another thread was already waiting for a response.  This would be an error (a thread-safety error) because the client cannot cope with overlapping synchronous commands on the same channel.  This is prevented: a thread that issues a command expecting a response will block until any outstanding response is received on that channel.
+
+Although the thread-safety issues are (should be&#8212;let&#8217;s not get complacent) now all fixed, this solution just made a deadlock on the Connection thread more likely if you were trying to code your own Consumer.
+
+In RabbitMQ 2.7.0 and 2.7.1, the Java client was changed to take the callback executions off of the Connection thread altogether. This was for three reasons.  One was to allow channel commands to be issued in handleDelivery (et al.), which, by the way, meant that bespoke Consumers were easier to write&#8212;QueueingConsumer is now not (so) necessary.  The second was to recover more gracefully from Consumers that do silly things: throwing exceptions, hanging indefinitely, and so on.  And the third was to prevent Consumers on distinct channels from holding each other up.  (There is now a pool of threads used to execute Consumer callbacks, each channel&#8217;s callbacks being executed serially, but distinct channels&#8217; callbacks being allowed to run concurrently.)
+
+It is quite safe to issue an ack (or nack) from another thread.  But you should beware of doing this twice, so multi-threaded applications need to be carefully designed to avoid &#8216;confusion&#8217; over which thread does what&#8212;&#8220;channel control fights&#8221;.
+
+Channel commands can be issued from multiple threads if you can ensure that the correct channel protocol is observed.  To do this properly requires communication between the threads in the application, which can be non-trivial to get right (I recommend Java Concurrency in Practice, Addison Wesley, Goetz, et al.).
+
+So, the &#8216;advice&#8217; is not to share channels between application threads, but it is just advice.  It is expected that you might issue (n)acks from the Consumer handleDelivery method, and put other Channel method calls there, too.  No rules are being &#8216;broken&#8217;.
+
+Steve Powell  [Cell: +44-7815-838-558] [RabbitMQ, Pivotal]
+&#8220;L&#8217;enfer, c&#8217;est les autres.&#8221; Sartre
+
+On 23 Sep 2013, at 15:52, Mike Hadlow &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">mike at suteki.co.uk</A>&gt; wrote:
+
+&gt;<i> Hi Michael, Tim,
+</I>&gt;<i> 
+</I>&gt;<i> I've put your comments into a blog post: <A HREF="http://mikehadlow.blogspot.co.uk/2013/09/rabbitmq-amqp-channel-best-practices.html.">http://mikehadlow.blogspot.co.uk/2013/09/rabbitmq-amqp-channel-best-practices.html.</A>
+</I>&gt;<i> 
+</I>&gt;<i> Let me know if there's anything you'd like to add/change/remove.
+</I>&gt;<i> 
+</I>&gt;<i> Many thanks
+</I>&gt;<i> Mike
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> On Mon, Sep 23, 2013 at 12:35 PM, Michael Klishin &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">michael.s.klishin at gmail.com</A>&gt; wrote:
+</I>&gt;<i> 
+</I>&gt;<i> 2013/9/23 Mike Hadlow &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">mike at suteki.co.uk</A>&gt;
+</I>&gt;<i> You shouldn't share a channel between multiple threads, but given that an ACK should be sent on the same channel that the delivery is received mean that one _must_ violate this rule?
+</I>&gt;<i> 
+</I>&gt;<i> If you run one consumer per thread, use a new channel for every one of them.
+</I>&gt;<i> -- 
+</I>&gt;<i> MK
+</I>&gt;<i> 
+</I>&gt;<i> <A HREF="http://github.com/michaelklishin">http://github.com/michaelklishin</A>
+</I>&gt;<i> <A HREF="http://twitter.com/michaelklishin">http://twitter.com/michaelklishin</A>
+</I>&gt;<i> 
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20130924/06dbf5df/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20130924/06dbf5df/attachment.htm</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="030346.html">[rabbitmq-discuss] Channel best practices
+</A></li>
+	<LI>Next message: <A HREF="030378.html">[rabbitmq-discuss] Channel best practices
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#30376">[ date ]</a>
+              <a href="thread.html#30376">[ thread ]</a>
+              <a href="subject.html#30376">[ subject ]</a>
+              <a href="author.html#30376">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,126 @@
+Index: rabbit_stomp_server.erl
+===================================================================
+--- rabbit_stomp_server.erl	(revision 12140)
++++ rabbit_stomp_server.erl	(working copy)
+@@ -35,7 +35,8 @@
+ -module(rabbit_stomp_server).
+ 
+ -export([start/1,
+-         listener_started/2, listener_stopped/2, start_client/1,
++         async_recv/3,
++         listener_started/2, listener_stopped/2, start_client/1, start_client_x/1,
+          start_link/0, init/1, mainloop/1]).
+ 
+ -include_lib("rabbit_common/include/rabbit.hrl").
+@@ -71,7 +72,7 @@
+                    {reuseaddr, true}],
+                   {?MODULE, listener_started, []},
+                   {?MODULE, listener_stopped, []},
+-                  {?MODULE, start_client, []}, "STOMP Listener"]},
++                  {?MODULE, start_client, []}, "STOMP SSL Listener"]},
+                 transient, infinity, supervisor, [tcp_listener_sup]}),
+     start_listeners(More).
+ 
+@@ -82,22 +83,66 @@
+     ok.
+ 
+ start_client(Sock) ->
++    SslOpts = [{cacertfile,"/Users/jon/testca/cacert.pem"},{certfile,"/Users/jon/server/cert.pem"},{keyfile,"/Users/jon/server/key.pem"},{verify,verify_peer},{fail_if_no_peer_cert,false}],
++    case rabbit_net:peername(Sock) of
++        {ok, {PeerAddress, PeerPort}} ->
++            PeerIp = inet_parse:ntoa(PeerAddress),
++            case ssl:ssl_accept(Sock, SslOpts) of
++                {ok, SslSock} ->
++                    rabbit_log:info("upgraded STOMP TCP connection "
++                                    "from ~s:~p to SSL~n",
++                                    [PeerIp, PeerPort]),
++                    RabbitSslSock = #ssl_socket{tcp = Sock, ssl = SslSock},
++                    start_client_x(RabbitSslSock);
++                {error, Reason} ->
++                    gen_tcp:close(Sock),
++                    rabbit_log:error("failed to upgrade STOMP TCP connection "
++                                     "from ~s:~p to SSL: ~n~p~n",
++                                     [PeerIp, PeerPort, Reason]),
++                    {error, Reason}
++            end;
++        {error, Reason} ->
++            gen_tcp:close(Sock),
++            rabbit_log:error("failed to upgrade TCP connection to SSL: ~p~n",
++                             [Reason]),
++            {error, Reason}
++    end.
++
++start_client_x(Sock) ->
+     {ok, Child} = supervisor:start_child(rabbit_stomp_client_sup, []),
+-    ok = gen_tcp:controlling_process(Sock, Child),
++    ok = rabbit_net:controlling_process(Sock, Child),
+     Child ! {go, Sock},
+     Child.
+ 
+ start_link() ->
+     {ok, proc_lib:spawn_link(?MODULE, init, [self()])}.
+ 
++inet_op(F) -> rabbit_misc:throw_on_error(inet_error, F).
++
++peername(Sock) ->
++    try
++        {Address, Port} = inet_op(fun () -> rabbit_net:peername(Sock) end),
++        AddressS = inet_parse:ntoa(Address),
++        {AddressS, Port}
++    catch
++        Ex -> rabbit_log:error("error on TCP connection ~p:~p~n",
++                               [self(), Ex]),
++              rabbit_log:info("closing TCP connection ~p", [self()]),
++              exit(normal)
++    end.
++
++async_recv(Sock, Length, Timeout) -> %% when is_record(Sock, ssl_socket) ->
++    Pid = self(),
++    Ref = make_ref(),
++    spawn(fun() -> Pid ! {ssl, Sock, ssl:recv(Sock#ssl_socket.ssl, Length, Timeout)} end),
++    {ok, Ref}.
++
+ init(_Parent) ->
+     receive
+         {go, Sock} ->
+-            ok = inet:setopts(Sock, [{active, once}]),
++            async_recv(Sock, 0, infinity),
+             process_flag(trap_exit, true),
+-
+-            {ok, {PeerAddress, PeerPort}} = inet:peername(Sock),
+-            PeerAddressS = inet_parse:ntoa(PeerAddress),
++            {PeerAddressS, PeerPort} = peername(Sock),
+             error_logger:info_msg("starting STOMP connection ~p from ~s:~p~n",
+                                   [self(), PeerAddressS, PeerPort]),
+             ParseState = rabbit_stomp_frame:initial_state(),
+@@ -117,10 +162,10 @@
+             handle_exit(Pid, Reason, State);
+         {channel_exit, ChannelId, Reason} ->
+             handle_exit(ChannelId, Reason, State);
+-        {tcp, Sock, Bytes} ->
+-            inet:setopts(Sock, [{active, once}]),
++        {ssl, Sock, {ok, Bytes}} ->
++            async_recv(Sock, 0, infinity),
+             process_received_bytes(Bytes, State);
+-        {tcp_closed, _Sock} ->
++        {ssl, _Sock, {error, closed}} ->
+             case State#state.channel of
+                 none ->
+                     done;
+@@ -143,6 +188,7 @@
+             %% which event we do respond to.
+             ?MODULE:mainloop(State);
+         Data ->
++            rabbit_log:info("WTF:FIXME ~p : ~p", [Data, State]),
+             send_priv_error("Error", "Internal error in mainloop\n",
+                             Data, State),
+             done
+@@ -280,7 +326,7 @@
+     %% asynchronous notification of the same (or a related) fault
+     %% shortly anyway. See bug 21365.
+     %% io:format("Sending ~p~n", [Frame]),
+-    case gen_tcp:send(Sock, rabbit_stomp_frame:serialize(Frame)) of
++    case ssl:send(Sock#ssl_socket.ssl, rabbit_stomp_frame:serialize(Frame)) of
+         ok -> State;
+         {error, closed} -> State;
+         {error, enotconn} -> State;

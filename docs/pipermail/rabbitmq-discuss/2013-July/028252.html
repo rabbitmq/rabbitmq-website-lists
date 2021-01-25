@@ -1,0 +1,150 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] rabbitmq-c should I start a thread for amqp_simple_wait_frame() to get mesage?
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20rabbitmq-c%20should%20I%20start%20a%20thread%20for%0A%20amqp_simple_wait_frame%28%29%20to%20get%20mesage%3F&In-Reply-To=%3CCAAt2poK8BgMdYxv05Ob5fKuQ-FfMtXXFZu2K_M2nRYGmLuDjDw%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="028251.html">
+   <LINK REL="Next"  HREF="028255.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] rabbitmq-c should I start a thread for amqp_simple_wait_frame() to get mesage?</H1>
+    <B>Alan Antonuk</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20rabbitmq-c%20should%20I%20start%20a%20thread%20for%0A%20amqp_simple_wait_frame%28%29%20to%20get%20mesage%3F&In-Reply-To=%3CCAAt2poK8BgMdYxv05Ob5fKuQ-FfMtXXFZu2K_M2nRYGmLuDjDw%40mail.gmail.com%3E"
+       TITLE="[rabbitmq-discuss] rabbitmq-c should I start a thread for amqp_simple_wait_frame() to get mesage?">alan.antonuk at gmail.com
+       </A><BR>
+    <I>Wed Jul  3 06:59:10 BST 2013</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="028251.html">[rabbitmq-discuss] rabbitmq-c should I start a thread for amqp_simple_wait_frame() to get mesage?
+</A></li>
+        <LI>Next message: <A HREF="028255.html">[rabbitmq-discuss] rabbitmq-c should I start a thread for amqp_simple_wait_frame() to get mesage?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#28252">[ date ]</a>
+              <a href="thread.html#28252">[ thread ]</a>
+              <a href="subject.html#28252">[ subject ]</a>
+              <a href="author.html#28252">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Ok, now I have a better understanding of what you're trying to accomplish.
+
+First a bit of a warning: as you've already noticed, the rabbitmq-c API
+doesn't lend itself to doing RPC-style commands (such as
+amqp_basic_consume, or amqp_queue_declare, etc) while waiting on a message
+to be delivered with amqp_simple_wait_frame().  So the following solutions
+won't be the most natural solutions out there, they may also may suffer
+from performance issues. If these solutions don't work for you - I would
+encourage you to explore using other RabbitMQ clients.
+
+
+My first suggestion would be to declare a command queue on the broker and
+have your message reading thread consume from that command queue.  When a
+user logs into the chat, using a different connection publish a message to
+that command queue &quot;start consuming from queue X&quot;.  Your message reading
+thread should then read that message, then create the consumer, and go back
+to waiting for messages.  You could use a similar process to stop a
+consumer.
+
+The upside is this is fairly easy to implement, the downside (and you would
+need to do some performance testing) is that there is a certain cost for
+having the message go to the broker and back, also if your message reading
+thread is consuming a lot of messages from different consumers, there could
+be a significant delay between the time you send the message from one
+thread, and the time the message is received in your message reading thread.
+
+
+My second suggestion would be to create a pipe (
+<A HREF="http://linux.die.net/man/7/pipe">http://linux.die.net/man/7/pipe</A>) and before the first
+amqp_simple_wait_frame() call, extract the socket fd from the
+amqp_connection_state_t with amqp_get_sockfd() and do a select() call with
+both the read-end of the pipe and the socket fd. If the pipe can be read
+that will be the signal that a consumer should be started or stopped,
+otherwise a message should be read.
+
+In the other thread, when a new user logs in write a command to the pipe
+indicating what other amqp commands the message reader thread should do
+(start or stop a consumer).
+
+The upside is that this will likely be more performant than my first
+suggestion.  The downside is that this is a fair bit more complicated in
+terms of programming effort, and understanding how pipes work, and outside
+of Linux i'm not 100% sure this will work (I know it will require a
+different approach on Win32).
+
+HTH
+-Alan
+
+
+On Tue, Jul 2, 2013 at 8:51 PM, 3k4b251 &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">314992959 at qq.com</A>&gt; wrote:
+
+&gt;<i>
+</I>&gt;<i> 1.  &#12304; For example when a new person signs on to this chat, what happens on
+</I>&gt;<i> the broker? Do new queues get created? Do you start some consumer?&#12305;
+</I>&gt;<i>
+</I>&gt;<i> Re:    when  a  new  person  login in the  online server, the online
+</I>&gt;<i>  Server
+</I>&gt;<i> ask   rabbitmq-server to  create   a  queue  for  him. and  start a
+</I>&gt;<i> consumer for  the queue.  (if  he  already  have  the queue on mq server,
+</I>&gt;<i> the create fail, but we  don't  care about  that.  the only thing  we care
+</I>&gt;<i> about  is   that   when  a new person  login in ,there will be a queue
+</I>&gt;<i> server for him)     every  person  only  have  one queue and  one  consumer
+</I>&gt;<i> for the queue  in  rabbitmq-server.
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> 2.  &#12304;When a person sends a message to another person over this chat what
+</I>&gt;<i> queues does it get routed to? How does the message get back to the
+</I>&gt;<i> application the user is using.&#12305;
+</I>&gt;<i>
+</I>&gt;<i> Re:    when he want to chart to another person  A.  he send message to A's
+</I>&gt;<i> only queue.  and A may receive the message by him only consumer.  if A want
+</I>&gt;<i> to reply to sender, he need to send message to sender's only queue.   it's
+</I>&gt;<i> seems like email.    maybe we need talk group,  so I'd like to create
+</I>&gt;<i> exchange for talk group.   we can bind the group memebers to a exchange.
+</I>&gt;<i> and
+</I>&gt;<i> send message to the exchange.
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> --
+</I>&gt;<i> View this message in context:
+</I>&gt;<i> <A HREF="http://rabbitmq.1065348.n5.nabble.com/rabbitmq-c-should-I-start-a-thread-for-amqp-simple-wait-frame-to-get-mesage-tp27666p27760.html">http://rabbitmq.1065348.n5.nabble.com/rabbitmq-c-should-I-start-a-thread-for-amqp-simple-wait-frame-to-get-mesage-tp27666p27760.html</A>
+</I>&gt;<i> Sent from the RabbitMQ mailing list archive at Nabble.com.
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20130702/90c00a3a/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20130702/90c00a3a/attachment.htm</A>&gt;
+</PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="028251.html">[rabbitmq-discuss] rabbitmq-c should I start a thread for amqp_simple_wait_frame() to get mesage?
+</A></li>
+	<LI>Next message: <A HREF="028255.html">[rabbitmq-discuss] rabbitmq-c should I start a thread for amqp_simple_wait_frame() to get mesage?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#28252">[ date ]</a>
+              <a href="thread.html#28252">[ thread ]</a>
+              <a href="subject.html#28252">[ subject ]</a>
+              <a href="author.html#28252">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

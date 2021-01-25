@@ -1,0 +1,125 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Reconnect logic for C library
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Reconnect%20logic%20for%20C%20library&In-Reply-To=%3C0adcfd20-2639-4884-a22d-be569742ba83%40zimbra-prod-mbox-1.vmware.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="012642.html">
+   <LINK REL="Next"  HREF="012662.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Reconnect logic for C library</H1>
+    <B>Tony Menges</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Reconnect%20logic%20for%20C%20library&In-Reply-To=%3C0adcfd20-2639-4884-a22d-be569742ba83%40zimbra-prod-mbox-1.vmware.com%3E"
+       TITLE="[rabbitmq-discuss] Reconnect logic for C library">amenges at vmware.com
+       </A><BR>
+    <I>Tue May  3 03:25:31 BST 2011</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="012642.html">[rabbitmq-discuss] New project with examples in Erlang
+</A></li>
+        <LI>Next message: <A HREF="012662.html">[rabbitmq-discuss] Reconnect logic for C library
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#12643">[ date ]</a>
+              <a href="thread.html#12643">[ thread ]</a>
+              <a href="subject.html#12643">[ subject ]</a>
+              <a href="author.html#12643">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi Paul,
+
+I started to take a look at this and wanted to make sure I understand the problem. Is the basic problem that the return code from amqp_basic_publish() shows success even after the broker has closed the connection? Are you doing a commit after each message is published? Is commit showing success when the broker is down?
+
+I've written a simple test driver program that allows me to vary the number of messages per transaction and the amount of delay between messages and after commits. I set the number of messages per transaction to 5, the delay between publishes to 0 and the delay after each transaction to a few seconds. After I see a commit, I ctl-C Rabbit and I see usually 5 (the transaction batch size) messages published and the commit fails with a connection closed error. The Wireshark trace shows that only 1 of the messages was actually put on the wire.
+
+If I put a delay between message sends, I get a SIGPIPE usually after 1 or 2 messages have been sent.
+
+I think that in the first case, the messages are put into the socket's output buffer fast enough that the close from the other side has not been processed (my messages are quite small so they all fit in the socket's buffer); amqp_tx_commit() actually tries to read from the socket so it will notice the socket closed.
+
+Does this sound consistent with your experience?
+
+Tony Menges
+VMware, Inc
+
+----- Original Message -----
+From: &quot;Paul Dix&quot; &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">paul at pauldix.net</A>&gt;
+To: &quot;Matthias Radestock&quot; &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">matthias at rabbitmq.com</A>&gt;
+Cc: &quot;rabbitmq-discuss&quot; &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>&gt;
+Sent: Tuesday, April 12, 2011 6:50:13 AM
+Subject: Re: [rabbitmq-discuss] Reconnect logic for C library
+
+Hi Matthias,
+I briefly tried to use these two:
+
+amqp_tx_commit(connection, channel);
+amqp_get_rpc_reply(connection)
+
+Then check the result. However, I found that it would indicate success
+for a message or two after I took RabbitMQ down before it indicated a
+problem. I ended up bailing on C, but I'd be interested to hear if
+this is possible with the library. The two things are: fail if a
+message doesn't get published (i.e. don't fail silently) and check
+that a connection/channel is open.
+
+Thanks,
+Paul
+
+On Tue, Apr 12, 2011 at 7:04 AM, Matthias Radestock
+&lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">matthias at rabbitmq.com</A>&gt; wrote:
+&gt;<i> Paul,
+</I>&gt;<i>
+</I>&gt;<i> On 01/04/11 22:40, Paul Dix wrote:
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> I'm working with the rabbitmq c library and I need to have reconnect
+</I>&gt;&gt;<i> logic in there. Basically, try to send a message, if it fails, attempt
+</I>&gt;&gt;<i> reconnect and try again. How do I accomplish this? I've been using
+</I>&gt;&gt;<i> amqp_basic_publish and if I try that it just hangs.
+</I>&gt;<i>
+</I>&gt;<i> Did you work out what the problem was? The people familiar with the C client
+</I>&gt;<i> at Rabbit HQ are a bit swamped at the moment, so it will likely be a while
+</I>&gt;<i> before we can look into this.
+</I>&gt;<i>
+</I>&gt;<i> Matthias.
+</I>&gt;<i>
+</I>_______________________________________________
+rabbitmq-discuss mailing list
+<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="012642.html">[rabbitmq-discuss] New project with examples in Erlang
+</A></li>
+	<LI>Next message: <A HREF="012662.html">[rabbitmq-discuss] Reconnect logic for C library
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#12643">[ date ]</a>
+              <a href="thread.html#12643">[ thread ]</a>
+              <a href="subject.html#12643">[ subject ]</a>
+              <a href="author.html#12643">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

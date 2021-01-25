@@ -1,0 +1,250 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] please help understanding why my pool of	channels are blocking.
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20please%20help%20understanding%20why%20my%20pool%20of%0A%09channels%20are%20blocking.&In-Reply-To=%3CCAHSyJgJvZ%2BNXn1%2B51i5KN10HZ3mQY56Cz%2BKjiPfzMVuEaEwpsg%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="019857.html">
+   <LINK REL="Next"  HREF="019872.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] please help understanding why my pool of	channels are blocking.</H1>
+    <B>Gautam Bakshi</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20please%20help%20understanding%20why%20my%20pool%20of%0A%09channels%20are%20blocking.&In-Reply-To=%3CCAHSyJgJvZ%2BNXn1%2B51i5KN10HZ3mQY56Cz%2BKjiPfzMVuEaEwpsg%40mail.gmail.com%3E"
+       TITLE="[rabbitmq-discuss] please help understanding why my pool of	channels are blocking.">gautam.bakshi at gmail.com
+       </A><BR>
+    <I>Thu May  3 04:34:41 BST 2012</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="019857.html">[rabbitmq-discuss] heroku beta
+</A></li>
+        <LI>Next message: <A HREF="019872.html">[rabbitmq-discuss] please help understanding why my pool of	channels are blocking.
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#19839">[ date ]</a>
+              <a href="thread.html#19839">[ thread ]</a>
+              <a href="subject.html#19839">[ subject ]</a>
+              <a href="author.html#19839">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi Everyone,
+
+I'm playing around with Rabbitmq(sorry for flooding the list lately) and am
+having some weird problems in my tests.  I have a multi-threaded
+application that I was considering using rabbitmq to manage the queue but
+I'm getting alot of blocking between my channels.  Is there a preferred way
+to setup pools?
+
+I'm a bit new to Java so I used to the pools from apache commons but when I
+profile the channels are all blocking each other.  To test if dedicated
+connections per thread worked better I made an example of it as well and it
+does not block when the same program has a single channel per connection.
+
+So my question, do channels block each other or am I doing something
+wrong(using java api wrong or misunderstanding connection/channels)?  Is
+there a more preferred way? Unrelated to the question, but I was also
+wondering is there any difference between channels and connections in terms
+of throughput(i.e. would there be any benefit of using dedicated
+connections ignoring the overhead in establishing/maintaining the
+connection)?
+
+Here's the test code(it simply sends to a thread a bunch of data to write
+the queue). If it helps I'm using v2.7.1, installed from MacPorts):
+
+
+import org.apache.commons.pool.BasePoolableObjectFactory;
+import org.apache.commons.pool.ObjectPool;
+import org.apache.commons.pool.PoolableObjectFactory;
+import org.apache.commons.pool.impl.GenericObjectPool;
+
+import java.io.IOException;
+import java.util.NoSuchElementException;
+import java.util.Set;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.LinkedBlockingDeque;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
+
+
+import com.rabbitmq.client.ConnectionFactory;
+import com.rabbitmq.client.Connection;
+import com.rabbitmq.client.Channel;
+import com.rabbitmq.client.MessageProperties;
+
+public class PoolExample {
+
+private static ExecutorService executor_worker;
+ static {
+        final int numberOfThreads_ThreadPoolExecutor = 20;
+        executor_worker =
+Executors.newFixedThreadPool(numberOfThreads_ThreadPoolExecutor);
+}
+    public static void main(String[] args) throws Exception {
+    System.out.println(&quot;starting..&quot;);
+    ObjectPool&lt;Channel&gt; pool =
+                new GenericObjectPool&lt;Channel&gt;(
+                new ConnectionPoolableObjectFactory(), 50);
+    for (int x = 0; x&lt;500000000; x++) {
+    executor_worker.submit(new MyRunnable(x, pool));
+    }
+    }
+}
+
+/*
+ //this is a version that creates its own connection per channel
+ class ConnectionPoolableObjectFactory
+        extends BasePoolableObjectFactory&lt;Channel&gt; {
+
+    private static final ConnectionFactory factory = newConnectionFactory();
+
+    private static ConnectionFactory newConnectionFactory() {
+        ConnectionFactory factory = new ConnectionFactory();
+        factory.setHost(&quot;localhost&quot;);
+        return factory;
+    }
+
+    @Override
+    public Channel makeObject() throws Exception {
+        System.out.println(&quot;new channel&quot;);
+    return factory.newConnection().createChannel();
+
+    }
+
+    @Override
+    public boolean validateObject(Channel channel) {
+        return channel.isOpen();
+    }
+
+    @Override
+    public void destroyObject(Channel channel) throws Exception {
+    System.out.println(&quot;closing&quot;);
+        channel.close();
+    }
+
+    @Override
+    public void passivateObject(Channel channel) throws Exception {
+        //System.out.println(&quot;sent back to queue&quot;);
+    }
+}
+*/
+
+//this version pools channels
+class ConnectionPoolableObjectFactory extends
+BasePoolableObjectFactory&lt;Channel&gt; {
+
+private final Connection connection;
+
+ConnectionPoolableObjectFactory() throws IOException {
+ConnectionFactory factory = new ConnectionFactory();
+factory.setHost(&quot;localhost&quot;);
+connection = factory.newConnection();
+}
+
+@Override
+public Channel makeObject() throws Exception {
+return connection.createChannel();
+}
+
+@Override
+public boolean validateObject(Channel channel) {
+return channel.isOpen();
+}
+
+@Override
+public void destroyObject(Channel channel) throws Exception {
+channel.close();
+}
+
+@Override
+public void passivateObject(Channel channel) throws Exception {
+//do nothing
+}
+}
+
+
+class MyRunnable implements Runnable{
+protected int x = 0;
+protected ObjectPool&lt;Channel&gt; pool;
+    public MyRunnable(int x, ObjectPool&lt;Channel&gt; pool) {
+// TODO Auto-generated constructor stub
+    this.x = x;
+    this.pool = pool;
+}
+
+public void run(){
+        try {
+                Channel channel = pool.borrowObject();
+            String message = Integer.toString(x);
+            channel.basicPublish( &quot;&quot;, &quot;task_queue&quot;,
+                        MessageProperties.PERSISTENT_TEXT_PLAIN,
+                        message.getBytes());
+            pool.returnObject(channel);
+} catch (NoSuchElementException e) {
+// TODO Auto-generated catch block
+e.printStackTrace();
+} catch (IllegalStateException e) {
+// TODO Auto-generated catch block
+e.printStackTrace();
+} catch (Exception e) {
+// TODO Auto-generated catch block
+e.printStackTrace();
+}
+    }
+}
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20120502/b0e244a6/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20120502/b0e244a6/attachment.htm</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="019857.html">[rabbitmq-discuss] heroku beta
+</A></li>
+	<LI>Next message: <A HREF="019872.html">[rabbitmq-discuss] please help understanding why my pool of	channels are blocking.
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#19839">[ date ]</a>
+              <a href="thread.html#19839">[ thread ]</a>
+              <a href="subject.html#19839">[ subject ]</a>
+              <a href="author.html#19839">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

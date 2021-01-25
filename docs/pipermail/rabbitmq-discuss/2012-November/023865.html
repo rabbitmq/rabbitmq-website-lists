@@ -1,0 +1,195 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] RabbitMQ as communication server for mobile devices
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20RabbitMQ%20as%20communication%20server%20for%20mobile%0A%20devices&In-Reply-To=%3C50A4AEC4.7060308%40rabbitmq.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="023858.html">
+   <LINK REL="Next"  HREF="023871.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] RabbitMQ as communication server for mobile devices</H1>
+    <B>Tim Watson</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20RabbitMQ%20as%20communication%20server%20for%20mobile%0A%20devices&In-Reply-To=%3C50A4AEC4.7060308%40rabbitmq.com%3E"
+       TITLE="[rabbitmq-discuss] RabbitMQ as communication server for mobile devices">tim at rabbitmq.com
+       </A><BR>
+    <I>Thu Nov 15 08:58:44 GMT 2012</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="023858.html">[rabbitmq-discuss] RabbitMQ as communication server for mobile	devices
+</A></li>
+        <LI>Next message: <A HREF="023871.html">[rabbitmq-discuss] RabbitMQ as communication server for mobile	devices
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#23865">[ date ]</a>
+              <a href="thread.html#23865">[ thread ]</a>
+              <a href="subject.html#23865">[ subject ]</a>
+              <a href="author.html#23865">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi Michal,
+
+On 11/14/2012 04:49 PM, Michal Lev&#253; wrote:
+&gt;<i> Hi everyone
+</I>&gt;<i>
+</I>&gt;<i> I have following scenario:
+</I>&gt;<i> 1) Many Android clients (from 1000 to 10 000 clients) - not connected 
+</I>&gt;<i> all the time (messaging seems like good fit for this)
+</I>&gt;<i> 2) Each sending max 100 messages\day
+</I>&gt;<i> 3) Also needs to send some messages back from server but not very 
+</I>&gt;<i> frequently (10\day)
+</I>&gt;<i>
+</I>&gt;<i> I was looking on rabbit tutorials, AMQP spec etc.
+</I>&gt;<i> It looks like collecting data from androids is easy task. All will 
+</I>&gt;<i> send data into single exchange\queue.
+</I>&gt;<i> But what about sending messages to Androids from server?
+</I>&gt;<i> 1st i was thinking about having single queue and to subcribe from each 
+</I>&gt;<i> device with some kind of &quot;filter&quot; (based on some header field). I know 
+</I>&gt;<i> there are message brokers which support this scenario.
+</I>&gt;<i> But it seems Rabbit doesn't support this.
+</I>
+It isn't hard to set this up in Rabbit! You will need to think about 
+solving the problem in AMQP terms though, which is admittedly a bit 
+different from what you'd do with say JMS or whatever.
+
+&gt;<i> Do i really have to create one &quot;sending&quot; queue for each client (using 
+</I>&gt;<i> direct exchange with proper &quot;per device&quot; routing key) ?
+</I>
+As a matter of fact, clients never send messages directly to queues, but 
+rather send them to exchanges (as you've already noted), after which 
+they're routed to zero or more queues based on the bindings you've set 
+up (between the exchanges and queues). So for example, you can send a 
+message to an exchange from one client and receive it on another a la 
+pub/sub by using a topic exchange. You can apply content based routing 
+using the headers exchange. If you've got data that needs to go out to 
+the devices then you first need to figure out what your filters look 
+like. Once these are in place, you can use one of the built in exchange 
+types to place the messages into the broker's care. Each device that 
+wishes to consume data can either create a temporary queue and bind it 
+to the exchange(s) in the right way, or connect to an existing queue 
+which is bound to a topic exchange for some set of keys that interest you.
+
+&gt;<i> How much overhead queues in rabbit have ?
+</I>
+You can have lots (i.e., thousands) of queues without suffering too 
+much, though there is obviously *some* overhead (memory, etc) and its 
+worth planning your topology carefully so as to get the best out of 
+Rabbit. We can help with that (here) by pointing you to the right 
+resources and documentation, or if you want elaborate on some of the 
+finer details of the design we often have lively and interesting 
+discussions about how to solve various problems on this mailing list!
+
+Going back to something you mentioned at the beginning of your post:
+
+&gt;<i> It looks like collecting data from androids is easy task. All will 
+</I>&gt;<i> send data into single exchange\queue.
+</I>
+This really depends on what the whole messaging topology needs to look 
+like. Sometimes you need to propagate messages into various places, and 
+building blocks like fan-out and exchange-2-exchange bindings can help 
+with this. Other times, it actually makes more sense to send some 
+messages to a specific exchange and others to, well, another. As you're 
+making design decisions such as these, you'll want to consider various 
+factors which include performance and resource consumption on the 
+broker, scaling up/out (as you add more clients, potentially cluster the 
+broker and so on) and of course the management of all this 
+infrastructure, from the perspective of both the client application(s) 
+and the administration of the broker itself.
+
+&gt;<i> It can be also management issue and really feels like overkill when 
+</I>&gt;<i> number of messages send from server to device is really low....
+</I>&gt;<i>
+</I>
+It's actually quite easy to set up a temporary, auto-delete (once the 
+client disconnects) queue that is used simply to bind to an exchange 
+that you're interested in. The semantics probably need some thought 
+however: how are you going to consume messages (e.g., round robin, 
+fan-out, etc), how will you know to delete them from the broker (using 
+acks, etc) and so on. This is where you need to think carefully about 
+your design. Either way, there shouldn't be much management to do if 
+you're using temporary queues to make consumption and guarantee that the 
+queues are deleted once you're finished with them (i.e., the client goes 
+away). If you're using long lived (shared) queues then the design 
+complexity pushes back into the exchanges and bindings you configure, 
+but that's done just once and then clients need to know where/how to 
+connect.
+
+&gt;<i> Any advice will be appriciated.
+</I>
+If you've been through the tutorials, then hopefully it's clear that 
+consuming from a queue is relatively simple and that you have a number 
+of choices when it comes to 'filtering' what you receive. If you want to 
+go into a bit more detail about these 'filters' then we can look at 
+which topologies might best support your use cases.
+
+Cheers,
+
+Tim
+
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="023858.html">[rabbitmq-discuss] RabbitMQ as communication server for mobile	devices
+</A></li>
+	<LI>Next message: <A HREF="023871.html">[rabbitmq-discuss] RabbitMQ as communication server for mobile	devices
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#23865">[ date ]</a>
+              <a href="thread.html#23865">[ thread ]</a>
+              <a href="subject.html#23865">[ subject ]</a>
+              <a href="author.html#23865">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

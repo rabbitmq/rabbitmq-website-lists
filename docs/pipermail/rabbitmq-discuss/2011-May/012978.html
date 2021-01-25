@@ -1,0 +1,154 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Memory usage
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Memory%20usage&In-Reply-To=%3C4DDBC2A3.7070103%40rabbitmq.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="012977.html">
+   <LINK REL="Next"  HREF="012958.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Memory usage</H1>
+    <B>Rob Harrop</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Memory%20usage&In-Reply-To=%3C4DDBC2A3.7070103%40rabbitmq.com%3E"
+       TITLE="[rabbitmq-discuss] Memory usage">rob at rabbitmq.com
+       </A><BR>
+    <I>Tue May 24 15:37:23 BST 2011</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="012977.html">[rabbitmq-discuss] Memory usage
+</A></li>
+        <LI>Next message: <A HREF="012958.html">[rabbitmq-discuss] Dead Letter Channel?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#12978">[ date ]</a>
+              <a href="thread.html#12978">[ thread ]</a>
+              <a href="subject.html#12978">[ subject ]</a>
+              <a href="author.html#12978">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>
+
+Rob Harrop wrote:
+&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> Hagbard Celine wrote:
+</I>&gt;&gt;<i> Thanks for your answer and sorry for the questions - i just want to
+</I>&gt;&gt;<i> know if RabbitMQ is a possible solution for my problem.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> --
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Does it mean that RabbitMQ will nerver hit the watermark if the
+</I>&gt;&gt;<i> producer slow enough (and the speed of my producers depends on the
+</I>&gt;&gt;<i> amount of memory i use)?
+</I>&gt;<i>
+</I>&gt;<i> RabbitMQ will only hit the watermark if there are too many messages in
+</I>&gt;<i> memory. This can be caused by many different factors, the most likely
+</I>&gt;<i> being that messages are arriving at the broker faster than they can be
+</I>&gt;<i> sent to consumers or written to disk.
+</I>&gt;<i>
+</I>&gt;<i> Rabbit will flush messages to disk if memory is low, but it also has to
+</I>&gt;<i> stop messages arriving while it does this otherwise it could still run
+</I>&gt;<i> out of memory while doing the paging.
+</I>&gt;<i>
+</I>&gt;<i> Messages are only flushed to disk once the high watermark is hit, so
+</I>&gt;<i> you'll always see memory tend towards the watermark if the message
+</I>&gt;<i> ingress rate outweighs the message egress rate.
+</I>
+Of course, this is actually nonsense. What I wanted to write is that 
+Rabbit will flush messages to disk as needed, even if the watermark 
+isn't hit. However, if you do hit the watermark then Rabbit has to flush 
+messages to disk *and* it can't receive any more - hence the blocking 
+behaviour on the producers.
+
+&gt;<i>
+</I>&gt;<i> Once the high watermark is hit, messages are paged to disk until enough
+</I>&gt;<i> memory is reclaimed to drop below the watermark. For the duration of
+</I>&gt;<i> this process, producers are throttled.
+</I>&gt;<i>
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> In my tests (with no consumers) the memory usage grows constantly with
+</I>&gt;&gt;<i> the amount of messages. Sometimes the memory usage decreased but
+</I>&gt;&gt;<i> overall it grows until the watermark. Are the producers still too fast
+</I>&gt;&gt;<i> for RabbitMQ (and my hardware)?
+</I>&gt;<i>
+</I>&gt;<i> This is expected due to the behaviour above. If you have no consumers
+</I>&gt;<i> the only way to reclaim memory is to flush messages to disk.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> To solve my problem i have to guarantee that all messages will be
+</I>&gt;&gt;<i> queued and not blocked by RabbitMQ.
+</I>&gt;<i>
+</I>&gt;<i> You have a few options I think, but the most sensible one is to simply
+</I>&gt;<i> perform your own throttling of your producer.
+</I>&gt;<i>
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Thanks a lot
+</I>&gt;&gt;<i> Hagbard
+</I>&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i> Hagbard,
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i> Since 2.x, RabbitMQ will no longer allow the Erlang process to run out
+</I>&gt;&gt;&gt;<i> of memory and stop due to fast producers and slow consumers.
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i> If you have a fast producer running constantly, accompanied by a slow
+</I>&gt;&gt;&gt;<i> consumer then the number of queued messages will grow. To prevent this
+</I>&gt;&gt;&gt;<i> from causing out of memory problems, Rabbit will throttle the producer
+</I>&gt;&gt;&gt;<i> once the memory high watermark is hit.
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i> The throttling works by simply blocking the producer from sending any
+</I>&gt;&gt;&gt;<i> more data over the TCP socket. Once memory drops below the high
+</I>&gt;&gt;&gt;<i> watermark, due to the consumer catching up or messages being flushed to
+</I>&gt;&gt;&gt;<i> disk, the producer can send data again.
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i> Note that your producer might bounce off the watermark frequently if it
+</I>&gt;&gt;&gt;<i> just keeps publishing without let up.
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i> Rob
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">Hagbard at gmx.de</A> wrote:
+</I>&gt;&gt;&gt;&gt;<i> Hi,
+</I>&gt;&gt;&gt;&gt;<i> im new to RabbitMQ and i have a question about the memory usage of
+</I>&gt;&gt;&gt;<i> RabbitMQ. I read that since RabbitMQ 2.x i don't need to care about fast
+</I>&gt;&gt;&gt;<i> producers and slow consumers and so don't need to care about the
+</I>&gt;&gt;&gt;<i> amount of
+</I>&gt;&gt;&gt;<i> messages in a queue and memory usage. After a test yesterday with 2GB
+</I>&gt;&gt;&gt;<i> memory and
+</I>&gt;&gt;&gt;<i> 4M messages in a queue (no consumer) RabbitMQ reached high memory
+</I>&gt;&gt;&gt;<i> watermark
+</I>&gt;&gt;&gt;<i> and stopped. Can somebody explain that behaviour?
+</I>&gt;&gt;&gt;&gt;<i> Thanks a lot
+</I>&gt;&gt;&gt;&gt;<i> Hagbard
+</I>&gt;&gt;&gt;<i> _______________________________________________
+</I>&gt;&gt;&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;&gt;&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;&gt;&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>&gt;&gt;<i>
+</I></PRE>
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="012977.html">[rabbitmq-discuss] Memory usage
+</A></li>
+	<LI>Next message: <A HREF="012958.html">[rabbitmq-discuss] Dead Letter Channel?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#12978">[ date ]</a>
+              <a href="thread.html#12978">[ thread ]</a>
+              <a href="subject.html#12978">[ subject ]</a>
+              <a href="author.html#12978">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

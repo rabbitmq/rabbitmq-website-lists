@@ -1,0 +1,153 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] ShutdownSignalException second 'channel.open'
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20ShutdownSignalException%20second%20%27channel.open%27&In-Reply-To=%3C32E33686-2FCA-4800-BF2B-7B5953786B63%40rabbitmq.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="017749.html">
+   <LINK REL="Next"  HREF="017804.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] ShutdownSignalException second 'channel.open'</H1>
+    <B>Steve Powell</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20ShutdownSignalException%20second%20%27channel.open%27&In-Reply-To=%3C32E33686-2FCA-4800-BF2B-7B5953786B63%40rabbitmq.com%3E"
+       TITLE="[rabbitmq-discuss] ShutdownSignalException second 'channel.open'">steve at rabbitmq.com
+       </A><BR>
+    <I>Tue Jan 31 12:19:10 GMT 2012</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="017749.html">[rabbitmq-discuss] ShutdownSignalException second 'channel.open'
+</A></li>
+        <LI>Next message: <A HREF="017804.html">[rabbitmq-discuss] ShutdownSignalException second 'channel.open'
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#17800">[ date ]</a>
+              <a href="thread.html#17800">[ thread ]</a>
+              <a href="subject.html#17800">[ subject ]</a>
+              <a href="author.html#17800">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Yogesh,
+
+Please can you provide some information about your environment? And your
+application? What version of RabbitMQ (and client) are you using?
+
+In your stack trace the ShutdownListener you registered is apparently being
+called, because the Connection is being shut down. It is not clear why this
+exception (and its associated stack trace) appears, it seems to come from your
+Listener code, but perhaps that does nothing.
+
+The Shutdown seems to be being called because the channel is being opened twice.
+The broker complains about this and closes the connection. Are you creating
+channels on different threads simultaneously? (Looking at your app 'design' you
+might be.) Depending upon the version of RabbitMQ this might cause a problem.
+
+I'm afraid your application design is unclear:
+
+&gt;<i> This is how I handle doing basicPublish and basicGet on potentially
+</I>&gt;<i> non-existent queues
+</I>&gt;<i> - publish involves 3 steps
+</I>&gt;<i>  queueDeclare
+</I>&gt;<i>  queueBind
+</I>&gt;<i>  basicPublish
+</I>&gt;<i>  If some other thread deletes the queue after either queueDeclare or
+</I>&gt;<i> queueBind, basicPublish fails and I again create a new
+</I>&gt;<i>  channel and do these operations
+</I>
+I don't think the basicPublish will fail if the queue doesn't exist. Why would
+you create a new channel in this case?
+
+Please explain why you expect the queue might be deleted by some other thread.
+
+&gt;<i> - if basicGet fails, I simply ignore it
+</I>
+What do you mean by ignoring it? Do you poll the queue periodically? Why aren't
+you using basicConsume and a Consumer to get messages (which will be notified if
+the queue is deleted)?
+
+Steve Powell  (a loopy bunny)
+----------some more definitions from the SPD----------
+vermin (v.) Treating the dachshund for roundworm.
+chinchilla (n.) Cooling device for the lower jaw.
+socialcast (n.) Someone to whom everyone is speaking but nobody likes.
+
+On 30 Jan 2012, at 04:33, Yogesh Ketkar wrote:
+
+&gt;<i> Only operations I ever do with com.rabbitmq.client.Connection in the
+</I>&gt;<i> code are
+</I>&gt;<i>    c.addShutdownListener
+</I>&gt;<i>    c.createChannel
+</I>&gt;<i> 
+</I>&gt;<i> What does this error signify?
+</I>&gt;<i> 
+</I>&gt;<i> 2012-01-30 09:44:45,158 ERROR  [ConnectionShutdownHandler]
+</I>&gt;<i> ShutdownListener
+</I>&gt;<i> com.rabbitmq.client.ShutdownSignalException: connection error; reason:
+</I>&gt;<i> {#method&lt;connection.close&gt;(reply-code=503, reply-text=COMMAND_INVALID
+</I>&gt;<i> - second 'channel.open' seen, class-id=20, method-id=10), null,
+</I>&gt;<i> &quot;[<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">B at 105691e</A>&quot;}
+</I>&gt;<i> 	at com.rabbitmq.client.impl.AMQConnection.shutdown(AMQConnection.java:
+</I>&gt;<i> 641)
+</I>&gt;<i> 	at
+</I>&gt;<i> com.rabbitmq.client.impl.AMQConnection.handleConnectionClose(AMQConnection.java:
+</I>&gt;<i> 599)
+</I>&gt;<i> 	at
+</I>&gt;<i> com.rabbitmq.client.impl.AMQConnection.processControlCommand(AMQConnection.java:
+</I>&gt;<i> 571)
+</I>&gt;<i> 	at com.rabbitmq.client.impl.AMQConnection
+</I>&gt;<i> $1.processAsync(AMQConnection.java:88)
+</I>&gt;<i> 	at
+</I>&gt;<i> com.rabbitmq.client.impl.AMQChannel.handleCompleteInboundCommand(AMQChannel.java:
+</I>&gt;<i> 144)
+</I>&gt;<i> 	at com.rabbitmq.client.impl.AMQChannel.handleFrame(AMQChannel.java:
+</I>&gt;<i> 91)
+</I>&gt;<i> 	at com.rabbitmq.client.impl.AMQConnection
+</I>&gt;<i> $MainLoop.run(AMQConnection.java:500)
+</I>&gt;<i> 
+</I>&gt;<i> Some additional info.
+</I>&gt;<i> I create and close thousands of channels in the code. But at any point
+</I>&gt;<i> of time there are not more than 20/21 channels open.
+</I>&gt;<i> This is how I handle doing basicPublish and basicGet on potentially
+</I>&gt;<i> non-existent queues
+</I>&gt;<i> - publish involves 3 steps
+</I>&gt;<i>  queueDeclare
+</I>&gt;<i>  queueBind
+</I>&gt;<i>  basicPublish
+</I>&gt;<i>  If some other thread deletes the queue after either queueDeclare or
+</I>&gt;<i> queueBind, basicPublish fails and I again create a new
+</I>&gt;<i>  channel and do these operations
+</I>&gt;<i> - if basicGet fails, I simply ignore it
+</I>&gt;<i> 
+</I>&gt;<i> regards, Yogesh
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>
+</PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="017749.html">[rabbitmq-discuss] ShutdownSignalException second 'channel.open'
+</A></li>
+	<LI>Next message: <A HREF="017804.html">[rabbitmq-discuss] ShutdownSignalException second 'channel.open'
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#17800">[ date ]</a>
+              <a href="thread.html#17800">[ thread ]</a>
+              <a href="subject.html#17800">[ subject ]</a>
+              <a href="author.html#17800">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

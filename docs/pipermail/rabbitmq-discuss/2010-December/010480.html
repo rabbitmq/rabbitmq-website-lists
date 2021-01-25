@@ -1,0 +1,192 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Queue / Exchange Purge
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Queue%20/%20Exchange%20Purge&In-Reply-To=%3C20101222192047.GC2297%40dakota%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="010478.html">
+   <LINK REL="Next"  HREF="010472.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Queue / Exchange Purge</H1>
+    <B>Alexandru Scvor&#355;ov</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Queue%20/%20Exchange%20Purge&In-Reply-To=%3C20101222192047.GC2297%40dakota%3E"
+       TITLE="[rabbitmq-discuss] Queue / Exchange Purge">alexandru at rabbitmq.com
+       </A><BR>
+    <I>Wed Dec 22 19:20:47 GMT 2010</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="010478.html">[rabbitmq-discuss] Queue / Exchange Purge
+</A></li>
+        <LI>Next message: <A HREF="010472.html">[rabbitmq-discuss] Queue / Exchange Purge
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#10480">[ date ]</a>
+              <a href="thread.html#10480">[ thread ]</a>
+              <a href="subject.html#10480">[ subject ]</a>
+              <a href="author.html#10480">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi Steven,
+
+So, first client connects and publishes, second client connects and
+doesn't get any message (fails to ack), third client connects and purges
+the queue:
+
+public static int Main(string[] args) {
+    ConnectionFactory cf = new ConnectionFactory();
+    string QUEUE_NAME = &quot;magic&quot;;
+
+    using (IConnection conn = cf.CreateConnection()) {
+	using (IModel ch = conn.CreateModel()) {
+	    ch.QueueDeclare(QUEUE_NAME, false, true, false, false, false, null);
+	    IBasicProperties props = ch.CreateBasicProperties();
+	    props.SetPersistent(true);
+	    ch.BasicPublish(&quot;&quot;, QUEUE_NAME, props, Encoding.UTF8.GetBytes(&quot;Happy Holidays!&quot;));
+	}
+    }
+
+    using (IConnection conn = cf.CreateConnection()) {
+	using (IModel ch = conn.CreateModel()) {
+	    ch.BasicGet(QUEUE_NAME, false);
+	    //not ack'ing
+	}
+    }
+
+    using (IConnection conn = cf.CreateConnection()) {
+	using (IModel ch = conn.CreateModel()) {
+	    uint n = ch.QueuePurge(QUEUE_NAME, false);
+	    Console.Write(&quot;&quot; + n + &quot; message(s) lost. ):&quot;);
+	}
+    }
+
+    return 0;
+}
+
+This works.
+
+Since you're getting 404 errors, I suspect you either: 1) get the queue
+name wrong at some point; or 2) declare it at auto-delete, exclusive or
+non-durable and then restart the broker.
+
+Does this help?
+
+Cheers,
+Alex
+
+
+On Wed, Dec 22, 2010 at 06:35:08PM +0000, Steven Taylor wrote:
+&gt;<i> Hi Alexander,
+</I>&gt;<i> 
+</I>&gt;<i> the situation is where client connects, publishes, and disconnects. 2nd
+</I>&gt;<i> client comes along to consume message, and fails in some task it tries to do
+</I>&gt;<i> on the data (i.e. message is returned to the queue). 3rd client intervenes
+</I>&gt;<i> (i.e. me manually during test phase with a little script), and wants to
+</I>&gt;<i> clear out all messages that are hanging around on the broker.
+</I>&gt;<i> 
+</I>&gt;<i> Your test sounds like purge works for the 1st client in the above example,
+</I>&gt;<i> but not for the 3rd.
+</I>&gt;<i> 
+</I>&gt;<i> Probably I'm not understanding what you intended purge for. Could you help
+</I>&gt;<i> me out with this scenario?
+</I>&gt;<i> 
+</I>&gt;<i> thanks,
+</I>&gt;<i> -Steven
+</I>&gt;<i> 
+</I>&gt;<i> On 22 December 2010 15:04, Alexandru Scvor&#355;ov &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">alexandru at rabbitmq.com</A>&gt;wrote:
+</I>&gt;<i> 
+</I>&gt;<i> &gt; Hi,
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; Using our .NET client, declaring a queue, then immediately purging it
+</I>&gt;<i> &gt; works as expected.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; Could you supply the code that's causing the problem?
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; Cheers,
+</I>&gt;<i> &gt; Alex
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; On Wed, Dec 22, 2010 at 02:37:50PM +0000, Steven Taylor wrote:
+</I>&gt;<i> &gt; &gt; update:
+</I>&gt;<i> &gt; &gt;
+</I>&gt;<i> &gt; &gt;
+</I>&gt;<i> &gt; &gt;  code: ch.QueuePurge(queueName,false);
+</I>&gt;<i> &gt; &gt;
+</I>&gt;<i> &gt; &gt;
+</I>&gt;<i> &gt; &gt;
+</I>&gt;<i> &gt; &gt; The AMQP operation was interrupted: AMQP close-reason, initiated by Peer,
+</I>&gt;<i> &gt; &gt; code=404, text=&quot;NOT_FOUND - no queue 'm.w' in vhost '/'&quot;, classId=50,
+</I>&gt;<i> &gt; &gt; methodId=30, cause=
+</I>&gt;<i> &gt; &gt;
+</I>&gt;<i> &gt; &gt; First off, this error relates to an exchange routing key, so slightly
+</I>&gt;<i> &gt; &gt; expected. What wasn't expected was the error message should have had the
+</I>&gt;<i> &gt; &gt; right queue name 'm.w.ctr'.  'm.w' is the queue (not bound to an
+</I>&gt;<i> &gt; exchange)
+</I>&gt;<i> &gt; &gt; that failed earlier when I tried to purge it because it wasn't yet
+</I>&gt;<i> &gt; created.
+</I>&gt;<i> &gt; &gt;
+</I>&gt;<i> &gt; &gt; let me try something else...
+</I>&gt;<i> &gt; &gt;
+</I>&gt;<i> &gt; &gt; If I first create the queue 'm.w' and then attempted to purge it, I still
+</I>&gt;<i> &gt; &gt; get the same error message as above.
+</I>&gt;<i> &gt; &gt;
+</I>&gt;<i> &gt; &gt; Is anybody else seeing this behaviour?
+</I>&gt;<i> &gt; &gt;
+</I>&gt;<i> &gt; &gt; thanks,
+</I>&gt;<i> &gt; &gt; -Steven
+</I>&gt;<i> &gt; &gt;
+</I>&gt;<i> &gt; &gt;
+</I>&gt;<i> &gt; &gt; On 22 December 2010 13:32, Steven Taylor &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">taylste at gmail.com</A>&gt; wrote:
+</I>&gt;<i> &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; Hi,
+</I>&gt;<i> &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; is there equivilent to purge queue for an exchange?  If we can't
+</I>&gt;<i> &gt; already,
+</I>&gt;<i> &gt; &gt; &gt; it would be nice to be able to purge with a routing key.  I see
+</I>&gt;<i> &gt; &gt; &gt; an ExchangeDelete. Perhaps I should delete and then redeclare.
+</I>&gt;<i> &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; Currently I'm using non-durable queues, and taking down the broker +
+</I>&gt;<i> &gt; &gt; &gt; restarting it. I just wanted something a little simpler to execute.
+</I>&gt;<i> &gt; This is
+</I>&gt;<i> &gt; &gt; &gt; a test phase request.
+</I>&gt;<i> &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; thanks,
+</I>&gt;<i> &gt; &gt; &gt; -Steven
+</I>&gt;<i> &gt; &gt; &gt;
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt;  &gt; _______________________________________________
+</I>&gt;<i> &gt; &gt; rabbitmq-discuss mailing list
+</I>&gt;<i> &gt; &gt; <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;<i> &gt; &gt; <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt;
+</I></PRE>
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="010478.html">[rabbitmq-discuss] Queue / Exchange Purge
+</A></li>
+	<LI>Next message: <A HREF="010472.html">[rabbitmq-discuss] Queue / Exchange Purge
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#10480">[ date ]</a>
+              <a href="thread.html#10480">[ thread ]</a>
+              <a href="subject.html#10480">[ subject ]</a>
+              <a href="author.html#10480">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

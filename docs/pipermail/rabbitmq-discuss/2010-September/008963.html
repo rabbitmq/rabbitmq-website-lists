@@ -1,0 +1,146 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] flow control issues
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20flow%20control%20issues&In-Reply-To=%3CAANLkTimL5v%2BvNi-aKR%2B735%2BY4E_dxY_28Vvq4oYYdRH7%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="008949.html">
+   <LINK REL="Next"  HREF="008973.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] flow control issues</H1>
+    <B>Marek Majkowski</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20flow%20control%20issues&In-Reply-To=%3CAANLkTimL5v%2BvNi-aKR%2B735%2BY4E_dxY_28Vvq4oYYdRH7%40mail.gmail.com%3E"
+       TITLE="[rabbitmq-discuss] flow control issues">majek04 at gmail.com
+       </A><BR>
+    <I>Thu Sep 16 13:49:39 BST 2010</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="008949.html">[rabbitmq-discuss] flow control issues
+</A></li>
+        <LI>Next message: <A HREF="008973.html">[rabbitmq-discuss] flow control issues
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#8963">[ date ]</a>
+              <a href="thread.html#8963">[ thread ]</a>
+              <a href="subject.html#8963">[ subject ]</a>
+              <a href="author.html#8963">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>On Wed, Sep 15, 2010 at 19:11, <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">romary.kremer at gmail.com</A>
+&lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">romary.kremer at gmail.com</A>&gt; wrote:
+&gt;<i> Yes. You will never hear &quot;FlowListener.handleFlow()&quot; and it may be possible
+</I>&gt;<i> for
+</I>&gt;<i> channel.publish to block (though I would need to consult the sources
+</I>&gt;<i> to be sure).
+</I>&gt;<i>
+</I>&gt;<i> It seems to me that FlowListener interface is likely to be deprecated so,
+</I>&gt;<i> does'nt it ?
+</I>
+It's more complex than that, but yes, you won't hear anything on that interface.
+
+&gt;<i> Does not really matter for us anyway, cause we where on wrong idea using
+</I>&gt;<i> that.
+</I>&gt;<i> Does this new implementation keep the broker on track for compliance with
+</I>&gt;<i> specification then ?
+</I>
+Yes, the spec doesn't force us to send channel.flow. We implemented that
+for a while but realized that it doesn't solve our problems.
+
+&gt;<i> This would be acceptable for our needs, only if we can somehow guarantee
+</I>&gt;<i> that's an upper boundary !
+</I>
+Optimistically, the upper bouadary is not more than your memory usage
+divided by the disk throughput.
+
+&gt;<i> But it is possible to create a very pessimistic environment in which the
+</I>&gt;<i> memory usage will not drop - and the connection could be stuck for a long
+</I>&gt;<i> time.
+</I>&gt;<i> (though it's pretty unlikely).
+</I>
+&gt;<i> ... Not that much unlikely, considering my little&#160;playing with the
+</I>&gt;<i> MultiCastMain sample (see my previous reply about it for details).
+</I>&gt;<i> I get 100 % times blocked connection.
+</I>&gt;<i> What would be, based on your knowledge and your intuition, &quot;a very
+</I>&gt;<i> pessimistic environment in which the memory usage will not drop&quot; ?
+</I>&gt;<i> I think that the experimentation I've done on the MultiCastMain is maybe a
+</I>&gt;<i> beginning of an answer for that question, although I would
+</I>&gt;<i> never have considered that a single producer could have such power to flood
+</I>&gt;<i> the broker.
+</I>
+Okay. The memory can stay high due to a lot of reasons. If your metadata
+that rabbit never releases is using more memory than threshold -
+rabbit will just get stuck.
+
+Next thing. remember, we don't control how erlang eats memory - and it
+has pretty
+complex GC and memory allocation mechanisms.
+
+If you think that you have enough memory for all the connections,
+queues, exchanges and bindings. And some memory for the messages.
+And you still hit the limit when you get stuck - feel free to tune
+Erlang GC internals:
+  <A HREF="http://www.erlang.org/doc/man/erts_alloc.html">http://www.erlang.org/doc/man/erts_alloc.html</A>
+
+&gt;<i> Weren't Channel design for that ? In our environment, we have (naively ?)
+</I>&gt;<i> considered the use of Channel to
+</I>&gt;<i> separate the message production from the consumption.
+</I>&gt;<i> Since we are targeting 10 000 peers doing both production and consumption,
+</I>&gt;<i> the fact of multiplying the number of
+</I>&gt;<i> connections by 2 is not negligible at all, considering scalability.
+</I>&gt;<i> Moreover, as I reported later on, we use SSL to authenticate the broker, and
+</I>&gt;<i> we are still unclear about memory leaks
+</I>&gt;<i> induce by SSL connections. Doubling the number of connections will not be
+</I>&gt;<i> negligible at all considering memory occupation either.
+</I>&gt;<i> In conclusion, we are not likely to implement our peers using 2 connections
+</I>&gt;<i> for the same broker.
+</I>&gt;<i> What would you recommend to us then ? And could you give us a better
+</I>&gt;<i> understanding on the use case of channels ?
+</I>
+Yes, channels were designed exactly for that. On the other hand, AMQP
+has few pretty serious issues. For example when you open channel
+you're free to publish a message. And broker can't 'refuse' accepting
+a message. Channel.flow can be sent from the broker to the client
+but *after* channel is opened. So there is a window in which
+you just can publish (after channel.open before channel.flow). Sorry, there
+just isn't other way of forbidding publishes than by stopping the whole
+connection. I also don't like it, but it's the only way.
+
+
+Cheers,
+ Marek
+</PRE>
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="008949.html">[rabbitmq-discuss] flow control issues
+</A></li>
+	<LI>Next message: <A HREF="008973.html">[rabbitmq-discuss] flow control issues
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#8963">[ date ]</a>
+              <a href="thread.html#8963">[ thread ]</a>
+              <a href="subject.html#8963">[ subject ]</a>
+              <a href="author.html#8963">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

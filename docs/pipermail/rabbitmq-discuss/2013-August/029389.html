@@ -1,0 +1,148 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] How to catch RESOURCE_LOCKED exceptions in erlang client
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20How%20to%20catch%20RESOURCE_LOCKED%20exceptions%20in%0A%20erlang%20client&In-Reply-To=%3C520E4276.9080702%40rabbitmq.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="029387.html">
+   <LINK REL="Next"  HREF="029390.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] How to catch RESOURCE_LOCKED exceptions in erlang client</H1>
+    <B>Tim Watson</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20How%20to%20catch%20RESOURCE_LOCKED%20exceptions%20in%0A%20erlang%20client&In-Reply-To=%3C520E4276.9080702%40rabbitmq.com%3E"
+       TITLE="[rabbitmq-discuss] How to catch RESOURCE_LOCKED exceptions in erlang client">tim at rabbitmq.com
+       </A><BR>
+    <I>Fri Aug 16 16:17:10 BST 2013</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="029387.html">[rabbitmq-discuss] How to catch RESOURCE_LOCKED exceptions in erlang client
+</A></li>
+        <LI>Next message: <A HREF="029390.html">[rabbitmq-discuss] How to catch RESOURCE_LOCKED exceptions in erlang client
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#29389">[ date ]</a>
+              <a href="thread.html#29389">[ thread ]</a>
+              <a href="subject.html#29389">[ subject ]</a>
+              <a href="author.html#29389">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi Mark,
+
+Ok - without getting buried in the details, it sounds like what you want 
+is a simple try...catch in your code to determine whether or not the 
+queue.declare succeeds. That's fairly simple to do, since either you'll 
+get back a #'queue.declare-ok'{} record or an error will propagate to 
+the caller. In the latter case, you can set off a timer to retry when 
+you're ready:
+
+init(Config) -&gt;
+     {Timeout, Queue, Params} = parse_config(Config),
+     {ok, Conn} = amqp_connection:start(Params),
+     {ok, Chan} = amqp_connection:open_channel(Conn),
+     State = #state{ connection = Conn, channel = Chan, queue = Queue, 
+timeout = Timeout, status = idle },
+     start_timer(State),
+     {ok, State}.
+
+handle_info(connect, State = #state{ status = running }) -&gt;
+     {noreply, State};
+handle_info(connect, State = #state{ channel = Chan, queue = Queue }) -&gt;
+     try
+         #'queue.declare_ok'{} = amqp_channel:call(Chan, 
+#'queue.declare{ queue = Queue, exclusive = true }),
+         {noreply, State#state{ status = running }}
+     catch _:_ -&gt;
+         start_timer(State),
+         {noreply, State}
+     end.
+
+start_timer(#state{ timeout = T }) -&gt;
+     erlang:send_after(T, self(),
+
+
+Hopefully that'll get you going.
+
+Cheers,
+Tim
+
+
+On 08/16/2013 04:03 PM, Geib, Mark wrote:
+&gt;<i> Maybe more explanation will help.
+</I>&gt;<i>
+</I>&gt;<i> I am trying to re-broadcast udp datagrams between different networks with a simple erlang application that listens to the specified UDP port, then publishes to a rabbitmq exchange. Then another erlang application is consuming the messages and broadcasting the datagram on whatever network is required, etc. These datagrams are near mission critical and so we are building completely, nearly, redundant paths. That is there will be two applications listening to the datagram source, both will publish to separate brokers, on different network paths. Then there will be two consumer applications each able to consume messages from both of the brokers being published to. What I need to do is prevent both consuming applications from broadcasting the datagram on the target network. We can not handle duplicates.
+</I>&gt;<i>
+</I>&gt;<i> Here was my idea.
+</I>&gt;<i>
+</I>&gt;<i> On the consuming client side we configure both clients the same, both brokers are listed in each config. When a client comes up it will try to connect to each broker, if those connections succeed then an attempt is made to create an exclusive queue on each broker, no bindings yet. If a client can create both exclusive queues then it will be the UDP broadcaster. At this point the client will bind one of the two queues to start receiving messages from one of the servers. The other exclusive queue is left unbound, so no messages are routed to it. The other client attempts the same, but will fail to create the exclusive queues. The connections to the two brokers will be maintained, but at some interval will continue to attempt to create the exclusive queues, if it should ever succeed then it will start broadcasting as the first client did. So in order to broadcast one of these applications must create both exclusive queues. What I was depending on was being able to use the exclusive queue as a sort of resource lock, but not do any bindings or consuming until I am sure I have &quot;locked&quot; all the brokers.
+</I>&gt;<i>
+</I>&gt;<i> The case where one of the brokers is down, or un-reachable is handled by the clients where the connection attempt to that broker will fail, so the client assumes it is not useable, but is able to connect and create the exclusive queue on the other broker. In this case the client will be the broadcaster, since it is able to create the exclusive queue on all &quot;available&quot; brokers. Even if the other client is able to connect to both brokers it will not be able to create the exclusive queues on both, so will not broadcast.
+</I>&gt;<i>
+</I>&gt;<i> Hope that helps.
+</I>&gt;<i>
+</I>&gt;<i> Mark Geib
+</I>&gt;<i> Principal Engineer
+</I>&gt;<i> Cheyenne Software Engineering
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">mark.geib at echostar.com</A> / 35-215
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> &quot;We, the unwilling, led by the unknowing, are doing the impossible for the ungrateful. We have done so much, for so long, with so little, we are now qualified to do anything with nothing.&quot;
+</I>&gt;<i> -- Mother Teresa
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20130816/821d68ea/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20130816/821d68ea/attachment.htm</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="029387.html">[rabbitmq-discuss] How to catch RESOURCE_LOCKED exceptions in erlang client
+</A></li>
+	<LI>Next message: <A HREF="029390.html">[rabbitmq-discuss] How to catch RESOURCE_LOCKED exceptions in erlang client
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#29389">[ date ]</a>
+              <a href="thread.html#29389">[ thread ]</a>
+              <a href="subject.html#29389">[ subject ]</a>
+              <a href="author.html#29389">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

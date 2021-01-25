@@ -1,0 +1,165 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss]  Simple benchmark and results
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20%20Simple%20benchmark%20and%20results&In-Reply-To=">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="005185.html">
+   <LINK REL="Next"  HREF="005181.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss]  Simple benchmark and results</H1>
+    <B>David Glaubman</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20%20Simple%20benchmark%20and%20results&In-Reply-To="
+       TITLE="[rabbitmq-discuss]  Simple benchmark and results">dglaubman at acm.org
+       </A><BR>
+    <I>Tue Oct 20 03:46:45 BST 2009</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="005185.html">[rabbitmq-discuss] Can't run rabbitmq-server... Install issue?
+</A></li>
+        <LI>Next message: <A HREF="005181.html">[rabbitmq-discuss] Simple benchmark and results
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#5177">[ date ]</a>
+              <a href="thread.html#5177">[ thread ]</a>
+              <a href="subject.html#5177">[ subject ]</a>
+              <a href="author.html#5177">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>
+Hi, I am experimenting with RabbitMQ (v1.7.0) on Windows using the .Net
+client.
+
+First, my initial reaction to AMQP/RabbitMQ is very positive -- I've
+received good support in getting started, the protocol and client API are
+clear and seem straightforward, and (so far) everything works.
+
+Second, I&#8217;d like to offer some performance numbers for a very simple
+benchmark I am using.
+Your mileage will most assuredly vary.
+
+And third, I am looking for some insight as to suitability/tunability of
+RabbitMQ for a particular use case. (but I'll leave that to my next message)
+
+Thanks,
+David
+
+The setup
+---------
+In local setup, I have one rabbitmq server and one single-threaded client
+which runs the benchmark.
+In distributed setup, client runs as in local setup, but rabbitmq server
+runs on another machine.
+
+Client machine: Quad CPU @ 2.4Ghz, 4Gb memory, running 32-bit Windows XP SP2
+Server machine: Quad CPU @ 2.2GHz, 4Gb memory, running 64-bit Windows Server
+2008 Standard
+Network: 1Gbps Ethernet, tracert shows 2 hops between machines
+
+The benchmark
+-------------
+Benchmark consists of 
+	1. BasicPublish of 1000 24-byte messages to a Fanout exchange
+(non-persistent)
+	2. Dequeuing these 1000 messages using a QueueingBasicConsumer
+      3. Sending 1000 24-byte messages using MSMQ
+      4. Receiving 1000 24-byte messages using MSMQ
+(All benchmarks were run using MeasureIt, a free microbenchmarking tool for
+.Net code.)
+
+Results
+-------
+RabbitMQ:
+In the local case, published about 4K messages per second, consumed about
+10K messages per second.
+In the remote case, median times were the same as for local, but big
+outliers occurred on some runs.
+(Using BasicGet instead of QueueingBasicConsumer, I got around 1500 messages
+per sec remote, 3K local)
+
+MSMQ:
+In the local case, MSMQ sent about 40K messages per second, received about
+40K messages per second.
+In the remote case, MSMQ sent about 33K messages per second, received about
+1.2K per second.
+
+I've run the benchmark about 50 times so far, and median times are pretty
+stable, tho max time for a single Consumed message can run up to 5ms.
+
+So, one question I have is: Is there a way to achieve MSMQ-like Send
+performance using rabbitmq?
+
+The code
+--------
+
+(This is called by the harness with hostname of the local or remote machine,
+port = 5672 and a 24-byte binary message payload).
+
+    private static void AmqpWorker(string serverAddress, int basePort,
+LossBullet message)
+    {
+        var exchange = &quot;fanout&quot;;
+        var routingKey= &quot;key&quot;;
+        var endpoint = new AmqpTcpEndpoint(serverAddress, basePort++);
+        var connection = new ConnectionFactory().CreateConnection(endpoint);
+        var channel = connection.CreateModel();
+        string queue = null;
+        channel.ExchangeDeclare(exchange, ExchangeType.Fanout);
+        queue = channel.QueueDeclare(&quot;q1&quot;);
+        channel.QueueBind(queue, exchange, routingKey, false, null);
+        var consumer = new QueueingBasicConsumer(channel);
+
+        LossBullet bullet = message;
+
+        timer1000.Measure(&quot;Publish fanout&quot;, 1, delegate
+       {
+           channel.BasicPublish(exchange, routingKey, null,
+bullet.ToBytes());
+       });
+
+        BasicDeliverEventArgs eventArgs = null;
+        consumer.Model.BasicConsume(queue, null, consumer);
+
+        timer1000.Measure(&quot;Consume fanout&quot;, 1, delegate
+       {
+           eventArgs = consumer.Queue.Dequeue() as BasicDeliverEventArgs;
+           message = new LossBullet( eventArgs.Body);
+           consumer.Model.BasicAck( eventArgs.DeliveryTag, false);
+       });
+    }
+
+
+
+-- 
+View this message in context: <A HREF="http://www.nabble.com/Simple-benchmark-and-results-tp25968960p25968960.html">http://www.nabble.com/Simple-benchmark-and-results-tp25968960p25968960.html</A>
+Sent from the RabbitMQ mailing list archive at Nabble.com.
+
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="005185.html">[rabbitmq-discuss] Can't run rabbitmq-server... Install issue?
+</A></li>
+	<LI>Next message: <A HREF="005181.html">[rabbitmq-discuss] Simple benchmark and results
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#5177">[ date ]</a>
+              <a href="thread.html#5177">[ thread ]</a>
+              <a href="subject.html#5177">[ subject ]</a>
+              <a href="author.html#5177">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

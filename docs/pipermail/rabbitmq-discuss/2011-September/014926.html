@@ -1,0 +1,165 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] active/active HA cluster appears to be deadlocked
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20active/active%20HA%20cluster%20appears%20to%20be%0A%20deadlocked&In-Reply-To=%3C20110907110523.GC8651%40rabbitmq.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="014920.html">
+   <LINK REL="Next"  HREF="014921.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] active/active HA cluster appears to be deadlocked</H1>
+    <B>Matthew Sackman</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20active/active%20HA%20cluster%20appears%20to%20be%0A%20deadlocked&In-Reply-To=%3C20110907110523.GC8651%40rabbitmq.com%3E"
+       TITLE="[rabbitmq-discuss] active/active HA cluster appears to be deadlocked">matthew at rabbitmq.com
+       </A><BR>
+    <I>Wed Sep  7 12:05:23 BST 2011</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="014920.html">[rabbitmq-discuss] active/active HA cluster appears to be	deadlocked
+</A></li>
+        <LI>Next message: <A HREF="014921.html">[rabbitmq-discuss] pika error - need a help
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#14926">[ date ]</a>
+              <a href="thread.html#14926">[ thread ]</a>
+              <a href="subject.html#14926">[ subject ]</a>
+              <a href="author.html#14926">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi Bryan,
+
+Thanks for reporting all of this.
+
+&gt;<i> &gt; On Tue, Sep 6, 2011 at 3:26 PM, Bryan Murphy &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">bmurphy1976 at gmail.com</A>&gt; wrote:
+</I>&gt;<i> &gt;&gt; I created a 3 server RabbitMQ v2.6.0 cluster with all queues
+</I>&gt;<i> &gt;&gt; configured for &quot;x-ha-policy&quot;: &quot;all&quot;. &#160;Everything seemed to be working
+</I>&gt;<i> &gt;&gt; fine, and then I killed one of the servers (halt). &#160;This is in a
+</I>&gt;<i> &gt;&gt; virtualized environment (ec2) so that server is gone. &#160;I wanted to
+</I>&gt;<i> &gt;&gt; simulate scenarios where one of the servers failed catastrophically.
+</I>&gt;<i> &gt;&gt;
+</I>&gt;<i> &gt;&gt; The problem is, now my cluster seems to be stuck in some sort of
+</I>&gt;<i> &gt;&gt; deadlocked state. &#160;One of my processes *thinks* it posted a message to
+</I>&gt;<i> &gt;&gt; the cluster, but I am unable to list_queues to verify this and the
+</I>&gt;<i> &gt;&gt; consumer has yet to receive this message.
+</I>&gt;<i> &gt;&gt;
+</I>&gt;<i> &gt;&gt; &quot;rabbitmqctl list_queues&quot; blocks forever and never returns.
+</I>
+list_queues actively calls into each queue process. Thus it requires the
+queue process to respond. To me, what it sounds like, is that the node
+that went away contained the master of the mirrored queue, and none of
+the slaves have noticed yet, thus there has been no promotion of a
+slave, and thus list_queues will still try to call the old and dead
+master. This raises two interesting and related questions:
+
+1. Why have the slaves not noticed the loss of the master?
+2. Why did the list_queues call not fail - if list_queues tries to call
+a queue that doesn't exist, it will error.
+
+What this seems to suggest is that Erlang itself has got very confused
+about what's going on - it seems to think that the dead node may be
+alive. There are some timers in Erlang (the kernel net tick time) that
+Erlang uses to try and detect whether a node is dead or alive. How long
+did the cluster remain in this state? Presumably some time.
+
+If you can get this to happen again, the log entries of all the nodes
+would be very very useful.
+
+&gt;<i> &gt;&gt; &quot;/etc/init.d/rabbitmq-server stop&quot; blocks forever and never actually
+</I>&gt;<i> &gt;&gt; shuts down the server.
+</I>
+Yeah, if list_queues can get blocked, then there'll likely be some other
+process within Rabbit that's calling to the dead node and has similarly
+got blocked and is then blocking the shutdown sequence.
+
+&gt;<i> &gt;&gt; &quot;rabbitmqctl cluster_status&quot; returns immediately showing me the three
+</I>&gt;<i> &gt;&gt; registered nodes with only two listed as running:
+</I>&gt;<i> &gt;&gt;
+</I>&gt;<i> &gt;&gt; Cluster status of node '<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at domU-12-31-39-00-E1-D7</A>' ...
+</I>&gt;<i> &gt;&gt; [{nodes,[{disc,['<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at ip-10-212-138-134</A>','<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at ip-10-90-195-244</A>',
+</I>&gt;<i> &gt;&gt; &#160; &#160; &#160; &#160; &#160; &#160; &#160; &#160;'<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at domU-12-31-39-00-E1-D7</A>']}]},
+</I>&gt;<i> &gt;&gt; &#160;{running_nodes,['<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at ip-10-212-138-134</A>','<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at domU-12-31-39-00-E1-D7</A>']}]
+</I>&gt;<i> &gt;&gt; ...done.
+</I>
+That's interesting. That shows that mnesia has realised
+<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at ip-10-90-195-244</A> has died, even if the rest of Erlang hasn't.
+Most curious.
+
+&gt;<i> &gt; I can now run &quot;rabbitmqclt list_queues&quot; on both nodes in the cluster,
+</I>&gt;<i> &gt; but the messages are still not flowing and the node I restarted shows
+</I>&gt;<i> &gt; the following error when I run &quot;rabbitmqclt list_queues&quot;:
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; =ERROR REPORT==== 6-Sep-2011::20:31:35 ===
+</I>&gt;<i> &gt; Discarding message
+</I>&gt;<i> &gt; {'$gen_call',{&lt;0.256.0&gt;,#Ref&lt;0.0.0.646&gt;},{info,[name,messages]}} from
+</I>&gt;<i> &gt; &lt;0.256.0&gt; to &lt;0.1382.0&gt; in an old incarnation (2) of this node (3)
+</I>
+That is an amazing error. Erlang not only gives every node a name, but
+also gives every node a version. But what is being suggested is that a
+msg has been received from the local node and to the local node where
+the message appears to come from a prior version of this node.
+
+This error seems to come from C code in the source of Erlang and is
+invoked on sending a message. I can't get close to explaining exactly
+what's going on here - all those pids in that error message are local
+pids. There's no remote node involved at all there...
+
+&gt;<i> I've tried to duplicate this and the second time around the cluster is
+</I>&gt;<i> behaving like I would have expected.  Unfortunately, I stupidly
+</I>&gt;<i> overwrote the old cluster so I can't go back to it for any deeper
+</I>&gt;<i> inspection.
+</I>
+Ahh that's a shame. Log entries would have been very very useful. If you
+can reproduce this again, please let us know.
+
+&gt;<i> After trawling the archives a bit, it seems that the only way to bring
+</I>&gt;<i> a dead node out of the cluster is to create a new node that
+</I>&gt;<i> masquerades as the old node.  That seems pretty messy to me.  Am I
+</I>&gt;<i> correct about this?  Are there plans to address this in a future
+</I>&gt;<i> release?
+</I>
+Yes, you're right about that, and it is messy. Having looked at the code
+in this area, there seems to me no reason why we couldn't add that
+functionality. I'll raise a bug.
+
+Matthew
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="014920.html">[rabbitmq-discuss] active/active HA cluster appears to be	deadlocked
+</A></li>
+	<LI>Next message: <A HREF="014921.html">[rabbitmq-discuss] pika error - need a help
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#14926">[ date ]</a>
+              <a href="thread.html#14926">[ thread ]</a>
+              <a href="subject.html#14926">[ subject ]</a>
+              <a href="author.html#14926">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

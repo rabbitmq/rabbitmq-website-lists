@@ -1,0 +1,249 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] [Minimum Air Induction] Introducing Shovel:	An AMQP Relay
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20%5BMinimum%20Air%20Induction%5D%20Introducing%20Shovel%3A%0A%09An%20AMQP%20Relay&In-Reply-To=269388e30809200013m2564f264n97c6ec6834edef21%40mail.gmail.com">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001551.html">
+   <LINK REL="Next"  HREF="001554.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] [Minimum Air Induction] Introducing Shovel:	An AMQP Relay</H1>
+    <B>Valentino Volonghi</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20%5BMinimum%20Air%20Induction%5D%20Introducing%20Shovel%3A%0A%09An%20AMQP%20Relay&In-Reply-To=269388e30809200013m2564f264n97c6ec6834edef21%40mail.gmail.com"
+       TITLE="[rabbitmq-discuss] [Minimum Air Induction] Introducing Shovel:	An AMQP Relay">dialtone at gmail.com
+       </A><BR>
+    <I>Sat Sep 20 09:56:01 BST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001551.html">[rabbitmq-discuss] The relationship of Channels to Consumers
+</A></li>
+        <LI>Next message: <A HREF="001554.html">[rabbitmq-discuss] [Minimum Air Induction] Introducing Shovel:	An AMQP Relay
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1553">[ date ]</a>
+              <a href="thread.html#1553">[ thread ]</a>
+              <a href="subject.html#1553">[ subject ]</a>
+              <a href="author.html#1553">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>-----BEGIN PGP SIGNED MESSAGE-----
+Hash: SHA1
+
+Hi all,
+small intro: I'm trying to use Shovel (LINK HERE) to create a push- 
+based system
+that can move loglines from a remote location to a centralized  
+storage, being a
+remote location means that messages have to cross the internet.
+
+
+On Sep 20, 2008, at 12:13 AM, Ben Hood wrote:
+
+&gt;<i> Valentino,
+</I>&gt;<i>
+</I>&gt;<i> On Sat, Sep 20, 2008 at 1:57 AM, Valentino Volonghi &lt;<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">dialtone at gmail.com</A> 
+</I>&gt;<i> &gt; wrote:
+</I>&gt;&gt;<i> Well... I'm currently rewriting the lib_shovel.erl file using a  
+</I>&gt;&gt;<i> cleaner
+</I>&gt;&gt;<i> version of it.
+</I>&gt;<i>
+</I>&gt;<i> See comment in previous email.
+</I>
+Yes, I am tracking tip, I didn't notice the big changes in lib_amqp.erl
+so I'll refactor my code to use them.
+
+&gt;&gt;<i> SOURCE ---&gt; LOCAL RABBITMQ (FORWARD) -----&gt; CENTRAL RABBITMQ
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> And in CENTRAL RABBITMQ there would be all the listeners.
+</I>&gt;<i>
+</I>&gt;<i> Sounds like a good idea.
+</I>
+I hope so :). The main problem is the absolute necessity to not lose
+any single one of the messages. Nothing can be lost.
+
+&gt;&gt;<i> The other thing I need is absolute reliability, if a message is not
+</I>&gt;&gt;<i> transmitted don't remove it from
+</I>&gt;&gt;<i> the queue and ack it when it is delivered. And if a connection is  
+</I>&gt;&gt;<i> dropped
+</I>&gt;&gt;<i> instead of crashing it
+</I>&gt;&gt;<i> should retry to connect and not deliver until it's connected back.
+</I>&gt;<i>
+</I>&gt;<i> Sounds reasonable. Currently Shovel does not have any reliability.
+</I>&gt;<i> Maybe you can elaborate on the concrete scenarios you are trying to
+</I>&gt;<i> cover with this.
+</I>
+Sure, basically the source of loglines would be a mochiweb server that  
+for
+relevant requests would send messages to a known exchange.
+
+Here is already the first 'problem', if the known exchange is down the  
+line
+would be lost forever, this is simple enough though and rabbitmq would
+run embedded in mochiweb together with shovel. Every queue durable and
+every message too. In this case if mochiweb fails I won't have to  
+worry, if
+shovel disconnects it won't send lines to anyone and wouldn't even  
+remove
+them from the queue so nothing is lost here, if rabbitmq dies I hope  
+it brings
+everything down with itself, traffic is rebalanced on the remaining  
+servers and
+nothing is lost.
+
+Right after this component there's another rabbitmq server, that we  
+can call
+local rabbitmq, which is local to the mochiweb server, in the same  
+subnet.
+This server would collect everything that various mochiweb+rabbitmq 
++shovel
+servers send, persist it and forward it to a central location. Again,  
+everything is
+durable so there should be no risk of losing messages.
+
+In the central location there would be a final rabbitmq server that  
+will wait for
+data. Attached to it there would be several consumers that fetch data  
+and
+store it in various databases in small transactions (let's say one  
+transaction
+every 50-100 log lines). Even here everything should be durable so there
+should be no problem.
+
+So, how should shovel behave:
+
+Well, it should be pretty sure that every message was delivered to the  
+final
+location, so I think its way of working would be:
+
+  1. receive message from embedded consumer
+  2. publish message to remote host
+  3. wait for ack
+  4. ack the rabbitmq container
+  5. the rabbitmq container at this point can remove the message
+
+Then of course this procedure is repeated in each machine until we  
+reach the
+central location.
+
+Now... I'm not sure if there's an ack confirmation message so that the  
+consumer if
+100% sure that the confirmation was received, I suppose there isn't so  
+this means
+that the system will maybe have duplicates at the end and I'll have to  
+take care of
+this somehow (any suggestions?).
+
+Another small problem is the current state of Shovel where it  
+basically crashes when a
+connection is dropped, a change that I would like to make (or I would  
+like to see) is that
+it should be able to reconnect to the remote host with an exponential  
+backoff so that it
+starts retransmitting as soon as possible.
+
+Does this usecase sound reasonable?
+
+I've read a bit of the archives and I see there are some problems with  
+memory growth
+and rabbitmq simply crashing... I hope this doesn't become a problem  
+for us, but...
+let's say that the web servers generate messages of about 1K each  
+(could be much
+less, but this is for the example's sake), now the local rabbitmq  
+instance is down for
+some reason, basically mochiweb will remain alive as long as it has  
+memory which
+means about 4GB/1MB/sec (let's say that the server generates 1000  
+requests per
+second) that is about 66 minutes. If the problem instead is in the  
+central rabbitmq
+basically each local rabbitmq is subject to the traffic of every web  
+server, if we have
+8 webservers we obtain 4000/8MB/sec or about 8 minutes.
+
+So it basically means that we have 8 minutes to react to such a  
+failure. Does this
+also sound reasonable? and if so... What possible fixes can I look for?
+Ultimately... does this sound like something that rabbitmq can be good  
+at?
+
+failures of machines can be anything from hardware failure to anything  
+else.
+
+&gt;&gt;<i> I took part of the code I'm using now to replace lib_shovel.erl  
+</I>&gt;&gt;<i> from a guy
+</I>&gt;&gt;<i> on IRC #erlang that
+</I>&gt;&gt;<i> shared it, I had my version of it which was pretty similar but his  
+</I>&gt;&gt;<i> looked
+</I>&gt;&gt;<i> more cleaned up so
+</I>&gt;&gt;<i> I'm using that now.
+</I>&gt;<i>
+</I>&gt;<i> Who was that?
+</I>
+Ah, can't remember.
+
+&gt;<i> BTW a couple of points:
+</I>&gt;<i>
+</I>&gt;<i> 1. Bear in mind the refactoring that is being discussed on the list to
+</I>&gt;<i> get the core client into a 1.0 state;
+</I>
+Yep, will do.
+
+&gt;<i> 2. I think this discussion should go over the mailing list, because
+</I>&gt;<i> this currently has the widest reach, so other people are made aware of
+</I>&gt;<i> what is going on and can potentially offer help to you -  so if don't
+</I>&gt;<i> mind I will turn this is into a list topic;
+</I>
+This email is CCed/reply-to to the ML.
+
+&gt;<i> 3. It would be really cool if your changes were in a github fork, so
+</I>&gt;<i> that they are publicly visible (obviously posting the patches to the
+</I>&gt;<i> list would be sharing it as well). An example of this is Peter who is
+</I>&gt;<i> maintaining a fork of the as3-amqp client, and I regularly fold his
+</I>&gt;<i> changes back into the upstream tree.
+</I>
+
+I'll start this tree too soon.
+
+- --
+Valentino Volonghi aka Dialtone
+Now running MacOS X 10.5
+Home Page: <A HREF="http://www.twisted.it">http://www.twisted.it</A>
+<A HREF="http://www.adroll.com">http://www.adroll.com</A>
+
+-----BEGIN PGP SIGNATURE-----
+Version: GnuPG v1.4.9 (Darwin)
+
+iEYEARECAAYFAkjUuqIACgkQ9Llz28widGVg6QCfSSXKo9NYiZLKeAe513wnFgEQ
+BdIAoJTMWVlX0McVcTNlz0m5fDeRPe1x
+=uDIk
+-----END PGP SIGNATURE-----
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001551.html">[rabbitmq-discuss] The relationship of Channels to Consumers
+</A></li>
+	<LI>Next message: <A HREF="001554.html">[rabbitmq-discuss] [Minimum Air Induction] Introducing Shovel:	An AMQP Relay
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1553">[ date ]</a>
+              <a href="thread.html#1553">[ thread ]</a>
+              <a href="subject.html#1553">[ subject ]</a>
+              <a href="author.html#1553">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

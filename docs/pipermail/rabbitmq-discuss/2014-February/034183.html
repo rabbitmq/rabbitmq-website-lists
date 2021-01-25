@@ -1,0 +1,192 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] .NET API - Using PublishConfirms to get	Reliability
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20.NET%20API%20-%20Using%20PublishConfirms%20to%20get%0A%09Reliability&In-Reply-To=%3Cloom.20140226T060815-341%40post.gmane.org%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="034144.html">
+   <LINK REL="Next"  HREF="034188.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] .NET API - Using PublishConfirms to get	Reliability</H1>
+    <B>Martywaz</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20.NET%20API%20-%20Using%20PublishConfirms%20to%20get%0A%09Reliability&In-Reply-To=%3Cloom.20140226T060815-341%40post.gmane.org%3E"
+       TITLE="[rabbitmq-discuss] .NET API - Using PublishConfirms to get	Reliability">marty.wasznicky at neudesic.com
+       </A><BR>
+    <I>Wed Feb 26 05:08:21 GMT 2014</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="034144.html">[rabbitmq-discuss] .NET API - Using PublishConfirms to get	Reliability
+</A></li>
+        <LI>Next message: <A HREF="034188.html">[rabbitmq-discuss] .NET API - Using PublishConfirms to get	Reliability
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#34183">[ date ]</a>
+              <a href="thread.html#34183">[ thread ]</a>
+              <a href="subject.html#34183">[ subject ]</a>
+              <a href="author.html#34183">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>hello,
+
+I'm using Publish Confirms and am trying to achieve zero message loss when 
+the Rabbit MQ instances go down.
+
+I have 2 instances of Rabbit MQ, clustered with all Queues mirrored on my 
+local desktop.
+
+I think use Publish Confirms to send a batch of about 50,000 messages.
+
+I've implemented duplicate message detection in my consumer, and implemented 
+the storage of all messages sent on the publisher. I wired in the following 
+events and remove the messages as Acks come in i.e.:
+
+            this.model.BasicAcks -= this.MessageAcknowledged;
+            this.model.BasicNacks -= this.MessageNotAcknowledged;
+            this.model.BasicReturn -= this.MessageReturned;
+            this.model.FlowControl -= this.FlowControlChanged;
+            this.model.CallbackException -= ReportCallbackException;
+
+Fairly straight forward I thought.  On the consumer side I did from the QOS 
+setting for consuming messages.  I do this in a tight loop like so:
+
+                consumerModel = this.connection.CreateModel();
+                consumerModel.BasicQos(0, 10000, false);
+                var consumer = new QueueingBasicConsumer(consumerModel);
+               
+                var consumerTag = consumerModel.BasicConsume(
+                    this.queueName,false,
+                    consumer);
+
+                while (true)
+                {
+                    BasicDeliverEventArgs item = null;
+                    try
+                    {
+                        if (!consumer.Queue.Dequeue(3000, out item))
+                        {
+                            if (null == item) continue;
+                        }
+                        // do stuff
+                        consumerModel.BasicAck(item.DeliveryTag, false);
+                    }
+                 }
+
+My first finding was that performance was very slow.  with 250 byte 
+messages, I'm getting about 500 to 600 msg/sec delivered.  
+
+Regardless though, my testing was around recover-ability.  What I'm doing is 
+sending groups of messages...about 50,000 at time.  Then while they are 
+sending, I take down both instances of my Rabbit MQ cluster to simulate a 
+failure like so using Powershell:
+
+     &amp;.\rabbitmqctl.bat -n cluster1 stop_app
+     &amp;.\rabbitmqctl.bat -n cluster2 stop_app
+
+My results are always the same.  There appear to be several thousand 
+messages that I never received Acks for still in my internal queue on the 
+Publisher side.  There are also pending messages to be delivered that 
+written to disk...that I don't expect my consumer to get until one of the 
+cluster instances start back up.
+
+Hence, I start up the main cluster instance followed by the second. 
+
+First observation is that the messages pending in the Rabbit MQ queue do 
+indeed get delivered to the consumer.  great.
+
+I then resubmit all the messages in my internal queue on the publisher side.  
+The result is always the same.  I'm always 3 or 4 messages short!
+
+I then retested without a cluster and without shutting down.  After my test 
+run..and after the consumer successfully gets all the messages I always find 
+the same thing. sometimes I have thousands of unacknowledged messages left 
+in my publisher queue.  I'd come back 5 minutes later....still there.
+
+In short, 2 serious issues I'm seeing.  
+
+First one is that Rabbit MQ is losing a few messages if both servers in the 
+cluster are shut down.
+
+Second one, Acks/Nacks seem to just get lost by Rabbit MQ.
+
+Third one...only happens now again...The producer actually receives Acks for 
+delivery tags/messages that don't exist in the its internal queue. 
+
+Fourth one....when both servers go down, sometimes, but not always, the 
+consumer will not throw an exception when it tries to read the message in 
+the while loop. i.e : if (!consumer.Queue.Dequeue(3000, out item)).  The 
+item comes back null, but If I look in the debugger, the consumer's and 
+connection's isopen property is true...and the CloseReason is null.
+
+Does anyone have any ideas or have experienced this?
+
+How I'm sending the message is pretty straight forward:
+
+
+                       messageProperties.MessageId = 
+System.Guid.NewGuid().ToString()
+                       lock (this.activeMessagesLock)
+                        {
+                            var deliveryTag = 0UL;
+                            deliveryTag = this.model.NextPublishSeqNo;
+
+                            this.model.BasicPublish(
+                                this.exchangeName,
+                                message.Header.Topic,
+                                this.properties.Durable,
+                                immediate,
+                                messageProperties,
+                                body);
+
+                            this.activeMessages[deliveryTag] = message;
+                        }
+
+I'm using the message ID to add to a concurrentdictionary collection on the 
+consumer side so I can detect duplicates.  The message is added to this 
+duplicate detection dictionary before the Ack is sent back to Rabbit MQ
+
+Any help would be appreciated.
+
+by the way, if I use the TxCommit and TxRollback....I don't have any issues 
+on resending by resending everything in the producer's internal queue. 
+Message loss only seems to happen with PublishConfirms
+
+
+</PRE>
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="034144.html">[rabbitmq-discuss] .NET API - Using PublishConfirms to get	Reliability
+</A></li>
+	<LI>Next message: <A HREF="034188.html">[rabbitmq-discuss] .NET API - Using PublishConfirms to get	Reliability
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#34183">[ date ]</a>
+              <a href="thread.html#34183">[ thread ]</a>
+              <a href="subject.html#34183">[ subject ]</a>
+              <a href="author.html#34183">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,180 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] rabbitmq-c: Nonblocking recv
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20rabbitmq-c%3A%20Nonblocking%20recv&In-Reply-To=%3CCAAt2poLm3rmD6SsBOoQ089%2BLSd6kKMrcxQhr%3D0C2Vz62T9gnrQ%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="018166.html">
+   <LINK REL="Next"  HREF="018208.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] rabbitmq-c: Nonblocking recv</H1>
+    <B>Alan Antonuk</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20rabbitmq-c%3A%20Nonblocking%20recv&In-Reply-To=%3CCAAt2poLm3rmD6SsBOoQ089%2BLSd6kKMrcxQhr%3D0C2Vz62T9gnrQ%40mail.gmail.com%3E"
+       TITLE="[rabbitmq-discuss] rabbitmq-c: Nonblocking recv">alan.antonuk at gmail.com
+       </A><BR>
+    <I>Thu Feb 16 05:32:06 GMT 2012</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="018166.html">[rabbitmq-discuss] rabbitmq-c: Nonblocking recv
+</A></li>
+        <LI>Next message: <A HREF="018208.html">[rabbitmq-discuss] rabbitmq-c: Nonblocking recv
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#18188">[ date ]</a>
+              <a href="thread.html#18188">[ thread ]</a>
+              <a href="subject.html#18188">[ subject ]</a>
+              <a href="author.html#18188">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Arun;
+
+I agree with the method used in the gist linked in your email:
+
+First check amqp_frames_enqueued(). If this returns true, there are decoded
+frames ready, amqp_simple_wait_frame() will not block.
+
+Second check amqp_data_in_buffer(). If this returns true, there is data
+that has already been received (with recv()) but not decoded. It is likely
+if you call amqp_simple_wait_frame() it will not block. However if the data
+in the buffer doesn't complete a frame, recv() will be called and may block.
+
+Third, call select() or poll() on the socket associated with the connection
+(you can use amqp_get_sockfd() to get the socket descriptor). If this
+system call shows that the socket can be read from amqp_simple_wait_frame()
+will call recv() and likely won't block - assuming a full frame is received.
+
+As you may notice the last two steps don't give you a &quot;correct all the
+time&quot; answer to whether amqp_simple_wait_frame() will block or not. In
+practice I've found the majority of the time the above works well enough
+for RPC-style AMQP messaging for the following two reasons:
+1. When the broker sends data - typically it sends it as an entire frame,
+if your select() call returns that there is data in the buffer likely you
+already have, or soon will have an entire frame ready to be read by recv()
+2. AMQP is intended to be run on a low-latency, high-bandwidth LAN, so if
+you do get a partial frame when recv is called, within a short time period
+you will receive the rest of the frame, otherwise it is likely something
+serious has happened and that will cause the whole connection to die at
+some point in the near future (possibly time out - which I grant you can
+possibly block for a lengthy amount of time).
+
+There is definitely room for improvement in the rabbitmq-c library handles
+non-blocking behavior.
+
+HTH
+-Alan
+
+On Feb 15, 2012, at 2:28 PM, Brett Cameron wrote:
+
+Arun,
+
+I'd look at implementing something along the lines of what Alex describes
+in the link using select() or poll(). Have cc'd Alan for his consideration
+as to how this might best be done. The approach outlined by Alex in the
+link is okay, but you could still potentially find yourself hanging on a
+blocked read if something bad happened between the initial check for data
+available and a read operation. An alternative might be to add a timeout
+parameter to the wait_frame call or create a variant of this function that
+includes a timeout...
+
+Regards,
+Brett
+
+On Thu, Feb 16, 2012 at 7:58 AM, Arun Chandrasekaran &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">visionofarun at gmail.com</A>
+&gt;<i> wrote:
+</I>
+&gt;<i> Hi all,
+</I>&gt;<i>
+</I>&gt;<i> How do we make a non blocking recv from librabbitmq?
+</I>&gt;<i> amqp_simple_wait_frame blocks if the queue doesn't contain any message.
+</I>&gt;<i>
+</I>&gt;<i> Should we call amqp_data_in_buffer() and based on the result call
+</I>&gt;<i> amqp_simple_wait_frame or implement a solution like this?
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> <A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/2011-September/014868.html">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/2011-September/014868.html</A>
+</I>&gt;<i>
+</I>&gt;<i> Thanks in advance.
+</I>&gt;<i>
+</I>&gt;<i> - Arun
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20120216/05ca4675/attachment.html">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20120216/05ca4675/attachment.html</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="018166.html">[rabbitmq-discuss] rabbitmq-c: Nonblocking recv
+</A></li>
+	<LI>Next message: <A HREF="018208.html">[rabbitmq-discuss] rabbitmq-c: Nonblocking recv
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#18188">[ date ]</a>
+              <a href="thread.html#18188">[ thread ]</a>
+              <a href="subject.html#18188">[ subject ]</a>
+              <a href="author.html#18188">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

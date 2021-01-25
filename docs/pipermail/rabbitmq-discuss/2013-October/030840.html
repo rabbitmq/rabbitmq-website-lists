@@ -1,0 +1,206 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Long timeout if server host becomes	unreachable
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Long%20timeout%20if%20server%20host%20becomes%0A%09unreachable&In-Reply-To=%3CCAOQRttp6qdGzXpvx%3DyVoMiEzJU9qMvLBvS%2Bw%2B5BxHOx9hLY97g%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="030826.html">
+   <LINK REL="Next"  HREF="030842.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Long timeout if server host becomes	unreachable</H1>
+    <B>Oleg Lyalikov</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Long%20timeout%20if%20server%20host%20becomes%0A%09unreachable&In-Reply-To=%3CCAOQRttp6qdGzXpvx%3DyVoMiEzJU9qMvLBvS%2Bw%2B5BxHOx9hLY97g%40mail.gmail.com%3E"
+       TITLE="[rabbitmq-discuss] Long timeout if server host becomes	unreachable">oleg.lyalikov at gmail.com
+       </A><BR>
+    <I>Tue Oct  8 14:48:08 BST 2013</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="030826.html">[rabbitmq-discuss] Long timeout if server host becomes	unreachable
+</A></li>
+        <LI>Next message: <A HREF="030842.html">[rabbitmq-discuss] Long timeout if server host becomes	unreachable
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#30840">[ date ]</a>
+              <a href="thread.html#30840">[ thread ]</a>
+              <a href="subject.html#30840">[ subject ]</a>
+              <a href="author.html#30840">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Thanks Michael,
+
+Unfortunately SocketFrameHandler#close invokes &quot;flush&quot; method which then
+blocks again:
+
+Thread [Thread-0] (Suspended)
+    waiting for: BufferedOutputStream  (id=26)
+        owned by: Thread [main] (Suspended)
+    BufferedOutputStream.flush() line: 140
+    DataOutputStream.flush() line: 123
+    SocketFrameHandler.flush() line: 142
+    SocketFrameHandler.close() line: 147
+    Send$2.run() line: 131
+    Thread.run() line: 724
+
+I looked at the implementation of the write timeout in ActiveMQ, here it is:
+<A HREF="http://opensourcejavaphp.net/java/activemq/org/apache/activemq/transport/WriteTimeoutFilter.java.html">http://opensourcejavaphp.net/java/activemq/org/apache/activemq/transport/WriteTimeoutFilter.java.html</A>
+
+The solution they use looks workable - it seems they register socket write
+start time + keep boolean whether writing occurs right now and then check
+in the separate thread
+
+long delta = (filter.getWriter().isWriting() &amp;&amp;
+writeStart&gt;0)?System.currentTimeMillis() - writeStart:-1;
+
+if delta is greater than write timeout they do socket.close().
+
+If &quot;_socket&quot; field is not private in SocketFrameHandler I could try
+overriding &quot;close&quot; method and invoke just _socket.close() - maybe that
+would help. But the field is private (maybe we can copy/paste the class and
+instantiate our new one but it does not look good - it would be better to
+just enhance existing functionality not to replace - there could be some
+problems with compatibility with newer versions of RabbitMQ client lib,
+RabbitMQ tests should be run regularly as our own tests, etc).
+By the way do you know why SocketFrameHandler#close method invokes &quot;flush&quot;
+first before making socket.close()? Is it ok in case of write timeout just
+do socket.close() without flush?
+
+As for modifying SocketFrameHandler so that it will use locks with timeouts
+- that could be possible but with the same drawbacks as the solution above.
+
+Both workarounds require careful testing and time, we will think about it.
+But I'm hoping RabbitMQ library will provide functionality to set socket
+write timeout in the future. Could you provide some ticket link so that we
+can monitor its status?
+
+Thanks,
+Oleg
+
+2013/10/8 Michael Klishin [via RabbitMQ] &lt;
+<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">ml-node+s1065348n30323h50 at n5.nabble.com</A>&gt;
+
+&gt;<i>
+</I>&gt;<i> On oct 8, 2013, at 2:11 p.m., Oleg Lyalikov &lt;[hidden email]&lt;<A HREF="http://user/SendEmail.jtp?type=node&amp;node=30323&amp;i=0">http://user/SendEmail.jtp?type=node&amp;node=30323&amp;i=0</A>&gt;&gt;
+</I>&gt;<i> wrote:
+</I>&gt;<i>
+</I>&gt;<i> &gt; For me the client should have possibility to set such timeout or at
+</I>&gt;<i> least have some workaround - I don't see any now.
+</I>&gt;<i>
+</I>&gt;<i> Oleg,
+</I>&gt;<i>
+</I>&gt;<i> I understand your frustration. I will file a bug about this.
+</I>&gt;<i>
+</I>&gt;<i> It should be possible to getFrameHandler on a connection and close its
+</I>&gt;<i> underlying
+</I>&gt;<i> socket with SocketFrameHandler#close. It does not write any data and
+</I>&gt;<i> catches
+</I>&gt;<i> any exceptions that may arise. It also does not use the output stream
+</I>&gt;<i> which is
+</I>&gt;<i> what SocketFrameHandler#writeFrame synchronizes on.
+</I>&gt;<i>
+</I>&gt;<i> So try detecting that the peer is gone in your own code (note: this is
+</I>&gt;<i> *the* fundamental
+</I>&gt;<i> issue here, not that JDK sockets don't have a timeout API) and close the
+</I>&gt;<i> socket.
+</I>&gt;<i> I cannot tell if that may cause the write method to throw but it's worth
+</I>&gt;<i> trying.
+</I>&gt;<i>
+</I>&gt;<i> Another relatively unintrusive option I can think of is modifying
+</I>&gt;<i> SocketFramehandler to use a lock that supports timeouts. This way it would
+</I>&gt;<i> be
+</I>&gt;<i> easier to detect the issue and instantiate a new connection.
+</I>&gt;<i>
+</I>&gt;<i> MK
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;<i> [hidden email] &lt;<A HREF="http://user/SendEmail.jtp?type=node&amp;node=30323&amp;i=1">http://user/SendEmail.jtp?type=node&amp;node=30323&amp;i=1</A>&gt;
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>&gt;<i>
+</I>&gt;<i> *signature.asc* (506 bytes) Download Attachment&lt;<A HREF="http://rabbitmq.1065348.n5.nabble.com/attachment/30323/0/signature.asc">http://rabbitmq.1065348.n5.nabble.com/attachment/30323/0/signature.asc</A>&gt;
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> ------------------------------
+</I>&gt;<i>  If you reply to this email, your message will be added to the discussion
+</I>&gt;<i> below:
+</I>&gt;<i>
+</I>&gt;<i> <A HREF="http://rabbitmq.1065348.n5.nabble.com/Long-timeout-if-server-host-becomes-unreachable-tp30275p30323.html">http://rabbitmq.1065348.n5.nabble.com/Long-timeout-if-server-host-becomes-unreachable-tp30275p30323.html</A>
+</I>&gt;<i>  To unsubscribe from Long timeout if server host becomes unreachable, click
+</I>&gt;<i> here&lt;<A HREF="http://rabbitmq.1065348.n5.nabble.com/template/NamlServlet.jtp?macro=unsubscribe_by_code&amp;node=30275&amp;code=b2xlZy5seWFsaWtvdkBnbWFpbC5jb218MzAyNzV8MzI1NzkxMjU5">http://rabbitmq.1065348.n5.nabble.com/template/NamlServlet.jtp?macro=unsubscribe_by_code&amp;node=30275&amp;code=b2xlZy5seWFsaWtvdkBnbWFpbC5jb218MzAyNzV8MzI1NzkxMjU5</A>&gt;
+</I>&gt;<i> .
+</I>&gt;<i> NAML&lt;<A HREF="http://rabbitmq.1065348.n5.nabble.com/template/NamlServlet.jtp?macro=macro_viewer&amp;id=instant_html%21nabble%3Aemail.naml&amp;base=nabble.naml.namespaces.BasicNamespace-nabble.view.web.template.NabbleNamespace-nabble.view.web.template.NodeNamespace&amp;breadcrumbs=notify_subscribers%21nabble%3Aemail.naml-instant_emails%21nabble%3Aemail.naml-send_instant_email%21nabble%3Aemail.naml">http://rabbitmq.1065348.n5.nabble.com/template/NamlServlet.jtp?macro=macro_viewer&amp;id=instant_html%21nabble%3Aemail.naml&amp;base=nabble.naml.namespaces.BasicNamespace-nabble.view.web.template.NabbleNamespace-nabble.view.web.template.NodeNamespace&amp;breadcrumbs=notify_subscribers%21nabble%3Aemail.naml-instant_emails%21nabble%3Aemail.naml-send_instant_email%21nabble%3Aemail.naml</A>&gt;
+</I>&gt;<i>
+</I>
+
+
+
+--
+View this message in context: <A HREF="http://rabbitmq.1065348.n5.nabble.com/Long-timeout-if-server-host-becomes-unreachable-tp30275p30338.html">http://rabbitmq.1065348.n5.nabble.com/Long-timeout-if-server-host-becomes-unreachable-tp30275p30338.html</A>
+Sent from the RabbitMQ mailing list archive at Nabble.com.
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20131008/6376e8d4/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20131008/6376e8d4/attachment.htm</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="030826.html">[rabbitmq-discuss] Long timeout if server host becomes	unreachable
+</A></li>
+	<LI>Next message: <A HREF="030842.html">[rabbitmq-discuss] Long timeout if server host becomes	unreachable
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#30840">[ date ]</a>
+              <a href="thread.html#30840">[ thread ]</a>
+              <a href="subject.html#30840">[ subject ]</a>
+              <a href="author.html#30840">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

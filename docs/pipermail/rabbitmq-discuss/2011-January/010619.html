@@ -1,0 +1,230 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] RabbitMQ Test case - Possible Memory Leak problem
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20RabbitMQ%20Test%20case%20-%20Possible%20Memory%20Leak%20problem&In-Reply-To=%3CAANLkTimgA6tNpstggKpeKTj2yUC%2BxdWGpuAD%2BCvYP9jq%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="010969.html">
+   <LINK REL="Next"  HREF="010690.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] RabbitMQ Test case - Possible Memory Leak problem</H1>
+    <B>Crisoforo Seccia</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20RabbitMQ%20Test%20case%20-%20Possible%20Memory%20Leak%20problem&In-Reply-To=%3CAANLkTimgA6tNpstggKpeKTj2yUC%2BxdWGpuAD%2BCvYP9jq%40mail.gmail.com%3E"
+       TITLE="[rabbitmq-discuss] RabbitMQ Test case - Possible Memory Leak problem">cristofer.seccia at gmail.com
+       </A><BR>
+    <I>Tue Jan 11 11:44:54 GMT 2011</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="010969.html">[rabbitmq-discuss] Java client: channel shutdown notification while closing connection
+</A></li>
+        <LI>Next message: <A HREF="010690.html">[rabbitmq-discuss] RabbitMQ Test case - Possible Memory Leak problem
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#10619">[ date ]</a>
+              <a href="thread.html#10619">[ thread ]</a>
+              <a href="subject.html#10619">[ subject ]</a>
+              <a href="author.html#10619">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi,
+I'm developing a stress test to compare and measure the performance between
+RabbitMQ and ActiveMQ. Also the objective was to compare the standard AMQP
+with the JMS specifications. There is something that I would like to share
+with the community since I think in could be a possible bug or a memory leak
+problem. The stress test is very easy; there are no exponential ore base
+variables, just a linear test case. I'm going to describe the scenario.
+The scenario is composed by two JAVA clients: a publisher and a subscriber,
+and one instance of RabbitMQ (V. 2.2.0) running over a virtual machine 2GB
+RAM. The clients, both publisher and subscriber are placed in two different
+physical machines. The messages to be sent by the publisher and received by
+the subscriber are described within a cluster. A cluster specifies the size
+of the body message (in byte) and the total number of messages to send and
+receive for that dimension. Ex: C1 = (512::10000). The publisher uses a list
+of clusters, and for each one of them it starts a new loop in which messages
+are sent. Es: C1 = (512::500000); C2 = (1024::100000); C3 = (2048::10000).
+At begin and at the end of each cluster, the publisher sends a special
+message used to inform the subscriber that a new cluster is started or is
+just finished. Also a special message is sent to the subscriber when all the
+clusters have been elaborated. The subscriber does nothing more than
+receiving messages and calculates the elapsed time (in seconds) between the
+start and the end message for each cluster. The Publisher uses a &quot;direct&quot;
+exchange (non-durable, non auto-delete) to publish the messages while the
+subscriber creates and binds a new queue over the same &quot;direct&quot; exchange.
+
+This is the code used to initialize the publisher:
+
+ConnectionFactory factory = new ConnectionFactory();
+factory.setUsername(&quot;guest&quot;);
+factory.setPassword(&quot;guest&quot;);
+factory.setVirtualHost(&quot;/&quot;);
+factory.setHost(&quot;RabbitMQ_Srv_01&quot;);
+factory.setPort(5672);
+conn = factory.newConnection();
+channel = conn.createChannel();
+boolean durable = false;
+boolean autoDelete = false;
+channel.exchangeDeclare(&quot;linearTest&quot;, &quot;direct&quot;, durable, autoDelete, null);
+...
+//Define some properties
+AMQP.BasicProperties props = MessageProperties.PERSISTENT_TEXT_PLAIN;
+Map&lt;String, Object&gt; headers = new HashMap&lt;String, Object&gt;();
+headers.put(&quot;TestCommand&quot;, CURRENT_COMMAND);
+...
+props.setHeaders(headers);
+//Basic publish
+channel.basicPublish(&quot;linearExch&quot;, &quot;linearKey&quot;, props,
+CLUSTER[i].messageBodyBytes);
+...
+
+This is the code used to initialize the subscriber:
+
+ConnectionFactory factory = new ConnectionFactory();
+factory.setUsername(&quot;guest&quot;);
+factory.setPassword(&quot;guest&quot;);
+factory.setVirtualHost(&quot;/&quot;);
+factory.setHost(&quot;RabbitMQ_Srv_01&quot;);
+factory.setPort(5672);
+Connection conn = factory.newConnection();
+Channel channel = conn.createChannel();
+boolean durable = false;
+boolean autoDelete = false;
+boolean exclusive = false;
+channel.exchangeDeclare(&quot;linearExch&quot;, &quot;direct&quot;, durable, autoDelete, null);
+channel.queueDeclare(&quot;linearQueue&quot;, durable, exclusive, autoDelete, null);
+channel.queueBind(&quot;linearQueue&quot;, &quot;linearExch&quot;, &quot;linearKey&quot;, null);
+QueueingConsumer consumer = new QueueingConsumer(channel);
+boolean autoAck = false;
+channel.basicConsume(&quot;linearQueue&quot;, autoAck, consumer);
+
+while (true) {
+try {
+QueueingConsumer.Delivery delivery = consumer.nextDelivery();
+onMessage(delivery);
+channel.basicAck(delivery.getEnvelope().getDeliveryTag(), false);
+//If shutdown from the publisher is received
+if (shutdown) {
+channel.close();
+conn.close();
+break;
+}
+}
+catch (InterruptedException ie) {
+continue;
+}
+}
+
+This is how I've set up the test case:
+
+1.    Started the RabbitMQ broker by using the .bat &quot;rubbitmq-server.bat&quot;
+(NO extra configuration used).
+2.    Open the task manager to view the RabbitMQ (.erl process) memory
+usage.
+3.    Started the subscriber.
+4.    Started the publisher.
+5.    Defined Clusters As: {C1(512:10000); C2(512:10000); C3(512:10000);
+C4(512:100000); C5(512:100000); C6(512:100000); C7(1024:10000);
+C8(1024:10000); C9(1024:10000); C10(1024:100000); C11(1024:100000);
+C12(1024:100000); C13(2048:10000); C14(2048:10000); C15(2048:10000);
+C16(2048:100000); C17(2048:100000); C18(2048:100000) }
+
+These are some results and notifications:
+
+. I've started a first test case, I've noticed that RabbitMQ uses lots of
+memory during the test. At the first step, where only the broker was
+running, just 19 KB of memory were used. At the end of the process the
+memory usage increases up to more than 850 KB. After stopping the publisher
+and the subscriber, the memory usage was very slowly decreasing from
+850-800KB down to 50-20 KB.
+
+. I've started a second test case but this time using the publisher and the
+subscriber over the same physical machine. After a few minutes the broker
+crashed down showing the following message: &quot;eheap_alloc: Cannot allocate
+373662860 bytes of memory (of type &quot;heap&quot;)&quot;. I've repeated the same test
+more and more but every time the broker crashed down.
+
+. I&#8217;ve started a third test case, similar to the first one (publisher and
+subscriber placed in two different machines) but this time using the
+following cluster list:  {C1(512:10000); C2(512:10000); C3(512:10000);
+C4(512:100000); C5(512:100000); C6(512:100000); C7(512:500000);
+C8(512:500000); C9(512:500000)}. At the time of elaborating the last element
+(C9) the broker crashed down showing the same message as the one in the
+previous test.
+
+I think that the reason for the second test case can be found in the network
+usage, which causes the broker to store in the memory a lots of message
+because publisher and subscriber are placed in the same machine and, it&#8217;s
+clearly that the subscriber leads substantially the usage and the
+performance of the process (maybe because of the acknowledgements). But I
+don&#8217;t have a good idea for the third test case, which causes the same error.
+
+Now I&#8217;m facing with the fact that, comparing to ActiveMQ, the second test
+and the third test are successfully done, in fact, even if the subscriber
+and the publisher are placed in the same machine (the ActiveMQ broker runs
+in the same virtual machine as the one used for the RabbitMQ) the test case
+comes successfully to the end, and the broke doesn&#8217;t crash down. However,
+the first test case (described in the first point) seems to be more
+efficient, in terms of seconds, by using RabbitMQ.
+
+Here some questions:
+
+. In general, what do you think about the test?
+. Am I adopting a very strange test case which is not well handled by
+RabbitMQ?
+. Is there any connection with the solved bug described in the RabbitMQ 2.2
+release notes (&#8220;fix memory leak when long-running channels consume and
+cancel on many queues&#8221;)?
+. How does RabbitMQ handle message flooding? As stated in ActiveMQ official
+page, the flow control, in the current version means that: &#8220;if the broker
+detects that the memory limit for the destination, or the temp- or
+file-store limits for the broker, have been exceeded, then the flow of
+messages can be slowed down. The producer will be either blocked until
+resources are available or will receive a JMSException&#8221;.
+
+Thanks for any response.
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20110111/ae46a278/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20110111/ae46a278/attachment.htm</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="010969.html">[rabbitmq-discuss] Java client: channel shutdown notification while closing connection
+</A></li>
+	<LI>Next message: <A HREF="010690.html">[rabbitmq-discuss] RabbitMQ Test case - Possible Memory Leak problem
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#10619">[ date ]</a>
+              <a href="thread.html#10619">[ thread ]</a>
+              <a href="subject.html#10619">[ subject ]</a>
+              <a href="author.html#10619">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

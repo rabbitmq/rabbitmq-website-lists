@@ -1,0 +1,168 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Cluster Pathology
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20Cluster%20Pathology&In-Reply-To=3b949f090902111111s450fa33cre254c91bb3b4692d%40mail.gmail.com">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002990.html">
+   <LINK REL="Next"  HREF="002993.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Cluster Pathology</H1>
+    <B>Drew Smathers</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20Cluster%20Pathology&In-Reply-To=3b949f090902111111s450fa33cre254c91bb3b4692d%40mail.gmail.com"
+       TITLE="[rabbitmq-discuss] Cluster Pathology">drew.smathers at gmail.com
+       </A><BR>
+    <I>Wed Feb 11 22:19:49 GMT 2009</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002990.html">[rabbitmq-discuss] Cluster Pathology
+</A></li>
+        <LI>Next message: <A HREF="002993.html">[rabbitmq-discuss] Cluster Pathology
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2992">[ date ]</a>
+              <a href="thread.html#2992">[ thread ]</a>
+              <a href="subject.html#2992">[ subject ]</a>
+              <a href="author.html#2992">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>On Wed, Feb 11, 2009 at 2:11 PM, Jason J. W. Williams
+&lt;<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">jasonjwwilliams at gmail.com</A>&gt; wrote:
+&gt;&gt;<i>
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> - The reason why the consumer does not get notified about the removal
+</I>&gt;&gt;<i> of a queue (for whatever reason it may have disappeared) is because
+</I>&gt;&gt;<i> that this behaviour is not specified in the protocol. It is possible
+</I>&gt;&gt;<i> that this was an oversight, you would have to seek reference from your
+</I>&gt;&gt;<i> local AMQP representative. In practical terms, this notion has been
+</I>&gt;&gt;<i> addressed to an extent in the 0-10 version of the protocol, but YMMV.
+</I>&gt;&gt;<i> Going forwards, this is exactly the kind of thing that needs to get
+</I>&gt;&gt;<i> nailed down in the 1.0 version of the protocol;
+</I>&gt;<i>
+</I>
+I understand that this is already becoming, so I hope my comments
+don't add too much noise to the thread.  I'm having very similar
+issues (or misunderstandings on how RabbitMQ is supposed to work) with
+a project at work, and was about to start a new post over this.  We
+were doing some more thorough testing on a system running RabbitMQ (v.
+1.5.1) with a basic use case:
+
+1. producer A connects to node A, declares exchange E, declares and
+binds Q to E *
+2. producer B connects to node B, declares exchange E, declares and
+binds Q to E *
+3. consumer A connects to node A, declares exchange E, binds queue Q
+to E, and listens for messages via basic_consume
+    =&gt; Q exists on node A
+4. consumer B connects to node B (binds queue Q to exchange E) and
+listens for messages via basic_consume
+
+(* Producers declare and bind queues to ensure messages don't get
+&quot;blackholed&quot; - borrowing Jason's terminology which seems very apt).
+
+Now, if node A is taken down, producer A of course can't produce
+messages due to socket errors, but producer B continues producing
+messages not knowing they actually are just getting dropped with no
+queue to route to (since Q is on node A).  What's even more surprising
+to me on this matter is that if producer B restarts and publishes
+messages, the messages are still blackholed.
+
+Another bad side effect is that once node A comes back up, while
+messages are then routed correctly, consumers don't receive messages
+unless they're restarted.  My guess is that the consumer tag used by
+the consumers is not longer valid?
+
+So far as I can tell there is no easy way to detect either of these scenarios.
+
+&gt;<i> Well that explains why it doesn't happen. :-)
+</I>
+&gt;<i>
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> - Quorum decisions are difficult at the best of times, hence why we
+</I>&gt;&gt;<i> would need to think long and hard about how to do transparent
+</I>&gt;&gt;<i> replication;
+</I>&gt;<i>
+</I>&gt;<i> While replication would be nice, I don't really mind having to replay
+</I>&gt;<i> the messages later.
+</I>&gt;<i>
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> - Replay logic is potentially equally as tricky, once you have
+</I>&gt;&gt;<i> considered all of the corner cases;
+</I>&gt;<i>
+</I>&gt;<i> I can see where it would be tricky, particularly for applications that
+</I>&gt;<i> resubmitted messages. Personally, we'd like to see it as either a
+</I>&gt;<i> start-up option (--enable-auto-replay) or a separate utility that can
+</I>&gt;<i> be pointed at a persister log  with a particular queue name.
+</I>&gt;<i>
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> I can tell you right now that Rabbit does not currently cater for
+</I>&gt;&gt;<i> these circumstances OOTB, so if these are hard requirements for you,
+</I>&gt;&gt;<i> you may want to look somewhere else.
+</I>&gt;<i>
+</I>&gt;<i> Unfortunately, there's no where else to go. :-) We wrote our code to
+</I>&gt;<i> be fairly failure tolerant, and have upgraded the producers to now
+</I>&gt;<i> also create exchanges/queues/bindings so nothing gets blackholed. As a
+</I>&gt;<i> result, we'll be able to work around it for this project by deploying
+</I>&gt;<i> two non-clustered Rabbit instances. It's workable just not optimal.
+</I>&gt;<i> We'll have to be careful to upgrade the producers queue creation code
+</I>&gt;<i> any time we add new queues and consumer types. Allowing producers to
+</I>&gt;<i> be dumb about consumers is really our design target.
+</I>&gt;<i>
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> If your application could subscribe to AMQP level events OTOH, there
+</I>&gt;&gt;<i> may be a simple way to solve this issue for you in a protocol
+</I>&gt;&gt;<i> compliant fashion - for example, we do have patches that allow clients
+</I>&gt;&gt;<i> to subscribe to presence events. If the above is a not a KO critiereon
+</I>&gt;&gt;<i> for you, we could look into this option.
+</I>&gt;<i>
+</I>
+This feels like overkill to me on the client end.  From my naive
+perspective, it seems like queue bindings for non-exclusive queues
+should be made redundant in a cluster, so that if the node holding the
+queue goes down, other nodes can provisionally take responsibility for
+routing the messages to consumers' queues and persisting if necessary.
+
+&gt;<i> I'll need to research AMQP level events, but yes we can write it in if
+</I>&gt;<i> py-amqplib can support it.That would be fine.
+</I>&gt;<i> We don't mind recreating the queues, but consumers need to know
+</I>&gt;<i> they're orphaned in edge cases.
+</I>&gt;<i>
+</I>&gt;<i> Thank you so much for your help! I do really appreciate it and do not
+</I>&gt;<i> mean to be a pain.
+</I>&gt;<i>
+</I>&gt;<i> -J
+</I>&gt;<i>
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;<i> <A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;<i> <A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>&gt;<i>
+</I>
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002990.html">[rabbitmq-discuss] Cluster Pathology
+</A></li>
+	<LI>Next message: <A HREF="002993.html">[rabbitmq-discuss] Cluster Pathology
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2992">[ date ]</a>
+              <a href="thread.html#2992">[ thread ]</a>
+              <a href="subject.html#2992">[ subject ]</a>
+              <a href="author.html#2992">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

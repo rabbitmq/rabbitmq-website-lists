@@ -1,0 +1,133 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] RabbitMQ Stability Issues with large queue - 2011-12-28
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20RabbitMQ%20Stability%20Issues%20with%20large%20queue%20-%0A%202011-12-28&In-Reply-To=%3C4F030C4A.6050504%40rabbitmq.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="017093.html">
+   <LINK REL="Next"  HREF="017096.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] RabbitMQ Stability Issues with large queue - 2011-12-28</H1>
+    <B>Emile Joubert</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20RabbitMQ%20Stability%20Issues%20with%20large%20queue%20-%0A%202011-12-28&In-Reply-To=%3C4F030C4A.6050504%40rabbitmq.com%3E"
+       TITLE="[rabbitmq-discuss] RabbitMQ Stability Issues with large queue - 2011-12-28">emile at rabbitmq.com
+       </A><BR>
+    <I>Tue Jan  3 14:10:18 GMT 2012</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="017093.html">[rabbitmq-discuss] rabbitmqadmin fails when trying to get message from a queue
+</A></li>
+        <LI>Next message: <A HREF="017096.html">[rabbitmq-discuss] [announcement] amqp gem 0.9.0.pre (beta) is	released
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#17094">[ date ]</a>
+              <a href="thread.html#17094">[ thread ]</a>
+              <a href="subject.html#17094">[ subject ]</a>
+              <a href="author.html#17094">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi,
+
+The logfile indicates that the memory alarm has triggered, preventing
+further publishes. A broker in this state will only allow fetching. Is
+this what you see? What are the symptoms of the crash you observed?
+
+According to the report your one queue alone uses 3.7Gb while the total
+memory limit is only 4.8Gb. I would suggest lowering the
+vm_memory_high_watermark to the default value of 0.4 or lower so that
+the broker starts conserving memory sooner.
+
+If you see segfaults then consider disabling HiPE. This feature is
+experimental and could be the cause of your problem.
+
+
+
+On 28/12/11 22:20, DawgTool wrote:
+&gt;<i> ==&gt; dc001.log &lt;==
+</I>&gt;<i> =INFO REPORT==== 28-Dec-2011::17:00:00 ===
+</I>&gt;<i> vm_memory_high_watermark set. Memory used:8662988728 allowed:5153960755
+</I>&gt;<i> 
+</I>&gt;<i> =INFO REPORT==== 28-Dec-2011::17:00:00 ===
+</I>&gt;<i>     alarm_handler: {set,{{vm_memory_high_watermark,'<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">dc001 at rmquat-m01</A>'},[]}}
+</I>
+&gt;<i>  {vm_memory_high_watermark,0.5999999999767169},
+</I>&gt;<i>  {vm_memory_limit,5153960755}]
+</I>
+&gt;<i>  {vm_memory_high_watermark,0.6}]
+</I>
+&gt;&gt;<i>  {rabbit,                    [{vm_memory_high_watermark, 0.6},
+</I>&gt;&gt;<i>                               {collect_statistics_interval, 5000},
+</I>&gt;&gt;<i>                               {hipe_compile, true}
+</I>&gt;&gt;<i>                              ]
+</I>&gt;&gt;<i>  },
+</I>&gt;&gt;<i>  {rabbitmq_management,       [ {http_log_dir, &quot;/data/rabbitmq/dc001/rabbit-mgmt&quot;} ] },
+</I>&gt;&gt;<i>  {rabbitmq_management_agent, [ {force_fine_statistics, true} ] }
+</I>
+
+&gt;&gt;<i> [17:32] &lt;dawgtool&gt; background. doing some testing on 2.7.0 : 4 servers 2vcpu, 8gb ram, 80gb disc.
+</I>&gt;&gt;<i> [17:32] &lt;dawgtool&gt; cluser is setup all disc, currently one exchange durable fanout
+</I>&gt;&gt;<i> [17:33] &lt;dawgtool&gt; one queue also durable bind to the exchange.
+</I>&gt;&gt;<i> [17:33] &lt;dawgtool&gt; i'm pushing about 5M records, payload is ~500bytes each record
+</I>&gt;&gt;<i> [17:34] &lt;dawgtool&gt; rate is about 14k/s (which seems pretty slow)
+</I>&gt;&gt;<i> [17:35] &lt;dawgtool&gt; but my problem is, I'm testing a case where they consumers are busy or unavailable, so the queues would be filling up.
+</I>&gt;&gt;<i> [17:35] &lt;dawgtool&gt; even after slowing the publish rate to about 4k/s the mirrored queue does not complete on any of the clusters nodes other then master.
+</I>&gt;&gt;<i> [17:37] &lt;dawgtool&gt; memory seems to be the biggest issue here, as the servers will grow passed the high water mark, and eventually crash one at a time.
+</I>&gt;&gt;<i> [17:37] &lt;dawgtool&gt; once they are restarted, most servers in the cluster will have about 200k to 300k of messages in their queue
+</I>&gt;&gt;<i> [17:40] &lt;dawgtool&gt; so question is, why is so much memory being consumed (on disk these records are about 5.5GB) RabbitMQ pushes to 7.9 real, 11.9 virtual (swapping).
+</I>&gt;&gt;<i> [17:40] &lt;dawgtool&gt; why is the queue not stopping the publishers (RAM based clusters seem to stop the publisher until it can be spilled to disk)
+</I>&gt;&gt;<i> [17:41] &lt;dawgtool&gt; Why is mirroring unreliable in this test.
+</I></PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="017093.html">[rabbitmq-discuss] rabbitmqadmin fails when trying to get message from a queue
+</A></li>
+	<LI>Next message: <A HREF="017096.html">[rabbitmq-discuss] [announcement] amqp gem 0.9.0.pre (beta) is	released
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#17094">[ date ]</a>
+              <a href="thread.html#17094">[ thread ]</a>
+              <a href="subject.html#17094">[ subject ]</a>
+              <a href="author.html#17094">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

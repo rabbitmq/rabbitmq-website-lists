@@ -1,0 +1,113 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Long pauses when closing many channels	simultaneously
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Long%20pauses%20when%20closing%20many%20channels%0A%09simultaneously&In-Reply-To=%3C1380282223281-29973.post%40n5.nabble.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="030453.html">
+   <LINK REL="Next"  HREF="030436.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Long pauses when closing many channels	simultaneously</H1>
+    <B>mrogan</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Long%20pauses%20when%20closing%20many%20channels%0A%09simultaneously&In-Reply-To=%3C1380282223281-29973.post%40n5.nabble.com%3E"
+       TITLE="[rabbitmq-discuss] Long pauses when closing many channels	simultaneously">martin.rogan.inc at gmail.com
+       </A><BR>
+    <I>Fri Sep 27 12:43:43 BST 2013</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="030453.html">[rabbitmq-discuss] Long pauses when closing many channels	simultaneously
+</A></li>
+        <LI>Next message: <A HREF="030436.html">[rabbitmq-discuss] Question about long-lived connections
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#30471">[ date ]</a>
+              <a href="thread.html#30471">[ thread ]</a>
+              <a href="subject.html#30471">[ subject ]</a>
+              <a href="author.html#30471">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Michael Klishin wrote
+&gt;<i> To summarize: yes, this is a known but rare problem. If you can provide
+</I>&gt;<i> profiling and thread dump
+</I>&gt;<i> information that will help isolating the contention point, I think the
+</I>&gt;<i> issue can be resolved or largely
+</I>&gt;<i> mitigated in a future version.
+</I>&gt;<i> 
+</I>&gt;<i> MK
+</I>
+Uploaded test harness to recreate the delays, 
+SimultaneousChannelCloseTest.java
+&lt;<A HREF="http://rabbitmq.1065348.n5.nabble.com/file/n29973/SimultaneousChannelCloseTest.java">http://rabbitmq.1065348.n5.nabble.com/file/n29973/SimultaneousChannelCloseTest.java</A>&gt; 
+. Requires amqp-client-3.1.5.jar. No arguments, just change the RabbitMQ
+host, port, vhost, username and password in main(). Example output:
+
+
+
+Here 99% of the channels closed in less than 1 second. The remaining 100
+channels (equal to the number of threads used) closed in a significantly
+longer time. Increasing the number of channels increases the delay but only
+for the same number of channels as there are THREADS. Increasing the number
+of CONNECTIONS alleviates these delays. You can fiddle with these parameters
+in the source.
+
+Having played with this for a few hours now my take is that the initial
+channel-closes are simply delayed waiting on other stuff to happen on the
+connection. There's lots of publishing and consuming going on. Subsequent
+channel-closes are not delayed because they're all queued right behind the
+initial closes so there's nothing else really going on. Of course the test
+harness can be modified to create connection activity while the closes are
+being invoked and the delays will be seen in all channel-closes instead of
+just the first few. The channel-close is a synchronous roundtrip operation
+so we just have to wait. Maybe what I'm looking for is just a way to close
+the channels asynchronously so that I don't have to wait too?
+
+So my thinking is that I have 3 ways to alleviate these delays. 1) Use more
+connections. 2) Fire off channel-close asynchronously, ensuring that I don't
+try to use the channel subsequently. 3) Modify the Java amqp-client to offer
+an asynchronous close that fires off the close and returns, while discarding
+anything else received subsequently on that channel until the reply is
+received, at which point it cleans up properly with disconnectChannel().
+
+What are your thoughts on an asynchronous close in the amqp-client? Is it
+warranted? When should listeners be notified shutdownCompleted()?
+Immediately on firing the close or finally when the server reply is
+received? Is this just complicating the API and would it lead equivalent
+asynchronous operations everywhere else, such as when closing connections?
+
+Thanks, Martin.
+
+
+
+--
+View this message in context: <A HREF="http://rabbitmq.1065348.n5.nabble.com/Long-pauses-when-closing-many-channels-simultaneously-tp29937p29973.html">http://rabbitmq.1065348.n5.nabble.com/Long-pauses-when-closing-many-channels-simultaneously-tp29937p29973.html</A>
+Sent from the RabbitMQ mailing list archive at Nabble.com.
+</PRE>
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="030453.html">[rabbitmq-discuss] Long pauses when closing many channels	simultaneously
+</A></li>
+	<LI>Next message: <A HREF="030436.html">[rabbitmq-discuss] Question about long-lived connections
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#30471">[ date ]</a>
+              <a href="thread.html#30471">[ thread ]</a>
+              <a href="subject.html#30471">[ subject ]</a>
+              <a href="author.html#30471">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

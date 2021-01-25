@@ -1,0 +1,129 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Java Client Changes
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Java%20Client%20Changes&In-Reply-To=%3C0C5036F2-7100-40E7-B099-17BE7E5F3A3F%40rabbitmq.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="009433.html">
+   <LINK REL="Next"  HREF="009449.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Java Client Changes</H1>
+    <B>Rob Harrop</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Java%20Client%20Changes&In-Reply-To=%3C0C5036F2-7100-40E7-B099-17BE7E5F3A3F%40rabbitmq.com%3E"
+       TITLE="[rabbitmq-discuss] Java Client Changes">rob at rabbitmq.com
+       </A><BR>
+    <I>Thu Oct 14 23:08:30 BST 2010</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="009433.html">[rabbitmq-discuss] Java Client Changes
+</A></li>
+        <LI>Next message: <A HREF="009449.html">[rabbitmq-discuss] Java Client Changes
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#9443">[ date ]</a>
+              <a href="thread.html#9443">[ thread ]</a>
+              <a href="subject.html#9443">[ subject ]</a>
+              <a href="author.html#9443">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Thanks for taking the time to look at this and write up your thoughts. Your input is most appreciated.
+
+On 14 Oct 2010, at 18:02, Holger Hoffstaette wrote:
+
+&gt;<i> 
+</I>&gt;<i> Hi Rob,
+</I>&gt;<i> 
+</I>&gt;<i> thanks for taking the time to look into this. Sorry that I haven't
+</I>&gt;<i> commented earlier but I moved and had no internet/mail/list access etc.
+</I>&gt;<i> 
+</I>&gt;<i> On Tue, 12 Oct 2010 14:39:27 +0100, Rob Harrop wrote:
+</I>&gt;<i> 
+</I>&gt;&gt;<i> * Dispatch to consumers now happens on a separate thread from the
+</I>&gt;&gt;<i> Connection thread
+</I>&gt;<i> 
+</I>&gt;<i> This is good. :)
+</I>&gt;<i> 
+</I>&gt;&gt;<i> * Each Channel has its own dispatch thread
+</I>&gt;<i> 
+</I>&gt;<i> This is unfortunately not so good and pretty much what I was hoping to
+</I>&gt;<i> avoid. It can lead to excessive context switching (the #1 enemy), and with
+</I>&gt;<i> a large number of Channels to really large memory use.
+</I>&gt;<i> I've looked at the code and understand that ChannelDispatcher will
+</I>&gt;<i> not deadlock when a consumer calls back with Channel ops, since it runs in
+</I>&gt;<i> the same thread. However, this is &quot;recursive&quot; in the sense that call
+</I>&gt;<i> chains that are too deep could blow the stack -
+</I>
+I might be misunderstanding what you mean here but the ConsumerDispatcher is not self-recursive. Importantly, no two dispatch calls are ever nested on the same stack. Consider what might happen if you initiate basicConsume on queue1 and the consumer gets back a handleConsumeOK. In that call back the Consumer sends a message to queue1 and gets a handleDelivery callback. The stack in both callbacks is the same depth. I've posted an example here: <A HREF="http://pastebin.com/VVZaTb5T">http://pastebin.com/VVZaTb5T</A> to demonstrate this.
+
+&gt;<i> unlikely though.
+</I>&gt;<i> I know that this is unavoidable since Java does not have real
+</I>&gt;<i> continuations, but if that's the acceptable tradeoff then we might as well
+</I>&gt;<i> just pull a Thread from an arbitrary pool, note that in the dispatcher and
+</I>&gt;<i> do any channel ops. Any callbacks from a consumer on that thread should
+</I>&gt;<i> now be able to re-enter the dispatcher. When all is done just clear the
+</I>&gt;<i> current thread from the dispatcher and pop out.
+</I>&gt;<i> That way we can have a freely configurable ExecutorService and less
+</I>&gt;<i> threads with no deadlock on callback.
+</I>
+I've managed to convince myself that given the ExecutorService abstraction, it is simply not really feasible to allow for an arbitrary ExecutorService to be injected. I've written a bit about this in a past post, but looking back it wasn't all that clear or detailed. Hopefully you can forgive the detail that is about to spew forth :)
+
+Most importantly we should agree on some constraints:
+
+1. Dispatches to Consumers should happen in the order they arrive at the Connection
+2. Completion of dispatch to a given Consumer should happen-before the start of subsequent dispatch to that Consumer (this implies an as-if-serial execution for dispatches to a Consumer)
+
+It's also important to remember the limitations of the ExecutorService abstraction. In the general case, the size of the thread pool is neither fixed nor known to the outside world. As such, the usage model tends to be to submit one Runnable per discrete task, rather than one Runnable per thread (because we don't know how many threads there are).
+
+This maps to submitting one task per dispatch to the ExecutorService. There are two problems with this. Firstly, there is the matter of enforcing constraint 2. We must lock each Consumer so that we can only dispatch one callback at a time. If the ES queue has n tasks for Consumer a at the front of its work queue, and n is greater than the number of threads, then the ES will stall and other, potentially executable, callbacks will sit in the queue.
+
+Secondly, is the issue of enforcing ordering. Consider 2 callbacks c1 and c2, both for the same Consumer. The ES queue is [c1,c2]. The ES has 2 threads. Both threads can execute, one picking c1 and the other c2. The ExecutorService alone _does not_ provide guarantees as to the execution order here. To do this, we could give each callback a sequence number and ensure that only the next callback in sequence can proceed. This is not too simple. A typical wait/notify solution here can churn for some time when there are many callbacks all vying to execute.
+
+The real solution to ordering is to actually schedule a proxy task in the ES for each dispatcher, and maintain a queue of callbacks. When a proxy executes, it reserves the dispatcher, executes the head of the queue and unreserves the dispatcher. This works for ordering guarantees but doesn't prevent stalls. To prevent stalls, we need to introduce some kind of context stealing, and this is quite a meaty thing to do correctly.
+
+None of this is insurmountable, but I'd love to see a real scenario where it would make a difference worth the effort and pain to implement.
+
+I hope this makes sense. if you think I'm over thinking this or that there is a glaringly simple solution that I'm missing please do say. I'd love to be able to make the ExecutorService configurable in a safe and predictable fashion.
+
+Rob
+
+&gt;<i> 
+</I>&gt;<i> I should probably add that I just made that up and haven't tested it yet,
+</I>&gt;<i> but maybe you find the idea interesting. :-)
+</I>&gt;<i> 
+</I>&gt;<i> -h
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>
+</PRE>
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="009433.html">[rabbitmq-discuss] Java Client Changes
+</A></li>
+	<LI>Next message: <A HREF="009449.html">[rabbitmq-discuss] Java Client Changes
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#9443">[ date ]</a>
+              <a href="thread.html#9443">[ thread ]</a>
+              <a href="subject.html#9443">[ subject ]</a>
+              <a href="author.html#9443">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

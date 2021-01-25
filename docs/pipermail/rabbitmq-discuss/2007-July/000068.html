@@ -1,0 +1,157 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] FW: Multiple consumers
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20FW%3A%20Multiple%20consumers&In-Reply-To=lyk5skqfm8.fsf%40tanto.lshift.net">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000067.html">
+   <LINK REL="Next"  HREF="000069.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] FW: Multiple consumers</H1>
+    <B>Ben Hood</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20FW%3A%20Multiple%20consumers&In-Reply-To=lyk5skqfm8.fsf%40tanto.lshift.net"
+       TITLE="[rabbitmq-discuss] FW: Multiple consumers">0x6e6562 at gmail.com
+       </A><BR>
+    <I>Sun Jul 29 01:26:20 BST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000067.html">[rabbitmq-discuss] FW: Multiple consumers
+</A></li>
+        <LI>Next message: <A HREF="000069.html">[rabbitmq-discuss] FW: Multiple consumers
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#68">[ date ]</a>
+              <a href="thread.html#68">[ thread ]</a>
+              <a href="subject.html#68">[ subject ]</a>
+              <a href="author.html#68">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Matthias,
+
+
+&gt;<i> I think that may partially be due to some design choices in the
+</I>&gt;<i> channel/queue implementation that may need revisiting. atm the
+</I>&gt;<i> consume_ok is sent by the *queue* process. I think it ought to be sent
+</I>&gt;<i> by the channel process instead - the channel process should be
+</I>&gt;<i> responsible for sending back responses to *all* synchronous methods.
+</I>
+Fair enough, but I can't see how this affects the direct client
+fundamentally or even in terms of what messages it passes and what it
+expects to receive. I think that this could potentially be done
+independently of the direct client.
+
+&gt;<i>
+</I>&gt;<i> Why do the channel processes need to be named?
+</I>
+They don't need to be named per se. I just chose that approach as way
+to get a handle or a reference to a process that is implementing
+channel N. GIven the fact that you want to have a separate process per
+channel, if you stored the pid of the channel handler, that would
+suffice as well. I just though this is a simple way of maintaining a
+reference to the process that has done the protocol handling for a
+particular channel. Otherwise you would have to devise another way to
+refer to the protocol state of a channel.
+
+&gt;<i>
+</I>&gt;<i> &gt; if you use the named approach, the API might look this:
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; access_request(Channel, Host, Realm)
+</I>&gt;<i>
+</I>&gt;<i> I'd like to see
+</I>&gt;<i>   access_request(Channel, Realm)
+</I>
+I orginally started with that variant, then I thought it might be
+ambiguous when you are connecting to more than one AMQP server. In the
+direct case, adding the host is probably unecessary, but I wanted to
+keep a consistent interface for the network case.
+
+&gt;<i>
+</I>&gt;<i> &gt;&gt; You appear to be changing the channel's writer pid with every
+</I>&gt;<i> &gt;&gt; basic_consume. That doesn't look right.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; Do you mean in the mainloop_without_framing function?
+</I>&gt;<i>
+</I>&gt;<i> Yes.
+</I>
+The current code is catering for the basic_consume call, so it sets
+the writer pid to the actual subscriber and the ack_pid to process
+handling the protocol for a channel:
+
+mainloop_without_framing(State) -&gt;
+    receive
+	{method, MethodRecord, Content} -&gt;
+	    State1 = handle_method(MethodRecord, Content, State),
+	    mainloop_without_framing(State1);
+	{method, MethodRecord, Content, SubscriberPid} -&gt;
+        WriterPid = State#ch.writer_pid,
+        State0 = State#ch{writer_pid = SubscriberPid},
+	    State1 = handle_method(MethodRecord, Content, State0),
+        State2 = State1#ch{writer_pid = WriterPid},
+	    mainloop_without_framing(State2);
+	Other -&gt;
+	    rabbit_log:error(&quot;Unexpected ch~p content: ~p~n&quot;,
+[State#ch.channel, Other]),
+	    mainloop_without_framing(State)
+    end.
+
+&gt;<i> &gt; So are you saying that you should pass in the consumer's pid to the
+</I>&gt;<i> &gt; rabbit_amqqueue_process and have that maintain a list of consumers?
+</I>&gt;<i>
+</I>&gt;<i> rabbit_amqqueue_process already does this.
+</I>
+I've been looking at this, but viewed it as an optimization rather
+than a fundamental change. At the moment the queue sends to the writer
+that then sends to the actual consumer, when is an extra hop in the
+chain. I think this could be changed without having to change the
+client interaction.
+
+&gt;<i>
+</I>&gt;<i> &gt; I don't see how the networked API will change anything on the server
+</I>&gt;<i> &gt; side, otherwise wouldn't you have to change the java client as well.
+</I>&gt;<i>
+</I>&gt;<i> The idea was/is to use the existing server code (rabbit_reader,
+</I>&gt;<i> rabbit_channel etc) as the basis for the client code. This will require
+</I>&gt;<i> some refactoring along the lines you have been pursuing so that server
+</I>&gt;<i> and client can share a substantial part of their code base.
+</I>
+I suppose you could use the handle_XXX functions in rabbit_channel
+directly to acheive the same goal. In that case, you might have to
+merge some of the channel0 stuff into this channel. I can see some
+merit in that, though I think this would have to get discussed a bit
+more before diving into any code.
+
+BTW, I've implemented the process per channel model and now I'm
+looking at paramterizing the ampq_client to cater for the network
+case. Will let you know when something useful comes to life.
+
+
+Ben
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000067.html">[rabbitmq-discuss] FW: Multiple consumers
+</A></li>
+	<LI>Next message: <A HREF="000069.html">[rabbitmq-discuss] FW: Multiple consumers
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#68">[ date ]</a>
+              <a href="thread.html#68">[ thread ]</a>
+              <a href="subject.html#68">[ subject ]</a>
+              <a href="author.html#68">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

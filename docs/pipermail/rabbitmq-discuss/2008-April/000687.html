@@ -1,0 +1,182 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] RabbitMQ perfomance testing &amp; troubles
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20RabbitMQ%20perfomance%20testing%20%26%20troubles&In-Reply-To=47FCA0A7.5000006%40brandproduction.ru">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000737.html">
+   <LINK REL="Next"  HREF="000690.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] RabbitMQ perfomance testing &amp; troubles</H1>
+    <B>Matthias Radestock</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20RabbitMQ%20perfomance%20testing%20%26%20troubles&In-Reply-To=47FCA0A7.5000006%40brandproduction.ru"
+       TITLE="[rabbitmq-discuss] RabbitMQ perfomance testing &amp; troubles">matthias at lshift.net
+       </A><BR>
+    <I>Wed Apr  9 22:50:02 BST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000737.html">[rabbitmq-discuss] RabbitMQ perfomance testing &amp; troubles
+</A></li>
+        <LI>Next message: <A HREF="000690.html">[rabbitmq-discuss] RabbitMQ perfomance testing &amp; troubles
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#687">[ date ]</a>
+              <a href="thread.html#687">[ thread ]</a>
+              <a href="subject.html#687">[ subject ]</a>
+              <a href="author.html#687">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Alexey,
+
+Alexey Slynko wrote:
+&gt;<i> we have done some stress tests of rabbitmq. Our main goal was the ~10K
+</I>&gt;<i> messages per second and maximum cpu &amp; ram usage. Two servers with equal
+</I>&gt;<i> configuration listed below were used for this task.
+</I>
+&gt;<i> Intel(R) Xeon(R) CPU           E5345  @ 2.33GHz CPU1
+</I>&gt;<i> Intel(R) Xeon(R) CPU           E5345  @ 2.33GHz CPU2
+</I>
+You shouldn't have any trouble hitting ~10k mps on these boxes. We have 
+achieved that on machines with much lower specs.
+
+&gt;<i> These servers were connected with network link Ethernet 100Mb.
+</I>
+That's rather slow, though you probably won't be hitting the limits in 
+your tests. Check the stats on the network interface to get an idea how 
+much headroom you have.
+
+&gt;<i> Erlang version (stable debian distribution) :
+</I>&gt;<i> 
+</I>&gt;<i> # dpkg -l erlang\* | grep ii
+</I>&gt;<i> ii  erlang-base      11.b.2-4       Concurrent, real-time, distributed
+</I>&gt;<i> functiona
+</I>&gt;<i> ii  erlang-nox       11.b.2-4       Concurrent, real-time, distributed
+</I>&gt;<i> functiona
+</I>
+Any chance you could try the tests with R11B-5? Most of our testing has 
+been done on that. I doubt it will make much difference but at the very 
+least it will make it easier for us to compare results.
+
+&gt;<i> Another midfications were done for normal mnesia work (errors listed below)
+</I>&gt;<i> 
+</I>&gt;<i> ERROR REPORT==== 4-Apr-2008::18:29:14 ===
+</I>&gt;<i> Error in process &lt;0.20713.0&gt; on node '<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at altair</A>' with exit value:
+</I>&gt;<i> {{case_clause,{error,{system_limit,&quot;Cannot create an ets table for
+</I>&gt;<i> the local transaction
+</I>&gt;<i> store&quot;,{system_limit,[{ets,new,[mnesia_trans_store,[bag,public]]},{mnesia_tm,doit_loop,1},{mnesia_sp,init_proc,4},{ 
+</I>&gt;<i> 
+</I>&gt;<i> proc_lib...
+</I>
+We have never seen this before. At what point during your tests did you 
+get this error?
+
+&gt;<i> and for increasing common throughput
+</I>&gt;<i> 
+</I>&gt;<i> # diff -u rabbitmq-server.orig /usr/sbin/rabbitmq-server
+</I>&gt;<i> --- rabbitmq-server.orig        2008-04-07 22:27:26.000000000 +0400
+</I>&gt;<i> +++ /usr/sbin/rabbitmq-server   2008-04-07 22:28:40.000000000 +0400
+</I>&gt;<i> @@ -28,7 +28,7 @@
+</I>&gt;<i>   [ &quot;x&quot; = &quot;x$NODE_IP_ADDRESS&quot; ] &amp;&amp; NODE_IP_ADDRESS=0.0.0.0
+</I>&gt;<i>   [ &quot;x&quot; = &quot;x$NODE_PORT&quot; ] &amp;&amp; NODE_PORT=5672
+</I>&gt;<i> 
+</I>&gt;<i> -ERL_ARGS=&quot;+K true +A30 -kernel inet_default_listen_options
+</I>&gt;<i> [{sndbuf,16384},{recbuf,4096}]&quot;
+</I>&gt;<i> +ERL_ARGS=&quot;-env ERL_MAX_ETS_TABLES 10240 -env ERL_MAX_PORTS 10240 +K
+</I>&gt;<i> true +A300 +P512000 -kernel inet_default_listen_options
+</I>&gt;<i> [{sndbuf,65535},{recbuf,65535},{reuseaddr,true}] -smp auto&quot;
+</I>&gt;<i>   CLUSTER_CONFIG_FILE=/etc/default/rabbitmq_cluster.config
+</I>&gt;<i>   CONFIG_FILE=/etc/default/rabbitmq
+</I>
+These should all be fine except I have some concerns about the &quot;-smp 
+auto&quot;, given how old a version of Erlang/OTP are running. Did you test 
+that adding the flag indeed improves performance?
+
+Note that RabbitMQ when running with Erlang/OTP R11B (rather than the 
+more recent R12) will not benefit much (if at all) from the multiple 
+cores when running with -smp. In our experiments we have been getting 
+much better results when configuring a local cluster of one non-smp node 
+per code. So I'd recommend you do that.
+
+&gt;<i> Client source code attached to this message.
+</I>
+The following will all impact performance:
+
+- The queues are not auto-deleting and aren't being deleted explicitly, 
+and your queue/exchange naming scheme is deterministic. Unless you 
+restart the server between tests or subsequent tests will be affected by 
+the queues from earlier tests. I'd also recommend clearing the mnesia 
+dir prior to starting rabbit, just to make sure that there aren't any 
+stray exchanges, queues or persistent messages.
+
+- The consumer explicitly acknowledges each message. Would 
+bulk-acknowledgment or auto-acknowledgment be an option?
+
+- The tests use a single topic exchange, with a distinct routing/binding 
+key for each producer/consumer pair. That is a rather peculiar set up 
+and may well run into performance problems for high numbers of queues. 
+The reason is that currently topic exchange routing simply pattern 
+matches the routing key against each binding key in term, i.e. matching 
+time is linear in the number of queues. That's on our todo list to 
+change - we used to have some caching logic in pre-1.3.0 versions but 
+removed that because it exhibited unbounded memory growth when people 
+used UIDs for routing keys. Anyway, I'd suggest you use a direct 
+exchange. All you should have to do is change the type in the exchange 
+declaration; the rest of your code ought to work unchanged.
+
+- You start lots of producers and consumer and each establishes a 
+separate connection. Dmitriy already pointed out several reasons why 
+that may be affecting performance. Another reason is that connection 
+establishment and teardown is quite expensive in RabbitMQ. Queue 
+creation, binding and deletion are quite expensive too. I notice you 
+have some &quot;sleep&quot; statements in your code, presumably to prevent the set 
+up tasks from interfering with the measurements. However, given the high 
+number of producers and consumers you are creating I suspect you will 
+still get interference. The mnesia errors/warnings you are seeing are an 
+indication of that because the sending/receiving of messages does not 
+involve any mnesia writes but connection, queue, exchange and binding 
+creation all do. If you really want to measure throughput for that many 
+connections and queues then I'd suggest you make sure they are all 
+created prior to any messages being sent.
+
+
+You may also want to run one of the test programs supplied with the 
+RabbitMQ Java client packages, such as MulticastMain, e.g.
+   sh ./runjava.sh com.rabbitmq.examples.MulticastMain -h &lt;host&gt; -a
+which reports on throughput and latency.
+
+
+I hope the above helps. Please do let us know what results you are getting.
+
+
+Regards,
+
+Matthias.
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000737.html">[rabbitmq-discuss] RabbitMQ perfomance testing &amp; troubles
+</A></li>
+	<LI>Next message: <A HREF="000690.html">[rabbitmq-discuss] RabbitMQ perfomance testing &amp; troubles
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#687">[ date ]</a>
+              <a href="thread.html#687">[ thread ]</a>
+              <a href="subject.html#687">[ subject ]</a>
+              <a href="author.html#687">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,160 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Query for Binding with similar topic routing keys returns all similar vs the one matching
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Query%20for%20Binding%20with%20similar%20topic%20routing%0A%20keys%20returns%20all%20similar%20vs%20the%20one%20matching&In-Reply-To=%3C4E96E7F3.5010508%40rabbitmq.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="015472.html">
+   <LINK REL="Next"  HREF="015420.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Query for Binding with similar topic routing keys returns all similar vs the one matching</H1>
+    <B>Simon MacMullen</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Query%20for%20Binding%20with%20similar%20topic%20routing%0A%20keys%20returns%20all%20similar%20vs%20the%20one%20matching&In-Reply-To=%3C4E96E7F3.5010508%40rabbitmq.com%3E"
+       TITLE="[rabbitmq-discuss] Query for Binding with similar topic routing keys returns all similar vs the one matching">simon at rabbitmq.com
+       </A><BR>
+    <I>Thu Oct 13 14:30:27 BST 2011</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="015472.html">[rabbitmq-discuss] Query for Binding with similar topic routing keys returns all similar vs the one matching
+</A></li>
+        <LI>Next message: <A HREF="015420.html">[rabbitmq-discuss]  erl.exe crashing occasionally
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#15498">[ date ]</a>
+              <a href="thread.html#15498">[ thread ]</a>
+              <a href="subject.html#15498">[ subject ]</a>
+              <a href="author.html#15498">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>On 12/10/11 15:48, Helena Edelson wrote:
+&gt;<i> Matthias,
+</I>
+Hi Helena. I've figured out what's happening.
+
+&gt;<i> Given the following precondition:
+</I>&gt;<i> Bindings exist that routing keys such as #.foo.bar and *.foo.bar would match.
+</I>&gt;<i> Where objOption is the Option returned from GET /api/bindings/vhost/e/exchange/q/queue/routingKey  which unfortunately is either a binding or an array of bindings matching the #etc pattern
+</I>
+There are a couple of issues here. One is that the path should not be 
+/api/bindings/&lt;vhost&gt;/e/&lt;exchange&gt;/q/&lt;queue&gt;/&lt;routing_key&gt;, it's 
+/api/bindings/&lt;vhost&gt;/e/&lt;exchange&gt;/q/&lt;queue&gt;/&lt;properties_key&gt;, where 
+properties_key is a name for the binding the management plugin generates 
+from the routing key *and the arguments*. The properties key will often 
+look like the routing key in simple cases, but as soon as there are 
+arguments in the binding, or the routing key contains some special 
+characters, it will differ. This is all to get round the fact that 
+bindings don't have names, unlike everything else in AMQP.
+
+You can see the properties key for a given binding when retrieving its 
+details from mgmt.
+
+The other issue is that in general any names that are in the URI need to 
+be URI-escaped - in the same way as the vhost &quot;/&quot; needs to be referred 
+to as &quot;%2F&quot;, since some characters that are valid in AMQP cannot appear 
+in URIs.
+
+...and of course '#' is such a character - it marks the start of the 
+fragment in a URI, so when you request:
+
+/api/bindings/vhost/e/exchange/q/queue/#.foo.bar
+
+You're really asking for the document 
+&quot;/api/bindings/vhost/e/exchange/q/queue/&quot; (i.e. the list) and asserting 
+that you're going to look at the bit of it identified by &quot;.foo.bar&quot;. I'm 
+not sure whether your HTTP client or Mochiweb / Webmachine strip the 
+fragment part out, but that's what's happening.
+
+Anyway: tl;dr - use the properties key. If you need to generate such a 
+key then it has the form:
+
+enc(routing_key) + &quot;_&quot; + enc(args_key_n) + &quot;_&quot; + enc(args_value_n) + &quot;_&quot; 
++ enc(args_key_2) + &quot;_&quot; + enc(args_value_2) ... etc
+
+where enc() means 'URI encode, additionally encoding &quot;_&quot; as &quot;%5F&quot;'.
+
+Cheers, Simon
+
+&gt;<i> Case 1: If I pass in binding pattern #.foo.bar, I get an array of Bindings
+</I>&gt;<i> Case 2: If I pass in binding pattern *.foo.bar, I consistently get a single matching Binding
+</I>&gt;<i>
+</I>&gt;<i> Here is what I am doing, in scala, where I want to extract one binding given one pattern (routing key).
+</I>&gt;<i>
+</I>&gt;<i> if (objOption.isDefined) objOption.get match {
+</I>&gt;<i>
+</I>&gt;<i>     case bindings: Array[Binding] =&gt;  for { b&lt;- bindings if b.getRoutingKey == pattern } binding = b
+</I>&gt;<i>
+</I>&gt;<i>     case b: Binding =&gt;  binding = objOption.get.asInstanceOf[Binding]
+</I>&gt;<i> }
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> Helena
+</I>&gt;<i> ________________________________________
+</I>&gt;<i> From: Matthias Radestock [<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">matthias at rabbitmq.com</A>]
+</I>&gt;<i> Sent: Wednesday, October 12, 2011 7:21 AM
+</I>&gt;<i> To: Helena Edelson
+</I>&gt;<i> Cc: <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;<i> Subject: Re: [rabbitmq-discuss] Query for Binding with similar topic routing keys returns all similar vs the one matching
+</I>&gt;<i>
+</I>&gt;<i> Helena,
+</I>&gt;<i>
+</I>&gt;<i> On 11/10/11 14:15, Helena Edelson wrote:
+</I>&gt;&gt;<i> I found the user of the # character in the pattern of the binding,
+</I>&gt;&gt;<i> given the number and type of binding patterns between queues and
+</I>&gt;&gt;<i> exchanges, consistently returns multiple results vs the * character
+</I>&gt;&gt;<i> which Rabbit can return a singular match. So I had to write a work
+</I>&gt;&gt;<i> around :-)
+</I>&gt;<i>
+</I>&gt;<i> So do you think there is something broken there in rabbit? Or perhaps
+</I>&gt;<i> less obvious than it could be? If so, an example of the form &quot;I tried X
+</I>&gt;<i> and was expecting to see Y but instead got Z&quot; would help to shed light
+</I>&gt;<i> on the problem.
+</I>&gt;<i>
+</I>&gt;<i> Matthias.
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>
+
+-- 
+Simon MacMullen
+RabbitMQ, VMware
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="015472.html">[rabbitmq-discuss] Query for Binding with similar topic routing keys returns all similar vs the one matching
+</A></li>
+	<LI>Next message: <A HREF="015420.html">[rabbitmq-discuss]  erl.exe crashing occasionally
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#15498">[ date ]</a>
+              <a href="thread.html#15498">[ thread ]</a>
+              <a href="subject.html#15498">[ subject ]</a>
+              <a href="author.html#15498">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

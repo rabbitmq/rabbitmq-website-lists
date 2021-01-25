@@ -1,0 +1,125 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] exessive memory usage and blocked connection, even when no messages left
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20exessive%20memory%20usage%20and%20blocked%20connection%2C%0A%20even%20when%20no%20messages%20left&In-Reply-To=%3C2153f4f9-d1dd-4b22-a46a-141373088a52%40x3g2000yqj.googlegroups.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="012927.html">
+   <LINK REL="Next"  HREF="012934.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] exessive memory usage and blocked connection, even when no messages left</H1>
+    <B>Theo</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20exessive%20memory%20usage%20and%20blocked%20connection%2C%0A%20even%20when%20no%20messages%20left&In-Reply-To=%3C2153f4f9-d1dd-4b22-a46a-141373088a52%40x3g2000yqj.googlegroups.com%3E"
+       TITLE="[rabbitmq-discuss] exessive memory usage and blocked connection, even when no messages left">iconara at gmail.com
+       </A><BR>
+    <I>Thu May 19 11:00:01 BST 2011</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="012927.html">[rabbitmq-discuss] exessive memory usage and blocked connection, even when no messages left
+</A></li>
+        <LI>Next message: <A HREF="012934.html">[rabbitmq-discuss] exessive memory usage and blocked connection, even when no messages left
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#12930">[ date ]</a>
+              <a href="thread.html#12930">[ thread ]</a>
+              <a href="subject.html#12930">[ subject ]</a>
+              <a href="author.html#12930">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Ok, thanks for the clarification, it makes sense, and it's more or
+less what we figured. I was hoping there was another explanation, that
+would be fixable.
+
+What kind of performance should we expect when running on EC2? It
+feels like 20K messages per second shouldn't be a problem for a four
+node cluster where each node has 8 CPUs and 7 Gb RAM. to get any kind
+of performance and stability we have had to tune how we work with the
+cluster, making sure that queues are distributed over the nodes, that
+each node has more than one queue, that the connections from the
+producers and consumers are evenly distributed over the nodes, etc.
+even slight asymmetries show up quite quickly in the memory usage of a
+node, and as soon as that happens it's only minutes before the whole
+cluster goes bad. Topic exchanges seem to be completely out of the
+question, it only takes minutes before every node gets overloaded.
+
+With a direct exchange and extreme attention to symmetry we have
+achieved a sustained publish/deliver/ack load of 40K/s for as long as
+we ran the test, and we can probably live with that. The idea was to
+use a topic exchange, but at this point it seems like that is
+completely out of the question, but we can probably move that
+functionality into the application (just like we had to move load
+balancing into the application because queues are bound to CPUs).
+
+Theo
+
+On May 19, 11:28&#160;am, Matthias Radestock &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">matth... at rabbitmq.com</A>&gt; wrote:
+&gt;<i> Theo,
+</I>&gt;<i>
+</I>&gt;<i> On 19/05/11 06:35, Theo wrote:
+</I>&gt;<i>
+</I>&gt;<i> &gt; I rewrote my test code in Java, just to make sure there's nothing with
+</I>&gt;<i> &gt; the Ruby driver that is causing the problem, here is the code:
+</I>&gt;<i> &gt;<A HREF="https://gist.github.com/980238">https://gist.github.com/980238</A>
+</I>&gt;<i>
+</I>&gt;<i> &gt; I ran that with more or less the same result. After a few minutes at
+</I>&gt;<i> &gt; 20K publishes/deliveries/acks per second the cluster rotted and all
+</I>&gt;<i> &gt; connections got blocked. What's more, this time I saw that if I turned
+</I>&gt;<i> &gt; off my producers the web UI still reported messages being published
+</I>&gt;<i> &gt; for several minutes -- no producers were running (I'm absolutely sure
+</I>&gt;<i> &gt; the processes were terminated) but there were still messages being
+</I>&gt;<i> &gt; published.
+</I>&gt;<i>
+</I>&gt;<i> The figure you see reported in the management UI is the rate at which
+</I>&gt;<i> rabbit processes these messages. The publisher code publishes messages
+</I>&gt;<i> as fast as it can, which is a far higher rate than rabbit can process
+</I>&gt;<i> them. Hence rabbit is buffering the messages in order to try to keep up.
+</I>&gt;<i> That way rabbit can handle brief periods of high publishing rate.
+</I>&gt;<i>
+</I>&gt;<i> However, if publishing continues at a high rate then eventually the
+</I>&gt;<i> buffers fill up all memory. At that point rabbit blocks further
+</I>&gt;<i> publishes until the buffers have been drained sufficiently to allow
+</I>&gt;<i> publishing to resume. This can take a while since rabbit has to page the
+</I>&gt;<i> messages to disk in order to free up space.
+</I>&gt;<i>
+</I>&gt;<i> Moreover, as soon as the publishers are unblocked, if they resume
+</I>&gt;<i> publishing at the high rate, as is the case in your test, the memory
+</I>&gt;<i> limit will be hit again quickly. Hence you will see rabbit &quot;bouncing off
+</I>&gt;<i> the limiter&quot;, where publishers get unblocked briefly and then blocked again.
+</I>&gt;<i>
+</I>&gt;<i> This is all quite normal.
+</I>&gt;<i>
+</I>&gt;<i> Regards,
+</I>&gt;<i>
+</I>&gt;<i> Matthias.
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-disc... at lists.rabbitmq.comhttps</A>://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss
+</I></PRE>
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="012927.html">[rabbitmq-discuss] exessive memory usage and blocked connection, even when no messages left
+</A></li>
+	<LI>Next message: <A HREF="012934.html">[rabbitmq-discuss] exessive memory usage and blocked connection, even when no messages left
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#12930">[ date ]</a>
+              <a href="thread.html#12930">[ thread ]</a>
+              <a href="subject.html#12930">[ subject ]</a>
+              <a href="author.html#12930">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,174 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss]  FW: Multiple consumers
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20%20FW%3A%20Multiple%20consumers&In-Reply-To=269388e30707311653x339b0efehdda8cf91c1385675%40mail.gmail.com">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000094.html">
+   <LINK REL="Next"  HREF="000095.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss]  FW: Multiple consumers</H1>
+    <B>Ben Hood</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20%20FW%3A%20Multiple%20consumers&In-Reply-To=269388e30707311653x339b0efehdda8cf91c1385675%40mail.gmail.com"
+       TITLE="[rabbitmq-discuss]  FW: Multiple consumers">0x6e6562 at gmail.com
+       </A><BR>
+    <I>Wed Aug  1 19:26:40 BST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000094.html">[rabbitmq-discuss] RabbitMQ 1.1.0-alpha released
+</A></li>
+        <LI>Next message: <A HREF="000095.html">[rabbitmq-discuss] FW: Multiple consumers
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#96">[ date ]</a>
+              <a href="thread.html#96">[ thread ]</a>
+              <a href="subject.html#96">[ subject ]</a>
+              <a href="author.html#96">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Sorry, I forwarded this accidentally to erlang-questions....
+
+---------- Forwarded message ----------
+From: Ben Hood &lt;<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">0x6e6562 at gmail.com</A>&gt;
+Date: Aug 1, 2007 12:53 AM
+Subject: Re: [rabbitmq-discuss] FW: Multiple consumers
+To: Matthias Radestock &lt;<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">matthias at lshift.net</A>&gt;
+
+
+Matthias,
+
+Here is the latest patch based on the design discussion we have been
+having. This demonstrates how the connection initiation, opening
+channel 0, opening channel 1 and doing an access request for both the
+direct and networked cases. Please bear in mind that I was
+concentrating on getting a working prototype to you based on the
+design you described, so there are a lot of rough edges that require
+refactoring, cleaning up and polishing, as well as going through the
+complete spec for each case (direct and network).
+
+You can best see the flow by executing the amqp_client_test module
+which has a test case for the direct and network cases.
+
+To get a unified API, what I have done is to parameterize the client
+with a direct driver and a network driver that implement the necessary
+callbacks to provide connectivity in the 2 scenarios
+(amqp_direct_driver and amqp_network_driver). By doing this I can use
+amqp_send() and amqp_receive() functions in the higher level client in
+a transparent fashion, so the actual protocol handling is common.
+
+In the direct case, a new process for a client channel is spawned and
+this maintains connectivity to the server peer.
+
+In the network case, a new process for the initial AMQP network
+connection is spawned which handles the connection tuning. This
+process handles the socket connectivity (to be exact, there's a reader
+process and a writer process). Then when a user calls open_channel, a
+new amqp_client process is spawned for that channel, this process is
+registered with the relevant socket reader/writer processes, and
+normal message passing occurs from here on in. This way the same
+send() and recv() for AMQP can be used in the direct and network
+cases.
+
+There are a lot of things that require attention, for example
+
+- The way the new channel processes are send to the socket reader (I
+have been reading the gen_tcp man pages for a cleaner way to do this)
+- Making sure that exits are trapped correctly
+- Taking out all of the io:format() statements (is a logging strategy
+worth considering?)
+- Streamlining the messages that get passed, so the amqp_send/receive
+functions are simpler and easier to understand (there's probably
+redundancy in there) and to get rid of some case statements that
+currently exist.
+- General refactoring in the client to make it neater and easier to maintain.
+- Considering refactoring commonalities between the client and the
+server, such as the header files and the server modules used by the
+client
+- I patched rabbit_framing.erl, which I have subsequently learned is a
+generated file, so that needs cleaning up.
+- The patch probably also contains changes to server modules that are
+not entirely necessary, these need to be identified and reviewed.
+- Do some real testing with it :-)
+- Benchmark the direct and network drivers to see what difference it
+makes, if any ;-)
+
+But I just wanted to find out if this is going in the right direction
+before I do too much on these points. Also, there are some
+dependencies on refactoring the server modules.
+
+So I'll just answer some of your comments now:
+
+&gt;<i> &gt; 1. In the direct case, the host and channel would be set in the
+</I>&gt;<i> &gt; start() call, so just passing the Pid is fine.
+</I>&gt;<i>
+</I>&gt;<i> There is no 'host' in the direct case.
+</I>
+Fine. This is how it has been implemented.
+
+&gt;<i> The initialisation sequence for the networked client is:
+</I>&gt;<i>
+</I>&gt;<i> 1) open socket,
+</I>&gt;<i>
+</I>&gt;<i> 2) spawn reader process, parameterised by the socket.
+</I>&gt;<i>
+</I>&gt;<i> 3) open channels by sending a message to the reader process. This should
+</I>&gt;<i> result in the spawning a new channel process, parameterised by the
+</I>&gt;<i> channel number, ReaderPid and WriterPid, and the necessary book-keeping
+</I>&gt;<i> (mapping channel numbers to pids) - i.e. everything
+</I>&gt;<i> rabbit_reader:open_channel does currently. The reply message to the
+</I>&gt;<i> sender of the 'open_channel' message should contain the Pid of the new
+</I>&gt;<i> channel process.
+</I>
+This is IMHO exactly how it works now.
+
+&gt;<i>
+</I>&gt;<i> &gt; 2. Should the processes be linked at all? That is, if a channel
+</I>&gt;<i> &gt; process dies, should the user process die as well?
+</I>
+This requires some review to check that it is done properly in the
+code, but is not really a big deal.
+
+&gt;<i>
+</I>&gt;<i> Channel processes should be (and are) linked to their reader process. As
+</I>&gt;<i> for linking them to the user process, i.e. the process that initiated
+</I>&gt;<i> the opening of a channel, I reckon we should leave that up to the user.
+</I>
+OK.
+
+HTH,
+
+Ben
+-------------- next part --------------
+A non-text attachment was scrubbed...
+Name: erlang_client_3.patch
+Type: application/octet-stream
+Size: 50801 bytes
+Desc: not available
+Url : <A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20070801/59b50649/attachment.obj">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20070801/59b50649/attachment.obj</A> 
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000094.html">[rabbitmq-discuss] RabbitMQ 1.1.0-alpha released
+</A></li>
+	<LI>Next message: <A HREF="000095.html">[rabbitmq-discuss] FW: Multiple consumers
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#96">[ date ]</a>
+              <a href="thread.html#96">[ thread ]</a>
+              <a href="subject.html#96">[ subject ]</a>
+              <a href="author.html#96">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

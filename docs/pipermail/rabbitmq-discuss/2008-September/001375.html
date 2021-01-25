@@ -1,0 +1,152 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] [BUG] Erlang RabbitMQ client requires	installed server code
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20%5BBUG%5D%20Erlang%20RabbitMQ%20client%20requires%0A%09installed%20server%20code&In-Reply-To=269388e30809071641l205890bcr6e4fc6888af0780d%40mail.gmail.com">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001373.html">
+   <LINK REL="Next"  HREF="001376.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] [BUG] Erlang RabbitMQ client requires	installed server code</H1>
+    <B>Edwin Fine</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20%5BBUG%5D%20Erlang%20RabbitMQ%20client%20requires%0A%09installed%20server%20code&In-Reply-To=269388e30809071641l205890bcr6e4fc6888af0780d%40mail.gmail.com"
+       TITLE="[rabbitmq-discuss] [BUG] Erlang RabbitMQ client requires	installed server code">rabbitmq-discuss_efine at usa.net
+       </A><BR>
+    <I>Mon Sep  8 00:47:59 BST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001373.html">[rabbitmq-discuss] [BUG] Erlang RabbitMQ client requires	installed server code
+</A></li>
+        <LI>Next message: <A HREF="001376.html">[rabbitmq-discuss] [BUG] Erlang RabbitMQ client requires	installed server code
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1375">[ date ]</a>
+              <a href="thread.html#1375">[ thread ]</a>
+              <a href="subject.html#1375">[ subject ]</a>
+              <a href="author.html#1375">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>On Sun, Sep 7, 2008 at 7:41 PM, Ben Hood &lt;<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">0x6e6562 at gmail.com</A>&gt; wrote:
+
+&gt;<i> Edwin,
+</I>&gt;<i>
+</I>&gt;<i> On Sun, Sep 7, 2008 at 10:32 PM, Edwin Fine
+</I>&gt;<i> &lt;<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss_efine at usa.net</A>&gt; wrote:
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; As the most up to date client code currently stands, amqp_channel calls
+</I>&gt;<i> &gt; rabbit_amqqueue in a handle_info function. Although this handle_info
+</I>&gt;<i> &gt; function is used only by the direct client, I am uncomfortable with
+</I>&gt;<i> having
+</I>&gt;<i> &gt; server-specific code mixed in with pure client code. There should be a
+</I>&gt;<i> clean
+</I>&gt;<i> &gt; separation of concerns and all &quot;direct&quot; code, which calls into the
+</I>&gt;<i> &gt; server-specific code, should be in one module, and the network-only code
+</I>&gt;<i> in
+</I>&gt;<i> &gt; another.
+</I>&gt;<i>
+</I>&gt;<i> The clean separation has been accomplished by having both modes of
+</I>&gt;<i> operation (embedded vs TCP) implemented in separate driver modules.
+</I>&gt;<i>
+</I>&gt;<i> So if you want to build a network only package, you can just leave out
+</I>&gt;<i> the amqp_direct_driver module.
+</I>&gt;<i>
+</I>&gt;<i> Hence with all due respect, I would disagree that concerns have been mixed.
+</I>
+
+With all due respect in return, check out this code from
+amqp_connection.erl:
+
+%% Starts a new network channel.
+handle_call({network, ChannelNumber, OutOfBand}, From, State) -&gt;
+    handle_start({ChannelNumber, OutOfBand},
+                 fun amqp_network_driver:open_channel/3,
+                 fun amqp_network_driver:close_channel/1,
+                 fun amqp_network_driver:do/2,
+                 fun amqp_network_driver:do/3,
+                 State);
+
+%% Starts a new direct channel.
+handle_call({direct, ChannelNumber, OutOfBand}, From, State) -&gt;
+    handle_start({ChannelNumber, OutOfBand},
+                 fun amqp_direct_driver:open_channel/3,
+                 fun amqp_direct_driver:close_channel/1,
+                 fun amqp_direct_driver:do/2,
+                 fun amqp_direct_driver:do/3,
+                 State);
+
+This ties the module to amqp_direct_driver by naming it. xref will show this
+code is dependent on amqp_direct_driver. Dialyzer will complain if
+amqp_direct_driver is not there. This call should be handled somewhere else.
+In my humble opinion.
+
+
+&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> &gt; amqp_network_driver calls rabbit_framing_channel, which in turn calls
+</I>&gt;<i> &gt; rabbit_channel. So indirectly, the network client uses rabbit_channel and
+</I>&gt;<i> &gt; needs it in the common distribution.
+</I>&gt;<i>
+</I>&gt;<i> This is true, but this only pertains to the do/2 and do/3 calls, which
+</I>&gt;<i> *could* be abstracted out of the rabbit_channel module with not too
+</I>&gt;<i> many changes.
+</I>
+
+Well, then, let's factor it out.
+
+
+&gt;<i> &gt; So, ignoring modules provided by Erlang/OTP, and the network client
+</I>&gt;<i> modules
+</I>&gt;<i> &gt; themselves, the following modules are needed by the network client:
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; hessian
+</I>&gt;<i>
+</I>&gt;<i> I have just deleted the reference to hessian (bug19334). This was
+</I>&gt;<i> something experimental and should not be in the client code base.
+</I>
+
+Ok, good to know!
+
+
+&gt;<i> &gt; rabbit_binary_generator
+</I>&gt;<i> &gt; rabbit_framing
+</I>&gt;<i> &gt; rabbit_framing_channel
+</I>&gt;<i> &gt; rabbit_heartbeat
+</I>&gt;<i> &gt; rabbit_misc
+</I>&gt;<i> &gt; rabbit_reader
+</I>&gt;<i> &gt; rabbit_writer
+</I>&gt;<i>
+</I>&gt;<i> Ben
+</I>&gt;<i>
+</I>
+Regards,
+Edwin
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: <A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20080907/3b26d973/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20080907/3b26d973/attachment.htm</A> 
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001373.html">[rabbitmq-discuss] [BUG] Erlang RabbitMQ client requires	installed server code
+</A></li>
+	<LI>Next message: <A HREF="001376.html">[rabbitmq-discuss] [BUG] Erlang RabbitMQ client requires	installed server code
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1375">[ date ]</a>
+              <a href="thread.html#1375">[ thread ]</a>
+              <a href="subject.html#1375">[ subject ]</a>
+              <a href="author.html#1375">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

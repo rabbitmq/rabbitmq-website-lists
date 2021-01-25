@@ -1,0 +1,195 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] RabbitMQ - Not able to get sets of messages in the same order
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20RabbitMQ%20-%20Not%20able%20to%20get%20sets%20of%20messages%0A%20in%20the%20same%20order&In-Reply-To=%3C4C1775D9.2080801%40rabbitmq.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="007534.html">
+   <LINK REL="Next"  HREF="007575.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] RabbitMQ - Not able to get sets of messages in the same order</H1>
+    <B>Simon MacMullen</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20RabbitMQ%20-%20Not%20able%20to%20get%20sets%20of%20messages%0A%20in%20the%20same%20order&In-Reply-To=%3C4C1775D9.2080801%40rabbitmq.com%3E"
+       TITLE="[rabbitmq-discuss] RabbitMQ - Not able to get sets of messages in the same order">simon at rabbitmq.com
+       </A><BR>
+    <I>Tue Jun 15 13:45:13 BST 2010</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="007534.html">[rabbitmq-discuss] RabbitMQ - Not able to get sets of messages	in the same order
+</A></li>
+        <LI>Next message: <A HREF="007575.html">[rabbitmq-discuss] RabbitMQ - Not able to get sets of messages	in the same order
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#7572">[ date ]</a>
+              <a href="thread.html#7572">[ thread ]</a>
+              <a href="subject.html#7572">[ subject ]</a>
+              <a href="author.html#7572">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi Srijanani.
+
+On 10/06/10 15:53, Srijanani Srinivasan wrote:
+&gt;<i> Thanks for your response. What you said makes sense. When the messages
+</I>&gt;<i> that have not been acknowledged are put back to the queue, then
+</I>&gt;<i> the other messages added in the meantime should be the ones to be
+</I>&gt;<i> de-queued first right in the FIFO manner? But like you said, i guess
+</I>&gt;<i> thats not how it works.
+</I>
+There isn't a guarantee about ordering for redelivered messages in the 
+spec (since in more complex cases it's impossible to guarantee anyway), 
+and Rabbit tries to do the most efficient thing rather than be FIFO in 
+cases where it can.
+
+&gt;<i> The same problem occurs, when I get a set of messages and don't
+</I>&gt;<i> acknowledge them and close the channel (in the event of any exceptions).
+</I>&gt;<i> When we get the messages, they do not come in the correct order.
+</I>
+Exactly.
+
+&gt;<i> I guess, if i want to get sets of messages instead of one at a time, I
+</I>&gt;<i> must try to use the same channel. Is that right?
+</I>
+You could do that if it's convenient for you. Alternatively, you could 
+prevent messages from being redelivered by making sure the server only 
+sends you as many as you will actually process (if you know how many 
+that is).
+
+Oleg suggests you set the prefetch count to 1 - this will ensure that 
+the server only sends you one message until you ack it (which will block 
+if you're trying to process 100 at once).
+
+So if you're currently reading in 100 messages and then acking all of 
+them you could set the prefetch count to 100. The server will then allow 
+you 100 unacked messages. You'd need to make sure you cancel before 
+acking, otherwise the server can send you more messages between acking 
+and closing the channel.
+
+So to summarise:
+
+channel.open
+basic.qos(prefetch_count = 100)
+basic.consume
+(consume 100 messages)
+basic.cancel
+(ack 100 messages)
+
+I'd be interested to know why you need to process messages in batches 
+though.
+
+Cheers, Simon
+
+&gt;<i>
+</I>&gt;<i> On Thu, Jun 10, 2010 at 9:38 AM, Oleg Zhurakousky
+</I>&gt;<i> &lt;<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">ozhurakousky at vmware.com</A> &lt;mailto:<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">ozhurakousky at vmware.com</A>&gt;&gt; wrote:
+</I>&gt;<i>
+</I>&gt;<i>     Not sure about C# API, and how you are building the next set of
+</I>&gt;<i>     messages, but here is what I belive is happening.
+</I>&gt;<i>
+</I>&gt;<i>     Channel prefetch messages. That is different then invoking a
+</I>&gt;<i>     consumer. THis means that you might have 1000 prefetched messages in
+</I>&gt;<i>     your channel, while you are still processing 21st message. Whatever
+</I>&gt;<i>     you un-acknowledge is put back into the queue once the channel is
+</I>&gt;<i>     closed. AMQO does not define an ordering of messages for re-queueing.
+</I>&gt;<i>     One way to leverage this scenario is to set prefetchCount to 1. This
+</I>&gt;<i>     way there will never me more then one prefetched messages in your
+</I>&gt;<i>     channel.
+</I>&gt;<i>
+</I>&gt;<i>     Oleg
+</I>&gt;<i>
+</I>&gt;<i>     On Jun 10, 2010, at 10:24 AM, Srijanani Srinivasan wrote:
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>     Hi,
+</I>&gt;<i>
+</I>&gt;<i>     I am using Rabbit MQ in C#. This is my scenario
+</I>&gt;<i>     1.               A separate process publishes messages to the queue
+</I>&gt;<i>     2.               Client has to read set of N messages from queue
+</I>&gt;<i>     3.               Process the N messages
+</I>&gt;<i>     4.               Acknowledge the N messages
+</I>&gt;<i>     5.               Repeat steps 2 to 4 continuously to process all
+</I>&gt;<i>     sets of messages
+</I>&gt;<i>     Under the same channel, I receive the messages and then process them
+</I>&gt;<i>     and then acknowledge them. The server process keeps publishing
+</I>&gt;<i>     messages. The problem I am facing is, when I try to get next set of
+</I>&gt;<i>     messages, they do not come in the same order as it was published by
+</I>&gt;<i>     the publishing process. The messages come in a random order. Only
+</I>&gt;<i>     the first set of messages comes in the correct order.
+</I>&gt;<i>
+</I>&gt;<i>     Does any one what is going wrong here? Is creating a new channel to
+</I>&gt;<i>     access the next set of messages not right? Or is there a problem
+</I>&gt;<i>     caused because of acknowledging multiple messages? Please help me
+</I>&gt;<i>     understand why this does not work correctly.
+</I>&gt;<i>
+</I>&gt;<i>     Below is the sample code:
+</I>&gt;<i>     while (true)
+</I>&gt;<i>                 {
+</I>&gt;<i>                     using (IModel getChannel = MQConnection.CreateModel())
+</I>&gt;<i>                     {
+</I>&gt;<i>                         // Create a consumer
+</I>&gt;<i>                         QueueingBasicConsumer consumer =
+</I>&gt;<i>     CreateQueueConsumer(getChannel, exchangeName, queueName);
+</I>&gt;<i>                         int numberOfMessages = 100;
+</I>&gt;<i>                         // Next Recieve
+</I>&gt;<i>                         List&lt;object&gt; msgSet =
+</I>&gt;<i>     GetNextSetOfMessages(consumer, getChannel, exchangeName, queueName,
+</I>&gt;<i>     numberOfMessages,             out finalDeliverytag);
+</I>&gt;<i>                         // Do some processing
+</I>&gt;<i>                         //Acknowledge finished messages by passing in
+</I>&gt;<i>     the delivery tag.
+</I>&gt;<i>                         // calls the method BasicAck with multiple
+</I>&gt;<i>     param=true
+</I>&gt;<i>                         if (finalDeliverytag &gt; 0)
+</I>&gt;<i>                             AckFinishedMessages(exchangeName, queueName,
+</I>&gt;<i>     finalDeliverytag, getChannel);
+</I>&gt;<i>                         if (finalDeliverytag == 0)
+</I>&gt;<i>                             break;
+</I>&gt;<i>                     }
+</I>&gt;<i>                 }
+</I>&gt;<i>
+</I>&gt;<i>     Thanks for your help in advance!
+</I>&gt;<i>     Srijanani
+</I>&gt;<i>
+</I>&gt;<i>     &lt;ATT00001..txt&gt;
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;<i> <A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;<i> <A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>
+</PRE>
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="007534.html">[rabbitmq-discuss] RabbitMQ - Not able to get sets of messages	in the same order
+</A></li>
+	<LI>Next message: <A HREF="007575.html">[rabbitmq-discuss] RabbitMQ - Not able to get sets of messages	in the same order
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#7572">[ date ]</a>
+              <a href="thread.html#7572">[ thread ]</a>
+              <a href="subject.html#7572">[ subject ]</a>
+              <a href="author.html#7572">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

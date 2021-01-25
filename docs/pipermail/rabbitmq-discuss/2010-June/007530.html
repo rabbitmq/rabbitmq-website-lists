@@ -1,0 +1,142 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] chan.flow and vm_memory_high_watermark
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20chan.flow%20and%20vm_memory_high_watermark&In-Reply-To=%3CAANLkTinqnN-fC9QpllOp2vgKxQ_N6-7mNN8P6iYXayut%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="007528.html">
+   <LINK REL="Next"  HREF="007501.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] chan.flow and vm_memory_high_watermark</H1>
+    <B>Nicol&#225;s C&#233;sar</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20chan.flow%20and%20vm_memory_high_watermark&In-Reply-To=%3CAANLkTinqnN-fC9QpllOp2vgKxQ_N6-7mNN8P6iYXayut%40mail.gmail.com%3E"
+       TITLE="[rabbitmq-discuss] chan.flow and vm_memory_high_watermark">nico at nicocesar.com
+       </A><BR>
+    <I>Thu Jun 10 14:02:39 BST 2010</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="007528.html">[rabbitmq-discuss] chan.flow and vm_memory_high_watermark
+</A></li>
+        <LI>Next message: <A HREF="007501.html">[rabbitmq-discuss] hg version of RabbitMQ does not &quot;make install&quot;	at Ubuntu 10.4
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#7530">[ date ]</a>
+              <a href="thread.html#7530">[ thread ]</a>
+              <a href="subject.html#7530">[ subject ]</a>
+              <a href="author.html#7530">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>El 10 de junio de 2010 08:26, Simon MacMullen &lt;<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">simon at rabbitmq.com</A>&gt; escribi&#243;:
+
+&gt;<i> On 09/06/10 22:27, Nicol&#225;s C&#233;sar wrote:
+</I>&gt;<i>
+</I>&gt;&gt;<i> (<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at sendsorium</A>)1&gt; memory().
+</I>&gt;&gt;<i> [{total,27420688},
+</I>&gt;&gt;<i>
+</I>&gt;<i> &lt;snip&gt;
+</I>&gt;<i>
+</I>&gt;<i>  but in top I see beam.smp using:
+</I>&gt;&gt;<i> VIRT=141m  RES=95m
+</I>&gt;&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> So there is some disparity here but not as much as when you were seeing
+</I>&gt;<i> 400M used. I take it this was a different run?
+</I>
+
+
+Yess... the OOM assassin was with his gun killing my processes! Rabbit went
+down fist! Thanks to you I have the memory(). trick for the next time.
+
+
+&gt;<i>    * Are you stopping the queues from hibernating? If you've written
+</I>&gt;&gt;<i>    something like a shell script to repeatedly invoke rabbitmqctl
+</I>&gt;&gt;<i>    list_queues this will keep the queue processes from hibernating
+</I>&gt;&gt;<i>    which in turn stops them from GCing on hibernate. If queues are busy
+</I>&gt;&gt;<i>    this is not a problem as they also GC every (n) reductions, but if
+</I>&gt;&gt;<i>    they're almost-but-not-quite idle it can be a problem. It doesn't
+</I>&gt;&gt;<i>    have to be a shell script, anything that means the queues never get
+</I>&gt;&gt;<i>    10 seconds or so idle.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> This is really nice data!! Yes. I have scripts but they're cron'ed every
+</I>&gt;&gt;<i> minute.... I'm changing that and testing again.
+</I>&gt;&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> Every minute *should* be OK, it's more like every couple of seconds which
+</I>&gt;<i> can prevent the hibernation.
+</I>
+
+I've changed it to 10 minutes and there were no significant behavior
+changes.
+
+
+&gt;<i> One small detail. I'm using:
+</I>&gt;<i>
+</I>&gt;<i> -----------------------------------------------------
+</I>&gt;<i> while True:
+</I>&gt;<i>   msg = self.chan.basic_get(self.config['queue'])
+</I>&gt;<i>   if msg:
+</I>&gt;<i>      ....
+</I>&gt;<i>   time.sleep(2.0)
+</I>&gt;<i> ----------------------------------------------------
+</I>&gt;<i>
+</I>&gt;<i> because I need a fixed-rate consumer . ... could this be a similar case
+</I>&gt;<i> of the &quot;almost-but-not-quite idle queue&quot;?
+</I>&gt;<i>
+</I>
+Yes, as you'll still be waking the queue up every 2 seconds even if it's
+&gt;<i> empty. I suspect this is your real problem.
+</I>
+
+Bingo! thanks Simon for your help in this issue!! now it's on the mail
+archive, I hope this mail helps next googling rabbiter. :)
+
+
+&gt;<i>
+</I>&gt;<i>  is there any way to tell the broker to consume at a fixed rate with
+</I>&gt;&gt;<i> chan.basic_consume(...callback = f)?
+</I>&gt;&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> Yes, basic.qos. This not-very-well-named method lets you specify how many
+</I>&gt;<i> unacked messages the server will send to you at any time. So set qos to a
+</I>&gt;<i> low value, then use basic_consume with a sleep before acking.
+</I>&gt;<i>
+</I>
+Nice to hear a yes here!! I'll be changing my code to get this working!
+Thanks!
+
+Nico Cesar
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20100610/8178669e/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20100610/8178669e/attachment.htm</A>&gt;
+</PRE>
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="007528.html">[rabbitmq-discuss] chan.flow and vm_memory_high_watermark
+</A></li>
+	<LI>Next message: <A HREF="007501.html">[rabbitmq-discuss] hg version of RabbitMQ does not &quot;make install&quot;	at Ubuntu 10.4
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#7530">[ date ]</a>
+              <a href="thread.html#7530">[ thread ]</a>
+              <a href="subject.html#7530">[ subject ]</a>
+              <a href="author.html#7530">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

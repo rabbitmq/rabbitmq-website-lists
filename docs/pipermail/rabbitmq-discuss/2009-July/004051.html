@@ -1,0 +1,139 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] AMQP authentication with RabbitMQ
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20AMQP%20authentication%20with%20RabbitMQ&In-Reply-To=1247080750.26930.75.camel%40eric-desktop.grokthis.net">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="004050.html">
+   <LINK REL="Next"  HREF="004052.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] AMQP authentication with RabbitMQ</H1>
+    <B>Darien Kindlund</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20AMQP%20authentication%20with%20RabbitMQ&In-Reply-To=1247080750.26930.75.camel%40eric-desktop.grokthis.net"
+       TITLE="[rabbitmq-discuss] AMQP authentication with RabbitMQ">darien at kindlund.com
+       </A><BR>
+    <I>Wed Jul  8 20:45:51 BST 2009</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="004050.html">[rabbitmq-discuss] AMQP authentication with RabbitMQ
+</A></li>
+        <LI>Next message: <A HREF="004052.html">[rabbitmq-discuss] AMQP authentication with RabbitMQ
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#4051">[ date ]</a>
+              <a href="thread.html#4051">[ thread ]</a>
+              <a href="subject.html#4051">[ subject ]</a>
+              <a href="author.html#4051">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Okay, I think Laurens original issue was that she wanted RabbitMQ to
+verify SSL connections -- not individual messages... with the idea of
+different client certificates being allowed access to different
+vhosts.
+
+So, based on this, there's no need to have consumers verify
+signed/encrypted messages ... since the logic of comparing credentials
+per vhost is more suited on the RabbitMQ server than pushing that
+verification to each consumer.  I agree that if you're looking for
+end-to-end security, signing/encrypting/verifying messages certainly
+prevents any consumers from handling untrusted data.  However, having
+only this signing/encrypting/verifying capability at the end points
+(producer/consumer) and doing nothing on RabbitMQ does not address the
+issue of dealing with an _untrusted_ producer from shoving malformed
+messages onto RabbitMQ -- although these messages would eventually be
+discarded by the consumer, it could still end up being a
+denial-of-service (DoS) condition.
+
+&gt;<i> Second, you have a case where you simply want to your consumer or
+</I>&gt;<i> publisher to know basic details such as the server's DN, the cipher
+</I>&gt;<i> used, etc.  In that case, the server can use stunnel and then the
+</I>&gt;<i> client's AMQP library must understand SSL.  This provides, at a minimum,
+</I>&gt;<i> verification of the server's identity to the clients (otherwise, someone
+</I>&gt;<i> could install a rogue stunnel proxy and you'd never know!)
+</I>
+I think this is closer (but not exactly) what Laurens was looking for.
+ Specifically, the RabbitMQ server needs to verify the CLIENT's
+certificate credentials (not any server certs) -- specifically (I'm
+guessing) verifying the client's certificate is valid and that its
+path is valid (which stunnel can already do for you, given a valid set
+of CA certificates to use).  But also, look at the client
+certificate's DN and depending on what the DN matches... allow or deny
+access to the corresponding vhost channel.
+
+After thinking about it further, yes, this capability would definitely
+require modifying the RabbitMQ server's source code... the trick is
+whether or not stunnel exposes the client certificate's DN as an
+environment variable which can then be used inside of the Erlang code.
+ If that's not possible, then Lauren would have to not use stunnel and
+simply develop a new wrapper which talks directly to the OpenSSL
+libraries.
+
+-- Darien
+
+On Wed, Jul 8, 2009 at 3:19 PM, eric&lt;<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">eric at grokthis.net</A>&gt; wrote:
+&gt;<i> On Wed, 2009-07-08 at 14:55 -0400, Darien Kindlund wrote:
+</I>&gt;&gt;<i> Thanks for the clarification. &#160;So what you're saying is: &quot;If you need
+</I>&gt;&gt;<i> to access these environment variables, don't use stunnel and just have
+</I>&gt;&gt;<i> your client application talk to OpenSSL directly.&quot;
+</I>&gt;<i>
+</I>&gt;<i> There are a few use-cases to consider here.
+</I>&gt;<i>
+</I>&gt;<i> First, is the use-case where you simply want encryption and don't care
+</I>&gt;<i> about knowing how it is done. &#160;That is easy, you can just use stunnel
+</I>&gt;<i> directly on both ends. &#160;This is encryption pure and simple, without any
+</I>&gt;<i> AAA.
+</I>&gt;<i>
+</I>&gt;<i> Second, you have a case where you simply want to your consumer or
+</I>&gt;<i> publisher to know basic details such as the server's DN, the cipher
+</I>&gt;<i> used, etc. &#160;In that case, the server can use stunnel and then the
+</I>&gt;<i> client's AMQP library must understand SSL. &#160;This provides, at a minimum,
+</I>&gt;<i> verification of the server's identity to the clients (otherwise, someone
+</I>&gt;<i> could install a rogue stunnel proxy and you'd never know!)
+</I>&gt;<i>
+</I>&gt;<i> Third, there are certainly use-cases where a publisher speaks SSL with a
+</I>&gt;<i> client-certificate, and the consuming client wants to know where the
+</I>&gt;<i> message came from, which client published the message. &#160;This is
+</I>&gt;<i> impossible without modifications to RabbitMQ itself and, more
+</I>&gt;<i> importantly, as I understand it, the AMQP protocol.
+</I>&gt;<i>
+</I>&gt;<i> For use-case #3, your best bet is to implement the solution to the
+</I>&gt;<i> second use-case and then having the contents of your messages signed.
+</I>&gt;<i> This is how e-mail is done currently, and it works reasonably well.
+</I>&gt;<i>
+</I>&gt;<i> Before anyone publicly suggests mentions DTLS or SCTP, they only solve
+</I>&gt;<i> the transport issues and do not solve any AAA issues for Rabbit.
+</I>&gt;<i>
+</I>&gt;<i> --
+</I>&gt;<i> Regards,
+</I>&gt;<i> Eric Windisch
+</I>&gt;<i>
+</I>&gt;<i>
+</I>
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="004050.html">[rabbitmq-discuss] AMQP authentication with RabbitMQ
+</A></li>
+	<LI>Next message: <A HREF="004052.html">[rabbitmq-discuss] AMQP authentication with RabbitMQ
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#4051">[ date ]</a>
+              <a href="thread.html#4051">[ thread ]</a>
+              <a href="subject.html#4051">[ subject ]</a>
+              <a href="author.html#4051">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

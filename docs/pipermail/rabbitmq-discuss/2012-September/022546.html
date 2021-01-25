@@ -1,0 +1,165 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Clustered nodes failure
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Clustered%20nodes%20failure&In-Reply-To=%3C20be5e39-2566-4cdc-97eb-8972ddba8f2a%40googlegroups.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="022548.html">
+   <LINK REL="Next"  HREF="022547.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Clustered nodes failure</H1>
+    <B>Ian</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Clustered%20nodes%20failure&In-Reply-To=%3C20be5e39-2566-4cdc-97eb-8972ddba8f2a%40googlegroups.com%3E"
+       TITLE="[rabbitmq-discuss] Clustered nodes failure">ian.cross at gmail.com
+       </A><BR>
+    <I>Wed Sep 19 12:45:30 BST 2012</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="022548.html">[rabbitmq-discuss] Introducing RabbitMQ-Web-STOMP plugin!
+</A></li>
+        <LI>Next message: <A HREF="022547.html">[rabbitmq-discuss] Clustered nodes failure
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#22546">[ date ]</a>
+              <a href="thread.html#22546">[ thread ]</a>
+              <a href="subject.html#22546">[ subject ]</a>
+              <a href="author.html#22546">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi all,
+
+I wonder if anyone can help diagnose problems we've been having with our 
+2-node clustered rabbit which sporadically seizes up completely. None of 
+the applications can get through to Rabbit though it is still up and 
+running. CPU and RAM spike up to 100%. The Management UI cannot be reached 
+and we end up having to restart the nodes to get service back. Sometimes it 
+does not come back gracefully requiring reboot.
+
+Some stats: 
+
+   - Both nodes are 4 Core 8GB RAM CentOS 6.2 virtual machines, running on 
+   VMWare ESXi 4.1 host. We are running RabbitMQ version 2.7.1 on Erlang 
+   R14B04.
+   - Looking at our metrics right now I see around:
+      - 1000 queues
+      - 4000 channels
+      - 8000 bindings
+      - 16 exchanges
+   - Memory usage, erlang processes, file descriptors, socket descriptors 
+   are generally low and healthy
+
+Analysing errors in the rabbit logs from a recent failure reveals:
+
+   - Before the failure we have a bunch of background errors which may be 
+   the fault of our applications like &quot;no binding X between exchange Y in 
+   vhost '/' and queue Z in vhost '/'&quot;
+   - As we ramp up to the failure we see
+      - Two errors like this:
+         - &#8220;** Generic server &lt;0.16813.1677&gt; terminating  ** Last message 
+         in was {'$gen_cast',                             
+         {run_backing_queue,rabbit_mirror_queue_master,                                 
+         #Fun&lt;rabbit_mirror_queue_master.4.85178772&gt;}}  ** When Server state == 
+         {lim,0,undefined,false,[],0}  ** Reason for termination ==   ** 
+         {function_clause,         [{rabbit_limiter,handle_cast,              
+         [{run_backing_queue,rabbit_mirror_queue_master,                   
+         #Fun&lt;rabbit_mirror_queue_master.4.85178772&gt;},               
+         {lim,0,undefined,false,[],0}]},          
+         {gen_server2,handle_msg,2},          {proc_lib,init_p_do_apply,3}]}  &#8220;
+      - A handful like this:
+         - &#8220;connection &lt;0.14270.7735&gt;, channel 38 - error:  
+         {amqp_error,command_invalid,&quot;second 'channel.open' seen&quot;,'channel.open'}  &#8220;
+         - A couple of these:
+         - &#8220;connection &lt;0.158.6322&gt;, channel 135 - error:  
+         {amqp_error,not_found,              &quot;no queue 
+         'InRunning.WebClient.SessionId[l0mpn3egx5n0yj0lbs1hcehj]' in vhost 
+         '/'&quot;,              'basic.get'}  &#8220;
+         - And then all these:
+         - exception on TCP connection &lt;0.14270.7735&gt; from 
+         WWW.XXX.YYY.ZZZ:59106  {inet_error,enotconn}  
+         - exception on TCP connection &lt;0.14577.1677&gt; from 
+         WWW.XXX.YYY.ZZZ:53163  {inet_error,enotconn}  
+         - exception on TCP connection &lt;0.1520.5487&gt; from 
+         WWW.XXX.YYY.ZZZ:53435  {timeout,running}  
+         - exception on TCP connection &lt;0.158.6322&gt; from 
+         WWW.XXX.YYY.ZZZ:63187  {writer,send_failed,{error,enotconn}}  
+         - exception on TCP connection &lt;0.17097.1918&gt; from 
+         WWW.XXX.YYY.ZZZ:55161  {writer,send_failed,{error,enotconn}}  
+         - exception on TCP connection &lt;0.18340.7733&gt; from 
+         WWW.XXX.YYY.ZZZ:52868  {inet_error,enotconn}  
+         - exception on TCP connection &lt;0.24514.6782&gt; from 
+         WWW.XXX.YYY.ZZZ:64362  {timeout,blocking}  
+         - exception on TCP connection &lt;0.24518.6782&gt; from 
+         WWW.XXX.YYY.ZZZ:61252  {timeout,blocking}  
+         - exception on TCP connection &lt;0.24524.6782&gt; from 
+         WWW.XXX.YYY.ZZZ:55845  {timeout,blocking}  
+         - exception on TCP connection &lt;0.24528.6782&gt; from 
+         WWW.XXX.YYY.ZZZ:53434  {timeout,blocking}  
+         - exception on TCP connection &lt;0.24532.6782&gt; from 
+         WWW.XXX.YYY.ZZZ:54398  {timeout,blocking}  
+         - exception on TCP connection &lt;0.24536.6782&gt; from 
+         WWW.XXX.YYY.ZZZ:58878  {timeout,blocking}  
+         - exception on TCP connection &lt;0.24552.6782&gt; from 
+         WWW.XXX.YYY.ZZZ:63155  {timeout,blocking}  
+         - exception on TCP connection &lt;0.2577.2793&gt; from 
+         WWW.XXX.YYY.ZZZ:52752  {writer,send_failed,{error,enotconn}}  
+         - exception on TCP connection &lt;0.26105.2580&gt; from 
+         WWW.XXX.YYY.ZZZ:50364  {writer,send_failed,{error,enotconn}}  
+         - exception on TCP connection &lt;0.27505.6740&gt; from 
+         WWW.XXX.YYY.ZZZ:56170  {writer,send_failed,{error,enotconn}}  
+         - exception on TCP connection &lt;0.27741.2921&gt; from 
+         WWW.XXX.YYY.ZZZ:54600  {writer,send_failed,{error,enotconn}}  
+         - exception on TCP connection &lt;0.28602.6323&gt; from 
+         WWW.XXX.YYY.ZZZ:56863  {writer,send_failed,{error,enotconn}}  
+         - exception on TCP connection &lt;0.30059.3135&gt; from 
+         WWW.XXX.YYY.ZZZ:57078  {writer,send_failed,{error,closed}}  
+         - exception on TCP connection &lt;0.5634.2393&gt; from 
+         WWW.XXX.YYY.ZZZ:53807  {writer,send_failed,{error,enotconn}}  
+         - exception on TCP connection &lt;0.6691.6783&gt; from 
+         WWW.XXX.YYY.ZZZ:64363  {timeout,blocking}  
+      
+Can anyone help?
+
+Thanks,
+
+Ian
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20120919/d3482850/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20120919/d3482850/attachment.htm</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="022548.html">[rabbitmq-discuss] Introducing RabbitMQ-Web-STOMP plugin!
+</A></li>
+	<LI>Next message: <A HREF="022547.html">[rabbitmq-discuss] Clustered nodes failure
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#22546">[ date ]</a>
+              <a href="thread.html#22546">[ thread ]</a>
+              <a href="subject.html#22546">[ subject ]</a>
+              <a href="author.html#22546">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

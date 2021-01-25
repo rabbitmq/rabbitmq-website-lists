@@ -1,0 +1,117 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Stuck waiting for frame during	amqp_basic_qos?
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Stuck%20waiting%20for%20frame%20during%0A%09amqp_basic_qos%3F&In-Reply-To=%3Cyrv4cpqh1os61.fsf%40dwragg.eng.vmware.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="016097.html">
+   <LINK REL="Next"  HREF="016099.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Stuck waiting for frame during	amqp_basic_qos?</H1>
+    <B>David Wragg</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Stuck%20waiting%20for%20frame%20during%0A%09amqp_basic_qos%3F&In-Reply-To=%3Cyrv4cpqh1os61.fsf%40dwragg.eng.vmware.com%3E"
+       TITLE="[rabbitmq-discuss] Stuck waiting for frame during	amqp_basic_qos?">david at rabbitmq.com
+       </A><BR>
+    <I>Wed Nov  9 22:19:18 GMT 2011</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="016097.html">[rabbitmq-discuss] Stuck waiting for frame during amqp_basic_qos?
+</A></li>
+        <LI>Next message: <A HREF="016099.html">[rabbitmq-discuss] Stuck waiting for frame during amqp_basic_qos?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#16098">[ date ]</a>
+              <a href="thread.html#16098">[ thread ]</a>
+              <a href="subject.html#16098">[ subject ]</a>
+              <a href="author.html#16098">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi Pieter,
+
+Pieter de Zwart &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">pdezwart at rubiconproject.com</A>&gt; writes:
+&gt;<i> I have managed to reproduce it using C code only. Caveat: this code is
+</I>&gt;<i> really messy and leaks like a sieve.
+</I>&gt;<i>
+</I>&gt;<i> Let me know what you think. And please don&#185;t judge me =)
+</I>
+Thanks.  That was very helpful to work out what is going on here.
+
+Here's the tracer output with your program:
+
+[...]
+1320874543711: &lt;Tracer-0&gt; ch#1 -&gt; {#method&lt;basic.ack&gt;(delivery-tag=22,multiple=true),null,&quot;&quot;}
+1320874543711: &lt;Tracer-0&gt; ch#1 -&gt; {#method&lt;basic.qos&gt;(prefetch-size=0,prefetch-count=3, global=false),null,&quot;&quot;}
+1320874543752: &lt;Tracer-0&gt; ch#1 &lt;- {#method&lt;channel.close&gt;(reply-code=406, reply-text=PRECONDITION_FAILED - unknown delivery tag 22, class-id=60, method-id=80),null,&quot;&quot;}
+1320874543791: &lt;Tracer-0&gt; ch#1 -&gt; {#method&lt;basic.qos&gt;(prefetch-size=0,prefetch-count=1, global=false),null,&quot;&quot;}
+
+The client sends the bad ack, and immediately follows up with the
+basic.qos.  That first amqp_basic_qos call after the ack does return
+NULL to indicate an error, although your program doesn't report that
+error.
+
+Then your program does another basic.qos.  And the server never replies
+to it.  That's actually what the AMQP spec requires: Once a peer sends a
+channel.close, it should ignore all frames on that channel except the
+channel.close-ok indicating that the channel is fully closed.
+
+However, librabbitmq never sends a channel.close-ok, and in fact provides
+no way to do so.
+
+That seems like a bug in librabbitmq to me.  But I'll have to have a
+think about the best way to fix it.
+
+In the meanwhile, you should always check for errors from API calls.
+When you get an error, you should not re-use the relevant channel.  And
+if your connection is potentially long-lived, that means that you should
+probably close and re-open it.
+
+-- 
+David Wragg
+Staff Engineer, RabbitMQ
+VMware, Inc.
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="016097.html">[rabbitmq-discuss] Stuck waiting for frame during amqp_basic_qos?
+</A></li>
+	<LI>Next message: <A HREF="016099.html">[rabbitmq-discuss] Stuck waiting for frame during amqp_basic_qos?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#16098">[ date ]</a>
+              <a href="thread.html#16098">[ thread ]</a>
+              <a href="subject.html#16098">[ subject ]</a>
+              <a href="author.html#16098">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

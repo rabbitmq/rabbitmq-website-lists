@@ -1,0 +1,182 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Having some issues with RabbitMQ
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Having%20some%20issues%20with%20RabbitMQ&In-Reply-To=%3C20100718094325.GA28733%40wellquite.org%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="008026.html">
+   <LINK REL="Next"  HREF="008029.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Having some issues with RabbitMQ</H1>
+    <B>Matthew Sackman</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Having%20some%20issues%20with%20RabbitMQ&In-Reply-To=%3C20100718094325.GA28733%40wellquite.org%3E"
+       TITLE="[rabbitmq-discuss] Having some issues with RabbitMQ">matthew at rabbitmq.com
+       </A><BR>
+    <I>Sun Jul 18 10:43:25 BST 2010</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="008026.html">[rabbitmq-discuss] Having some issues with RabbitMQ
+</A></li>
+        <LI>Next message: <A HREF="008029.html">[rabbitmq-discuss] Having some issues with RabbitMQ
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#8028">[ date ]</a>
+              <a href="thread.html#8028">[ thread ]</a>
+              <a href="subject.html#8028">[ subject ]</a>
+              <a href="author.html#8028">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi Christian,
+
+On Sat, Jul 17, 2010 at 05:31:45PM -0700, Christian Legnitto wrote:
+&gt;<i> I saw that and I'm not sure that is what I want. There will be users
+</I>&gt;<i> creating queues with scripts running locally on laptops and such. With
+</I>&gt;<i> your suggestion I believe this would happen:
+</I>&gt;<i> 
+</I>&gt;<i>       1. User has a local script &quot;foo.py&quot; running on a laptop, which
+</I>&gt;<i>       connects (&quot;connection1&quot;), gets a queue with a server-defined
+</I>&gt;<i>       name (call it &quot;queue1&quot;) and reads messages
+</I>&gt;<i>       2. User goes to a meeting and the laptop sleeps, causing
+</I>&gt;<i>       RabbitMQ to close connection1
+</I>&gt;<i>       3. User comes back, foo.py is running but has thrown an
+</I>&gt;<i>       exception (or perhaps is listening on a dead connection, not
+</I>&gt;<i>       sure what happens here)
+</I>&gt;<i>       4. User restarts foo.py, getting a new connection
+</I>&gt;<i>       (&quot;connection2&quot;) to a new server-generated queue (&quot;queue2&quot;)
+</I>&gt;<i>       5. All messages sent between the closing of connection1 and
+</I>&gt;<i>       creation of connection2 never make it into queue2, so foo.py
+</I>&gt;<i>       possibly missed a bunch of messages
+</I>&gt;<i> 
+</I>&gt;<i> If I am mistaken, please correct me..this is all new :-)
+</I>
+No, you are right. But what you are asking for is nearly an impossible
+situation - you'd like queues to be deleted if they're no longer used,
+but you'd like them to stay around if the consumer disconnects - as far
+as Rabbit is concerned, the two scenarios are the same. Thus if you
+really want the queues to remain present after the clients have
+disconnected (and clients which are shutdown &quot;nicely&quot; must remember to
+delete any queues they created) then you'll have to use named queues and
+revert to something like BQL to tidy up any mess left over.
+
+&gt;<i> So, if the server takes care of creating the queue, there is no way
+</I>&gt;<i> for the client to tell it to reconnect when it comes back (and no
+</I>&gt;<i> queue will be there anyway as the server has cleared it). Creating a
+</I>&gt;<i> named queue takes write permission, correct?
+</I>
+No, configure permission. See
+<A HREF="http://www.rabbitmq.com/admin-guide.html#access-control">http://www.rabbitmq.com/admin-guide.html#access-control</A>
+
+Creating a binding to that queue requires write permission to the queue.
+You could partition your namespace so that the exchanges all start
+&quot;exchange-&quot; and the queues all start &quot;queue-&quot; and then you only need to
+grant write permissions to &quot;^queue-.*&quot;. That would allow your public
+users to connect, create queues, bind them to the exchanges, but *not*
+publish to the exchanges. (they'd also need configure permission on
+&quot;^queue-.*&quot;.
+
+&gt;<i> It doesn't actually crash (bad choice of words on my part). The whole
+</I>&gt;<i> server is hung from the standpoint of any client I can use (python
+</I>&gt;<i> mainly). The BQL client won't even connect or give me a prompt at that
+</I>&gt;<i> point, it just hangs. amqp-utils (ruby, but may use the same lib as
+</I>&gt;<i> python) hangs and doesn't let me do anything. I end up stopping the
+</I>&gt;<i> server, clearing the data directory, and restarting it (which clearly
+</I>&gt;<i> wouldn't work in production). FWIW I got the same behavior with the
+</I>&gt;<i> old persister, which is why I thought I perhaps wasn't turning the new
+</I>&gt;<i> one on even though I am using the branch.
+</I>
+When this happens, is the disk thrashing, or is CPU use really high?
+Also what type of machine / OS are you running this on?
+
+&gt;<i> Yeah, I saw that flow control is generally not supported by the python
+</I>&gt;<i> libs (though I see <A HREF="http://gist.github.com/399282">http://gist.github.com/399282</A>), but I'm not sure I
+</I>&gt;<i> would have hit it with ~30 msgs per second going to 10 queues.
+</I>
+Well, if the queues are backing up, with the old persister you would
+eventually hit it. With the new persister, unless your disks are
+catastrophically slow or your messages are massive, you certainly
+shouldn't. How big are your messages?
+
+&gt;<i> The fact that the BQL plugin stopped working was suspect. I'm not sure
+</I>&gt;<i> how that's written though, but I assumed it used the erlang client and
+</I>&gt;<i> would allow me to clear queues and get everything unblocked.
+</I>
+Indeed, it should, and yes, it uses the erlang client.
+
+&gt;<i> So even though it isn't a crash, the behavior is the same....I can't
+</I>&gt;<i> read anything, publish anything, or clear queues to unblock, via
+</I>&gt;<i> carrot (python), amqp-utils (ruby), and the BQL plugin (erlang I
+</I>&gt;<i> guess). Perhaps all the libs I am using to interact with the broker
+</I>&gt;<i> barf with flow control?
+</I>
+You're right - it is pretty much indistinguishable from a crash, though
+I'd love to know exactly what it's doing when it gets into this state.
+The erlang client certainly does understand flow control, and I believe
+the ruby client does as well.
+
+&gt;<i> I also notice the status plugin says &quot;memory (used/available) = 1498MB
+</I>&gt;<i> / 810MB&quot; with the new persister...is that expected? I thought that it
+</I>&gt;<i> would always stay under the max and just flush to disk. Is my VM too
+</I>&gt;<i> wimpy?
+</I>
+Ahh! So that's a first clue - can you check the rabbit logs please
+because there should be entries in there talking about it hitting the
+high memory watermark. Certainly, that would ensure that the flow
+control has been invoked. It's possible then that at least with the new
+persister it's then flushing to disk, and bizarrely enough, if you keep
+something like the status plugin installed and enabled and up in a web
+browser, it can actually *prevent* GC from occurring, thus even when
+everything has been flushed to disk, it can then take a huge amount of
+time before the memory usage drops. I would (temporarily) suggest not
+using the status plugin, relying on rabbitmqctl and the logs, and not
+running rabbitmqctl more than once every 30 seconds. Yes, this is a
+fairly severe issue with Rabbit and I'd certainly like to fix it.
+
+Matthew
+
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="008026.html">[rabbitmq-discuss] Having some issues with RabbitMQ
+</A></li>
+	<LI>Next message: <A HREF="008029.html">[rabbitmq-discuss] Having some issues with RabbitMQ
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#8028">[ date ]</a>
+              <a href="thread.html#8028">[ thread ]</a>
+              <a href="subject.html#8028">[ subject ]</a>
+              <a href="author.html#8028">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

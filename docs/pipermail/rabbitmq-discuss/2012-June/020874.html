@@ -1,0 +1,209 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Populate queues in an instance with queues in	multiple instances
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Populate%20queues%20in%20an%20instance%20with%20queues%20in%0A%09multiple%20instances&In-Reply-To=%3CCACWtv5koNkiRT%3Dmf4gDnkQ3QH423wMYSSuw3EYcrCHc4gMfXxA%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="020904.html">
+   <LINK REL="Next"  HREF="020876.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Populate queues in an instance with queues in	multiple instances</H1>
+    <B>Vaidik Kapoor</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Populate%20queues%20in%20an%20instance%20with%20queues%20in%0A%09multiple%20instances&In-Reply-To=%3CCACWtv5koNkiRT%3Dmf4gDnkQ3QH423wMYSSuw3EYcrCHc4gMfXxA%40mail.gmail.com%3E"
+       TITLE="[rabbitmq-discuss] Populate queues in an instance with queues in	multiple instances">kapoor.vaidik at gmail.com
+       </A><BR>
+    <I>Thu Jun 28 12:29:12 BST 2012</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="020904.html">[rabbitmq-discuss] [Q] How can one remove dead nodes from	a	cluster?
+</A></li>
+        <LI>Next message: <A HREF="020876.html">[rabbitmq-discuss] Populate queues in an instance with queues	in multiple instances
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#20874">[ date ]</a>
+              <a href="thread.html#20874">[ thread ]</a>
+              <a href="subject.html#20874">[ subject ]</a>
+              <a href="author.html#20874">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>There is a problem that we are trying to deal with queues. I posted the
+problem on Stackoverflow and got a very quick response from
+Alexis&lt;<A HREF="http://stackoverflow.com/users/1397341/alexis">http://stackoverflow.com/users/1397341/alexis</A>&gt;which does clear
+a lot of things but I have a few more questions.
+
+The problem as stated on
+Stackoverflow&lt;<A HREF="http://stackoverflow.com/questions/11241837/synchronize-one-queue-instance-with-multiple-redis-instances">http://stackoverflow.com/questions/11241837/synchronize-one-queue-instance-with-multiple-redis-instances</A>&gt;
+:<i>
+</I>
+*The Scenario:*
+
+We have multiple nodes distributed geographically on which we want to have
+queues collecting messages for that location. And then we want to send this
+collected data from every queue in every node to their corresponding queues
+in a central location. In the central node, we will pull out data collected
+in the queues (from other nodes), process it and store it persistently.
+
+Constraints:
+
+   - Data is very important to us. Therefore, we have to make sure that we
+   are not loosing data in any case.
+   - Therefore, we need persistent queues on every node so that even if the
+   node goes down for some random reason, when we bring it up we have the
+   collected data safe with us and we can send it to the central node where it
+   can be processed.
+   - Similarly, if the central node goes down, the data must remain at all
+   the other nodes so that when the central node comes up we can send all the
+   data to the central node for processing.
+   - Also, the data on the central node must not get duplicated or stored
+   again. That is data collected on one of the nodes should be stored on the
+   central nodes only once.
+   - The data that we are collecting is very important to us and the order
+   of data delivery to the central node is not an issue.
+
+*Our Solution:*
+
+We have considered a couple of solutions out of which I am going to list
+down the one that we thought would be the best. A possible solution (in our
+opinion) is to use Redis to maintain queues everywhere because Redis
+provides persistent storage. Then perhaps have a daemon running on all the
+geographically separated nodes which reads the data from the queue and
+sends it to the central node. The central node on receiving the data sends
+an ACK to the node it received the data from (because data is very
+important to us) and then on receiving the ACK, the node deletes the data
+from the queue. Of course, there will be timeout period in which the ACK
+must be received.
+
+*The Problem:*
+
+The above stated solution (according to us) will work fine but the issue is
+that we don't want to implement the whole synchronization protocol by
+ourselves for the simple reason that we might be wrong here. We were unable
+to find this particular way of synchronization in Redis. So we are open to
+other AMQP based queues like RabbitMQ, ZeroMQ, etc. Again we were not able
+to figure out if we can do this with these solutions.
+
+   - Do these Message Queues or any other data store provide features that
+   can be the solution to our problem? If yes, then how?
+   - If not, then is our solution good enough?
+   - Can anyone suggest a better solution?
+   - Can there be a better way to do this?
+   - What would be the best way to make it fail safe?
+   - The data that we are collecting is very important to us and the order
+   of data delivery to the central node is not an issue.
+
+---
+
+Response from Alexis:
+
+You could do this with RabbitMQ by setting up the central node (or cluster
+of nodes) to be a consumer of messages from the other nodes, and using the
+message acknowledgement feature. This feature means that the central
+node(s) can ack delivery, so that other nodes only delete messages after
+the ack. See for example:
+<A HREF="http://www.rabbitmq.com/tutorials/tutorial-two-python.html">http://www.rabbitmq.com/tutorials/tutorial-two-python.html</A>
+
+---
+
+The response from Alexis actually solves most of our problems. But, there
+is one more thing to consider.
+
+*I had stated it as a constraint in the original post that:*
+&quot;Also, the data on the central node must not get duplicated or stored
+again. That is data collected on one of the nodes should be stored on the
+central nodes only once.&quot;
+
+How do I ensure this? Consider the scenario in which the ACK does not get
+delivered due to network issues (in our scenario). What happens in that
+case? The queue still is not aware of the status of the completion of the
+work. Does the message in that case get locked? Or does another worker pick
+it up? If another worker picks it up, then will we have the same data
+worked twice? How do we deal this situation?
+
+Thanks in advance,
+Vaidik
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20120628/aa5fa89b/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20120628/aa5fa89b/attachment.htm</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="020904.html">[rabbitmq-discuss] [Q] How can one remove dead nodes from	a	cluster?
+</A></li>
+	<LI>Next message: <A HREF="020876.html">[rabbitmq-discuss] Populate queues in an instance with queues	in multiple instances
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#20874">[ date ]</a>
+              <a href="thread.html#20874">[ thread ]</a>
+              <a href="subject.html#20874">[ subject ]</a>
+              <a href="author.html#20874">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

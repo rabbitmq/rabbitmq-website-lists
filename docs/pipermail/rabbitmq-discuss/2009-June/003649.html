@@ -1,0 +1,148 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] RabbitMQ heavy queue managing
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20RabbitMQ%20heavy%20queue%20managing&In-Reply-To=">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003685.html">
+   <LINK REL="Next"  HREF="003650.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] RabbitMQ heavy queue managing</H1>
+    <B>Lev Walkin</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20RabbitMQ%20heavy%20queue%20managing&In-Reply-To="
+       TITLE="[rabbitmq-discuss] RabbitMQ heavy queue managing">vlm at lionet.info
+       </A><BR>
+    <I>Mon Jun  1 14:29:00 BST 2009</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003685.html">[rabbitmq-discuss] Recovery and Upgrade Path
+</A></li>
+        <LI>Next message: <A HREF="003650.html">[rabbitmq-discuss] RabbitMQ heavy queue managing
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3649">[ date ]</a>
+              <a href="thread.html#3649">[ thread ]</a>
+              <a href="subject.html#3649">[ subject ]</a>
+              <a href="author.html#3649">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>
+Hi,
+
+My RabbitMQ (hg head) exhibits the following behavior: its
+CPU usage grows from 20% to 99% in about two days, where a
+persister log grows from about 1 megabyte to 15 megabytes.
+
+During times when AMQ is 99% loaded it is still responsive,
+although performance is severely degraded so it becomes mandatory
+to do something with it.
+
+In the initial, 20% CPU &quot;after start&quot; load the numbers are the
+following:
+
+Rough statistics:
+
+     1   durable, persistent topic exchange
+     100 persistent queues with no data stored for too long
+         (removed quickly, the queue length is always at 0)
+     50  persistent queues with about 100 to 500 1k messages TOTAL
+	(0-15 messages in each), which are not drained for
+	hours, if not days
+     10  events per second sustained going through persistent
+         queues (those which are drained quickly)
+     50  events per second going through a single transient queue
+         with multiple subscribers
+     1   event every 10 minutes goes to one of those permanent queues
+         which are not drained at all.
+
+[<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">vlm at tamq</A> ~]&gt; date; rabbitmqctl list_queues | awk '{sum += $2} END 
+{print NR, sum}'
+Mon Jun  1 06:05:29 PDT 2009
+153 104
+[<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">vlm at tamq</A> ~]&gt;
+
+The server CPU load is correlated to the TOTAL number of events in the
+&quot;never drained&quot; queues. So the growth from 100 to 500 undrained 1k
+events in those &quot;never drained&quot; queues gives me 20% -&gt; 99% increase in 
+CPU load.
+
+The persister logs are filled with 100 kilobytes per second, and rotated
+every few seconds (once the rabbit_persister.LOG is filled, it gets
+renamed in a couple of seconds into .previous, then everything starts anew).
+
+[<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">vlm at tamq</A> /js-kit/rabbitmq/mnesia/rabbit]&gt; date; ls -al; sleep 1; date; 
+ls -al rabbit_persister.LOG*
+Mon Jun  1 06:00:05 PDT 2009
+total 2232
+drwxr-xr-x  2 www  wheel     1024 Jun  1 05:59 .
+drwxr-xr-x  8 www  wheel      512 Jun  1 05:24 ..
+-rw-r--r--  1 www  wheel      153 Jun  1 05:57 DECISION_TAB.LOG
+-rw-r--r--  1 www  wheel     1531 Jun  1 05:59 LATEST.LOG
+-rw-r--r--  1 www  wheel        8 May  3 23:43 rabbit_config.DCD
+-rw-r--r--  1 www  wheel       87 Jun  1 05:24 rabbit_durable_exchange.DCD
+-rw-r--r--  1 www  wheel      445 Jun  1 05:27 rabbit_durable_exchange.DCL
+-rw-r--r--  1 www  wheel    13931 Jun  1 05:54 rabbit_durable_queue.DCD
+-rw-r--r--  1 www  wheel      587 Jun  1 05:57 rabbit_durable_queue.DCL
+-rw-r--r--  1 www  wheel    19442 Jun  1 05:54 rabbit_durable_route.DCD
+-rw-r--r--  1 www  wheel     2009 Jun  1 05:57 rabbit_durable_route.DCL
+-rw-r--r--  1 www  wheel   866427 Jun  1 06:00 rabbit_persister.LOG
+-rw-r--r--  1 www  wheel  1308162 Jun  1 05:59 rabbit_persister.LOG.previous
+-rw-r--r--  1 www  wheel      125 May  4 00:01 rabbit_user.DCD
+-rw-r--r--  1 www  wheel      183 May  4 00:01 rabbit_user_permission.DCD
+-rw-r--r--  1 www  wheel      124 May  4 00:01 rabbit_vhost.DCD
+-rw-r--r--  1 www  wheel    12367 May  3 23:43 schema.DAT
+
+Mon Jun  1 06:00:06 PDT 2009
+-rw-r--r--  1 www  wheel  1163116 Jun  1 06:00 rabbit_persister.LOG
+-rw-r--r--  1 www  wheel  1308162 Jun  1 05:59 rabbit_persister.LOG.previous
+[<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">vlm at tamq</A> /js-kit/rabbitmq/mnesia/rabbit]&gt;
+
+
+My guess is that RabbitMQ does not like high-performance
+persistent queue operations while other persistent queues contain
+non-zero queues.
+
+Having such 20% -&gt; 99% dynamics is not acceptable for me. Moreover,
+having consistently 1-10 mb persister log for somewhat 100 persistent
+messages does seem like an excess and a promises potential for
+optimization.
+I would like to use RabbitMQ as a persistent mechanism capable of
+holding 10-50 megabytes of 1k messages (50000 messages) until delivery,
+the current situation seems two orders of magnitude worse than acceptable.
+
+My question is what would you recommend doing with it? Or, better,
+would someone be open to fix it, perhaps for a bit of money?
+
+
+-- 
+Lev Walkin
+<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">vlm at lionet.info</A>
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003685.html">[rabbitmq-discuss] Recovery and Upgrade Path
+</A></li>
+	<LI>Next message: <A HREF="003650.html">[rabbitmq-discuss] RabbitMQ heavy queue managing
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3649">[ date ]</a>
+              <a href="thread.html#3649">[ thread ]</a>
+              <a href="subject.html#3649">[ subject ]</a>
+              <a href="author.html#3649">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

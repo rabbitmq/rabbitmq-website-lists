@@ -1,0 +1,43 @@
+<tt>
+Hi,&lt;br&gt;&lt;br&gt;I&nbsp;am&nbsp;very&nbsp;new&nbsp;to&nbsp;RabbitMQ.&nbsp;we&nbsp;are&nbsp;using&nbsp;Rabbit&nbsp;MQ&nbsp;C&nbsp;API&nbsp;to&nbsp;talk&nbsp;with&nbsp;the&nbsp;broker.&lt;br&gt;We&nbsp;are&nbsp;playing&nbsp;with&nbsp;the&nbsp;examples(with&nbsp;few&nbsp;modifications)&nbsp;given&nbsp;by&nbsp;RabbitMQ.&nbsp;&lt;br&gt;We&nbsp;created&nbsp;one&nbsp;producer&nbsp;and&nbsp;one&nbsp;consumer&nbsp;with&nbsp;the&nbsp;same&nbsp;connection&nbsp;but&nbsp;difference&nbsp;channels.&lt;br&gt;<br>
+<br>
+In&nbsp;the&nbsp;following&nbsp;code&nbsp;amqp_channel_open(conn,&nbsp;2)&nbsp;statement&nbsp;is&nbsp;causing&nbsp;the&nbsp;my&nbsp;main&nbsp;thread&nbsp;to&nbsp;block&nbsp;&lt;br&gt;but&nbsp;if&nbsp;i&nbsp;move&nbsp;this&nbsp;statement&nbsp;before&nbsp;creating&nbsp;of&nbsp;consumer&nbsp;thread&nbsp;then&nbsp;every&nbsp;thing&nbsp;seems&nbsp;to&nbsp;be&nbsp;working.&lt;br&gt;&lt;br&gt;My&nbsp;code&nbsp;is&nbsp;as&nbsp;follows.&lt;br&gt;<br>
+<br>
+static&nbsp;void&nbsp;send_batch(amqp_connection_&lt;div&nbsp;id=&quot;:aj&quot;&nbsp;class=&quot;ii&nbsp;gt&quot;&gt;state_t&nbsp;conn,&lt;br&gt;                      &nbsp;char&nbsp;const&nbsp;*queue_name,&lt;br&gt;                      &nbsp;int&nbsp;rate_limit,&lt;br&gt;                      &nbsp;int&nbsp;message_count)&lt;br&gt;<br>
+{&lt;br&gt; &nbsp;char&nbsp;message[256]&nbsp;=&nbsp;&amp;quot;test&amp;quot;;&lt;br&gt;<br>
+ &nbsp;die_on_error(amqp_basic_publish(conn,&lt;br&gt;                                   &nbsp;2,&lt;br&gt;                                   &nbsp;amqp_cstring_bytes(&amp;quot;amq.direct&amp;quot;),&lt;br&gt;                                   &nbsp;amqp_cstring_bytes(queue_name),&lt;br&gt;<br>
+<br>
+                                   &nbsp;0,&lt;br&gt;                                   &nbsp;0,&lt;br&gt;                                   &nbsp;NULL,&lt;br&gt;                                   &nbsp;(amqp_bytes_t)&nbsp;{.len&nbsp;=&nbsp;sizeof(message),&nbsp;.bytes&nbsp;=&nbsp;message}),&lt;br&gt;<br>
+<br>
+                &nbsp;&amp;quot;Publishing&amp;quot;);&lt;br&gt;   &nbsp;printf(&amp;quot;Message&nbsp;sent&nbsp;by&nbsp;producer\n&amp;quot;);&lt;br&gt;}&lt;br&gt;&lt;br&gt;static&nbsp;void&nbsp;run(amqp_connection_state_t&nbsp;conn)&lt;br&gt;{&lt;br&gt; &nbsp;amqp_frame_t&nbsp;frame;&lt;br&gt; &nbsp;int&nbsp;result;&lt;br&gt; &nbsp;size_t&nbsp;body_received;&lt;br&gt;<br>
+<br>
+ &nbsp;size_t&nbsp;body_target;&lt;br&gt; &nbsp;int &nbsp;received&nbsp;=&nbsp;0;   &nbsp;&lt;br&gt; &nbsp;while&nbsp;(1)&nbsp;{&lt;br&gt;   &nbsp;amqp_maybe_release_buffers(conn);&lt;br&gt;   &nbsp;result&nbsp;=&nbsp;amqp_simple_wait_frame(conn,&nbsp;&amp;amp;frame);&lt;br&gt;   &nbsp;if&nbsp;(result&nbsp;&amp;lt;=&nbsp;0)&nbsp;return;&lt;br&gt;   &nbsp;if&nbsp;(frame.frame_type&nbsp;!=&nbsp;AMQP_FRAME_METHOD)&lt;br&gt;<br>
+<br>
+     &nbsp;continue;&lt;br&gt;   &nbsp;if&nbsp;(&lt;a&nbsp;href=&quot;http://frame.payload.method.id/&quot;&nbsp;target=&quot;_blank&quot;&gt;frame.payload.method.id&lt;/a&gt;&nbsp;!=&nbsp;AMQP_BASIC_DELIVER_METHOD)&lt;br&gt;     &nbsp;continue;&lt;br&gt;   &nbsp;result&nbsp;=&nbsp;amqp_simple_wait_frame(conn,&nbsp;&amp;amp;frame);&lt;br&gt;<br>
+   &nbsp;if&nbsp;(result&nbsp;&amp;lt;=&nbsp;0)&nbsp;return;&lt;br&gt;<br>
+   &nbsp;if&nbsp;(frame.frame_type&nbsp;!=&nbsp;AMQP_FRAME_HEADER)&nbsp;{&lt;br&gt;     &nbsp;abort();&lt;br&gt;   &nbsp;}&lt;br&gt;   &nbsp;body_target&nbsp;=&nbsp;frame.payload.properties.body_size;&lt;br&gt;   &nbsp;body_received&nbsp;=&nbsp;0;&lt;br&gt;   &nbsp;while&nbsp;(body_received&nbsp;&amp;lt;&nbsp;body_target)&nbsp;{&lt;br&gt;     &nbsp;result&nbsp;=&nbsp;amqp_simple_wait_frame(conn,&nbsp;&amp;amp;frame);&lt;br&gt;<br>
+<br>
+     &nbsp;if&nbsp;(result&nbsp;&amp;lt;=&nbsp;0)&nbsp;return;&lt;br&gt;     &nbsp;if&nbsp;(frame.frame_type&nbsp;!=&nbsp;AMQP_FRAME_BODY)&nbsp;{&lt;br&gt;   &nbsp;abort();&lt;br&gt;     &nbsp;}&lt;br&gt;     &nbsp;body_received&nbsp;+=&nbsp;frame.payload.body_fragment.len;&lt;br&gt;     &nbsp;assert(body_received&nbsp;&amp;lt;=&nbsp;body_target);&lt;br&gt;<br>
+<br>
+   &nbsp;}&lt;br&gt;   &nbsp;received++;&lt;br&gt;   &nbsp;printf(&amp;quot;received=%d\n&amp;quot;,received);&lt;br&gt; &nbsp;}&lt;br&gt;}&lt;br&gt;void* &nbsp;consume(void*&nbsp;conn){&lt;br&gt; &nbsp;run(*((amqp_connection_state_t*)conn));&lt;br&gt;}&lt;br&gt;int&nbsp;main(int&nbsp;argc,&nbsp;char&nbsp;const&nbsp;*&nbsp;const&nbsp;*argv)&nbsp;{&lt;br&gt;<br>
+<br>
+ &nbsp;char&nbsp;const&nbsp;*hostname=&amp;quot;127.0.0.1&amp;quot;;&lt;br&gt; &nbsp;int&nbsp;port=&amp;quot;5672&amp;quot;;&lt;br&gt; &nbsp;char&nbsp;const&nbsp;*exchange;&lt;br&gt; &nbsp;char&nbsp;const&nbsp;*bindingkey;&lt;br&gt; &nbsp;int&nbsp;sockfd;&lt;br&gt; &nbsp;amqp_connection_state_t&nbsp;conn;&lt;br&gt; &nbsp;amqp_bytes_t&nbsp;queuename;&lt;br&gt; &nbsp;exchange&nbsp;=&nbsp;&amp;quot;amq.direct&amp;quot;;&nbsp;//argv[3];&lt;br&gt;<br>
+<br>
+ &nbsp;bindingkey&nbsp;=&nbsp;&amp;quot;test&nbsp;queue&amp;quot;;&nbsp;//argv[4];&lt;br&gt; &nbsp;int&nbsp;rate_limit&nbsp;=&nbsp;100;&lt;br&gt; &nbsp;int&nbsp;message_count&nbsp;=&nbsp;10000;&lt;br&gt; &nbsp;conn&nbsp;=&nbsp;amqp_new_connection();&lt;br&gt; &nbsp;die_on_error(sockfd&nbsp;=&nbsp;amqp_open_socket(hostname,&nbsp;port),&nbsp;&amp;quot;Opening&nbsp;socket&amp;quot;);&lt;br&gt;<br>
+<br>
+ &nbsp;amqp_set_sockfd(conn,&nbsp;sockfd);&lt;br&gt; &nbsp;die_on_amqp_error(amqp_login(conn,&nbsp;&amp;quot;/&amp;quot;,&nbsp;0,&nbsp;131072,&nbsp;0,&nbsp;AMQP_SASL_METHOD_PLAIN,&nbsp;&amp;quot;guest&amp;quot;,&nbsp;&amp;quot;guest&amp;quot;),&lt;br&gt;   &nbsp;   &nbsp;   &nbsp;&amp;quot;Logging&nbsp;in&amp;quot;);&lt;br&gt; &nbsp;amqp_channel_open(conn,&nbsp;1);&lt;br&gt;<br>
+<br>
+ &nbsp;die_on_amqp_error(amqp_rpc_reply,&nbsp;&amp;quot;Opening&nbsp;channel&amp;quot;);&lt;br&gt; &nbsp;{&lt;br&gt;   &nbsp;amqp_queue_declare_ok_t&nbsp;*r&nbsp;=&nbsp;amqp_queue_declare(conn,&nbsp;1,&nbsp;AMQP_EMPTY_BYTES,&nbsp;0,&nbsp;0,&nbsp;0,&nbsp;1,&lt;br&gt;   &nbsp;   &nbsp;   &nbsp;   &nbsp;   &nbsp;   &nbsp;   &nbsp;AMQP_EMPTY_TABLE);&lt;br&gt;<br>
+   &nbsp;die_on_amqp_error(amqp_rpc_reply,&nbsp;&amp;quot;Declaring&nbsp;queue&amp;quot;);&lt;br&gt;<br>
+   &nbsp;queuename&nbsp;=&nbsp;amqp_bytes_malloc_dup(r-&amp;gt;queue);&lt;br&gt;   &nbsp;if&nbsp;(queuename.bytes&nbsp;==&nbsp;NULL)&nbsp;{&lt;br&gt;     &nbsp;die_on_error(-ENOMEM,&nbsp;&amp;quot;Copying&nbsp;queue&nbsp;name&amp;quot;);&lt;br&gt;   &nbsp;}&lt;br&gt; &nbsp;}&lt;br&gt; &nbsp;amqp_queue_bind(conn,&nbsp;1,&nbsp;queuename,&nbsp;amqp_cstring_bytes(exchange),&nbsp;amqp_cstring_bytes(bindingkey),&lt;br&gt;<br>
+<br>
+   &nbsp;   &nbsp; &nbsp;AMQP_EMPTY_TABLE);&lt;br&gt; &nbsp;die_on_amqp_error(amqp_rpc_reply,&nbsp;&amp;quot;Binding&nbsp;queue&amp;quot;);&lt;br&gt;&lt;br&gt; &nbsp;amqp_basic_consume(conn,&nbsp;1,&nbsp;queuename,&nbsp;AMQP_EMPTY_BYTES,&nbsp;0,&nbsp;1,&nbsp;0);&lt;br&gt; &nbsp;die_on_amqp_error(amqp_rpc_reply,&nbsp;&amp;quot;Consuming&amp;quot;);&lt;br&gt;<br>
+<br>
+ &nbsp;pthread_t&nbsp;threadId;&lt;br&gt; &nbsp;pthread_create(&amp;amp;threadId,NULL,consume,(void*)&amp;amp;conn);&lt;br&gt; &nbsp;sleep(1);&lt;br&gt; &nbsp;amqp_channel_open(conn,&nbsp;2);&lt;br&gt; &nbsp;send_batch(conn,&nbsp;&amp;quot;test&nbsp;queue&amp;quot;,&nbsp;rate_limit,&nbsp;message_count);&lt;br&gt; &nbsp;die_on_amqp_error(amqp_channel_close(conn,&nbsp;1,&nbsp;AMQP_REPLY_SUCCESS),&nbsp;&amp;quot;Closing&nbsp;channel&amp;quot;);&lt;br&gt;<br>
+<br>
+ &nbsp;die_on_amqp_error(amqp_connection_close(conn,&nbsp;AMQP_REPLY_SUCCESS),&nbsp;&amp;quot;Closing&nbsp;connection&amp;quot;);&lt;br&gt; &nbsp;amqp_destroy_connection(conn);&lt;br&gt; &nbsp;die_on_error(close(sockfd),&nbsp;&amp;quot;Closing&nbsp;socket&amp;quot;);&lt;br&gt; &nbsp;return&nbsp;0;&lt;br&gt;}&lt;br&gt;<br>
+<br>
+&lt;br&gt;Please&nbsp;provide&nbsp;me&nbsp;the&nbsp;reasons&nbsp;for&nbsp;blocking.&lt;br&gt;&lt;br&gt;Thanks,&lt;br&gt;Ragavendra.&lt;br&gt;<br>
+&lt;/div&gt;<br>
+
+</tt>

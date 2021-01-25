@@ -1,0 +1,134 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Implement guaranteed delivery with ReturnListener and ConfirmListener
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Implement%20guaranteed%20delivery%20with%0A%20ReturnListener%20and%20ConfirmListener&In-Reply-To=%3CetPan.53c42c61.74b0dc51.cfde%40mercurio.local%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="037168.html">
+   <LINK REL="Next"  HREF="037191.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Implement guaranteed delivery with ReturnListener and ConfirmListener</H1>
+    <B>Michael Klishin</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Implement%20guaranteed%20delivery%20with%0A%20ReturnListener%20and%20ConfirmListener&In-Reply-To=%3CetPan.53c42c61.74b0dc51.cfde%40mercurio.local%3E"
+       TITLE="[rabbitmq-discuss] Implement guaranteed delivery with ReturnListener and ConfirmListener">mklishin at gopivotal.com
+       </A><BR>
+    <I>Mon Jul 14 20:15:19 BST 2014</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="037168.html">[rabbitmq-discuss] Implement guaranteed delivery with ReturnListener and ConfirmListener
+</A></li>
+        <LI>Next message: <A HREF="037191.html">[rabbitmq-discuss] Implement guaranteed delivery with ReturnListener and ConfirmListener
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#37169">[ date ]</a>
+              <a href="thread.html#37169">[ thread ]</a>
+              <a href="subject.html#37169">[ subject ]</a>
+              <a href="author.html#37169">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>
+
+On 14 July 2014 at 22:02:52, ArnavJoshi (<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">arnav.joshi at mathworks.com</A>) wrote:
+&gt;<i> &gt; For testing purposes, we are checking for the confirms for messages  
+</I>&gt;<i> which
+</I>&gt;<i> are being written to undeclared/unbound/currently unavailable  
+</I>&gt;<i> queues. We
+</I>&gt;<i> observe that although the ReturnListener method throws a 312  
+</I>&gt;<i> (NO_ROUTE)
+</I>&gt;<i> error code, the ConfirmListener still calls the &#8216;handleAck&#8217;  
+</I>&gt;<i> method, and not
+</I>&gt;<i> the &#8216;handleNack&#8217; method as we would expect.
+</I>
+I can see that some may expect unroutable messages
+to be nack-ed but RabbitMQ cannot know whether that's the case: in some cases
+it's fine for messages to not be routed anywhere. So acks verify a bunch of things:
+
+&#160;1. Your connection is alive
+&#160;2. Your channel is still open (no exceptions)
+&#160;3. Routed message was delivered to all queue mirrors (if applicable)
+
+Using a nack to indicate that the message is unroutable would confuse a lot
+of apps into thinking that 1) or 2) were not true.
+
+
+&gt;<i> If this implementation is by design &#8211; could you suggest a way in  
+</I>&gt;<i> which we
+</I>&gt;<i> can implement guaranteed delivery, i.e.:
+</I>&gt;<i>  
+</I>&gt;<i> 1. Confirm that the message has not only reached the broker, but  
+</I>&gt;<i> has been
+</I>&gt;<i> processed by one or more queues.
+</I>&gt;<i> 2. Throw a nack, or generate an exception when the message cannot  
+</I>&gt;<i> be routed
+</I>&gt;<i> and that the message has been persisted to disk
+</I>&gt;<i> 3. Making blocking calls to our publishes in the ReturnListener  
+</I>&gt;<i> implementation when we are trying to write to such queues?
+</I>
+Group messages in batches if you can. Then
+publish a batch, use Channel#waitForConfirms. If it returns false, schedule
+the batch for re-publishing. If a return arrives, do the same.
+You'll also need to have a way to identify messages, but this is generally true
+with confirms.
+
+Batching will provide good throughput with easier to use but generally slower API (#waitForConfirms vs. ConfirmListener).&#160;
+
+Because basic.return may arrive after #waitForConfirms returns, you may want to schedule
+a &quot;batch check&quot; that runs in a few seconds and completely marks the batch as successfully
+delivered.
+
+&gt;<i> Follow up question: If a queue process being killed is the only  
+</I>&gt;<i> criterion
+</I>&gt;<i> for ConfirmListener.handleNack being called &#8211; shouldn&#8217;t an  
+</I>&gt;<i> undeclared/currently unavailable queue result in handleNack  
+</I>&gt;<i> being called.
+</I>&gt;<i> Our suspicion is that the message which cannot be routed to a currently  
+</I>&gt;<i> unavailable queue is handled like an unroutable message, which  
+</I>&gt;<i> is confirmed
+</I>&gt;<i> immediately after basic.return but is also &#8216;ACK&#8217;ed, which seems  
+</I>&gt;<i> counter-intuitive.
+</I>
+Can you expand on how exactly your experiment was conducted? Did you receive
+an ack for a message routed to a queue whose master was unavailable? Was it the only
+queue the message was routed to?&#160;
+--&#160;
+MK  
+
+Staff Software Engineer, Pivotal/RabbitMQ
+</PRE>
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="037168.html">[rabbitmq-discuss] Implement guaranteed delivery with ReturnListener and ConfirmListener
+</A></li>
+	<LI>Next message: <A HREF="037191.html">[rabbitmq-discuss] Implement guaranteed delivery with ReturnListener and ConfirmListener
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#37169">[ date ]</a>
+              <a href="thread.html#37169">[ thread ]</a>
+              <a href="subject.html#37169">[ subject ]</a>
+              <a href="author.html#37169">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

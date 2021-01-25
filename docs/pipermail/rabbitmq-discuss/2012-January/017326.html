@@ -1,0 +1,166 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Considerations on client error semantics
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Considerations%20on%20client%20error%20semantics&In-Reply-To=%3CCAOn7oW_dufxpSS6yQiQF%2B5uWsjwmCn1hZg1-sz-xo6bMme--mA%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="017331.html">
+   <LINK REL="Next"  HREF="017328.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Considerations on client error semantics</H1>
+    <B>Simone Busoli</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Considerations%20on%20client%20error%20semantics&In-Reply-To=%3CCAOn7oW_dufxpSS6yQiQF%2B5uWsjwmCn1hZg1-sz-xo6bMme--mA%40mail.gmail.com%3E"
+       TITLE="[rabbitmq-discuss] Considerations on client error semantics">simone.busoli at gmail.com
+       </A><BR>
+    <I>Wed Jan 11 23:13:41 GMT 2012</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="017331.html">[rabbitmq-discuss] pika stops ioloop on disconnect
+</A></li>
+        <LI>Next message: <A HREF="017328.html">[rabbitmq-discuss] Considerations on client error semantics
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#17326">[ date ]</a>
+              <a href="thread.html#17326">[ thread ]</a>
+              <a href="subject.html#17326">[ subject ]</a>
+              <a href="author.html#17326">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi I would like to share some thoughts about error handling when
+interacting with the broker, and specifically with the .NET API.
+
+By looking at the source code of the client, reading the docs and some
+experience with using it I am under the impression that it's not easy to
+figure out whether, which ones, and how to handle and react to exceptions
+thrown when calling methods on the client.
+
+I think that most of the exceptions that can arise under normal usage of
+the client  should appear in this list:
+
+- BrokerUnreachableException
+- AlreadyClosedException
+- OperationInterruptedException
+- IOException
+- EndOfStreamException
+
+Aiming at creating highly reliable applications making use of the API which
+are not supposed to crash and loose, duplicate or get any messages out of
+order I realized that the behavior of the client is a bit underspecified.
+The straightforward approach would be to catch every exception thrown by
+the client, but it's not straightforward to figure out whether all of them
+should really be handled in the same way.
+Also, failure conditions are also notified by events on the various
+IConnection and IModel interfaces, which is useful but also confusing in
+that they partially overlap with the exceptions.
+
+Although all of the above concerns mostly the .NET client I'm very
+interested in how others are solving the same problem.
+
+Following is a rough overview of the behavior of the API I expose to such
+kind of applications.
+
+On the publishing side:
+
+- publishes don't make it to the broker immediately, but rather collected
+into an in-memory queue which is gated by a semaphore watching the status
+of the connection by subscribing to the ConnectionShutdown event.
+- Connection shutdowns are monitored and reconnection is scheduled.
+- Publisher confirms are used. Unconfirmed or nacked messages are
+republished at intervals and also enqueued for publishing as soon as the
+connection shuts down, in order to be the first to be published when the
+connection is restored
+- BasicPublish invocations are wrapped into try-catch blocks catching
+several kind of exceptions but doing nothing except logging. Since the
+message appears as unconfirmed it will eventually be republished.
+
+On the consuming side:
+
+- QueueingConsumer is used, looping its queue on a separate thread.
+Deliveries are marshalled to the application and acked after that. Issues
+to deal with are: what happens if an exception is thrown by the application
+while processing the message?
+
+- Ahead of the consuming loop there are deduplication and resequencing
+filters, in the order. Deduplication is required especially as publisher
+confirms may cause it, resequencing is needed because of limited guarantees
+RabbitMQ provides about ordering and also because connection and broker
+shutdowns may lead to messages arriving out of order.
+
+- Connection status is monitored and connection is rescheduled when it
+drops. It is not clear whether exceptions thrown when calling QueueDeclare,
+QueueBind, BasicConsume, should be interpreted as connection going down or
+if in such cases the connection should be closed explicitly and scheduled
+for later. The fact is, if any of those throw you really want to start from
+the beginning even if they weren't caused by the connection dropping, if
+this is at all possible.
+
+There are lots of other pernicious details, but these are the main things I
+beliveve.
+Sorry for the long mail, I'd appreciate some feedback.
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20120112/6eceb73c/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20120112/6eceb73c/attachment.htm</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="017331.html">[rabbitmq-discuss] pika stops ioloop on disconnect
+</A></li>
+	<LI>Next message: <A HREF="017328.html">[rabbitmq-discuss] Considerations on client error semantics
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#17326">[ date ]</a>
+              <a href="thread.html#17326">[ thread ]</a>
+              <a href="subject.html#17326">[ subject ]</a>
+              <a href="author.html#17326">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

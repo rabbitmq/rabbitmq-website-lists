@@ -1,0 +1,148 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Huge latency in Linux, compared with Leopard
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20Huge%20latency%20in%20Linux%2C%20compared%20with%20Leopard&In-Reply-To=48DDFB53.9030404%40lshift.net">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001630.html">
+   <LINK REL="Next"  HREF="001635.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Huge latency in Linux, compared with Leopard</H1>
+    <B>Holger Hoffst&#228;tte</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20Huge%20latency%20in%20Linux%2C%20compared%20with%20Leopard&In-Reply-To=48DDFB53.9030404%40lshift.net"
+       TITLE="[rabbitmq-discuss] Huge latency in Linux, compared with Leopard">holger at wizards.de
+       </A><BR>
+    <I>Sat Sep 27 19:35:43 BST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001630.html">[rabbitmq-discuss] Huge latency in Linux, compared with Leopard
+</A></li>
+        <LI>Next message: <A HREF="001635.html">[rabbitmq-discuss] Huge latency in Linux, compared with Leopard
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1634">[ date ]</a>
+              <a href="thread.html#1634">[ thread ]</a>
+              <a href="subject.html#1634">[ subject ]</a>
+              <a href="author.html#1634">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>
+This is just too interesting to resist :)
+
+Matthias Radestock wrote:
+&gt;<i> Bogon Choi wrote:
+</I>&gt;&gt;<i> I am using RabbitMQ Java library to talk with RabbitMQ Server.
+</I>&gt;<i> 
+</I>&gt;<i> I have just run a test on a one of our Debian Linux machines here - 
+</I>&gt;<i> kernel 2.6.24-1-686, &quot;Intel(R) Xeon(TM) CPU 2.80GHz stepping 09&quot;. The 
+</I>&gt;<i> test uses the MulticastMain example that ships with the Java client to 
+</I>&gt;<i> send a 1k message every second and measure the latency:
+</I>&gt;<i> 
+</I>&gt;<i> sh runjava.sh com.rabbitmq.examples.MulticastMain -a -r 1 -s 1024 -i 5
+</I>&gt;<i> 
+</I>&gt;<i> Once the system has settled down I get minimum latencies of around 900 
+</I>&gt;<i> microseconds, and average latencies of about 1050 microseconds.
+</I>&gt;<i> 
+</I>&gt;<i> Do you see the same results on your system when running the same test?
+</I>
+Basically yes, though with a couple of tricks I have been able to get
+minimum &amp; average latency &lt;300us, see below (best value was 266us!)
+
+&gt;<i> There is the occasional blip that produces max latencies of around 40ms. 
+</I>&gt;<i> I always thought that was most likely due to the fact that the system is 
+</I>&gt;<i> doing other things - it's my desktop machine - but given that the figure 
+</I>&gt;<i> is the same that you are reporting perhaps that is not the case.
+</I>
+I thought so too but got the same 40ms blips on both a single-CPU machine
+with other (mostly idle) processes, and my completely idle dual-core
+laptop. Both are running 2.6.26.5, rabbit 1.4 and erlang 12.2.4.
+
+Some findings:
+
+- kernel settings matter, but not as much as one would think. My server
+runs at 250 HZ &amp; voluntary preemption, whereas the laptop runs with full
+preemption at 300 HZ - however both exhibit very similar symptoms, and I
+strongly suspect you'd see the same at 1000 HZ or with the RT kernel
+(still need to try that one). Keep in mind that different distributions
+have patched kernels to varying degrees (especially RedHat) and that the
+relatively new CFQ CPU scheduler (new in 2.6.23 IIRC) had a lot of
+performance oddities since its introduction. My understanding from
+following the kernel list most of these should be fixed in the current
+2.6.26 kernel, however the variance between the average (~1ms) and max.
+latency (40ms) is IMHO just way too big for an occasional mis-schedule so
+something else must be wrong. Besides we all get the same 40ms penalty so
+that is a good sign that it's not the kernel scheduler per se.
+
+- eliminate any JVM latency/threading oddities. Adjusting some VM flags
+can make sure you don't get surprised by HotSpot dynamically recompiling
+itself, the GC stoppping the world etc. You can actually see the native
+method compiler kick in and the latencies decrease if you watch closely.
+So to avoid any interference by the JVM I used JDK 6 and:
+
+  -XX:CompileThreshold=10 -XX:+UseParNewGC -XX:+UseConcMarkSweepGC
+
+This will (in order) compile methods to native code after 10 invocations,
+use a second thread for collecting the young generation, and not
+block-the-world when doing any major collections. You will see that the
+latencies go down quite a bit after a few messages. It won't fix any
+problems with Rabbit or the Erlang VM, but it reduces latency jitter on
+the client side.
+
+- I noticed that increasing the rate (-r) to 10 gave me more spikes, and
+-r 100 ran with 40ms max latency all the time. This got *much* better
+without -a (auto-ack) so something with the ack handling seemed to trigger
+the behaviour.
+
+- the fixed penalty for small packets reminded me of good old Mr. Nagle
+who is not your friend when it comes to latency..and behold! Setting
+TCP_NODELAY in both the Java client's SocketFrameHandler and the Rabbit
+startup script (as documented in inet: {nodelay, Boolean}) did the trick,
+even *with* auto-ack!
+
+With this setup even my single-CPU box has only a handful of latency blips
+ at -r 100 over a longer period of time, with a much smaller variance than
+before (a very rare max. ~12k us) which might as well be my
+cron/fetchmail/tomcat waking up. On the dual-core laptop the latencies are
+all ~350/750/900 with the very occasional 1500us max. blip.
+
+I have no idea how exactly the auto-ack works, but I suspect there is just
+some bad interaction with auto-ack, beam's own internal process
+scheduling, the tcp writer and possibly some inet options like e.g.
+{delay_send, Boolean}.
+
+Not sure if this helps but maybe it will give you some ideas for further
+testing.
+
+regards
+Holger
+
+(I really need to build me an -rt kernel.. :)
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001630.html">[rabbitmq-discuss] Huge latency in Linux, compared with Leopard
+</A></li>
+	<LI>Next message: <A HREF="001635.html">[rabbitmq-discuss] Huge latency in Linux, compared with Leopard
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1634">[ date ]</a>
+              <a href="thread.html#1634">[ thread ]</a>
+              <a href="subject.html#1634">[ subject ]</a>
+              <a href="author.html#1634">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

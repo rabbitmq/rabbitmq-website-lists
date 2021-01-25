@@ -1,0 +1,212 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] RabbitMQ memory management
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20RabbitMQ%20memory%20management&In-Reply-To=269388e30809120927g2c1fb57fi5e900becb77d9cd0%40mail.gmail.com">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001468.html">
+   <LINK REL="Next"  HREF="001470.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] RabbitMQ memory management</H1>
+    <B>Edwin Fine</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20RabbitMQ%20memory%20management&In-Reply-To=269388e30809120927g2c1fb57fi5e900becb77d9cd0%40mail.gmail.com"
+       TITLE="[rabbitmq-discuss] RabbitMQ memory management">rabbitmq-discuss_efine at usa.net
+       </A><BR>
+    <I>Fri Sep 12 18:36:16 BST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001468.html">[rabbitmq-discuss] RabbitMQ memory management
+</A></li>
+        <LI>Next message: <A HREF="001470.html">[rabbitmq-discuss] RabbitMQ memory management
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1469">[ date ]</a>
+              <a href="thread.html#1469">[ thread ]</a>
+              <a href="subject.html#1469">[ subject ]</a>
+              <a href="author.html#1469">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Ben,
+
+Thanks for clarifying. Disclaimer: what follows is not an attack on Rabbit,
+or you, or anything like that. It's simply explaining my situation without
+judgment and asking for suggestions.
+
+I now understand that in the worst-case scenario as discussed, the Rabbit
+Erlang VM could crash due to out of memory conditions. What I should then do
+is probably set the rabbit node up with a heartbeat so that in the extremely
+unlikely event of this happening, at least the system will auto-recover. All
+persistent messages will be on disk, so nothing crucial will be lost.
+Presumably, if there are a grillion (that's a metric SI term for &quot;a lot of&quot;
+;)) persistent messages in Mnesia for a specific queue, RabbitMQ won't try
+to load these all into memory and cause the crash to repeat itself.
+*That*would be unfortunate.
+
+I think it would be a really solid addition to RabbitMQ to limit the number
+of messages kept in memory and hence reduce considerably the likelihood of
+out of memory conditions. It is very difficult for me to know exactly when I
+will need this feature, because I don't yet know the volumes that could be
+hitting the system when it goes into full production. It's currently in
+limited production. However, the sooner the better. In my opinion, and I
+really like RabbitMQ, so don't get me wrong, the lack of this feature
+severely limits the usefulness of RabbitMQ in a store and forward scenario.
+Basically, it means that barring other solution, I would have to store the
+messages myself in a database, and dequeue them myself. This means I would
+have to write a mini-queuing system myself, which I was trying to avoid. In
+particular, I didn't want to write it because Mnesia has a serious
+limitation in that if your table is a set, it cannot be disk-only, which
+means... that all the messages in the database are kept in memory!! There
+are some ways around this, but I just didn't want to have to handle these
+issues myself.
+
+Look, it's not your fault that I didn't understand that RabbitMQ keeps all
+the queued messages in memory until they are delivered (although this should
+be prominently featured in the documentation, if it is not already, but I
+haven't seen it). But now I do.
+
+The system that I am using RabbitMQ is part of is an SMS message aggregator.
+It stores and forwards of the order of a million SMS text messages and other
+kinds of messages per day. I had a choice when designing the system: either
+write my own database queuing mechanism, or find a messaging and queuing
+system. I had used WebSphereMQ for very similar systems in the past, so I
+was averse to reinventing the wheel. When I evaluated RabbitMQ, I saw that
+it did persistent messaging and made an erroneous assumption that it worked
+the same way as WebSphereMQ in how it dealt with persistent messages. My
+testing never showed any different, but I probably never stressed RabbitMQ
+to the point where it would have shown up.
+
+In fact, I originally had a problem, which I posted on this mailing list,
+where my consumers were being overwhelmed by the speed at which RabbitMQ was
+pushing messages to them. This caused the messages to be buffered in the
+consumer's Erlang queue, which made the consumer's memory usage go through
+the roof. There was no way to throttle the sender because QoS was not
+implemented, so I changed my consumers to use a basic.get. This, I thought,
+pushed the problem back into RabbitMQ's camp, which I thought would solve
+the problem because I had believed it was all going to disk and did not know
+it was being shadowed in memory too. So it didn't solve the problem, it
+simply pushed it to a different part of the system.
+
+I put a great deal of effort into ensuring that the consumers stay running
+at all times, but the thing that is out of my control is whether they can
+keep up with the messages that are being put into the system. The reason for
+this is that the consumers deliver messages to various URLs over http, and
+the server behind the URL might be offline for any period of time, or
+delivery might be very slow. This can cause the messages to back up if they
+are being added at a high rate. Messages are added at a high rate sometimes
+when a client wants to send a batch of tens of thousands of messages in a
+store and forward mode.
+
+So... in the absence of the &quot;feature&quot; discussed above, do you have any
+suggestions as to how I can dig myself out of this hole (without using a
+different m&amp;q system) ? :)
+
+Regards,
+Edwin
+
+
+On Fri, Sep 12, 2008 at 12:27 PM, Ben Hood &lt;<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">0x6e6562 at gmail.com</A>&gt; wrote:
+
+&gt;<i> Edwin,
+</I>&gt;<i>
+</I>&gt;<i> On Fri, Sep 12, 2008 at 2:31 AM, Edwin Fine
+</I>&gt;<i> &lt;<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss_efine at usa.net</A>&gt; wrote:
+</I>&gt;<i> &gt; I think you misunderstood my message. I was saying RabbitMQ should be
+</I>&gt;<i> able
+</I>&gt;<i> &gt; to store a non-memory-limited number of persistent messages in the
+</I>&gt;<i> absence
+</I>&gt;<i> &gt; of a consumer draining the queue. So to be exact, these would be
+</I>&gt;<i> &gt; non-transactional persistent messages. You replied to me about
+</I>&gt;<i> &gt; non-persistent messages, which I know are memory-limited. I am confused,
+</I>&gt;<i> &gt; because I was at one time (when I was doing my due diligence) convinced
+</I>&gt;<i> that
+</I>&gt;<i> &gt; RabbitMQ had no practical limit (other than any set by Mnesia and hard
+</I>&gt;<i> disk
+</I>&gt;<i> &gt; space) for storing non-transactional persistent messages. I am simply
+</I>&gt;<i> &gt; concerned that perhaps I was mistaken and was asking you to elaborate.
+</I>&gt;<i>
+</I>&gt;<i> Thanks for the clarification.
+</I>&gt;<i>
+</I>&gt;<i> The status quo is that irrespective of whether we are talking about
+</I>&gt;<i> persistent or non-persistent messages, messages are queued up in
+</I>&gt;<i> memory until they are drained. The difference between persistent and
+</I>&gt;<i> non-persistent is that with persistent messages a replica of each
+</I>&gt;<i> message is written to disk. This disk copy will only be used in a
+</I>&gt;<i> recovery situation for messages that have not been acknowledged.
+</I>&gt;<i>
+</I>&gt;<i> Obviously the limit to which you carry on queuing messages without
+</I>&gt;<i> draining them depends on the physical resources available to the
+</I>&gt;<i> Erlang VM and how virtual memory is utilized, which in turn depends on
+</I>&gt;<i> your OS and production setup.
+</I>&gt;<i>
+</I>&gt;<i> So to draw a line in the sand, you could go through and calibrate your
+</I>&gt;<i> setup wrt to the point at which it cannot allocate any more memory. By
+</I>&gt;<i> doing so, you've worked out approximately what your absolute bottom
+</I>&gt;<i> line will be. If, for example, your expected capacity is a small
+</I>&gt;<i> fraction of this known limit for your particular setup, and that in
+</I>&gt;<i> practice, you would notice undrained messages long before you hit the
+</I>&gt;<i> limit, you *might* decide that for all intents and purposes this is a
+</I>&gt;<i> acceptable and manageable risk.
+</I>&gt;<i>
+</I>&gt;<i> Whilst doing your testing, you may not have encountered any problems,
+</I>&gt;<i> because you may not have pushed it to the limit. All I am saying is
+</I>&gt;<i> that in doing stress testing for the scalability improvements I am
+</I>&gt;<i> working on, I have pushed Rabbit to its limits at various stages and
+</I>&gt;<i> am just informing you of the current theoretical worse case scenario -
+</I>&gt;<i> ATM queue depth is bounded by memory and there is no overflow
+</I>&gt;<i> facility.
+</I>&gt;<i>
+</I>&gt;<i> However, you may be more risk averse and not want to entertain the
+</I>&gt;<i> possibility of exhausting your system resources, ever.
+</I>&gt;<i>
+</I>&gt;<i> In that case, as you have rightfully pointed out, an obvious
+</I>&gt;<i> improvement to Rabbit is to overflow to disk when a certain queue
+</I>&gt;<i> depth is reached.
+</I>&gt;<i>
+</I>&gt;<i> This could apply to persistent and non-persistent messages alike.
+</I>&gt;<i>
+</I>&gt;<i> I'll take this down as an enhancement suggestion which may factored in
+</I>&gt;<i> the work that we have planned to make queues pluggable. An alternative
+</I>&gt;<i> is to incorporate this into the current queue implementation, but
+</I>&gt;<i> whether we do this would basically depend on what resources we have
+</I>&gt;<i> available and how acute it is time wise.
+</I>&gt;<i>
+</I>&gt;<i> Another related improvement includes implementing message expiry.
+</I>&gt;<i>
+</I>&gt;<i> Please let us what your time scales are for when you absolutely need
+</I>&gt;<i> this in production.
+</I>&gt;<i>
+</I>&gt;<i> HTH,
+</I>&gt;<i>
+</I>&gt;<i> Ben
+</I>&gt;<i>
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: <A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20080912/4b6bcefa/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20080912/4b6bcefa/attachment.htm</A> 
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001468.html">[rabbitmq-discuss] RabbitMQ memory management
+</A></li>
+	<LI>Next message: <A HREF="001470.html">[rabbitmq-discuss] RabbitMQ memory management
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1469">[ date ]</a>
+              <a href="thread.html#1469">[ thread ]</a>
+              <a href="subject.html#1469">[ subject ]</a>
+              <a href="author.html#1469">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

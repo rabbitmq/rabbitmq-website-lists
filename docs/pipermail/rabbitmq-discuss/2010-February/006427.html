@@ -1,0 +1,152 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] topix
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20topix&In-Reply-To=764E80D5-AB79-404C-AC5C-B0E198A333B3%40gmail.com">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="006424.html">
+   <LINK REL="Next"  HREF="006428.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] topix</H1>
+    <B>David R. MacIver</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20topix&In-Reply-To=764E80D5-AB79-404C-AC5C-B0E198A333B3%40gmail.com"
+       TITLE="[rabbitmq-discuss] topix">david.maciver at lshift.net
+       </A><BR>
+    <I>Mon Feb 22 11:24:59 GMT 2010</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="006424.html">[rabbitmq-discuss] Re-creation of queues not allowed
+</A></li>
+        <LI>Next message: <A HREF="006428.html">[rabbitmq-discuss] topix
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#6427">[ date ]</a>
+              <a href="thread.html#6427">[ thread ]</a>
+              <a href="subject.html#6427">[ subject ]</a>
+              <a href="author.html#6427">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>For those just joining us, the discussion is on the implementation of topic 
+exchanges.
+
+On Sat, Feb 20, 2010 at 02:52:41AM -0800, Yurii Rashkovskii wrote:
+&gt;<i> Matthias,
+</I>&gt;<i> 
+</I>&gt;<i> On 2010-02-20, at 2:49 AM, Matthias Radestock wrote:
+</I>&gt;<i> 
+</I>&gt;<i> &gt; Yurii,
+</I>&gt;<i> &gt; 
+</I>&gt;<i> &gt; Yurii Rashkovskii wrote:
+</I>&gt;<i> &gt;&gt; Out of curiosity, how this finite state machine would work?
+</I>&gt;<i> &gt; 
+</I>&gt;<i> &gt; Let me hand you over to my colleagues Matthew Sackman and David MacIver, who have been discussing this recently.
+</I>&gt;<i> 
+</I>&gt;<i> Thanks!
+</I>
+Hi, 
+
+There's still a bunch of discussion to be resolved about this (and will no doubt 
+be more when we actually find time to implement it).
+
+A couple points to consideri:
+
+We essentially have three operations we need to optimise:
+
+1. adding a binding
+2. removing a binding
+3. looking up a key against a set of bindings
+
+Currently the first two are fast (probably O(log(n)). Depends what mnesia is doing)
+but the third is O(length of key * number of bindings). This is sub-optimal.
+
+The naive solution would be to recompile the bindings to a finite automaton every
+time they change, but this is an O(number of bindings) operation, so this would
+result in creating O(n) bindings being O(n^2), which isn't great. So the objective
+is to build the tree incrementally in a way makes each operation relatively cheap.
+
+The version I proposed (which is almost certainly not how it will look in the end)
+is that we'd implement it as a mostly-optimized NFA (only mostly because it makes
+ the cost of all binding modification operations way cheaper to do it this way 
+while not hurting binding lookup that much). This actually ends up being relatively
+close to the tree of topics you proposed in your earlier email. 
+
+Essentially the way it would look is that you'd have the obvious NFA corresponding
+to any given binding and then merge prefixes for these.
+
+So e.g. the binding foo.bar.baz to queue 1 would simply look like:
+
+1 -(foo)-&gt; 2 -(bar)-&gt; 3 -(baz)-&gt; [queue-1]
+
+while foo.#.baz to queue-2 would give
+
+1 -(foo)-&gt; 2 -(.)-&gt; 2
+            -(epsilon)-&gt; 3 -(baz)-&gt; [queue-2]
+
+(where an epsilon transition is as usual one that doesn't consume any tokens)
+
+And adding both would result in:
+
+1 -(foo)-&gt; 2 -(epsilon)-&gt; 3 -(bar)-&gt; 4 -(baz)-&gt; [queue-1]
+             -(epsilon)-&gt; 5 -(.)-&gt; 5
+                            -(epsilon)-&gt; 6 -(baz)-&gt; [queue-2]
+
+It's worth noting that although in principle if both bindings were to queue-1 we
+would be able to merge nodes 6 and 7, we probably wouldn't do so: Because we want
+these machines to be incrementally editable there will definitely be some redundant
+nodes.
+
+One thing we've discussed is the choice between an NFA and a DFA. On the one hand,
+the DFA will be a lot faster on lookup for the cases it's well suited to (as well 
+as constant factors, the DFA will be O(length of key) while the NFA will be more
+like O(length of key * number of _matching_ bindings)), on the other hand it will 
+be slower for binding deletion (because you have to scan multiplea branches of 
+the tree to delete a single binding). 
+
+Additionally there are pathological cases where a DFA ends up with an exponentially 
+larger number of nodes than the equivalent DFA. For example:
+
+#.foo{&quot;.*&quot; k times} 
+
+takes O(2^k) nodes to represent with a DFA but O(k) nodes with an NFA.
+
+One thing that would help us to make these decisions as to the best approach would
+be some feedback on how people are using topic exchanges in the real world: e.g.
+if it turns out that basically all bindings are short then the space explosion 
+isn't really an issue. If bindings are created rarely, or typically in big blocks,
+then we could optimise for that. There's not going to be a universally &quot;best&quot; 
+solution, so while the objective is of course to make everything as fast as possible
+it always helps to know which operations we need to worry about the most. 
+
+Hope that helps clarify some of our thoughts so far.
+
+Regards,
+David
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="006424.html">[rabbitmq-discuss] Re-creation of queues not allowed
+</A></li>
+	<LI>Next message: <A HREF="006428.html">[rabbitmq-discuss] topix
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#6427">[ date ]</a>
+              <a href="thread.html#6427">[ thread ]</a>
+              <a href="subject.html#6427">[ subject ]</a>
+              <a href="author.html#6427">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,259 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] request for help!
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20request%20for%20help%21&In-Reply-To=4BE80C00.3080204%40jboss.com">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="007183.html">
+   <LINK REL="Next"  HREF="007184.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] request for help!</H1>
+    <B>Robert Godfrey</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20request%20for%20help%21&In-Reply-To=4BE80C00.3080204%40jboss.com"
+       TITLE="[rabbitmq-discuss] request for help!">rob.j.godfrey at gmail.com
+       </A><BR>
+    <I>Mon May 10 16:18:06 BST 2010</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="007183.html">[rabbitmq-discuss] request for help!
+</A></li>
+        <LI>Next message: <A HREF="007184.html">[rabbitmq-discuss] request for help!
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#7180">[ date ]</a>
+              <a href="thread.html#7180">[ thread ]</a>
+              <a href="subject.html#7180">[ subject ]</a>
+              <a href="author.html#7180">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi Tim,
+
+thanks for the feedback
+
+On 10 May 2010 15:37, Tim Fox &lt;<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">tim.fox at jboss.com</A>&gt; wrote:
+&gt;<i> I've spent this morning going through the 1.0. PR3 spec, firstly, it's
+</I>&gt;<i> considerably simpler than 0.10, which is great news :)
+</I>&gt;<i>
+</I>&gt;<i> Here's my 2p:
+</I>&gt;<i>
+</I>&gt;<i> One thing I find quite strange is that the core spec doesn't actually
+</I>&gt;<i> seem to mandate any queueing semantics anywhere. I've nothing
+</I>&gt;<i> particularly against that - in fact, the idea that a node can do
+</I>&gt;<i> different types of ordering is actually quite nice, however it's not a
+</I>&gt;<i> queueing protocol. Shouldn't AMQP therefore be renamed to AMTP (Advanced
+</I>&gt;<i> Message Transfer Protocol) ? ;)
+</I>
+:<i>-) It is deliberate that we've chosen to break the specification up
+</I>into distinct layers.  The parts covered in PR3 do not form the
+&quot;whole&quot; of AMQP but what we have been so far referring to as the
+&quot;core&quot;.  It is in the plan that on top of this will come definitions
+of specific node types (such as Queues) and the behaviours that one
+can expect from them.  An &quot;AMQP Broker&quot; will be defined in terms the
+node types and behaviours required to be supported.  That is not to
+say that you can't have a messaging broker which speaks AMQP which is
+not an &quot;AMQP Broker&quot;.  One of the design goals was to enable vendors
+of existing messaging products to layer AMQP as a protocol on top of
+their existing product - something that proved very difficult with the
+0-x protocols due to the very specific model it imposed on broker
+behaviour right down to the transport layer.
+
+&gt;<i>
+</I>&gt;<i> On a more serious note, my main concerns are mainly around complexity,
+</I>&gt;<i> and verbosity of the wire format. The latter I suppose is not completely
+</I>&gt;<i> independent from the former.
+</I>&gt;<i>
+</I>&gt;<i> Regarding complexity. IMO a large part of the complexity in the spec.
+</I>&gt;<i> seems to come from the way it tries to provide a once and only once
+</I>&gt;<i> delivery guarantee. AIUI the way the spec. implements this guarantee is
+</I>&gt;<i> something like the following when transferring a message from A to B:
+</I>&gt;<i>
+</I>&gt;<i> a) message to be sent from A--&gt;B
+</I>&gt;<i> b) ack sent back from B--&gt;A
+</I>&gt;<i> c) &quot;ack of ack&quot; sent from A--&gt;B - now the delivery tag can be removed
+</I>&gt;<i> from the senders cache
+</I>&gt;<i>
+</I>
+Just to be clear, while this behaviour is permitted under the spec, it
+is not mandated that every message exchange follows this pattern.
+Firstly the protocol will support different reliability guarantees
+agreed at the link level (at most once, at least once, exactly once,
+etc) which will allow simpler patterns where the extra guarantees are
+not required.  Secondly even when performing exactly once messaging
+these acknowledgements are expected to be batched if you are looking
+for reasonable performance.
+
+&gt;<i> This results in a complex set of message states, and puts the burden on
+</I>&gt;<i> both sides of the link to maintain a map of delivery tags, which would
+</I>&gt;<i> also have to be persisted in order to provide once and only delivery
+</I>&gt;<i> guarantee in event of failures of node(s). This will also require
+</I>&gt;<i> several syncs to storage at each transition (for durable messaging).
+</I>&gt;<i> I.e. slow
+</I>
+For each message you will need to sync when it is assigned to a
+consumer and when it is dequeued if you want exactly once.  I'm not
+sure how you can easily do it with fewer (other than combining the
+enqueue with an assignment to a consumer).  If you are happy with at
+least once then you can remove the first of these (though you'd still
+need the enqueue sync - obviously).  If you want at most once you,
+dequeue on sending.
+
+&gt;<i> Perhaps a simpler way of getting the once and only guarantee is to
+</I>&gt;<i> forget the delivery tag altogether and allow the sender to specify a
+</I>&gt;<i> de-duplication-id - this is just a user generated id - e.g. a String or
+</I>&gt;<i> a byte[], (can be generated from user application domain concepts - e.g.
+</I>&gt;<i> order number).
+</I>
+I'm not sure what the difference between this and the delivery-tag
+is... or are you just suggesting that in the case where you don't need
+exactly once then you don't need a semantically meaningful (at the
+application level) tag?
+
+&gt;<i> When sending a message this id can be specified on the transfer. The
+</I>&gt;<i> receiving end can then maintain a de-duplication cache. The
+</I>&gt;<i> de-duplication cache can be implemented as a circular buffer which just
+</I>&gt;<i> overwrites itself when full (this is what we do in HornetQ for reliable
+</I>&gt;<i> bridging between nodes), this means the interaction c) is not necessary
+</I>&gt;<i> or can just be sent intermittently to allow the cache to be cleared. The
+</I>&gt;<i> de-dup cache still requires syncing to non volatile storage to give the
+</I>&gt;<i> once and only once (for durable messages), however it requires less
+</I>&gt;<i> writes than the method described in the spec, and it it has one less
+</I>&gt;<i> interaction (you can get rid of the &quot;ack of ack&quot;)
+</I>
+This is pretty much how the spec works.  There is nothing to prevent
+you implementing your de-dup cache as a circular buffer.  One thing
+that was missed in PR3 but has been rectified since we sent it out is
+that sequence-no for the low watermark of unsettled transfers should
+be on the transfer frame as well as the disposition frame.  Inspecting
+this value allows you to clear from your circular buffer safely.
+
+&gt;<i> On recovery after system failure, the sender just blindly sends the
+</I>&gt;<i> messages again, on receipt at the server any messages seen before will
+</I>&gt;<i> just be rejected. No need for reattaching, sending maps of unsettled
+</I>&gt;<i> transfers or other complex stuff like that.
+</I>
+
+
+&gt;<i> By removing all this delivery tag book-keeping and session re-attachment
+</I>&gt;<i> stuff, which seems unnecessary to me, would result in a dramatic
+</I>&gt;<i> simplification.
+</I>
+I presume by this you mean link reattachment - there is no concept of
+session reattachment in PR3.  I'm not sure exactly how much
+simplification this gives... the retained state needs to be pretty
+much the same (the sender needs to hold the in-doubt messages, the
+receiver the de-dup ids of the in-doubt transfers).  On re-attach all
+we are doing is sending this state (which you will be keeping anyway).
+ The advantage in terms of not sending unnecessary duplicates is
+possibly only marginal for many people (though it does help solve the
+case of resuming an interrupted transfer of a large message), however
+it also allows the disambiguation of the case where one side has
+actually lost state, so we can determine what to do with the messages
+where we can no-longer guarantee exactly once.  Sending as maps rather
+than as a sequence allows each end to retain the data without
+necessarily having to remember the sequence.  the point is really that
+you can *choose* to implement this all using circular buffers (you
+don't *need* to implement a map)... but we aren't forcing clients to
+persistently remember the sequence in which they sent/received
+messages.
+
+&gt;<i> Regarding verbosity of the wire format for message transfer; if you're
+</I>&gt;<i> just passing a 12 byte message (e.g. stock price - 4 byte identifier + 8
+</I>&gt;<i> byte price) then the overall encoded size is much higher than 12 bytes.
+</I>&gt;<i>
+</I>&gt;<i> This will kill performance for small messages, making any AMQP compliant
+</I>&gt;<i> implementation unable to compete in the world of lightweight
+</I>&gt;<i> publish/subscribe messaging with other, non AMQP implementations which
+</I>&gt;<i> don't have to conform to the AMQP wire format and can produce much more
+</I>&gt;<i> lightweight encodings. The key to perf with lightweight pub/sub is to
+</I>&gt;<i> make the encoded message size as small as possible and cram as many
+</I>&gt;<i> messages as you can into single socket writes.
+</I>&gt;<i>
+</I>&gt;<i> Now, lightweight pub/sub may not be the target domain for AMQP, in which
+</I>&gt;<i> case it does not need to worry about it, however if a particular
+</I>&gt;<i> messaging system supports multiple protocols including AMQP, it will not
+</I>&gt;<i> do much for the adoption of AMQP if the best performance is not
+</I>&gt;<i> achievable using the AMQP protocol - users will fall back to using the
+</I>&gt;<i> proprietary protocol offered by the vendor.
+</I>
+I haven't actually worked out what the per message overhead will be...
+we've tried to make as many fields optional as possible to reduce
+overhead, and we'll continue to do so.  The efficiency (in terms of
+number of bytes per value) of the encoding has not been a focus simply
+because the protocol is designed to admit alternative encodings at a
+later date.  In many use cases we've seen that the ease of
+encoding/decoding has actually proven a bigger determinant on
+performance than the number of bytes on the wire.  Our view was that
+trying to optimise this stuff too early would perhaps lead us to focus
+on the wrong areas.  habing said all this, AMQP is specifically not
+targeting high volume low latency pub/sub at this juncture... and this
+is an area where protocols targeted at that market will always likely
+have an advantage over a more general protocol.
+
+&gt;<i> A short comment on transactions. I have to be honest here, I spent about
+</I>&gt;<i> 30 mins reading the chapter on transactions several times. I have to say
+</I>&gt;<i> at the end of it I am not much further understanding it. :(
+</I>&gt;<i>
+</I>&gt;<i> However maybe that is moot - a part of me is thinking that transactions
+</I>&gt;<i> don't really belong in the core spec. Perhaps the core spec should be
+</I>&gt;<i> concerned with allowing the reliable movement of messages between nodes.
+</I>&gt;<i> With that in place, transactions could be layered on top in another spec (?)
+</I>&gt;<i>
+</I>
+The ideas is that the transactions are already layered on top of the
+transport rather than as a part of it as in prior versions of AMQP.
+It is quite possible that the transaction documentation needs a little
+more polishing to make this clear :-)  There will more more work
+coming out on this, including more detailed work on distributed
+transactions.
+
+&gt;<i>
+</I>&gt;<i> --
+</I>&gt;<i> Sent from my BBC Micro Model B
+</I>
+The computer of champions :-)
+
+
+-- Rob
+
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="007183.html">[rabbitmq-discuss] request for help!
+</A></li>
+	<LI>Next message: <A HREF="007184.html">[rabbitmq-discuss] request for help!
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#7180">[ date ]</a>
+              <a href="thread.html#7180">[ thread ]</a>
+              <a href="subject.html#7180">[ subject ]</a>
+              <a href="author.html#7180">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

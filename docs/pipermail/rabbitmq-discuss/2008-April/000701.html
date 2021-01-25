@@ -1,0 +1,254 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] pub-sub part 2: erlang consume
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20pub-sub%20part%202%3A%20erlang%20consume&In-Reply-To=2DFE3F25-9079-49E2-B408-8EFFF0344177%40gmail.com">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000699.html">
+   <LINK REL="Next"  HREF="000702.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] pub-sub part 2: erlang consume</H1>
+    <B>Joe Lee</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20pub-sub%20part%202%3A%20erlang%20consume&In-Reply-To=2DFE3F25-9079-49E2-B408-8EFFF0344177%40gmail.com"
+       TITLE="[rabbitmq-discuss] pub-sub part 2: erlang consume">codewalkerjoe at gmail.com
+       </A><BR>
+    <I>Fri Apr 11 05:24:57 BST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000699.html">[rabbitmq-discuss] pub-sub part 2: erlang consume
+</A></li>
+        <LI>Next message: <A HREF="000702.html">[rabbitmq-discuss] pub-sub part 2: erlang consume
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#701">[ date ]</a>
+              <a href="thread.html#701">[ thread ]</a>
+              <a href="subject.html#701">[ subject ]</a>
+              <a href="author.html#701">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hello all,
+
+On Thu, Apr 10, 2008 at 6:55 AM, Ben Hood &lt;<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">0x6e6562 at gmail.com</A>&gt; wrote:
+
+&gt;<i> You are trying to match this tuple
+</I>&gt;<i>
+</I>&gt;<i> #'queue.declare_ok'{queue = Q,
+</I>&gt;<i>                        message_count = MessageCount,
+</I>&gt;<i>                        consumer_count = ConsumerCount}
+</I>&gt;<i>                       = amqp_channel:call(Channel,QueueDeclare)
+</I>&gt;<i>
+</I>&gt;<i> with this tuple:
+</I>&gt;<i>
+</I>&gt;<i>  {'queue.declare_ok',
+</I>&gt;<i> &gt;                         &lt;&lt;&quot;<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">amq.q.gen1_rabbit at home_20080409224223_</A>
+</I>&gt;<i> &gt; &quot;&gt;&gt;,0,0}
+</I>&gt;<i> &gt;
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> so that fact that Q, which was previously bound to &lt;&lt;&quot;&quot;&gt;&gt; is being
+</I>&gt;<i> compared to &lt;&quot;<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">amq.q.gen1_rabbit at home_20080409224223_</A>&quot;&gt;&gt; which violates the
+</I>&gt;<i> match condition.
+</I>&gt;<i>
+</I>&gt;<i> To fix this, don't re-use the *variable* Q, because in Erlang, it's not
+</I>&gt;<i> really a variable (non-destructive assignment).
+</I>&gt;<i>
+</I>
+I have tried what Ben suggested and used a new variable called Q1.  It
+helped me get over that problem.  Now I have another issue with the consume
+code.
+
+I tried looking into mnesia tables and ets tables, but not much help.
+Receive is timing out at after 2000 -&gt;  exit(did_not_receive_message) end.
+Only reason for to get timeout is when there isn't a message in the
+exchange.  This shouldn't be the case because I just published the message.
+
+ receive
+        {#'basic.deliver'{delivery_tag = DeliveryTag}, Content} -&gt;
+            #content{payload_fragments_rev = [Payload]} = Content,
+            io:format(&quot;Message received: ~p~n&quot;, [Payload])
+    after 2000 -&gt;
+        exit(did_not_receive_message)
+    end
+
+3&gt; amqp_async:amqp_lifecycle().
+Connection: {&lt;0.37.0&gt;,network}
+ok
+4&gt; amqp_async_consume:amqp_lifecycle_consume().
+Connection: {&lt;0.47.0&gt;,network}
+Have a look into this one: closed
+** exception exit: {{amqp_async_consume,amqp_lifecycle_consume,0},
+                    {line,80},
+                    did_not_receive_message}
+     in function  amqp_async_consume:amqp_lifecycle_consume/0
+5&gt;
+
+
+Also, I captured the packet with Wireshark and getting [Unreassembled Packet
+[incorrect TCP checksum]] and [Dissector bug, protocol AMQP:
+packet-amqp.c:1252.  My guess is that rabbitmq is communicating with
+amqp-0.8 protocol and Wireshark trying to make sense out of those packets
+using amqp-0.9 protocol.
+
+Wireshark amqp pub/sub output:
+
+228    2008-04-10 22:50:59.646435000    127.0.0.1    127.0.0.1    TCP
+amqp &gt; 37251 [SYN, ACK] Seq=0 Ack=1 Win=6144 Len=0 MSS=16396 TSV=922137
+TSER=922137 WS=6
+229    2008-04-10 22:50:59.646478000    127.0.0.1    127.0.0.1    TCP
+37251 &gt; amqp [ACK] Seq=1 Ack=1 Win=32832 Len=0 TSV=922137 TSER=922137
+230    2008-04-10 22:50:59.648524000    127.0.0.1    127.0.0.1    AMQP
+Protocol-Header
+231    2008-04-10 22:50:59.648557000    127.0.0.1    127.0.0.1    TCP
+amqp &gt; 37251 [ACK] Seq=1 Ack=9 Win=6080 Len=0 TSV=922140 TSER=922140
+232    2008-04-10 22:50:59.760571000    127.0.0.1    127.0.0.1    AMQP
+Connection.Start
+233    2008-04-10 22:50:59.760615000    127.0.0.1    127.0.0.1    TCP
+37251 &gt; amqp [ACK] Seq=9 Ack=297 Win=33920 Len=0 TSV=922252 TSER=922252
+234    2008-04-10 22:50:59.777853000    127.0.0.1    127.0.0.1    AMQP
+Connection.Start-Ok
+235    2008-04-10 22:50:59.777891000    127.0.0.1    127.0.0.1    TCP
+amqp &gt; 37251 [ACK] Seq=297 Ack=139 Win=5952 Len=0 TSV=922269 TSER=922269
+236    2008-04-10 22:50:59.782283000    127.0.0.1    127.0.0.1    AMQP
+Connection.Tune
+237    2008-04-10 22:50:59.782427000    127.0.0.1    127.0.0.1    AMQP
+Connection.Tune-Ok
+238    2008-04-10 22:50:59.821494000    127.0.0.1    127.0.0.1    TCP
+amqp &gt; 37251 [ACK] Seq=317 Ack=159 Win=6144 Len=0 TSV=922313 TSER=922273
+239    2008-04-10 22:50:59.821532000    127.0.0.1    127.0.0.1    AMQP
+Connection.Open
+240    2008-04-10 22:50:59.821704000    127.0.0.1    127.0.0.1    TCP
+amqp &gt; 37251 [ACK] Seq=317 Ack=175 Win=6144 Len=0 TSV=922313 TSER=922313
+241    2008-04-10 22:50:59.846424000    127.0.0.1    127.0.0.1    AMQP
+Connection.Open-Ok
+242    2008-04-10 22:50:59.870959000    127.0.0.1    127.0.0.1    AMQP
+Channel.Open
+243    2008-04-10 22:50:59.877764000    127.0.0.1    127.0.0.1    AMQP
+[Unreassembled Packet [incorrect TCP checksum]]
+244    2008-04-10 22:50:59.878032000    127.0.0.1    127.0.0.1    AMQP
+Access.Request
+245    2008-04-10 22:50:59.880196000    127.0.0.1    127.0.0.1    AMQP
+Access.Request-Ok
+246    2008-04-10 22:50:59.880396000    127.0.0.1    127.0.0.1    AMQP
+Exchange.Declare
+247    2008-04-10 22:50:59.881167000    127.0.0.1    127.0.0.1    AMQP
+Exchange.Declare-Ok
+248    2008-04-10 22:50:59.881430000    127.0.0.1    127.0.0.1    AMQP
+Basic.Publish Content-Header Content-Body
+249    2008-04-10 22:50:59.920486000    127.0.0.1    127.0.0.1    TCP
+amqp &gt; 37251 [ACK] Seq=378 Ack=322 Win=6144 Len=0 TSV=922412 TSER=922372
+250    2008-04-10 22:50:59.920515000    127.0.0.1    127.0.0.1    AMQP
+Channel.Close
+251    2008-04-10 22:50:59.920637000    127.0.0.1    127.0.0.1    TCP
+amqp &gt; 37251 [ACK] Seq=378 Ack=348 Win=6144 Len=0 TSV=922412 TSER=922412
+252    2008-04-10 22:50:59.921226000    127.0.0.1    127.0.0.1    AMQP
+Channel.Close-Ok
+253    2008-04-10 22:50:59.921528000    127.0.0.1    127.0.0.1    AMQP
+[Dissector bug, protocol AMQP: packet-amqp.c:1252: failed assertion &quot;(0)&quot;]
+254    2008-04-10 22:50:59.921733000    127.0.0.1    127.0.0.1    AMQP
+[Dissector bug, protocol AMQP: packet-amqp.c:1252: failed assertion &quot;(0)&quot;]
+255    2008-04-10 22:50:59.921917000    127.0.0.1    127.0.0.1    TCP
+37251 &gt; amqp [FIN, ACK] Seq=374 Ack=402 Win=33920 Len=0 TSV=922413
+TSER=922413
+256    2008-04-10 22:50:59.922030000    127.0.0.1    127.0.0.1    TCP
+amqp &gt; 37251 [FIN, ACK] Seq=402 Ack=375 Win=6144 Len=0 TSV=922413
+TSER=922413
+257    2008-04-10 22:50:59.922055000    127.0.0.1    127.0.0.1    TCP
+37251 &gt; amqp [ACK] Seq=375 Ack=403 Win=33920 Len=0 TSV=922413 TSER=922413
+258    2008-04-10 22:51:09.766385000    127.0.0.1    127.0.0.1    TCP
+48524 &gt; 48428 [PSH, ACK] Seq=249 Ack=249 Win=4096 [TCP CHECKSUM INCORRECT]
+Len=4 TSV=932257 TSER=917257
+259    2008-04-10 22:51:09.766603000    127.0.0.1    127.0.0.1    TCP
+48428 &gt; 48524 [PSH, ACK] Seq=249 Ack=253 Win=513 [TCP CHECKSUM INCORRECT]
+Len=4 TSV=932258 TSER=932257
+260    2008-04-10 22:51:09.766641000    127.0.0.1    127.0.0.1    TCP
+48524 &gt; 48428 [ACK] Seq=253 Ack=253 Win=4095 Len=0 TSV=932258 TSER=932258
+261    2008-04-10 22:51:14.617207000    127.0.0.1    127.0.0.1    TCP
+33647 &gt; amqp [SYN] Seq=0 Win=32792 Len=0 MSS=16396 TSV=937108 TSER=0 WS=6
+262    2008-04-10 22:51:14.617251000    127.0.0.1    127.0.0.1    TCP
+amqp &gt; 33647 [SYN, ACK] Seq=0 Ack=1 Win=6144 Len=0 MSS=16396 TSV=937108
+TSER=937108 WS=6
+263    2008-04-10 22:51:14.617287000    127.0.0.1    127.0.0.1    TCP
+33647 &gt; amqp [ACK] Seq=1 Ack=1 Win=32832 Len=0 TSV=937108 TSER=937108
+264    2008-04-10 22:51:14.617405000    127.0.0.1    127.0.0.1    AMQP
+Protocol-Header
+265    2008-04-10 22:51:14.617426000    127.0.0.1    127.0.0.1    TCP
+amqp &gt; 33647 [ACK] Seq=1 Ack=9 Win=6080 Len=0 TSV=937108 TSER=937108
+266    2008-04-10 22:51:14.618507000    127.0.0.1    127.0.0.1    AMQP
+Connection.Start
+267    2008-04-10 22:51:14.618540000    127.0.0.1    127.0.0.1    TCP
+33647 &gt; amqp [ACK] Seq=9 Ack=297 Win=33920 Len=0 TSV=937110 TSER=937110
+268    2008-04-10 22:51:14.618730000    127.0.0.1    127.0.0.1    AMQP
+Connection.Start-Ok
+269    2008-04-10 22:51:14.618910000    127.0.0.1    127.0.0.1    AMQP
+Connection.Tune
+270    2008-04-10 22:51:14.619114000    127.0.0.1    127.0.0.1    AMQP
+Connection.Tune-Ok
+271    2008-04-10 22:51:14.658486000    127.0.0.1    127.0.0.1    TCP
+amqp &gt; 33647 [ACK] Seq=317 Ack=159 Win=6144 Len=0 TSV=937150 TSER=937110
+272    2008-04-10 22:51:14.658513000    127.0.0.1    127.0.0.1    AMQP
+Connection.Open
+273    2008-04-10 22:51:14.658533000    127.0.0.1    127.0.0.1    TCP
+amqp &gt; 33647 [ACK] Seq=317 Ack=175 Win=6080 Len=0 TSV=937150 TSER=937150
+274    2008-04-10 22:51:14.659453000    127.0.0.1    127.0.0.1    AMQP
+Connection.Open-Ok
+275    2008-04-10 22:51:14.660066000    127.0.0.1    127.0.0.1    AMQP
+Channel.Open
+276    2008-04-10 22:51:14.660332000    127.0.0.1    127.0.0.1    AMQP
+[Unreassembled Packet [incorrect TCP checksum]]
+277    2008-04-10 22:51:14.660548000    127.0.0.1    127.0.0.1    AMQP
+Access.Request
+278    2008-04-10 22:51:14.661351000    127.0.0.1    127.0.0.1    AMQP
+Access.Request-Ok
+279    2008-04-10 22:51:14.661573000    127.0.0.1    127.0.0.1    AMQP
+Queue.Declare
+280    2008-04-10 22:51:14.686647000    127.0.0.1    127.0.0.1    AMQP
+Queue.Declare-Ok
+281    2008-04-10 22:51:14.686925000    127.0.0.1    127.0.0.1    AMQP
+Queue.Bind
+282    2008-04-10 22:51:14.687699000    127.0.0.1    127.0.0.1    AMQP
+Queue.Bind-Ok
+283    2008-04-10 22:51:14.687920000    127.0.0.1    127.0.0.1    AMQP
+[Unreassembled Packet [incorrect TCP checksum]]
+284    2008-04-10 22:51:14.688307000    127.0.0.1    127.0.0.1    AMQP
+Basic.Consume-Ok
+285    2008-04-10 22:51:14.727486000    127.0.0.1    127.0.0.1    TCP
+33647 &gt; amqp [ACK] Seq=352 Ack=489 Win=33920 Len=0 TSV=937219 TSER=937179
+286    2008-04-10 22:51:16.689197000    127.0.0.1    127.0.0.1    TCP
+33647 &gt; amqp [FIN, ACK] Seq=352 Ack=489 Win=33920 Len=0 TSV=939180
+TSER=937179
+287    2008-04-10 22:51:16.690130000    127.0.0.1    127.0.0.1    TCP
+amqp &gt; 33647 [FIN, ACK] Seq=489 Ack=353 Win=6144 Len=0 TSV=939181
+TSER=939180
+
+Thank you all, it's been a long day for me.
+Joe
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: <A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20080411/16f2527e/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20080411/16f2527e/attachment.htm</A> 
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000699.html">[rabbitmq-discuss] pub-sub part 2: erlang consume
+</A></li>
+	<LI>Next message: <A HREF="000702.html">[rabbitmq-discuss] pub-sub part 2: erlang consume
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#701">[ date ]</a>
+              <a href="thread.html#701">[ thread ]</a>
+              <a href="subject.html#701">[ subject ]</a>
+              <a href="author.html#701">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

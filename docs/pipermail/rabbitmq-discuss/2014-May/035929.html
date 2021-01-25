@@ -1,0 +1,187 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] auto-delete queue/exchanges and cluster	synchronization
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20auto-delete%20queue/exchanges%20and%20cluster%0A%09synchronization&In-Reply-To=%3C53722549.4030002%40rabbitmq.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="036032.html">
+   <LINK REL="Next"  HREF="036031.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] auto-delete queue/exchanges and cluster	synchronization</H1>
+    <B>Simon MacMullen</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20auto-delete%20queue/exchanges%20and%20cluster%0A%09synchronization&In-Reply-To=%3C53722549.4030002%40rabbitmq.com%3E"
+       TITLE="[rabbitmq-discuss] auto-delete queue/exchanges and cluster	synchronization">simon at rabbitmq.com
+       </A><BR>
+    <I>Tue May 13 14:59:37 BST 2014</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="036032.html">[rabbitmq-discuss] auto-delete queue/exchanges and cluster	synchronization
+</A></li>
+        <LI>Next message: <A HREF="036031.html">[rabbitmq-discuss] auto-delete queue/exchanges and cluster	synchronization
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#35929">[ date ]</a>
+              <a href="thread.html#35929">[ thread ]</a>
+              <a href="subject.html#35929">[ subject ]</a>
+              <a href="author.html#35929">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>On 13/05/2014 14:25, mouad ben wrote:
+&gt;<i> RabbitMQ cluster (RabbitMQ 3.1.5,Erlang R14B04)
+</I>
+&gt;<i> (Queues are also created with x-ha-policy set to all).
+</I>
+As an aside, note that x-ha-policy only controls queue mirroring in 2.x! 
+In 3.x it does nothing at all. See <A HREF="http://www.rabbitmq.com/ha.html">http://www.rabbitmq.com/ha.html</A> and 
+<A HREF="http://www.rabbitmq.com/blog/2012/11/19/breaking-things-with-rabbitmq-3-0/">http://www.rabbitmq.com/blog/2012/11/19/breaking-things-with-rabbitmq-3-0/</A>
+
+Of course, autodelete RPC queues quite possibly do not need to be HA.
+
+&gt;<i> But in the same time if a node of the cluster go down the Queue consumer
+</I>&gt;<i> that are created in this node will be deleted, the Queues with
+</I>&gt;<i> auto-delete will end up being deleted too and the same thing with the
+</I>&gt;<i> exchanges bounded to them which also have auto-delete, all of this will
+</I>&gt;<i> be done **eventually** in all RabbitMQ nodes that are still up.
+</I>&gt;<i>
+</I>&gt;<i> So in detail from neutron side we have:
+</I>&gt;<i>
+</I>&gt;<i> N1. Connect to node 2.
+</I>&gt;<i> N2. Create Exchange X.
+</I>&gt;<i> N3. Create Queue Q.
+</I>&gt;<i> N4. Create Binding from Q to X.
+</I>&gt;<i>
+</I>&gt;<i>  From cluster side we have:
+</I>&gt;<i>
+</I>&gt;<i> R1. Delete consumer.
+</I>&gt;<i> R2. Delete Queue Q (Binding is deleted explicitly).
+</I>&gt;<i> R3. Delete Exchange X.
+</I>&gt;<i>
+</I>&gt;<i> This actually can lead to a race condition that will result of N4
+</I>&gt;<i> failing with error stating that exchange doesn't exist because
+</I>&gt;<i> apparently R3 action was executed after N2 and before N4.
+</I>
+That makes sense. But note that R2 and R3 are an atomic event.
+
+&gt;<i> A workaround that we have created is to retry creation if it fail as you
+</I>&gt;<i> can see in the bug report in OpenStack side
+</I>&gt;<i> <A HREF="https://bugs.launchpad.net/neutron/+bug/1318721.">https://bugs.launchpad.net/neutron/+bug/1318721.</A>
+</I>
+And that would work as a workaround.
+
+&gt;<i> But i think that this also a problem in RabbitMQ side, basically i
+</I>&gt;<i> believe a more sane behavior will be for RabbitMQ to ignore **old**
+</I>&gt;<i> delete if a newest exchange's declare was sent, instead of threading
+</I>&gt;<i> this later as a no op.
+</I>
+Hmm. Newer than what? The queue delete R2 is not necessarily older than 
+then most recent exchange declare N2 in this scenario, is it? In fact, 
+isn't R2 always newer than N2?
+
+(Also, doing this would require timestamps in queues, exchanges and 
+bindings, updated cluster-wide every time they are re-declared. That 
+would be a big problem for performance.)
+
+&gt;<i> Does my analyze above make sense !?
+</I>
+So I'm not sure it does.
+
+&gt;<i> When reading also the AMQP 0-9-1 reference
+</I>&gt;<i> (<A HREF="https://www.rabbitmq.com/amqp-0-9-1-reference.html">https://www.rabbitmq.com/amqp-0-9-1-reference.html</A>) i found that:
+</I>&gt;<i>
+</I>&gt;<i>   * The server SHOULD allow for a reasonable delay between the point
+</I>&gt;<i>     when it determines that an exchange is not being used (or no longer
+</I>&gt;<i>     used), and the point when it deletes the exchange. At the least it
+</I>&gt;<i>     must allow a client to create an exchange and then bind a queue to
+</I>&gt;<i>     it, with a small but non-zero delay between these two actions.
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> Does my finding contradict this ? And how big is the delay ?
+</I>
+It does; there is no delay in RabbitMQ.
+
+Note that if there were a delay then you'd still have exactly the same 
+race anyway, it wouldn't solve anything.
+
+You can get a similar delay for the queue deletion, by using x-expires 
+instead of auto-delete. But once the queue goes, the bindings and 
+exchange all go atomically.
+
+So how to solve your problem? It sounds like each thing that can receive 
+RPC replies declares an exchange, queue and binding for that purpiose, 
+with the exchange and queue not linked in to anything else. Is that correct?
+
+If that is so, why not only declare a queue, and have the RPC server 
+publish to that queue directly? The queue could still be auto-delete, 
+and everything would be simpler. Or is there some subtlety I'm not getting?
+
+&gt;<i> One last thing is the auto-delete deprecation from
+</I>&gt;<i> <A HREF="http://www.rabbitmq.com/amqp-0-9-1-errata.html,">http://www.rabbitmq.com/amqp-0-9-1-errata.html,</A> point 25:
+</I>&gt;<i>
+</I>&gt;<i> The 'auto-delete' flag on 'exchange.declare' got deprecated in 0-9-1.
+</I>&gt;<i> Auto-delete exchanges are actually quite useful, so this flag should be
+</I>&gt;<i> restored.
+</I>&gt;<i>
+</I>&gt;<i> Does this mean the auto-delete flag will not be removed from RabbitMQ or
+</I>&gt;<i> what ?
+</I>
+It means we will continue to support it, yes.
+
+Cheers, Simon
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="036032.html">[rabbitmq-discuss] auto-delete queue/exchanges and cluster	synchronization
+</A></li>
+	<LI>Next message: <A HREF="036031.html">[rabbitmq-discuss] auto-delete queue/exchanges and cluster	synchronization
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#35929">[ date ]</a>
+              <a href="thread.html#35929">[ thread ]</a>
+              <a href="subject.html#35929">[ subject ]</a>
+              <a href="author.html#35929">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

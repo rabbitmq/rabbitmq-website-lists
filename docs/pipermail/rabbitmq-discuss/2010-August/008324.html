@@ -1,0 +1,127 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Exactly Once Delivery
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Exactly%20Once%20Delivery&In-Reply-To=%3C4C5FDD46.7070609%40jboss.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="008311.html">
+   <LINK REL="Next"  HREF="008325.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Exactly Once Delivery</H1>
+    <B>Tim Fox</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Exactly%20Once%20Delivery&In-Reply-To=%3C4C5FDD46.7070609%40jboss.com%3E"
+       TITLE="[rabbitmq-discuss] Exactly Once Delivery">tim.fox at jboss.com
+       </A><BR>
+    <I>Mon Aug  9 11:49:42 BST 2010</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="008311.html">[rabbitmq-discuss] Exactly Once Delivery
+</A></li>
+        <LI>Next message: <A HREF="008325.html">[rabbitmq-discuss] Exactly Once Delivery
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#8324">[ date ]</a>
+              <a href="thread.html#8324">[ thread ]</a>
+              <a href="subject.html#8324">[ subject ]</a>
+              <a href="author.html#8324">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>On 07/08/10 12:50, Matthew Sackman wrote:
+&gt;<i> On Fri, Aug 06, 2010 at 10:43:56PM +0100, Tim Fox wrote:
+</I>&gt;<i>    
+</I>&gt;&gt;<i> The way we do it in HornetQ is we have a well defined header key
+</I>&gt;&gt;<i> &quot;_HQ_DUP_ID&quot;. The client can set this with some unique value of it's
+</I>&gt;&gt;<i> choice before sending (e.g. a GUID). When the server receives the
+</I>&gt;&gt;<i> message if the _HQ_DUP_ID header is set, it looks up the value in
+</I>&gt;&gt;<i> it's cache, and if it's seen it before it ignores it. The cache can
+</I>&gt;&gt;<i> optionally be persisted.
+</I>&gt;&gt;<i>      
+</I>&gt;<i> How do you prevent the cache from growing without bound?
+</I>&gt;<i>    
+</I>Currently we use a circular buffer. It's up to the user to make it big 
+enough for their use case. For JMS, where persistent sends/ tx commit 
+must be synchronous, the buffer size would need to be somewhat larger 
+than the max number of producers, since there's never more than one 
+&quot;inflight&quot; message at any time per producer. But there's certainly an 
+element of guesswork here.
+
+In HornetQ we also provide an interface above and beyond JMS, which 
+allows the user to receive an *asynchronous* ack that the message they 
+sent (or tx commit) has been received ok on the server so they can clear 
+it from their local resend cache. Since this is async it's not limited 
+by network latency as in the blocking JMS case. The downside is many 
+messages can be in-flight at any time per producer so the caches need to 
+be larger.
+
+To do all of this without being limited by arbitrary cache size, would 
+need some kind of &quot;ack of ack&quot; (we don't implement this yet)- i.e. 1) 
+the client sends message to server, 2) server sends ack back to to 
+client to say &quot;received-ok&quot; 3) client sends further ack from client to 
+server saying received-received-ok-ok. At point 2) the client can clear 
+their resend cache. At point 3) the server can clear it's cache. I 
+believe AMQP 1.0 specifies something similar to this too (?)
+
+So.. this could scale. You'd have a further buffer per producer on the 
+server side. If you're using TCP on the server, then every connection 
+will have it's own buffer anyway. The extra buffer per producer should 
+be of the same order of size as the TCP buffer, since it's effectively 
+defined by a window, kind of similar to the TCP window size.
+
+Like others have said, 100% once and only once delivery doesn't happen. 
+To get very near at 100% you can implement stuff like the above, and 
+also make sure your storage is highly redundant, also mirrored in 
+geographically distributed sites in case the building blows up. Then 
+you've got bugs in your own app, device drivers or the operating system 
+that screw your once and only once (for example last week I hit a bug in 
+the Linux kernel TCP impl which can cause packets to be lost at high 
+load) that you might hit well before having to take quantum effects into 
+account :)
+&gt;<i> Matthew
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>&gt;<i>    
+</I>
+
+-- 
+Sent from my BBC Micro Model B
+
+Tim Fox
+JBoss
+
+HornetQ - putting the buzz in messaging <A HREF="http://hornetq.org">http://hornetq.org</A>
+<A HREF="http://hornetq.blogspot.com/">http://hornetq.blogspot.com/</A>
+<A HREF="http://twitter.com/hornetq">http://twitter.com/hornetq</A>
+<A HREF="irc://irc.freenode.net:6667#hornetq">irc://irc.freenode.net:6667#hornetq</A>	
+<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">fox at redhat.com</A>
+
+</PRE>
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="008311.html">[rabbitmq-discuss] Exactly Once Delivery
+</A></li>
+	<LI>Next message: <A HREF="008325.html">[rabbitmq-discuss] Exactly Once Delivery
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#8324">[ date ]</a>
+              <a href="thread.html#8324">[ thread ]</a>
+              <a href="subject.html#8324">[ subject ]</a>
+              <a href="author.html#8324">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

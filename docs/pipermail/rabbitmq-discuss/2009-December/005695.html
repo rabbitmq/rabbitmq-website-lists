@@ -1,0 +1,197 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss]  Will this work?
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20%20Will%20this%20work%3F&In-Reply-To=">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="005702.html">
+   <LINK REL="Next"  HREF="005696.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss]  Will this work?</H1>
+    <B>Dinabandhu</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20%20Will%20this%20work%3F&In-Reply-To="
+       TITLE="[rabbitmq-discuss]  Will this work?">dinabandhu.mitra at tecnotree.com
+       </A><BR>
+    <I>Tue Dec 22 05:44:32 GMT 2009</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="005702.html">[rabbitmq-discuss] amqp-js experiences?
+</A></li>
+        <LI>Next message: <A HREF="005696.html">[rabbitmq-discuss]  amqpfs announcement
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#5695">[ date ]</a>
+              <a href="thread.html#5695">[ thread ]</a>
+              <a href="subject.html#5695">[ subject ]</a>
+              <a href="author.html#5695">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>
+Hi,
+
+I am new to RabbitMQ. We have a telecoms application. We are looking at
+restructuring the application based on RabbitMQ to solve some problems that
+we currently have. As we are very new to RabbitMQ (and messaging in general)
+I would be grateful if someone can comment/advice on whether we are on the
+right track. I have described the scenario below with as much detail as I
+can. Any comment/advice is very welcome.
+
+The characteristics of the application
+======================================
+
+1. The application has two layers, locators and processors.
+2. Each layer has multiple engines; i.e. multiple locator engines (LE) and
+multiple processor engines (PE).
+3. The clients of the application connect to one (or more) LEs and send
+requests.
+4. The LEs are deployed in N+1 active/active configuration in the sense that
+functionally any LE can process any request.
+5. Unlike LEs, the PEs are capable of handling only a subset of the client
+requests and are deployed in 1+1 active/passive pairs.
+6. Currently all LEs are connected to all PEs (and vice-versa) via point to
+point TCP connection.
+7. LEs have the intelligence to know which particular PE pair can handle a
+particular request and forwards the request to both engines of a PE pair
+(i.e. LE does not know which one of a pair is active).
+8. The PE that is active, processes (asynchronously) the request and sends
+the result back to the LE that originated the request.
+9. For simplicity we will assume that each instance of engine (LE/PE) is
+deployed in a separate physical machine though in reality multiple engines
+are co-located in actual deployments (e.g 4 PEs on a single server).  
+
+
+Good points of the current structure
+====================================
+1. As the connection if point to point, there is no single point of failure
+(e.g. a message broker) that can bring down the complete cluster. High
+availability is a very critical requirement for our application.
+2. Messages from LE to PE and vice-versa are delivered from the source to
+the target in single hop over the network. 
+
+Bad points of the current structure
+===================================
+1. The portion of the code that handles the network is fairly complicated as
+it needs to handle point to point connections. Ideally we would want to
+trivialize the code and push the responsibility out of the application.
+2. Again, because of the point to point nature of the connections, the
+configuration job of tying up of each LE to PE and vice-versa is fairly
+complicated because the number of engines can be quite large.
+3. As of now, we do not have any lateral (PE to PE or LE to LE)
+communication. In case we need lateral communication in future, then the
+complexity of both 1 &amp; 2 (especially 2) will increase exponentially.
+
+Of course, we want to solve the problems without loosing the benefits of
+current structure :-). A solution based on message bus looks interesting but
+may loose some of the benefits of the current structure. What we have done
+is kind of defined a set of design goals/attributes that a messaging based
+solution should have for it to work in our environment. I have given those
+goals below -
+
+Design Goals
+============ 
+1. Single point of failure - The message broker must not become a SPOF in
+the system. The messaging system must allow N+1 clustered configuration.
+2. While clustered configuration should replicate metadata, e.g. exchange
+definitions,queue bindings etc, it must not replicate the messages across
+the brokers in a cluster. We do not want message replication (and message
+persistence) because guaranteed delivery of message is not a requirement for
+the application to function. Hence we do not want to take message
+replication overheads.
+3. We do not want to dedicate additional equipment (with a separate role,
+e.g. &quot;broker-server&quot;) in the solution stack. Ideally, the broker (cluster)
+should share the existing servers in a symmetric manner.
+4. Ideally, we would want to retain the single hop delivery. However, we can
+loosen the requirement to the following -
+   a) There will be at most two hops to deliver a message from source to
+destination.
+   b) At least one of the hops will be local (within same physical server).
+
+With these requirements on mind, we are looking at the following solution
+structure based on RabbitMQ. We have made certain assumptions on how
+RabbitMQ works. I have tried to state the assumptions that we have made. If
+someone can help in validating the assumptions and whether the structure
+would work as expected (or whether the proposed structure is completely
+stupid) I would be very obliged.
+
+The proposed solution
+=====================
+1. Exchanges - The solution will have single topic exchange.
+2. Queues and Bindings - Each engine will declare a transient queue. The
+queue will be bound to the exchange with the following binding key -
+   a) For LEs - The binding key will be LE.&lt;le_id&gt;; e.g. LE.1, LE.2 ... and
+so on. Anyone wishing to send a message to a particular LE will send the
+message with appropriate routing key.
+   b) For PEs - The binding key will be PE.&lt;pe_id&gt;; e.g. PE.1, PE.2 ... and
+so on. Anyone wishing to send a message to a particular PE will send the
+message with appropriate routing key.
+   c) For PEs, there will be two separate queues (one each from active &amp;
+passive of PE pairs) with same binding. The assumption is, if a particular
+message matches the bindings of multiple queues in a topic exchange, the
+message is delivered to all the queues that matched. Is this assumption
+correct?
+3. Brokers - There will be a broker (RabbitMQ) running on each physical
+server and all the will be clustered. Any application engine (LE &amp; PE),
+connects only to the &quot;local broker instance&quot; and declares its queue and
+binds to the application exchange using appropriate binding keys. If a
+broker instance dies, then the application engines running on that physical
+server effectively becomes dead from the point of view of rest of the
+engines. This is acceptable as the application is already designed to work
+under scenarios where some of the engines has failed. However we have made
+quite a few assumptions here and not sure whether those are correct. The
+assumptions are below -
+   a) When a application engine (LE/PE) boots and declares it's queue and
+binding using a connection to the local broker, the queue and bindings
+becomes visible to all broker instances running in different servers. Is
+this correct?
+   b) The queues are hosted on the local broker node which is used to
+declare them. Is this correct?
+   c) When a application engine publishes a message using a connection to
+the local broker, then the local broker itself shall apply the routing
+filters and deliver the message directly to all the matching queues without
+requiring the message to be passed through additional broker instances. Is
+this correct?
+   d) The message itself will not be replicated to all brokers. Is this
+correct?
+   e) The queues and the bindings declared by application engines are (or
+can be configured as) transient in the sense that they will disappear once
+the application engine declaring them dies. Is this correct?
+   f) Anyone trying send a message that is immediately non-routable
+(possibly mandatory+immediate flag with auto-ack) gets a error and broker
+drops the message. Is this correct?
+
+
+Regards,
+Dinabandhu
+-- 
+View this message in context: <A HREF="http://old.nabble.com/Will-this-work--tp26875409p26875409.html">http://old.nabble.com/Will-this-work--tp26875409p26875409.html</A>
+Sent from the RabbitMQ mailing list archive at Nabble.com.
+
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="005702.html">[rabbitmq-discuss] amqp-js experiences?
+</A></li>
+	<LI>Next message: <A HREF="005696.html">[rabbitmq-discuss]  amqpfs announcement
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#5695">[ date ]</a>
+              <a href="thread.html#5695">[ thread ]</a>
+              <a href="subject.html#5695">[ subject ]</a>
+              <a href="author.html#5695">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

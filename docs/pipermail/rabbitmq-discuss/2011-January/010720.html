@@ -1,0 +1,196 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Erlang crashes trying to allocate	583848200	bytes of memory
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Erlang%20crashes%20trying%20to%20allocate%0A%09583848200%09bytes%20of%20memory&In-Reply-To=%3CF78BCF638F95D74A99D036114107EDB5023948CBF1%40EXCH-MBX-3.vmware.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="010715.html">
+   <LINK REL="Next"  HREF="010730.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Erlang crashes trying to allocate	583848200	bytes of memory</H1>
+    <B>Jerry Kuch</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Erlang%20crashes%20trying%20to%20allocate%0A%09583848200%09bytes%20of%20memory&In-Reply-To=%3CF78BCF638F95D74A99D036114107EDB5023948CBF1%40EXCH-MBX-3.vmware.com%3E"
+       TITLE="[rabbitmq-discuss] Erlang crashes trying to allocate	583848200	bytes of memory">jerryk at vmware.com
+       </A><BR>
+    <I>Mon Jan 17 20:18:55 GMT 2011</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="010715.html">[rabbitmq-discuss] Erlang crashes trying to allocate 583848200	bytes of memory
+</A></li>
+        <LI>Next message: <A HREF="010730.html">[rabbitmq-discuss] Erlang crashes trying to allocate 583848200 bytes of memory
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#10720">[ date ]</a>
+              <a href="thread.html#10720">[ thread ]</a>
+              <a href="subject.html#10720">[ subject ]</a>
+              <a href="author.html#10720">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi, Mark...
+
+Thanks very much for your mail!
+
+&gt;<i> Hi, I'm experiencing reproducible crashes of Erlang when running
+</I>&gt;<i> RabbitMQ 2.20 on a clean install of 64 bit Windows server 2008 R2 box
+</I>&gt;<i> - a parallels virtual machine with 1024 gig.
+</I>&gt;<i>
+</I>&gt;<i> They seem to be very similar to the problems here :
+</I>&gt;<i> <A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/2010-December/010443.html">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/2010-December/010443.html</A>
+</I>
+We've seen what appears to be this problem elsewhere with users
+running on Windows.  Unfortunately, I'm not sure that it's related to
+the queue memory leak discussed in the thread above, and the problem
+I'm thinking of, which looks like yours, occurs even in 2.2.0.  :-(
+
+&gt;<i> In particular I get
+</I>&gt;<i> &quot;broker running
+</I>&gt;<i> Crash dump was written to: erl_crash.dump
+</I>&gt;<i> eheap_alloc: Cannot allocate 583848200 bytes of memory (of type &quot;old_heap&quot;).
+</I>&gt;<i> This application has requested the Runtime to terminate it in an unusual way.
+</I>&gt;<i> Please contact the application's support team for more information.&quot;
+</I>&gt;<i> &quot;Cannot allocate 583848200 bytes of memory (of type &quot;old_heap&quot;).&quot; is
+</I>&gt;<i> the same message talked about in the previous discussion.
+</I>
+What's happened here is that the Erlang runtime has run desperately
+short of memory, been unable to allocate what it needs for its own
+use, and shut down.  We're not sure quite why this happens to Windows
+users at this point.  More below...
+
+&gt;<i> In my scenario, I load a durable queue with between 110k and 130k
+</I>&gt;<i> messages -around 900 bytes each- with the consumer off. I then turn on
+</I>&gt;<i> the consumer -to simulate the consumer being unable to contact the
+</I>&gt;<i> broker, or consumer being down for a period etc. - the Akka consumer
+</I>&gt;<i> then starts processing the messages with erl.exe consuming about 50
+</I>&gt;<i> meg.
+</I>
+This should be an entirely reasonable scenario.  If the broker is
+accumulating messages that aren't being consumed, it should page them
+to disk if it gets above 0.4 times the calculated memory high
+watermark value (which in turn is computed by multipling your high
+watermark config setting by the amount of RAM available to the Erlang
+process as detected at startup---on present Windows versions of Erlang
+this is limited to 2GB regardless of whether your OS is 64-bit or
+not).
+
+The paging should relieve memory pain on the broker; also, producers
+should be slowed by back-pressure, as the broker will stop reading
+from the sockets to which they're publishing when it's pushed into
+paging territory.  Ideally, all of these things should resolve and
+stabilize once things catch up, modulo catastrophic resource
+exhaustion such as a destination disk used for paging filling up.
+
+&gt;<i> With an empty durable queue, If I start the consumer, then start my
+</I>&gt;<i> load test, the queue runs for hours, Akka consumes and erl.exe stays
+</I>&gt;<i> around 50meg.
+</I>
+So with a nicely balanced, active consumer, everything works fine?
+
+&gt;<i> It was suggested switching to a Linux environment, this may be
+</I>&gt;<i> possible later, but currently Our planned environment is Windows
+</I>&gt;<i> Server 2008 R2.
+</I>
+That's good information for us.  The other customer we've seen with
+this problem was running Vista and I only had 2008 R2 available to me
+to try and reproduce it.  Using their test code I was never able to
+reproduce the problem, but I was running under virtualization on
+Amazon EC2.  Interestingly you're also running under Virtualization,
+although on a Mac, using a different hypervisor.  This is interesting
+information but it's not totally clear what its implications are at
+this point.
+
+&gt;<i> There was also talk of an &quot;experimental fix for this&quot;. Any idea if
+</I>&gt;<i> this work, or when this will be part of the next release ?
+</I>
+Alas, at this moment we still aren't sure what the problem is, other
+than that it appears to be specific to Windows and/or the Windows
+release of Erlang.  It's plausible that the throughput and/or
+scheduling of I/O under the Windows version of Erlang is different
+enough that by the time the paging mechanism engages, it can't get
+sufficiently caught up to the unrequited producers, and Rabbit and the
+Erlang enter a bad corner of their state space.
+
+Here's a shot in the partially illuminated dark you might try... 
+
+Check out the discussion here of memory-based flow control:
+
+<A HREF="http://www.rabbitmq.com/extensions.html#memsup">http://www.rabbitmq.com/extensions.html#memsup</A>
+
+Since you have a test case in front of your that crashes reproducibly,
+would you mind trying to set your vm_memory_high_watermark to
+something lower than the default, say 0.2, following the instructions
+presented at the above page?  That would cause the throttling of
+producers to kick in earlier?  It might be interesting to see whether
+this makes your system more stable under your test load.  If you do
+give this a try, please report back your results---they're likely to
+be helpful at refining our understanding of the issue.
+
+&gt;<i> Prior to this load testing, RabbitMQ worked faultlessly.
+</I>
+It may be small comfort given that you can't readily switch to running
+under Linux just now, but to my knowledge we've never seen this
+problem happen with the broker running on Linux.  Erlang seems much
+more widely used and deployed atop Linux and other Unixes, and those
+releases seem to get more testing, scrutiny and love, and thus present
+fewer surprises.
+
+My apologies that we don't have a great answer for you just now...  If
+you do try the suggested experiment of lowering the
+vm_memory_high_watermark value, I'd be very interested in seeing how
+you make out...
+
+Best regards,
+Jerry
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="010715.html">[rabbitmq-discuss] Erlang crashes trying to allocate 583848200	bytes of memory
+</A></li>
+	<LI>Next message: <A HREF="010730.html">[rabbitmq-discuss] Erlang crashes trying to allocate 583848200 bytes of memory
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#10720">[ date ]</a>
+              <a href="thread.html#10720">[ thread ]</a>
+              <a href="subject.html#10720">[ subject ]</a>
+              <a href="author.html#10720">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,207 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Implementing User Messaging Using RabbitMQ
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Implementing%20User%20Messaging%20Using%20RabbitMQ&In-Reply-To=%3CCAHEpgBDUKZnM95zRcqEShd_BDmA%3DAmoUh%2BCGR6OUz_baCuVdHQ%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="024954.html">
+   <LINK REL="Next"  HREF="024961.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Implementing User Messaging Using RabbitMQ</H1>
+    <B>Chris</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Implementing%20User%20Messaging%20Using%20RabbitMQ&In-Reply-To=%3CCAHEpgBDUKZnM95zRcqEShd_BDmA%3DAmoUh%2BCGR6OUz_baCuVdHQ%40mail.gmail.com%3E"
+       TITLE="[rabbitmq-discuss] Implementing User Messaging Using RabbitMQ">stuff at moesel.net
+       </A><BR>
+    <I>Wed Jan 16 03:14:50 GMT 2013</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="024954.html">[rabbitmq-discuss] Rate limiting queues
+</A></li>
+        <LI>Next message: <A HREF="024961.html">[rabbitmq-discuss] Implementing User Messaging Using RabbitMQ
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#24953">[ date ]</a>
+              <a href="thread.html#24953">[ thread ]</a>
+              <a href="subject.html#24953">[ subject ]</a>
+              <a href="author.html#24953">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hello RabbitMQ Gurus,
+
+If you don't mind, I'd love some help trying to arrive at the right design
+for a user messaging system I am working on.
+
+High-Level Requirements
+=======================
+- users can send messages to another user, several users, a group, or
+everyone
+  - users and groups are managed in a proprietary user management system
+- no chat rooms-- each user just has a message feed or &quot;timeline&quot; of
+incoming &amp; outgoing messages
+- message history must be preserved (in a database)
+- if a user is offline, the message should be forwarded to the user's email
+- 5000 concurrent users sending a few messages every few minutes (20,000
+users total in system).
+
+Environment
+===========
+The primary interface is a web application (or maybe a few web
+applications), but future iterations may introduce standalone clients.
+ RabbitMQ is 3.x and likely to be clustered or replicated, and running on
+same machine(s) as web application servers.
+
+General Approach
+================
+In order to store every message in a database (for historical purposes),
+all messages are initially sent to a direct exchange with a worker queue.
+ Consumers of the worker queue (let's call them messaging service workers)
+receive the message and store it to the database.  Then they distribute the
+message to the intended recipients (this is the part I think I need most
+help with).
+
+Message Distribution Option 1: Direct Exchange w/ Queue Per User
+=================================================================
+Message is sent to a direct exchange with username as the routing key.  For
+every logged in user, the webapp declares a queue and binds with the
+username.
+
+Issue 1: How to support groups?  The messaging service worker could resolve
+the group to a list of users and post the message multiple times (once for
+each user/routing key)-- but this would not scale very well.  Or we could
+create individual queues for every group too, but this increases complexity
+in the web app (and later in our other clients) since they need to
+determine what groups they need to listen for and who to distribute to.
+
+Issue 2: Is 5000 queues a bit much?  Especially when they are all
+ultimately going to the same consumer (in the webapp case)?  This isn't the
+only use of RabbitMQ, so there will be other queues/exchanges/bindings as
+well...
+
+Message Distribution Option 2: Topic Exchange w/ Single Queue per Webapp
+========================================================================
+Message is sent to topic exchange with routing key containing ALL addressed
+users (i.e., &quot;|usera|userb|userc|&quot;).  Webapp declares single queue and a
+separate binding to the exchange for each user (i.e., &quot;#|usera|#&quot;,
+&quot;#|userb|#&quot;, etc.).  This is similar to Option 1, but with the benefit that
+each message only has to be sent once.
+
+Issue 1: Routing key can get huge (20000 names if addressed to &quot;everyone&quot;
+group).
+Issue 2: It just seems like the wrong use of topic exchange.
+
+Message Distribution Option 3: Fanout Exchange w/ Single Queue per Webapp
+=========================================================================
+Message is sent to fanout exchange.  Webapp listens on fanout exchange and
+simply discards all messages for users that aren't logged in.
+
+Issue 1: Doesn't scale well (or even if it does, there is lots of waste
+filtering on the client side).
+Issue 2: Not at all secure (although, for now, we won't try to solve
+security).
+
+Message Distribution Option 4: Direct Exchange w/ Single Queue per Webapp
+========================================================================
+Webapp must notify messaging service worker as users log in and out-- and
+of the single queue on which it wants messages.  When a message needs to be
+distributed, messaging service worker checks to see which users are logged
+in where.  It sends message to the queue of each webapp that has logged in
+users that the message is addressed to (message itself contains &quot;to:&quot; list
+so webapp can send to right user UI).
+
+Issue 1: Messaging Service Worker now has a lot more state and processing
+messages is a lot heavier.  Need to make sure it stays in synch with webapp.
+
+Issue 2: Messaging Service Worker is now doing the routing-- which just
+seems wrong since that is what RabbitMQ is so good at!
+
+Message Distribution Option 5: Fanout Exchanges for Groups
+==========================================================
+Same as option 1 (queue per user), but also create a fanout exchange for
+every group.  The individual user queues need to be bound to the fanout
+exchange corresponding to each group they belong to.
+
+Issue 1: Could result in a lot of exchanges (not sure how many groups there
+are).
+
+Issue 2: Still seems like a lot of queues too (5000).
+
+Message Distribution Option 6: Custom Exchange
+==============================================
+Create our own exchange that allows consumers to bind with usernames.  When
+a message is posted to the exchange, it knows how to read the &quot;to:&quot; list
+from it, can even resolve groups, and then sends to the correct queues
+based on the bindings.
+
+Issue 1: We don't have any Erlang experience.
+
+Issue 2: Resolving groups in an Erlang custom exchange could be tricky (not
+sure about the APIs to our User Management).
+
+Something Else
+==============
+I'm more than open to other ideas too!
+
+BONUS QUESTION
+==============
+Whatever the correct approach is, how do we determine if a user is
+&quot;offline&quot; and we need to forward the message to their email?  If we are
+using queue-per-user, then we can set the mandatory flag, I guess?  If we
+are using another approach, what then?
+
+Thanks to anyone who can help point me in the right direction (or steer me
+away from the wrong direction)...  I'm not familiar enough yet with
+RabbitMQ performance characteristics to know what is a bad idea, and not
+familiar enough yet with its many features to know what is a good idea...
+;-)
+
+Thanks again,
+Chris
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20130115/4549e186/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20130115/4549e186/attachment.htm</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="024954.html">[rabbitmq-discuss] Rate limiting queues
+</A></li>
+	<LI>Next message: <A HREF="024961.html">[rabbitmq-discuss] Implementing User Messaging Using RabbitMQ
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#24953">[ date ]</a>
+              <a href="thread.html#24953">[ thread ]</a>
+              <a href="subject.html#24953">[ subject ]</a>
+              <a href="author.html#24953">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,186 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Advanced per-user authorization
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Advanced%20per-user%20authorization&In-Reply-To=%3C50AD0FDF.2060903%40rabbitmq.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="024069.html">
+   <LINK REL="Next"  HREF="024072.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Advanced per-user authorization</H1>
+    <B>Matthias Radestock</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Advanced%20per-user%20authorization&In-Reply-To=%3C50AD0FDF.2060903%40rabbitmq.com%3E"
+       TITLE="[rabbitmq-discuss] Advanced per-user authorization">matthias at rabbitmq.com
+       </A><BR>
+    <I>Wed Nov 21 17:31:11 GMT 2012</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="024069.html">[rabbitmq-discuss] Advanced per-user authorization
+</A></li>
+        <LI>Next message: <A HREF="024072.html">[rabbitmq-discuss] Advanced per-user authorization
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#24071">[ date ]</a>
+              <a href="thread.html#24071">[ thread ]</a>
+              <a href="subject.html#24071">[ subject ]</a>
+              <a href="author.html#24071">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Jonas,
+
+On 21/11/12 16:49, Jonas Schwertfeger wrote:
+&gt;<i> On Wed, Nov 21, 2012 at 5:43 PM, Matthias Radestock
+</I>&gt;<i> &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">matthias at rabbitmq.com</A>&gt; wrote:
+</I>&gt;&gt;<i> For AMQP, the combination of internal exchanges, exchange-to-exchange
+</I>&gt;&gt;<i> bindings, and RabbitMQ's existing permission system provide enough
+</I>&gt;&gt;<i> functionality to emulate per-routing-key-pattern access control.
+</I>&gt;<i>
+</I>&gt;<i> I'm curious, can you give an example of a setup that would allow the following:
+</I>&gt;<i>
+</I>&gt;<i> User A publishing a message M that only subscribing user B can consume.
+</I>&gt;<i>
+</I>&gt;<i> What exchanges, queues, bindings and ACLs would you set up?
+</I>
+The general approach is as follows:
+
+1) restricting what messages users can publish
+
+Say that users A and B publish messages to exchange X. Now you want to 
+restrict them to only publish messages with routing keys matching 
+'&lt;username&gt;.*'. To do this, you, as a server administrator...
+
+a) create X as an internal exchange, which means that nobody can publish 
+to it directly, and set permissions s.t. nobody except the administrator 
+can bind X, i.e. set appropriate 'write' permissions.
+
+b) create an additional exchange per user, say &quot;X.&lt;username&gt;&quot;, of the 
+same type as X
+
+c) set up the permissions s.t. A/B can publish to their own exchange 
+only, i.e. give each user 'write' permissions to their exchange (only)
+
+d) set up exchange-to-exchange bindings between X and X.A/X.B, 
+reflecting the publish restriction, i.e., in this case, bind X to X.A 
+with a binding key of &quot;A.*&quot;, and to X.B with a binding of &quot;B.*&quot;
+
+e) get clients to publish to &quot;their&quot; X.&lt;username&gt; exchange instead of X 
+(the latter is now prohibited by the permissions)
+
+
+2) restricting what messages users can receive
+
+Say that users A and B bind queues to exchange Y and consume from these 
+queues. Now you want to restrict them to only be able to receive 
+messages with routing keys matching '&lt;username&gt;.*'. To do this, you, as 
+a server administrator...
+
+a) set permissions on Y s.t. nobody except the administrator can bind to 
+Y, i.e. set appropriate 'read' permissions.
+
+b) create an additional exchange per user, say &quot;Y.&lt;username&gt;&quot;, of the 
+same type as Y
+
+c) set up permissions s.t. A/B can bind to their own exchange only, i.e. 
+give each user 'read' permissions to their exchange (only)
+
+d) set up exchange-to-exchange bindings between Y.A/Y.B and Y, 
+reflecting the receive restriction, i.e., in this case, bind Y.A to Y 
+with a binding key of &quot;A.*&quot;, and bind Y.B to Y with with a binding key 
+of &quot;B.*&quot;
+
+e) get clients to bind their queues to &quot;their&quot; Y.&lt;username&gt; exchange 
+instead of Y (the latter is now prohibited by permissions)
+
+You'd probably also want to put in place permissions that prevent users 
+from consuming from each others queues, which is easily done with an 
+appropriate queue naming convention and read permissions.
+
+
+Note that the above works for all exchange types, even the exotic ones 
+like header exchanges that match on message headers rather than routing 
+keys.
+
+
+Your example - &quot;User A publishing a message M that only subscribing user 
+B can consume&quot; - maps straightforwardly onto (2).
+
+
+An alternative that works in some cases is to rely on the built-in 
+restrictions for the default exchange, namely that it contains bindings 
+for all queues, and that clients are not allowed to create bindings to 
+it directly. So, in your example, if each user has a queue named after 
+them, and the permission are set up s.t. only the correct user can 
+create/delete/bind/consume-from their queues, then publishing a message 
+to the default exchange with the routing key set to the user's queue 
+guarantees that only the intended user can receive the message.
+
+
+Regards,
+
+Matthias.
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="024069.html">[rabbitmq-discuss] Advanced per-user authorization
+</A></li>
+	<LI>Next message: <A HREF="024072.html">[rabbitmq-discuss] Advanced per-user authorization
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#24071">[ date ]</a>
+              <a href="thread.html#24071">[ thread ]</a>
+              <a href="subject.html#24071">[ subject ]</a>
+              <a href="author.html#24071">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

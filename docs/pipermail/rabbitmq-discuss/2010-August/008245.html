@@ -1,0 +1,154 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Cluster recovery due to network outages
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Cluster%20recovery%20due%20to%20network%20outages&In-Reply-To=%3CAANLkTi%3D2hL6VRKgv5fxOVD1gGPaYywTyckd4mvrjepEq%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="008243.html">
+   <LINK REL="Next"  HREF="008263.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Cluster recovery due to network outages</H1>
+    <B>Aaron Westendorf</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Cluster%20recovery%20due%20to%20network%20outages&In-Reply-To=%3CAANLkTi%3D2hL6VRKgv5fxOVD1gGPaYywTyckd4mvrjepEq%40mail.gmail.com%3E"
+       TITLE="[rabbitmq-discuss] Cluster recovery due to network outages">aaron at agoragames.com
+       </A><BR>
+    <I>Mon Aug  2 15:14:09 BST 2010</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="008243.html">[rabbitmq-discuss] rabbitmq-stomp badmatch with 1.8.1
+</A></li>
+        <LI>Next message: <A HREF="008263.html">[rabbitmq-discuss] Cluster recovery due to network outages
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#8245">[ date ]</a>
+              <a href="thread.html#8245">[ thread ]</a>
+              <a href="subject.html#8245">[ subject ]</a>
+              <a href="author.html#8245">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>We had an outage in the internal network at our datacenter this
+weekend and our rabbit cluster did not fully recover.
+
+We have 4 hosts, all running 1.7.2.  When failures started, we saw
+messages like the following (which we've seen before):
+
+
+=ERROR REPORT==== 1-Aug-2010::06:13:24 ===
+** Node <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at caerbannog</A> not responding **
+** Removing (timedout) connection **
+
+=INFO REPORT==== 1-Aug-2010::06:13:24 ===
+node <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at caerbannog</A> down
+
+
+A short time later the hosts recovered, also as we've seen before:
+
+=INFO REPORT==== 1-Aug-2010::06:26:48 ===
+node <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at caerbannog</A> up
+=ERROR REPORT==== 1-Aug-2010::06:26:48 ===
+Mnesia(<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at bigwig</A>): ** ERROR ** mnesia_event got
+{inconsistent_database, running_partitioned_network,
+ <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at caerbannog</A>}
+
+=ERROR REPORT==== 1-Aug-2010::06:26:48 ===
+Mnesia(<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at bigwig</A>): ** ERROR ** mnesia_event got
+{inconsistent_database, starting_partitioned_network
+, <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at caerbannog</A>}
+
+
+Another 15 minutes later and the timedout errors were logged and that
+was the end of the cluster; I think two of the nodes figured out how
+to connect back to each other, but two others remained on their own.
+The hosts and nodes themselves never shutdown, and when I restarted
+just one of the nodes later in the day, the whole cluster rediscovered
+itself and all appeared to be well (`rabbitmqctl status` was
+consistent with expectations).
+
+So our first problem is that the nodes did not re-cluster after the
+second outage.  Once we corrected the cluster though, our applications
+still did not respond and we had to restart all of our clients.
+
+Our clients all have a lot of handling for connection drops and
+channel closures, but most of them did not see any TCP disconnects to
+their respective nodes.  When the cluster was fixed, we found a lot of
+our queues missing (they weren't durable), and so we had to restart
+all of the apps to redeclare the queues.  This still didn't fix our
+installation though, as our apps were receiving and processing data,
+but responses were not being sent back out of our HTTP translators.
+
+We have a single exchange, &quot;response&quot; that any application expecting a
+response can bind to.  Our HTTP translators handle traffic from our
+public endpoints, publish to various exchanges for the services we
+offer, and those services in turn write back to the response exchange.
+ We have a monitoring tool that confirmed that these translators could
+write a response to its own Rabbit host and immediately receive it (a
+ping, more or less).  However, none of the responses from services
+which were connected to other Rabbit nodes were received by the
+translators.
+
+In short, it appeared that even though the cluster was healed and all
+our services had re-declared their queues, the bindings between the
+response exchange and the queues which our translators use did not
+appear to propagate to the rest of the nodes in the cluster.
+
+So in summary,
+
+* Rabbit didn't re-connect to the other nodes after the second TCP disconnect
+* After fixing the cluster (manually or automatically), Rabbit appears
+to have lost its non-durable queues even though the nodes never
+stopped
+* Although we had every indication that exchanges and queues were
+still alive and functional, bindings appear to have been lost between
+Rabbit nodes
+
+What we'd like to know is,
+
+* Does any of this make sense and can we add more detail to help fix any bugs?
+* Have there been fixes for these issues since 1.7.2 that we should deploy?
+* Is there anything we should add/change about our applications to
+deal with these types of situations?
+
+
+Thanks in advance for any help.
+-Aaron
+
+
+-- 
+Aaron Westendorf
+Senior Software Engineer
+Agora Games
+359 Broadway
+Troy, NY 12180
+Phone: 518.268.1000
+<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">aaron at agoragames.com</A>
+www.agoragames.com
+</PRE>
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="008243.html">[rabbitmq-discuss] rabbitmq-stomp badmatch with 1.8.1
+</A></li>
+	<LI>Next message: <A HREF="008263.html">[rabbitmq-discuss] Cluster recovery due to network outages
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#8245">[ date ]</a>
+              <a href="thread.html#8245">[ thread ]</a>
+              <a href="subject.html#8245">[ subject ]</a>
+              <a href="author.html#8245">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

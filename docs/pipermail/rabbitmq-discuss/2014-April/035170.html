@@ -1,0 +1,158 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Possible memory leak in the management plugin
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Possible%20memory%20leak%20in%20the%20management%20plugin&In-Reply-To=%3C1397106237672-34725.post%40n5.nabble.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="035147.html">
+   <LINK REL="Next"  HREF="035184.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Possible memory leak in the management plugin</H1>
+    <B>Pavel</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Possible%20memory%20leak%20in%20the%20management%20plugin&In-Reply-To=%3C1397106237672-34725.post%40n5.nabble.com%3E"
+       TITLE="[rabbitmq-discuss] Possible memory leak in the management plugin">pmaisenovich at blizzard.com
+       </A><BR>
+    <I>Thu Apr 10 06:03:57 BST 2014</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="035147.html">[rabbitmq-discuss] Possible memory leak in the management plugin
+</A></li>
+        <LI>Next message: <A HREF="035184.html">[rabbitmq-discuss] Possible memory leak in the management plugin
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#35170">[ date ]</a>
+              <a href="thread.html#35170">[ thread ]</a>
+              <a href="subject.html#35170">[ subject ]</a>
+              <a href="author.html#35170">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Thanks for answers, Simon! Now everything makes much more sense!
+
+Here is the program I used (requires com.rabbitmq:amqp-client:3.3.0 in
+classpath):
+<A HREF="https://gist.github.com/maisenovich/10339925">https://gist.github.com/maisenovich/10339925</A>
+
+Running it with &quot;1000 0 10000&quot; params (1K channels, no delay on publish, 10K
+iterations) blows my Rabbit's RAM to 4G (high watermark) quick, then
+publishing channels become blocked and Rabbit struggles to free up some
+memory. As you suggested, with {force_fine_statistics,false} Rabbit was able
+to survive the same test, stabilizing around 2Gb mark with most RAM taken by
+connection_stats and queue_procs. So it is certainly a working option,
+although at the cost of reduced visibility.
+
+It's worth noting, that in my test publish rate was around 80K/s, which
+generates huge flood of channel_stats events and like you said, kind of
+expected to crash management plugin. However the incident we had in
+production happened under much lower publish rate (we believe), so it still
+leaves uncertainty about the exact cause. 
+
+Then I added a modification to the test - every time message is published to
+a random exchange (instead of publishing 1000 messages to each exchange
+sequentially). This produced an interesting result: rabbit_mgmt_db process
+was GCed properly and remained at stable memory use. However
+aggregated_stats table kept growing in size until all RAM (up to a high
+watermark) was taken.
+
+For example, {process_info(rabbit_mgmt_db, memory),ETS sizes} went from 
+
+{{memory,542484424},
+ [{5730386,1046,205243},
+  {5734488,2005,384904},
+  {5738585,2006,126545},
+  {5742682,1,175},
+  {5746779,1,175},
+  {5750876,1,1059},
+  {5754973,1009026,79415774},
+  {5759070,2001250,49359758},
+  {5763167,1003620,57435178}]}
+
+at one point to this some time later:
+
+{{memory,434953160},
+ [{5730386,1046,205243},
+  {5734488,2005,384904},
+  {5738585,2006,132875},
+  {5742682,1,175},
+  {5746779,1,175},
+  {5750876,1,1059},
+  {5754973,1009026,147761213},
+  {5759070,2001250,49359758},
+  {5763167,1003834,57452431}]}
+
+Note, that number of items for (5754973) didn't change, but the size almost
+doubled. I was trying to understand &quot;Event-GCing&quot; portion of 
+rabbit_mgmt_stats.erl
+&lt;<A HREF="https://github.com/rabbitmq/rabbitmq-management/blob/master/src/rabbit_mgmt_stats.erl">https://github.com/rabbitmq/rabbitmq-management/blob/master/src/rabbit_mgmt_stats.erl</A>&gt; 
+, but that's beyond me at the moment. Could you please describe in a few
+words, how and when aggregated_stats supposed to be cleaned up? 
+
+Also, from your earlier reply it sounds like closing and reopening channels
+(sometimes) would help to keep mgmt_db from expanding. Is this something
+generally recommended to do (short-live vs long-live channels)? 
+
+Thanks!
+
+
+
+--
+View this message in context: <A HREF="http://rabbitmq.1065348.n5.nabble.com/Possible-memory-leak-in-the-management-plugin-tp27414p34725.html">http://rabbitmq.1065348.n5.nabble.com/Possible-memory-leak-in-the-management-plugin-tp27414p34725.html</A>
+Sent from the RabbitMQ mailing list archive at Nabble.com.
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="035147.html">[rabbitmq-discuss] Possible memory leak in the management plugin
+</A></li>
+	<LI>Next message: <A HREF="035184.html">[rabbitmq-discuss] Possible memory leak in the management plugin
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#35170">[ date ]</a>
+              <a href="thread.html#35170">[ thread ]</a>
+              <a href="subject.html#35170">[ subject ]</a>
+              <a href="author.html#35170">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,166 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Queue delete causes transaction errors
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Queue%20delete%20causes%20transaction%20errors&In-Reply-To=%3CAANLkTimKb6jADqEJIRYo3E2KF6JQoHT3kWfaoVkTpuMu%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="007944.html">
+   <LINK REL="Next"  HREF="007962.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Queue delete causes transaction errors</H1>
+    <B>Aaron Westendorf</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Queue%20delete%20causes%20transaction%20errors&In-Reply-To=%3CAANLkTimKb6jADqEJIRYo3E2KF6JQoHT3kWfaoVkTpuMu%40mail.gmail.com%3E"
+       TITLE="[rabbitmq-discuss] Queue delete causes transaction errors">aaron at agoragames.com
+       </A><BR>
+    <I>Tue Jul 13 17:16:59 BST 2010</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="007944.html">[rabbitmq-discuss] Queue delete causes transaction errors
+</A></li>
+        <LI>Next message: <A HREF="007962.html">[rabbitmq-discuss] Queue delete causes transaction errors
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#7948">[ date ]</a>
+              <a href="thread.html#7948">[ thread ]</a>
+              <a href="subject.html#7948">[ subject ]</a>
+              <a href="author.html#7948">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>It didn't occur to me that the failure could have arisen after the
+routing but during the consumption stage of my passive listener.  I
+don't think that's the case, but here's what the broker reported which
+I intended to include in my first email:
+
+  class_id: 90
+  method_id: 20
+  reply_code: 541
+  reply_text: &quot;INTERNAL_ERROR - commit failed:
+[{&lt;0.25498.0&gt;,{exit,{queue_disappeared,&lt;0.25498.0&gt;},[{rabbit_amqqueue,'-commit_all/3-fun-0-',1},{delegate,safe_invoke,2},{delegate,'-safe_invoke/2-lc$^0/1-0-',2},{delegate,'-safe_invoke/2-lc$^0/1-0-',2},{delegate,delegat...&quot;
+
+&gt;&gt;<i> I see that 0.9.1 of the spec adds queue.unbind(). &#160;Is that the only
+</I>&gt;&gt;<i> way to avoid this problem, or is there another approach that we can
+</I>&gt;&gt;<i> take?
+</I>&gt;<i>
+</I>&gt;<i> I don't see how queue.unbind would help -- would you explain?
+</I>
+I imagine that I could unbind my listener's queue, wait for a bit,
+then safely delete the queue and the broker would no longer be trying
+to route to it.
+
+cheers,
+Aaron
+
+On Tue, Jul 13, 2010 at 11:29 AM, Michael Bridgen &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">mikeb at rabbitmq.com</A>&gt; wrote:
+&gt;<i> Hi Aaron,
+</I>&gt;<i>
+</I>&gt;&gt;<i> I've confirmed that transactions are being aborted due to a queue
+</I>&gt;&gt;<i> being deleted using an easily-reproducible test case.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> The base-case is an exchange and a 1-1 mapping of a routing key to a
+</I>&gt;&gt;<i> destination queue. &#160;The client is simply consuming a published message
+</I>&gt;&gt;<i> and then publishing the next one. &#160;A single client as a consumer is
+</I>&gt;&gt;<i> enough to repeat the bug.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> We then have a test client which we can use to attach to an exchange
+</I>&gt;&gt;<i> using a supplied routing key. &#160;It will create its own queue and then
+</I>&gt;&gt;<i> act as a passive listener, for easy monitoring of traffic. &#160;The queue
+</I>&gt;&gt;<i> it uses is set to auto-delete. In high-traffic situations, I would
+</I>&gt;&gt;<i> occasionally see a transaction error in the client.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> I setup a test case today where a listener would open a connection and
+</I>&gt;&gt;<i> queue, listen for 2 seconds, then disconnect. &#160;I tried combinations of
+</I>&gt;&gt;<i> auto_delete enabled and disabled, both with and without an explicit
+</I>&gt;&gt;<i> queue delete call, as well as using transactions and re-using a
+</I>&gt;&gt;<i> connection versus closing and reconnecting. &#160;I would run this test
+</I>&gt;&gt;<i> listener while a test client simply published a message to itself
+</I>&gt;&gt;<i> every time it received one. &#160;The client is using transactions,
+</I>&gt;&gt;<i> committing after each publish call. &#160;Within a few minutes, no matter
+</I>&gt;&gt;<i> how my listener was configured, the client would receive a transaction
+</I>&gt;&gt;<i> error. &#160;I repeated this with the 1.8.0 release.
+</I>&gt;<i>
+</I>&gt;<i> It looks like there's two races going on here:
+</I>&gt;<i> &#160;- the queue being autodeleted, and the transaction committing; and
+</I>&gt;<i> &#160;- the connection dropping, and the transaction committing.
+</I>&gt;<i>
+</I>&gt;<i> In the first case, the transaction commit fails because the queue has gone
+</I>&gt;<i> away and it can no longer route the message to it. &#160;I'm less certain about
+</I>&gt;<i> the second; I think it may be because the queue tries to deliver the message
+</I>&gt;<i> on tx.commit, and the connection drops while that's happening.
+</I>&gt;<i>
+</I>&gt;<i> The AMQP spec doesn't say a lot about the properties of transactions, and in
+</I>&gt;<i> particular, whether routing &quot;happens&quot; before or after tx.commit. &#160;RabbitMQ
+</I>&gt;<i> routes before the tx.commit, mainly so that persistent messages will land on
+</I>&gt;<i> disk.
+</I>&gt;<i>
+</I>&gt;<i> It would be well within the spec to *act* as though routing happened after
+</I>&gt;<i> tx.commit; e.g., the transaction wouldn't fail because your autodelete queue
+</I>&gt;<i> has gone away. &#160;We'd also have to be careful of the second case, that
+</I>&gt;<i> failing to deliver the message didn't cause the tx.commit to fail. &#160;That's
+</I>&gt;<i> probably a more useful semantics overall, anyway.
+</I>&gt;<i>
+</I>&gt;<i> (We actually already have a bug for looking into this -- thanks for bringing
+</I>&gt;<i> back to our attention!)
+</I>&gt;<i>
+</I>&gt;&gt;<i> I see that 0.9.1 of the spec adds queue.unbind(). &#160;Is that the only
+</I>&gt;&gt;<i> way to avoid this problem, or is there another approach that we can
+</I>&gt;&gt;<i> take?
+</I>&gt;<i>
+</I>&gt;<i> I don't see how queue.unbind would help -- would you explain?
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> Cheers,
+</I>&gt;<i> Michael
+</I>&gt;<i>
+</I>
+
+
+-- 
+Aaron Westendorf
+Senior Software Engineer
+Agora Games
+359 Broadway
+Troy, NY 12180
+Phone: 518.268.1000
+<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">aaron at agoragames.com</A>
+www.agoragames.com
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="007944.html">[rabbitmq-discuss] Queue delete causes transaction errors
+</A></li>
+	<LI>Next message: <A HREF="007962.html">[rabbitmq-discuss] Queue delete causes transaction errors
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#7948">[ date ]</a>
+              <a href="thread.html#7948">[ thread ]</a>
+              <a href="subject.html#7948">[ subject ]</a>
+              <a href="author.html#7948">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

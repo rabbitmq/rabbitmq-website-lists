@@ -1,0 +1,186 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] 3.0.4 extremely unstable in production...?
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%203.0.4%20extremely%20unstable%20in%20production...%3F&In-Reply-To=%3CCD942A15.90D3%25Michael.Laing%40nytimes.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="026516.html">
+   <LINK REL="Next"  HREF="026621.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] 3.0.4 extremely unstable in production...?</H1>
+    <B>Laing, Michael P.</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%203.0.4%20extremely%20unstable%20in%20production...%3F&In-Reply-To=%3CCD942A15.90D3%25Michael.Laing%40nytimes.com%3E"
+       TITLE="[rabbitmq-discuss] 3.0.4 extremely unstable in production...?">Michael.Laing at nytimes.com
+       </A><BR>
+    <I>Wed Apr 17 16:33:01 BST 2013</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="026516.html">[rabbitmq-discuss] 3.0.4 extremely unstable in production...?
+</A></li>
+        <LI>Next message: <A HREF="026621.html">[rabbitmq-discuss] 3.0.4 extremely unstable in production...?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#26525">[ date ]</a>
+              <a href="thread.html#26525">[ thread ]</a>
+              <a href="subject.html#26525">[ subject ]</a>
+              <a href="author.html#26525">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>We run a combination of clustered (across zones) and shovel-connected
+nodes in several regions, mostly m1 smalls but bigger ones too.
+
+We've experienced one partition in the last few months, a 2/1. Partitions
+occur  because an OTP heartbeat cannot be processed within the time frame
+set by the net_ticktime OTP parameter, as I recall. In EC2 that can occur
+for several reasons, most commonly because the shared network resource is
+being dominated by something else. In our case we discovered that due to
+an oversight, the three instances were simultaneously engaged in high IO
+activity unrelated to rabbitmq. A good way to possibly trigger this state
+would be to simultaneously snapshot EBS disks attached to the instances,
+especially if they are large.
+
+To mitigate against this you can: 1) use larger instances with more IO
+capability (bigger hose), more cores, and more memory (more schlitz) - we
+may do this; 2) cluster with fewer instances so there is less 'internal
+work' going on - we cluster w no more than 3, then scale up as needed (at
+the core - the retail layer scales out using shovels); 3) architecturally
+lighten the load by: avoiding persistent messages, never using
+transactions, offloading large message bodies and passing references
+instead (we use S3, cassandra, DynamoDB), emphasizing federation/shovels
+for broad deployments, tolerating duplicate messages, keeping queues
+short, etc.
+
+In your case, running celery, I would suggest: run 2 instances; make them
+m1 large or xlarge; use us-west-2 instead of us-west1 if you can (cheaper,
+newer, bigger); if possible with celery and your app designs, avoid
+persistent messages - and do the other stuff in 3) above.
+
+Michael Laing
+NYTimes
+
+On 4/16/13 5:58 PM, &quot;Matt Wise&quot; &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">matt at nextdoor.com</A>&gt; wrote:
+
+&gt;<i>Interesting... We are still running one node in us-west-1a, and one in
+</I>&gt;<i>us-west-1c. Today alone we saw 3 network glitches on the node in
+</I>&gt;<i>us-west-1a where it became unable to connect to remote services in other
+</I>&gt;<i>datacenters. Obviously the hardware or rack that machine is living on is
+</I>&gt;<i>having problems.
+</I>&gt;<i>
+</I>&gt;<i>The interesting part though is that RabbitMQ did not seem to report a
+</I>&gt;<i>network partition during these events now that we're running 2.8.5 and
+</I>&gt;<i>only two nodes instead of three. I'm still digging through the logs to
+</I>&gt;<i>see if there were other interruptions, but it still feels like the code
+</I>&gt;<i>is either:
+</I>&gt;<i>  a) more stable with 2 nodes
+</I>&gt;<i>  b) more fault-tolerant in 2.8.5 than it is in 3.0.4
+</I>&gt;<i>
+</I>&gt;<i>--Matt
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>On Apr 15, 2013, at 2:38 AM, Simon MacMullen &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">simon at rabbitmq.com</A>&gt; wrote:
+</I>&gt;<i>
+</I>&gt;&gt;<i> To add to what Emile said: the only difference between partition
+</I>&gt;&gt;<i>handling in 2.x and 3.x is that 3.x will show a big red warning in
+</I>&gt;&gt;<i>management when one has occurred whereas 2.x will stay silent. If you
+</I>&gt;&gt;<i>still have logs from the 2.x days you might want to grep for
+</I>&gt;&gt;<i>&quot;running_partitioned_network&quot; - I suspect you will find some matches.
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;<i> The next release, 3.1 will have some features around automatic healing
+</I>&gt;&gt;<i>of network partitions.
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;<i> Cheers, Simon
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;<i> On 15/04/2013 10:16, Emile Joubert wrote:
+</I>&gt;&gt;&gt;<i> 
+</I>&gt;&gt;&gt;<i> Hi,
+</I>&gt;&gt;&gt;<i> 
+</I>&gt;&gt;&gt;<i> On 12/04/13 19:36, Matt Wise wrote:
+</I>&gt;&gt;&gt;&gt;<i> Since creating the new server farm though we've had 3 outages. In the
+</I>&gt;&gt;&gt;&gt;<i> first two outages we received a Network Partition Split, and
+</I>&gt;&gt;&gt;&gt;<i>effectively
+</I>&gt;&gt;&gt;&gt;<i> all 3 of the systems decided to run their own queues independently of
+</I>&gt;&gt;&gt;&gt;<i> the other servers. This was the first time we'd ever seen this
+</I>&gt;&gt;&gt;&gt;<i>failure,
+</I>&gt;&gt;&gt;&gt;<i> ever. In the most recent failure we had 2 machines split off, and the
+</I>&gt;&gt;&gt;&gt;<i> 3rd rabbitmq service effectively became unresponsive entirely.
+</I>&gt;&gt;&gt;<i> 
+</I>&gt;&gt;&gt;<i> Versions 2.8.x and 3.0.x are equally susceptible to partitions. You can
+</I>&gt;&gt;&gt;<i> confirm this experimentally by setting up a cluster of v2.8.x nodes and
+</I>&gt;&gt;&gt;<i> interrupting connectivity for twice the net_ticktime (60s by default).
+</I>&gt;&gt;&gt;<i> 
+</I>&gt;&gt;&gt;<i> See <A HREF="https://www.rabbitmq.com/partitions.html">https://www.rabbitmq.com/partitions.html</A>
+</I>&gt;&gt;&gt;<i> 
+</I>&gt;&gt;&gt;&gt;<i> Up until recently though I had felt extremely comfortable with
+</I>&gt;&gt;&gt;&gt;<i> RabbitMQ's clustering technology and reliability... now ... not so
+</I>&gt;&gt;&gt;&gt;<i>much.
+</I>&gt;&gt;&gt;&gt;<i> Has anyone else seen similar behaviors? Is it simply due to the fact
+</I>&gt;&gt;&gt;&gt;<i> that we're running cross-zone now in Amazon, or is it more likely the
+</I>&gt;&gt;&gt;&gt;<i>3
+</I>&gt;&gt;&gt;&gt;<i> servers that caused the problem? Or the 3.0.x upgrade?
+</I>&gt;&gt;&gt;<i> 
+</I>&gt;&gt;&gt;<i> A network outage coincided with the period when nodes were running
+</I>&gt;&gt;&gt;<i> v3.0.4. The network interruption is the cause of the partition rather
+</I>&gt;&gt;&gt;<i> than the broker version.
+</I>&gt;&gt;&gt;<i> 
+</I>&gt;&gt;&gt;<i> At the time of writing RabbitMQ clustering does not tolerate network
+</I>&gt;&gt;&gt;<i> partitions well, so it should not be used over a WAN. The shovel or
+</I>&gt;&gt;&gt;<i> federation plugins are better solutions for that case.
+</I>&gt;&gt;&gt;<i> 
+</I>&gt;&gt;&gt;<i> See <A HREF="http://www.rabbitmq.com/clustering.html">http://www.rabbitmq.com/clustering.html</A>
+</I>&gt;&gt;&gt;<i> 
+</I>&gt;&gt;&gt;<i> 
+</I>&gt;&gt;&gt;<i> 
+</I>&gt;&gt;&gt;<i> -Emile
+</I>&gt;&gt;&gt;<i> 
+</I>&gt;&gt;&gt;<i> 
+</I>&gt;&gt;&gt;<i> 
+</I>&gt;&gt;&gt;<i> 
+</I>&gt;&gt;&gt;<i> 
+</I>&gt;&gt;&gt;<i> 
+</I>&gt;&gt;&gt;<i> 
+</I>&gt;&gt;&gt;<i> _______________________________________________
+</I>&gt;&gt;&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;&gt;&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;&gt;&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>&gt;&gt;&gt;<i> 
+</I>&gt;&gt;<i> 
+</I>&gt;<i>
+</I>&gt;<i>_______________________________________________
+</I>&gt;<i>rabbitmq-discuss mailing list
+</I>&gt;<i><A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;<i><A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>
+</PRE>
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="026516.html">[rabbitmq-discuss] 3.0.4 extremely unstable in production...?
+</A></li>
+	<LI>Next message: <A HREF="026621.html">[rabbitmq-discuss] 3.0.4 extremely unstable in production...?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#26525">[ date ]</a>
+              <a href="thread.html#26525">[ thread ]</a>
+              <a href="subject.html#26525">[ subject ]</a>
+              <a href="author.html#26525">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

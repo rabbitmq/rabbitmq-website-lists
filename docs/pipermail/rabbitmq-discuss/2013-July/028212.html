@@ -1,0 +1,178 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] rabbitmq-c amqp_tx_commit leak memory
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20rabbitmq-c%20amqp_tx_commit%20leak%20memory&In-Reply-To=%3CCAAt2po%2BbkU5qVm3s_Fc5cXo9uLmU23VnoGiVFA81HA1jAoF94w%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="028208.html">
+   <LINK REL="Next"  HREF="028223.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] rabbitmq-c amqp_tx_commit leak memory</H1>
+    <B>Alan Antonuk</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20rabbitmq-c%20amqp_tx_commit%20leak%20memory&In-Reply-To=%3CCAAt2po%2BbkU5qVm3s_Fc5cXo9uLmU23VnoGiVFA81HA1jAoF94w%40mail.gmail.com%3E"
+       TITLE="[rabbitmq-discuss] rabbitmq-c amqp_tx_commit leak memory">alan.antonuk at gmail.com
+       </A><BR>
+    <I>Mon Jul  1 16:08:42 BST 2013</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="028208.html">[rabbitmq-discuss] rabbitmq-c amqp_tx_commit leak memory
+</A></li>
+        <LI>Next message: <A HREF="028223.html">[rabbitmq-discuss] rabbitmq-c amqp_tx_commit leak memory
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#28212">[ date ]</a>
+              <a href="thread.html#28212">[ thread ]</a>
+              <a href="subject.html#28212">[ subject ]</a>
+              <a href="author.html#28212">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>You need to call amqp_maybe_releae_buffers() after amqp_tx_commit().
+
+The rule of thumb for rabbitmq-c is if the library returns something to
+you, you should release it when you're done with it by calling that
+function.
+
+
+On Mon, Jul 1, 2013 at 6:08 AM, Haster &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">haster2004 at yandex.ru</A>&gt; wrote:
+
+&gt;<i> Hi there!
+</I>&gt;<i>
+</I>&gt;<i> I try to use transactions in my producer. And I found that when I send many
+</I>&gt;<i> messages - my app eat a lot of memory.
+</I>&gt;<i>
+</I>&gt;<i> If I dismiss transaction feature - memory consumption is normal
+</I>&gt;<i>
+</I>&gt;<i> Maybe there is memory leak in amqp_tx_commit? Or maybe I have to call some
+</I>&gt;<i> function to clean something?
+</I>&gt;<i>
+</I>&gt;<i> my test case is below:
+</I>&gt;<i> const char * const host = &quot;localhost&quot;;
+</I>&gt;<i> int port = 5672;
+</I>&gt;<i> const char * const user = &quot;admin&quot;;
+</I>&gt;<i> const char * const pass = &quot;password&quot;;
+</I>&gt;<i> amqp_channel_t channel_exchange = 4;
+</I>&gt;<i> amqp_channel_t channel_queue = 5;
+</I>&gt;<i> const char *exchange = &quot;haster_ex&quot;;
+</I>&gt;<i>
+</I>&gt;<i> void main () {
+</I>&gt;<i>   amqp_connection_state_t conn = amqp_new_connection();
+</I>&gt;<i>   if (!conn) { cout &lt;&lt; &quot;Connection error\n&quot;; return;
+</I>&gt;<i>   }
+</I>&gt;<i>
+</I>&gt;<i>   int sockfd = amqp_open_socket(host, port);  //5672
+</I>&gt;<i>   if (sockfd &lt; 0) { cout &lt;&lt; &quot;Opening socket error\n&quot;; return;  }
+</I>&gt;<i>
+</I>&gt;<i>   amqp_set_sockfd(conn, sockfd);
+</I>&gt;<i>
+</I>&gt;<i>   amqp_rpc_reply_t reply = amqp_login(conn, &quot;/&quot;, 0, 131072, 0,
+</I>&gt;<i> AMQP_SASL_METHOD_PLAIN, user, pass);
+</I>&gt;<i>   if (reply.reply_type != AMQP_RESPONSE_NORMAL)
+</I>&gt;<i> {amqp_destroy_connection(conn); cout &lt;&lt; &quot;Login error\n&quot;; return;}
+</I>&gt;<i>
+</I>&gt;<i>   amqp_channel_open(conn, channel_exchange);
+</I>&gt;<i>   amqp_rpc_reply_t res = amqp_get_rpc_reply(conn);
+</I>&gt;<i>   if (res.reply_type != AMQP_RESPONSE_NORMAL) {cout &lt;&lt; &quot;Channel open
+</I>&gt;<i> error\n&quot;; amqp_connection_close(conn, AMQP_REPLY_SUCCESS);
+</I>&gt;<i> amqp_destroy_connection(conn);return;}
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> *  amqp_tx_select(conn, channel_exchange);   // If comment this - all is
+</I>&gt;<i> OK*
+</I>&gt;<i>   res = amqp_get_rpc_reply(conn);
+</I>&gt;<i>   if (res.reply_type != AMQP_RESPONSE_NORMAL) {cout &lt;&lt; &quot;Select error\n&quot;;
+</I>&gt;<i> amqp_connection_close(conn, AMQP_REPLY_SUCCESS);
+</I>&gt;<i> amqp_destroy_connection(conn);return;}
+</I>&gt;<i>
+</I>&gt;<i>   amqp_bytes_t message_bytes, routingKey_bytes, exchange_bytes;
+</I>&gt;<i>   exchange_bytes.bytes = (void*)exchange;
+</I>&gt;<i>   exchange_bytes.len = strlen(exchange);
+</I>&gt;<i>   message_bytes.bytes = (void*)&quot;Privrr&quot;;
+</I>&gt;<i>   message_bytes.len = 6;
+</I>&gt;<i>   routingKey_bytes.bytes = (void*)&quot;key&quot;;
+</I>&gt;<i>   routingKey_bytes.len = 3;
+</I>&gt;<i>   amqp_basic_properties_t props;
+</I>&gt;<i>   props._flags |= AMQP_BASIC_DELIVERY_MODE_FLAG;
+</I>&gt;<i>   props.delivery_mode = 2;
+</I>&gt;<i>   props._flags = AMQP_BASIC_CONTENT_TYPE_FLAG;
+</I>&gt;<i>   props.content_type = amqp_cstring_bytes(&quot;text/plain&quot;);
+</I>&gt;<i>
+</I>&gt;<i>   amqp_bytes_t expiration;
+</I>&gt;<i>   expiration.bytes = (void*)&quot;1000&quot;;
+</I>&gt;<i>   expiration.len = 4;
+</I>&gt;<i>   props.expiration = expiration;
+</I>&gt;<i>   props._flags |= AMQP_BASIC_EXPIRATION_FLAG;
+</I>&gt;<i>
+</I>&gt;<i>   while (1) {
+</I>&gt;<i>     int r = amqp_basic_publish(conn, channel_exchange, exchange_bytes,
+</I>&gt;<i> routingKey_bytes,  1, 0, &amp;props, message_bytes);
+</I>&gt;<i>
+</I>&gt;<i> *    amqp_tx_commit(conn, channel_exchange);  // if comment it - all is OK
+</I>&gt;<i>     amqp_get_rpc_reply(conn);*
+</I>&gt;<i>     //die_on_amqp_error(amqp_get_rpc_reply(conn), &quot;Commit error&quot;);
+</I>&gt;<i>   }
+</I>&gt;<i>   char ch;
+</I>&gt;<i>   cin &gt;&gt; ch;
+</I>&gt;<i> }
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> --
+</I>&gt;<i> View this message in context:
+</I>&gt;<i> <A HREF="http://rabbitmq.1065348.n5.nabble.com/rabbitmq-c-amqp-tx-commit-leak-memory-tp27717.html">http://rabbitmq.1065348.n5.nabble.com/rabbitmq-c-amqp-tx-commit-leak-memory-tp27717.html</A>
+</I>&gt;<i> Sent from the RabbitMQ mailing list archive at Nabble.com.
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20130701/9155c040/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20130701/9155c040/attachment.htm</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="028208.html">[rabbitmq-discuss] rabbitmq-c amqp_tx_commit leak memory
+</A></li>
+	<LI>Next message: <A HREF="028223.html">[rabbitmq-discuss] rabbitmq-c amqp_tx_commit leak memory
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#28212">[ date ]</a>
+              <a href="thread.html#28212">[ thread ]</a>
+              <a href="subject.html#28212">[ subject ]</a>
+              <a href="author.html#28212">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,206 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] OOM kill
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20OOM%20kill&In-Reply-To=%3CCAD6m6fHV7AgcSp406UckUj2hYjXdJtG%3D%2BXgu9ni7dYBde-sNmw%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="034380.html">
+   <LINK REL="Next"  HREF="034387.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] OOM kill</H1>
+    <B>Jason McIntosh</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20OOM%20kill&In-Reply-To=%3CCAD6m6fHV7AgcSp406UckUj2hYjXdJtG%3D%2BXgu9ni7dYBde-sNmw%40mail.gmail.com%3E"
+       TITLE="[rabbitmq-discuss] OOM kill">mcintoshj at gmail.com
+       </A><BR>
+    <I>Fri Mar  7 17:48:24 GMT 2014</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="034380.html">[rabbitmq-discuss] OOM kill
+</A></li>
+        <LI>Next message: <A HREF="034387.html">[rabbitmq-discuss] OOM kill
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#34383">[ date ]</a>
+              <a href="thread.html#34383">[ thread ]</a>
+              <a href="subject.html#34383">[ subject ]</a>
+              <a href="author.html#34383">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Simon:
+
+Is it messages or connections that it blocks?  I thought it would block new
+connections but still allow existing connections to publish messages?  At
+what point does rabbit start paging to disk on the messages?  Is that at
+50% of the vm memory threshold?
+
+Jason
+
+
+On Fri, Mar 7, 2014 at 11:45 AM, Simon MacMullen &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">simon at rabbitmq.com</A>&gt; wrote:
+
+&gt;<i> On 07/03/2014 5:16PM, Dmitry Andrianov wrote:
+</I>&gt;<i>
+</I>&gt;&gt;<i> Hello.
+</I>&gt;&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> Hi.
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>  We are trying to load-test RabbitMQ server in different configurations
+</I>&gt;&gt;<i> on Amazon EC2 node.
+</I>&gt;&gt;<i> Most of our tests end with Linux OOM killer intervening and killing
+</I>&gt;&gt;<i> Rabbit.
+</I>&gt;&gt;<i> That is something I cannot really understand especially given that it is
+</I>&gt;&gt;<i> reproducible even with vm_memory_high_watermark set to 0.2 and no other
+</I>&gt;&gt;<i> processes running on that box.
+</I>&gt;&gt;<i> So if someone could shed some light onto that issue it would help a lot.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Below the status response not long before the process was killed:
+</I>&gt;&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> &lt;snip&gt;
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>  Couple of strange things there are:
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> 1. {vm_memory_limit,804643635} but still memory {total,1984625336}. How
+</I>&gt;&gt;<i> is that possible? <A HREF="https://www.rabbitmq.com/memory.html">https://www.rabbitmq.com/memory.html</A> says that erlang
+</I>&gt;&gt;<i> process can take twice the configured size so I expected that but it is
+</I>&gt;&gt;<i> definitely more than twice.
+</I>&gt;&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> The only ways RabbitMQ has of preventing memory use from increasing are to
+</I>&gt;<i> do with messages - when the memory alarm goes off it will stop accepting
+</I>&gt;<i> new messages, and before that point it will start trying to reduce memory
+</I>&gt;<i> use by paging messages out to disc.
+</I>&gt;<i>
+</I>&gt;<i> Normally, messages are the biggest user of memory in RabbitMQ, so this
+</I>&gt;<i> approach works OK.
+</I>&gt;<i>
+</I>&gt;<i> However, your test ends up causing RabbitMQ to end up using the majority
+</I>&gt;<i> of its memory in connection processes - you have 11k connections open, at
+</I>&gt;<i> about 120kB each.
+</I>&gt;<i>
+</I>&gt;<i> We don't prevent RabbitMQ from accepting new connections when the memory
+</I>&gt;<i> alarm goes off since our main worry is messages - and those connections
+</I>&gt;<i> could be intending to consume messages and thus reduce memory pressure.
+</I>&gt;<i>
+</I>&gt;<i> So I guess you might want to reduce the ulimit, so that RabbitMQ runs out
+</I>&gt;<i> of file descriptors before it runs out of memory (when it runs out of FDs
+</I>&gt;<i> it *will* stop accepting network connections gracefully).
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>  2. {plugins,-44730984} - how this one is possible?
+</I>&gt;&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> That's a good question!
+</I>&gt;<i>
+</I>&gt;<i> That value is calculated from (memory used by all plugins including
+</I>&gt;<i> management) - (memory used by the management database). So somehow the
+</I>&gt;<i> memory counter managed to determine that &quot;all plugins&quot; used less memory
+</I>&gt;<i> than just the management plugin. I'll look into that.
+</I>&gt;<i>
+</I>&gt;<i> Cheers, Simon
+</I>&gt;<i>
+</I>&gt;<i> --
+</I>&gt;<i> Simon MacMullen
+</I>&gt;<i> RabbitMQ, Pivotal
+</I>&gt;<i>
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>&gt;<i>
+</I>
+
+
+-- 
+Jason McIntosh
+<A HREF="https://github.com/jasonmcintosh/">https://github.com/jasonmcintosh/</A>
+573-424-7612
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20140307/f70924e5/attachment.html">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20140307/f70924e5/attachment.html</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="034380.html">[rabbitmq-discuss] OOM kill
+</A></li>
+	<LI>Next message: <A HREF="034387.html">[rabbitmq-discuss] OOM kill
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#34383">[ date ]</a>
+              <a href="thread.html#34383">[ thread ]</a>
+              <a href="subject.html#34383">[ subject ]</a>
+              <a href="author.html#34383">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

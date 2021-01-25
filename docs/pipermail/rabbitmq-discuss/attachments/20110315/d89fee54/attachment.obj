@@ -1,0 +1,147 @@
+-module(rabbit_shovel_queue_watcher).
+-behaviour(gen_server).
+
+-export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2, code_change/3]).
+
+-include_lib("amqp_client/include/amqp_client.hrl").
+
+-record(state, {timer_ref, connection, channel, queue, remote_connection, remote_channel, destination, messages_forwarded, commit_timer, latest_delivery_tag, commit_count, def_count, def_time}).
+
+attempt_connect(Destination) ->
+	try
+		RemoteHost = proplists:get_value('host', Destination, "localhost"),
+		RemotePort = proplists:get_value('port', Destination, 5672),
+		RemoteUsername = proplists:get_value('username', Destination, <<"guest">>),
+		RemotePassword = proplists:get_value('password', Destination, <<"guest">>),
+		RemoteVhost = proplists:get_value('vhost', Destination, <<"/">>),
+		RemoteConnection = #amqp_params{username=RemoteUsername, password=RemotePassword, virtual_host=RemoteVhost, host=RemoteHost, port=RemotePort},
+		RemoteConn = amqp_connection:start_network_link(RemoteConnection),
+		RemoteChannel = amqp_connection:open_channel(RemoteConn),
+		link(RemoteChannel),
+		{ok, RemoteConn, RemoteChannel}
+	catch
+		Class:Error ->
+			error_logger:error_report(["Error connecting to remote Rabbit server", Class, Error, self()]),
+			{error}
+	end.
+
+
+connect_to_remote(State) ->
+	case attempt_connect(State#state.destination) of
+		{ok, RemoteConnection, RemoteChannel} ->
+			% Commit after time
+			CommitTime = proplists:get_value('commit_time', State#state.destination, 500),
+			CommitCount = proplists:get_value('commit_count', State#state.destination, 1000),
+
+			Channel = amqp_connection:open_channel(State#state.connection),
+			link(Channel),
+			#'basic.qos_ok'{} = amqp_channel:call(Channel, #'basic.qos'{prefetch_count = CommitCount * 2}),
+			#'basic.consume_ok'{} = amqp_channel:subscribe(Channel, #'basic.consume'{queue = State#state.queue}, self()),
+			% enable transactions on this channel
+			amqp_channel:call(RemoteChannel, #'tx.select'{}, none),
+
+			{ok, CommitTimer} = timer:send_after(CommitTime, self(), commit_transaction),
+			{ok, State#state{channel=Channel, remote_channel = RemoteChannel, remote_connection = RemoteConnection, commit_timer = CommitTimer, commit_count=CommitCount, def_count = CommitCount, def_time = CommitTime}};
+		{error} ->
+			{error, State#state{channel=undefined, remote_channel = undefined, remote_connection = undefined}}
+	end.
+
+do_commit(#state {channel = Channel, remote_channel = RemoteChannel, latest_delivery_tag = DeliveryTag} = _State) ->
+	% commit ensures the message has made it to the remote side.
+	% and creates another transaction implicitly
+	amqp_channel:call(RemoteChannel, #'tx.commit'{}, none),
+	amqp_channel:call(Channel, #'basic.ack'{delivery_tag = DeliveryTag, multiple=true}),
+	ok.
+
+
+disconnect_channel(Channel) ->
+	case is_pid(Channel) andalso is_process_alive(Channel) of
+		true -> amqp_channel:close(Channel);
+		_ -> ok
+	end.
+disconnect_connection(Connection) ->
+	case is_pid(Connection) andalso is_process_alive(Connection) of
+		true ->	amqp_connection:close(Connection);
+		_ -> ok
+	end.
+
+disconnect_shovel(State) ->
+	timer:cancel(State#state.commit_timer),
+	disconnect_channel(State#state.channel),
+	disconnect_channel(State#state.remote_channel),
+	disconnect_connection(State#state.remote_connection).
+
+init([Connection, Queue, Destination]) ->
+	process_flag(trap_exit, true),
+	erlang:send_after(1000, self(), connect_to_remote),
+	{ok, #state{connection=Connection, destination=Destination, queue=Queue, messages_forwarded=0}}.
+
+handle_call(get_status, _From, State) ->
+	Info = [{messages_forwarded, State#state.messages_forwarded}, {source, State#state.queue}, {destination, State#state.destination}],
+	{reply, Info, State};
+
+handle_call(_Msg, _From, State) ->
+	{reply, unknown_command, State}.
+
+handle_cast(shutdown, State) ->
+	{stop, shutdown, State};
+
+handle_cast(_Msg,State) ->
+	{noreply, State}.
+
+handle_info({#'basic.deliver'{} = Frame, #amqp_msg{} = Message}, State) ->
+	% We do the commit first since we are changing our delivery tag below.
+	{NewCount, Timer} = case State#state.commit_count of
+		Reset when Reset =< 0 ->
+			do_commit(State),
+			timer:cancel(State#state.commit_timer),
+			{ok, CommitTimer} = timer:send_after(State#state.def_time, self(), commit_transaction),
+			{State#state.def_count, CommitTimer};
+		Subtract -> {Subtract - 1, State#state.commit_timer}
+	end,
+
+	Publish = #'basic.publish'{exchange = Frame#'basic.deliver'.exchange, routing_key = Frame#'basic.deliver'.routing_key},
+	% Do the remote publish
+	amqp_channel:call(State#state.remote_channel, Publish, Message),
+	% Save the latest delivery tag so we know what to ack up to when we hit our transaction timer
+	UpdatedState = State#state{messages_forwarded = State#state.messages_forwarded+1, latest_delivery_tag = Frame#'basic.deliver'.delivery_tag, commit_timer = Timer, commit_count = NewCount},
+	{noreply, UpdatedState};
+
+handle_info(#'basic.consume_ok'{}, State) ->
+	{noreply, State};
+
+handle_info(connect_to_remote, #state{channel=undefined, remote_channel = undefined, remote_connection = undefined} = State) ->
+	{_Status, NewState} = connect_to_remote(State),
+	{noreply, NewState#state{timer_ref=undefined}};
+
+handle_info(commit_transaction, #state {channel = Channel, remote_channel = RemoteChannel, latest_delivery_tag = DeliveryTag} = State) when DeliveryTag =/= 'undefined', Channel =/= 'undefined', RemoteChannel =/= 'undefined' ->
+	do_commit(State),
+	{ok, CommitTimer} = timer:send_after(State#state.def_time, self(), commit_transaction),
+	{noreply, State#state{latest_delivery_tag = 'undefined', commit_timer = CommitTimer, commit_count = State#state.def_count}};
+
+handle_info(commit_transaction, #state {latest_delivery_tag = DeliveryTag} = State) when DeliveryTag =:= 'undefined' ->
+	{ok, CommitTimer} = timer:send_after(State#state.def_time, self(), commit_transaction),
+	{noreply, State#state{commit_timer = CommitTimer}};
+
+handle_info({'EXIT', _Pid, normal}, State) ->
+	{noreply, State};
+
+handle_info({'EXIT', _Pid, _Reason}, State) ->
+	%% Only have a single reconnect in progress at a time
+	%% connect_to_remote resets to undefined
+	Timer = case State#state.timer_ref of
+		undefined -> disconnect_shovel(State), erlang:send_after(5000, self(), connect_to_remote);
+		TimerRef when is_reference(TimerRef) -> TimerRef
+	end,
+	{noreply, State#state{timer_ref = Timer, channel=undefined, remote_connection=undefined, remote_channel=undefined}};
+
+handle_info(_Info, State) ->
+	{noreply, State}.
+
+terminate(Reason, State) ->
+	io:format("Queue Watcher exit: ~p~n", [Reason]),
+	disconnect_shovel(State),
+	ok.
+
+code_change(_OldVsn, State, _Extra) ->
+	{ok, State}.

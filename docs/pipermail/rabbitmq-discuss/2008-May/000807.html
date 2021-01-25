@@ -1,0 +1,176 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] TCP timeouts
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20TCP%20timeouts&In-Reply-To=4821E458.5050503%40lshift.net">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000795.html">
+   <LINK REL="Next"  HREF="000813.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] TCP timeouts</H1>
+    <B>David.Corcoran at edftrading.com</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20TCP%20timeouts&In-Reply-To=4821E458.5050503%40lshift.net"
+       TITLE="[rabbitmq-discuss] TCP timeouts">David.Corcoran at edftrading.com
+       </A><BR>
+    <I>Thu May  8 09:29:04 BST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000795.html">[rabbitmq-discuss] TCP timeouts
+</A></li>
+        <LI>Next message: <A HREF="000813.html">[rabbitmq-discuss] TCP timeouts
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#807">[ date ]</a>
+              <a href="thread.html#807">[ thread ]</a>
+              <a href="subject.html#807">[ subject ]</a>
+              <a href="author.html#807">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi Matthias,
+
+It looks like you were right about the java version. Running in java
+1.5.0.15 doesn't work. Running in java-6-openjdk or java-6 (1.6.0.06) works
+fine. I think it's a bug, perhaps related to this:
+<A HREF="http://bugs.sun.com/bugdatabase/view_bug.do?bug_id=6383015">http://bugs.sun.com/bugdatabase/view_bug.do?bug_id=6383015</A>
+
+I've attached the code that displays the problem. Putting back the
+Thread.yield() in java 5 makes it work, but obviously isn't a viable
+solution.
+
+I guess it's time we upgrade to java 6 ;)
+
+Thanks again for your help,
+
+Dave
+
+(See attached file: TimeoutTest.java)
+
+
+
+
+                                                                           
+             Matthias                                                      
+             Radestock                                                     
+             &lt;<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">matthias at lshift.</A>                                          To 
+             net&gt;                      <A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">David.Corcoran at edftrading.com</A>       
+             Sent by:                                                   cc 
+             rabbitmq-discuss-         <A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A> 
+             <A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">bounces at lists.rab</A>                                     Subject 
+             bitmq.com                 Re: [rabbitmq-discuss] TCP timeouts 
+                                                                           
+                                                                           
+             07/05/2008 18:18                                              
+                                                                           
+                                                                           
+                                                                           
+
+
+
+
+
+David,
+
+<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">David.Corcoran at edftrading.com</A> wrote:
+&gt;<i> I've run into a problem testing RabbitMQ. My Java clients keep
+</I>&gt;<i> disconnecting when using a lot of CPU and the error in the RabbitMQ logs
+</I>&gt;<i> is:
+</I>&gt;<i> =ERROR REPORT==== 7-May-2008::11:41:44 ===
+</I>&gt;<i> error on TCP connection from 127.0.0.1:37299
+</I>&gt;<i> {timeout,frame_header}
+</I>&gt;<i>
+</I>&gt;<i> I'm using channel.basicGet and I think I've narrowed down the problem.
+</I>When
+&gt;<i> I get a message I process it, then call basicAck once it's done. So the
+</I>&gt;<i> code looks like:
+</I>&gt;<i> GetResponse basicGet = channel.basicGet(ticket, queueName, false);
+</I>&gt;<i>  if (basicGet != null) {
+</I>&gt;<i>         process(basicGet);
+</I>&gt;<i>         channel.basicAck(basicGet.getEnvelope().getDeliveryTag(), false);
+</I>&gt;<i> }
+</I>&gt;<i>
+</I>&gt;<i> if process() looks like this:
+</I>&gt;<i>             long start = System.currentTimeMillis();
+</I>&gt;<i>             while(true) {
+</I>&gt;<i>                 long now = System.currentTimeMillis();
+</I>&gt;<i>                 if(now - start &gt; 10000) {
+</I>&gt;<i>                     break;
+</I>&gt;<i>                 }
+</I>&gt;<i>             }
+</I>&gt;<i> The client will disconnect. If I add a Thread.sleep(0) into the loop it
+</I>&gt;<i> will work fine. The sleep 0 just yields. In my real code it doesn't do
+</I>that
+&gt;<i> loop but does do a lot of maths that can take up to about 1 minute so it
+</I>&gt;<i> has the same effect of killing the CPU for a while.
+</I>&gt;<i>
+</I>&gt;<i> I guess what's happening is that the connection thread isn't getting any
+</I>&gt;<i> time to send heartbeats and the server is disconnecting it. Is there a
+</I>work
+&gt;<i> around for this? Can I change the heartbeat?
+</I>&gt;<i>
+</I>&gt;<i> A little more information if that helps:
+</I>&gt;<i>  - Quad core machine, only using 1 cpu during this test
+</I>&gt;<i>  - 4GB Ram
+</I>&gt;<i>  - Erlang 5.5.5 (64bit)
+</I>&gt;<i>  - Ubunut 64
+</I>&gt;<i>  - Rabbit mq 1.3.0-1
+</I>
+That is weird. The application thread that is calling process(...), and
+the connection thread are separate threads. The workload on the former
+should not prevent the latter from sending heartbeats, certainly not on
+a quad-core machine.
+
+Can you post the complete example? Also, what version of the jvm are you
+running?
+
+
+Matthias.
+
+_______________________________________________
+rabbitmq-discuss mailing list
+<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+
+
+*********************************************************************
+This communication contains confidential information, some or all of which may be privileged. It is for the intended recipient only and others must not disclose, distribute, copy, print or rely on this communication. If an addressing or transmission error has misdirected this communication, please notify the sender by replying to this e-mail and then delete the e-mail. E-mail sent to EDF Trading may be monitored by the company. Thank you. 
+EDF Trading Limited
+80 Victoria Street, 3rd Floor, Cardinal Place, London, SW1E 5JL
+A Company registered in England No. 4255974. 
+Switchboard: 020 7061 4000
+EDF Trading Markets Limited is a member of the EDF Trading Limited Group and is authorised and regulated by the Financial Services Authority.
+VAT number: GB 735 5479 07
+*********************************************************************
+-------------- next part --------------
+A non-text attachment was scrubbed...
+Name: TimeoutTest.java
+Type: application/octet-stream
+Size: 1795 bytes
+Desc: not available
+Url : <A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20080508/2ab8f6ee/attachment.obj">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20080508/2ab8f6ee/attachment.obj</A> 
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000795.html">[rabbitmq-discuss] TCP timeouts
+</A></li>
+	<LI>Next message: <A HREF="000813.html">[rabbitmq-discuss] TCP timeouts
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#807">[ date ]</a>
+              <a href="thread.html#807">[ thread ]</a>
+              <a href="subject.html#807">[ subject ]</a>
+              <a href="author.html#807">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

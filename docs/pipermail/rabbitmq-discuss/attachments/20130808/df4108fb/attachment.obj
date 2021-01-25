@@ -1,0 +1,124 @@
+package org.gbif.crawler;
+
+import java.io.IOException;
+import java.util.concurrent.Executors;
+
+import com.rabbitmq.client.AMQP.BasicProperties;
+import com.rabbitmq.client.Channel;
+import com.rabbitmq.client.Connection;
+import com.rabbitmq.client.ConnectionFactory;
+import com.rabbitmq.client.DefaultConsumer;
+import com.rabbitmq.client.Envelope;
+import com.rabbitmq.client.MessageProperties;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+public class RabbitTest {
+
+  private static final Logger LOG = LoggerFactory.getLogger(RabbitTest.class);
+
+  private static final String EXCHANGE = "test";
+  private static final String ROUTING_KEY = "test";
+  private static final String QUEUE = "test";
+  private static final int THREADS = 10;
+  private static final int PREFETCH = 50;
+  private static final String message = "testmessage";
+
+  private final Connection sendConnection;
+  private final Connection receiveConnection;
+
+  private RabbitTest(ConnectionFactory factory) throws IOException {
+    this.sendConnection = factory.newConnection();
+    this.receiveConnection = factory.newConnection(Executors.newFixedThreadPool(THREADS));
+  }
+
+  private void run() throws IOException {
+    Thread p = new Thread(new Producer());
+    Thread c = new Thread(new Consumer());
+    p.start();
+    c.start();
+    while (p.isAlive() || c.isAlive()) {
+      try {
+        Thread.sleep(10);
+      } catch (InterruptedException e) {
+      }
+    }
+  }
+
+  private class Producer implements Runnable {
+
+    @Override
+    public void run() {
+      Channel channel = null;
+      try {
+        channel = sendConnection.createChannel();
+        channel.exchangeDeclare(EXCHANGE, "topic", true);
+        for (int i = 0; i < Integer.MAX_VALUE; i++) {
+          channel.basicPublish(EXCHANGE, ROUTING_KEY, MessageProperties.PERSISTENT_TEXT_PLAIN,
+            (message + ":" + i).getBytes());
+        }
+
+      } catch (IOException e) {
+        LOG.error("Producer error", e);
+      } finally {
+        try {
+          channel.close();
+          sendConnection.close();
+        } catch (IOException e) {
+        }
+      }
+    }
+  }
+
+  private class Callback extends DefaultConsumer {
+
+    private final int id;
+
+    public Callback(Channel channel, int id) {
+      super(channel);
+      this.id = id;
+    }
+
+    @Override
+    public void handleDelivery(String consumerTag, Envelope envelope, BasicProperties properties, byte[] body)
+      throws IOException {
+      LOG.info("Thread[{}] received: {}", id, new String(body));
+      getChannel().basicAck(envelope.getDeliveryTag(), false);
+    }
+
+
+  }
+
+  private class Consumer implements Runnable {
+
+    @Override
+    public void run() {
+      for (int i = 0; i < THREADS; i++) {
+        try {
+          Channel channel = receiveConnection.createChannel();
+          channel.exchangeDeclare(EXCHANGE, "topic", true);
+          channel.queueDeclare(QUEUE, true, false, false, null);
+          channel.queueBind(QUEUE, EXCHANGE, ROUTING_KEY);
+          channel.basicQos(PREFETCH);
+          channel.basicConsume(QUEUE, false, new Callback(channel, i));
+        } catch (IOException e) {
+          LOG.error("Error consuming", e);
+        }
+      }
+    }
+  }
+
+  public static void main(String[] args) {
+    ConnectionFactory factory = new ConnectionFactory();
+    factory.setHost("localhost");
+    factory.setUsername("guest");
+    factory.setPassword("guest");
+    factory.setVirtualHost("/");
+    try {
+      RabbitTest app = new RabbitTest(factory);
+      app.run();
+    } catch (IOException e) {
+      LOG.error(e.getMessage(), e);
+    }
+  }
+}

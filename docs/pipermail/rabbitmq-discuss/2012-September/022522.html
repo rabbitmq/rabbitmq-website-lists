@@ -1,0 +1,146 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Confusing disk free space limit warning
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Confusing%20disk%20free%20space%20limit%20warning&In-Reply-To=%3C5056F045.8080002%40rabbitmq.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="022521.html">
+   <LINK REL="Next"  HREF="022531.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Confusing disk free space limit warning</H1>
+    <B>Matthias Radestock</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Confusing%20disk%20free%20space%20limit%20warning&In-Reply-To=%3C5056F045.8080002%40rabbitmq.com%3E"
+       TITLE="[rabbitmq-discuss] Confusing disk free space limit warning">matthias at rabbitmq.com
+       </A><BR>
+    <I>Mon Sep 17 10:41:25 BST 2012</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="022521.html">[rabbitmq-discuss] Confusing disk free space limit warning
+</A></li>
+        <LI>Next message: <A HREF="022531.html">[rabbitmq-discuss] Confusing disk free space limit warning
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#22522">[ date ]</a>
+              <a href="thread.html#22522">[ thread ]</a>
+              <a href="subject.html#22522">[ subject ]</a>
+              <a href="author.html#22522">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Mark,
+
+On 17/09/12 08:57, Mark Hingston wrote:
+&gt;<i> Below is the excerpt from the logs that shows what happened before the
+</I>&gt;<i> 'clear'.
+</I>&gt;<i>
+</I>&gt;<i> =INFO REPORT==== 16-Sep-2012::06:49:06 ===
+</I>&gt;<i> Disk free space limit now exceeded. Free bytes:888758272 Limit:1000000000
+</I>&gt;<i>
+</I>&gt;<i> =ERROR REPORT==== 16-Sep-2012::06:49:06 ===
+</I>&gt;<i> ** gen_event handler rabbit_alarm crashed.
+</I>&gt;<i> ** Was installed in alarm_handler
+</I>&gt;<i> ** Last event was: {set_alarm,{{<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">resource_limit,disk,rabbit at mq1</A>},[]}}
+</I>&gt;<i> ** When handler state == {alarms,
+</I>&gt;<i>                            {dict,6,16,16,8,80,48,
+</I>&gt;<i> {[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[]},
+</I>&gt;<i>                             {{[],
+</I>&gt;<i>                               [[&lt;0.1053.112&gt;|
+</I>&gt;<i> {rabbit_reader,conserve_resources,[]}]],
+</I>&gt;<i>                               [],[],[],[],[],[],[],
+</I>&gt;<i>                               [[&lt;0.1045.112&gt;|
+</I>&gt;<i> {rabbit_reader,conserve_resources,[]}]],
+</I>&gt;<i>                               [[&lt;0.106.101&gt;|
+</I>&gt;<i> {rabbit_stomp_reader,conserve_resources,[]}]],
+</I>&gt;<i>                               [[&lt;0.2522.112&gt;|
+</I>&gt;<i> {rabbit_reader,conserve_resources,[]}]],
+</I>&gt;<i>                               [[&lt;0.18285.113&gt;|
+</I>&gt;<i> {rabbit_reader,conserve_resources,[]}]],
+</I>&gt;<i>                               [],[],
+</I>&gt;<i>                               [[&lt;0.15164.198&gt;|
+</I>&gt;<i> {rabbit_reader,conserve_resources,[]}]]}}},
+</I>&gt;<i>                            {dict,0,16,16,8,80,48,
+</I>&gt;<i> {[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[]},
+</I>&gt;<i> {{[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],
+</I>&gt;<i>                               []}}}}
+</I>&gt;<i> ** Reason == {'function not exported',
+</I>&gt;<i>                   [{rabbit_stomp_reader,conserve_resources,
+</I>&gt;<i>                        [&lt;0.106.101&gt;,disk,true]},
+</I>&gt;<i>                    {dict,fold_bucket,3},
+</I>&gt;<i>                    {dict,fold_seg,4},
+</I>&gt;<i>                    {dict,fold_segs,4},
+</I>&gt;<i>                    {rabbit_alarm,maybe_alert,4},
+</I>&gt;<i>                    {rabbit_alarm,handle_event,2},
+</I>&gt;<i>                    {gen_event,server_update,4},
+</I>&gt;<i>                    {gen_event,server_notify,4}]}
+</I>
+Ah. That's a bug in the stomp plug-in. It's been around since 2.8.3. 
+Will fix.
+
+The upshot is that from then onwards alarm handling is broken, which 
+explains why the subsequent clearing of the disk alarm wasn't unblocking 
+producers for you.
+
+&gt;&gt;<i> Throttling/blocking affects producers (only). Messages published by a
+</I>&gt;&gt;<i> blocked producer will end up in various buffers at the client /
+</I>&gt;&gt;<i> network / server and be lost when the server is restarted. That's just
+</I>&gt;&gt;<i> normal TCP/IP behaviour.
+</I>&gt;&gt;<i>
+</I>&gt;<i> Given what you've said, I'm trying to understand how to best handle this
+</I>&gt;<i> situation from the client. There's an existing bug relating to this
+</I>&gt;<i> issue here: <A HREF="https://github.com/celery/kombu/issues/136.">https://github.com/celery/kombu/issues/136.</A> However, I don't
+</I>&gt;<i> understand what (if any) indication the amqp client receives that it is
+</I>&gt;<i> being 'blocked' / rate limited by the rabbitmq server. Can you shed any
+</I>&gt;<i> light on that?
+</I>
+There is nothing unsual about &quot;rate limiting&quot; / throttling. Flow control 
+is an integral part of TCP/IP - *all* TCP/IP connections are flow 
+controlled. It's how TCP/IP deals with congested networks and slow servers.
+
+The fact that the server is &quot;slow&quot; because it encountered an alarm 
+condition is neither here or there - as far as the client is concerned 
+it's just talking to a slow server.
+
+So your question really comes down to how would you expect a client to 
+detect and deal with a slow server / congested network.
+
+Regards,
+
+Matthias.
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="022521.html">[rabbitmq-discuss] Confusing disk free space limit warning
+</A></li>
+	<LI>Next message: <A HREF="022531.html">[rabbitmq-discuss] Confusing disk free space limit warning
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#22522">[ date ]</a>
+              <a href="thread.html#22522">[ thread ]</a>
+              <a href="subject.html#22522">[ subject ]</a>
+              <a href="author.html#22522">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

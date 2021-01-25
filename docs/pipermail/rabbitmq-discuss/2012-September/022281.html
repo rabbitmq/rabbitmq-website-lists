@@ -1,0 +1,167 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] How to achieve HA consumers?
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20How%20to%20achieve%20HA%20consumers%3F&In-Reply-To=%3C201209052151489305075%40edocom.cn%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="022269.html">
+   <LINK REL="Next"  HREF="022283.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] How to achieve HA consumers?</H1>
+    <B>johnson</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20How%20to%20achieve%20HA%20consumers%3F&In-Reply-To=%3C201209052151489305075%40edocom.cn%3E"
+       TITLE="[rabbitmq-discuss] How to achieve HA consumers?">johnson at edocom.cn
+       </A><BR>
+    <I>Wed Sep  5 14:51:52 BST 2012</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="022269.html">[rabbitmq-discuss] How to achieve HA consumers?
+</A></li>
+        <LI>Next message: <A HREF="022283.html">[rabbitmq-discuss] How to achieve HA consumers?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#22281">[ date ]</a>
+              <a href="thread.html#22281">[ thread ]</a>
+              <a href="subject.html#22281">[ subject ]</a>
+              <a href="author.html#22281">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>
+Hi Matthias,
+
+Thanks for your reply. I wrote some test code and found a wired problem.
+
+The init code is like
+
+ factory = new ConnectionFactory();
+ connection = factory.newConnection(address);
+ channel = connection.createChannel();
+ channel.basicQos(1);
+
+And the receive code is like
+
+ QueueingConsumer consumer = new QueueingConsumer(channel);
+ boolean autoAck = false; 
+
+ Queue.DeclareOk declare = channel.queueDeclarePassive(&quot;LBCQueue&quot;);
+ int consumerCount = declare.getConsumerCount();
+ if (consumerCount &gt; 0)
+  return false;
+ 
+ channel.basicConsume(&quot;LBCQueue&quot;, autoAck, consumer);
+
+First I started the first consumer and didn't publish any message. 
+
+
+Then I started the second consumer and the value of the variable declare is #method&lt;queue.declare-ok&gt;(queue=LBCQueue, message-count=0, consumer-count=1).
+So far everything is OK.
+
+Now I publish 1 messge into the queue and restart the second consumer. The value of the variable declare is #method&lt;queue.declare-ok&gt;(queue=LBCQueue, message-count=0, consumer-count=1).
+So far everything is still OK.
+
+
+Then I publish another message into the queue and restart the second consumer again. 
+
+
+This time the value of declare is #method&lt;queue.declare-ok&gt;(queue=LBCQueue, message-count=1, consumer-count=0).
+The message-count is correct but the consumer-count is changed from 1 to 0. I don't know why. Is it a bug?
+
+
+
+
+johnson
+
+From: Matthias Radestock
+Date: 2012-09-05 15:48
+To: johnson
+CC: rabbitmq-discuss; Francesco Mazzoli
+Subject: Re: [rabbitmq-discuss] How to achieve HA consumers?
+Johnson,
+
+On 05/09/12 05:32, johnson wrote:
+&gt;<i> The channel.queueDeclarePassive method returns the consumer count of
+</I>&gt;<i>  the specified channel,
+</I>
+No it doesn't. queue.declarePassive returns the total number of active
+consumers of the queue at that point in time. Regardless of what
+connection/channel they were created on.
+
+That should be pretty clear from the docs -
+<A HREF="http://www.rabbitmq.com/amqp-0-9-1-reference.html#queue.declare-ok.consumer-count">http://www.rabbitmq.com/amqp-0-9-1-reference.html#queue.declare-ok.consumer-count</A>
+- which make no mention of the count being connection/channel specific.
+
+&gt;<i> So if I start two consumers [...] in two different machines [...] the
+</I>&gt;<i> channel.queueDeclarePassive method always return the consumer count
+</I>&gt;<i> == 1, not 2.
+</I>
+I am not sure what you are expecting to see here. If you start two
+consumers, the count they will see prior to consuming will be 0 or 1.
+
+As mentioned &quot;You'd need to be mindful of races when consumers start 
+up.&quot;, i.e. if both consumers start up near simultaneously then they will 
+both see a count of 0.
+
+&gt;<i> I also try to find a API that can retrieve the existing connection or
+</I>&gt;<i> channel. Then the second consumer can reuse the connection or channel
+</I>&gt;<i> the first consumer created. But it seems no such APIs.
+</I>
+A connection represents a point-to-point TCP connection. You can't 
+&quot;reuse&quot; that from a third point.
+
+Regards,
+
+Matthias.
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20120905/8ce6f981/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20120905/8ce6f981/attachment.htm</A>&gt;
+-------------- next part --------------
+A non-text attachment was scrubbed...
+Name: not available
+Type: image/png
+Size: 22572 bytes
+Desc: not available
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20120905/8ce6f981/attachment.png">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20120905/8ce6f981/attachment.png</A>&gt;
+-------------- next part --------------
+A non-text attachment was scrubbed...
+Name: not available
+Type: image/png
+Size: 22628 bytes
+Desc: not available
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20120905/8ce6f981/attachment-0001.png">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20120905/8ce6f981/attachment-0001.png</A>&gt;
+-------------- next part --------------
+A non-text attachment was scrubbed...
+Name: not available
+Type: image/png
+Size: 22474 bytes
+Desc: not available
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20120905/8ce6f981/attachment-0002.png">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20120905/8ce6f981/attachment-0002.png</A>&gt;
+</PRE>
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="022269.html">[rabbitmq-discuss] How to achieve HA consumers?
+</A></li>
+	<LI>Next message: <A HREF="022283.html">[rabbitmq-discuss] How to achieve HA consumers?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#22281">[ date ]</a>
+              <a href="thread.html#22281">[ thread ]</a>
+              <a href="subject.html#22281">[ subject ]</a>
+              <a href="author.html#22281">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

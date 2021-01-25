@@ -1,0 +1,138 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Per-Connection Flow Control -- The Case	Against
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Per-Connection%20Flow%20Control%20--%20The%20Case%0A%09Against&In-Reply-To=%3C4FBF771F.5090009%40rabbitmq.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="020315.html">
+   <LINK REL="Next"  HREF="020381.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Per-Connection Flow Control -- The Case	Against</H1>
+    <B>Simon MacMullen</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Per-Connection%20Flow%20Control%20--%20The%20Case%0A%09Against&In-Reply-To=%3C4FBF771F.5090009%40rabbitmq.com%3E"
+       TITLE="[rabbitmq-discuss] Per-Connection Flow Control -- The Case	Against">simon at rabbitmq.com
+       </A><BR>
+    <I>Fri May 25 13:12:15 BST 2012</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="020315.html">[rabbitmq-discuss] Per-Connection Flow Control -- The Case Against
+</A></li>
+        <LI>Next message: <A HREF="020381.html">[rabbitmq-discuss] Per-Connection Flow Control -- The Case	Against
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#20323">[ date ]</a>
+              <a href="thread.html#20323">[ thread ]</a>
+              <a href="subject.html#20323">[ subject ]</a>
+              <a href="author.html#20323">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>(Please take this as a reply to your other mail too.)
+
+There's a couple of things going on here. The key point is that a few 
+years ago, in the 1.7.0(!) timeframe, the decision was taken to make 
+queues prioritise delivering messages over accepting messages. The idea 
+was - of course - that all else being equal it's better for messages to 
+go out than come in.
+
+The trouble is that it's possible for a queue to get into a state where 
+it is spending 100% of its time sending messages to consumers and 
+handling acks. With the current prioritisation scheme, this means that 
+no publishes are processed at all.
+
+It's considerably easier to get into this state with lots of consumers 
+and low prefetch count, since the queue has to do a bunch of accounting 
+as it constantly blocks and unblocks consumers.
+
+Before 2.8.0, this condition still existed, but since there was no flow 
+control, published messages would just back up in the channel and reader 
+processes. This is not good, since memory use balloons and when the 
+queue is finally able to start accepting publishes again it has a huge 
+backlog to get through - that clients thought were published some time 
+in the past.
+
+So I don't think that flow control is the problem. But it is making the 
+problem rather more visible.
+
+I am strongly tempted to just remove this prioritisation from the queue. 
+It would be easier to get into a state where queue lengths are growing 
+rather than shrinking, but behaviour would be more predictable, and I 
+think that's important.
+
+Would you be interested in testing this for your use case?
+
+In the mean time, I wonder whether 500 consumers and prefetch-count of 2 
+is what you really want. Normally I would expect a configuration like 
+that when you expect to take some time to process each message, but it 
+sounds like you're going fast enough that either 500 consumers are not 
+needed, or prefetch-count &gt; 2 might lead to better performance.
+
+Cheers, Simon
+
+On 25/05/12 09:07, Chip Salzenberg wrote:
+&gt;<i> The fundamental paradox of per-connection flow control is that it
+</I>&gt;<i> holds up the stop sign just when progress becomes possible.  It is
+</I>&gt;<i> backwards.  Consider:
+</I>&gt;<i>
+</I>&gt;<i> 1. A client is publishing 1.5K/sec to each of four exchanges, each of
+</I>&gt;<i> which has a queue.
+</I>&gt;<i> 2. There are no consumers.  Therefore the queue is growing.
+</I>&gt;<i> 3. RMQ does not stop this.
+</I>&gt;<i> 4. The consumers appear to begin to tear down the backlog.
+</I>&gt;<i> 5. RMQ per-connection flow control suddenly decides that now there are
+</I>&gt;<i> some consumers, now it has a reason to throttle the sender.
+</I>&gt;<i>
+</I>&gt;<i> Therefore, it is only when the backlog can go DOWN that the broker
+</I>&gt;<i> decides to throttle the sender.  Not when the backlog was GROWING, but
+</I>&gt;<i> when it could be SHRINKING, that's when RMQ decides to stop accepting.
+</I>&gt;<i>
+</I>&gt;<i> This is not acceptable.
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>
+
+-- 
+Simon MacMullen
+RabbitMQ, VMware
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="020315.html">[rabbitmq-discuss] Per-Connection Flow Control -- The Case Against
+</A></li>
+	<LI>Next message: <A HREF="020381.html">[rabbitmq-discuss] Per-Connection Flow Control -- The Case	Against
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#20323">[ date ]</a>
+              <a href="thread.html#20323">[ thread ]</a>
+              <a href="subject.html#20323">[ subject ]</a>
+              <a href="author.html#20323">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

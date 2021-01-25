@@ -1,0 +1,174 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Possible memory leak in the management plugin
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Possible%20memory%20leak%20in%20the%20management%20plugin&In-Reply-To=%3C51BF2C0C.9030601%40rabbitmq.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="027917.html">
+   <LINK REL="Next"  HREF="027922.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Possible memory leak in the management plugin</H1>
+    <B>Simon MacMullen</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Possible%20memory%20leak%20in%20the%20management%20plugin&In-Reply-To=%3C51BF2C0C.9030601%40rabbitmq.com%3E"
+       TITLE="[rabbitmq-discuss] Possible memory leak in the management plugin">simon at rabbitmq.com
+       </A><BR>
+    <I>Mon Jun 17 16:32:28 BST 2013</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="027917.html">[rabbitmq-discuss] Possible memory leak in the management plugin
+</A></li>
+        <LI>Next message: <A HREF="027922.html">[rabbitmq-discuss] Possible memory leak in the management plugin
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#27919">[ date ]</a>
+              <a href="thread.html#27919">[ thread ]</a>
+              <a href="subject.html#27919">[ subject ]</a>
+              <a href="author.html#27919">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>On 17/06/13 15:45, Travis Mehlinger wrote:
+&gt;<i> Hi Simon,
+</I>&gt;<i>
+</I>&gt;<i> Thanks for getting back to me. I'll need to restart our monitor and give
+</I>&gt;<i> it some time to leak the memory. I'll let you know the results sometime
+</I>&gt;<i> later today.
+</I>&gt;<i>
+</I>&gt;<i> One thing I failed to mention in my initial report: whenever we
+</I>&gt;<i> restarted one of our services, the queues they were using would get
+</I>&gt;<i> cleaned up (we have them set to auto-delete) and redeclared. Whenever we
+</I>&gt;<i> did that, we would see the memory consumption of the management DB fall
+</I>&gt;<i> off sharply before starting to rise again.
+</I>
+That is presumably because the historical data the management plugin has 
+been retaining for those queues got thrown away. If you don't want to 
+retain this data at all, change the configuration as documented here:
+
+<A HREF="http://www.rabbitmq.com/management.html#sample-retention">http://www.rabbitmq.com/management.html#sample-retention</A>
+
+However, I (currently) don't believe it's this historical data you are 
+seeing as &quot;leaking&quot; since making queries should not cause any more of it 
+to be retained.
+
+Cheers, Simon
+
+&gt;<i> Let me know if you'd like any further information in the meantime.
+</I>&gt;<i>
+</I>&gt;<i> Best, Travis
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> On Mon, Jun 17, 2013 at 6:39 AM, Simon MacMullen &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">simon at rabbitmq.com</A>
+</I>&gt;<i> &lt;mailto:<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">simon at rabbitmq.com</A>&gt;&gt; wrote:
+</I>&gt;<i>
+</I>&gt;<i>     Hi. Thanks for the report.
+</I>&gt;<i>
+</I>&gt;<i>     My first guess is that garbage collection for the management DB
+</I>&gt;<i>     process is happening too slowly. Can you invoke:
+</I>&gt;<i>
+</I>&gt;<i>     $ rabbitmqctl eval
+</I>&gt;<i>     'P=global:whereis_name(rabbit___mgmt_db),M1=process_info(P,
+</I>&gt;<i>     memory),garbage_collect(P),M2=__process_info(P,
+</I>&gt;<i>     memory),{M1,M2,rabbit_vm:__memory()}.'
+</I>&gt;<i>
+</I>&gt;<i>     and post the results?
+</I>&gt;<i>
+</I>&gt;<i>     Cheers, Simon
+</I>&gt;<i>
+</I>&gt;<i>     On 15/06/13 03:09, Travis Mehlinger wrote:
+</I>&gt;<i>
+</I>&gt;<i>         We recently upgraded RabbitMQ from 3.0.4 to 3.1.1 after noticing
+</I>&gt;<i>         two bug
+</I>&gt;<i>         fixes in 3.1.0 related to our RabbitMQ deployment:
+</I>&gt;<i>
+</I>&gt;<i>            * 25524 fix memory leak in mirror queue slave with many
+</I>&gt;<i>         short-lived
+</I>&gt;<i>              publishing channel
+</I>&gt;<i>            * 25290 fix per-queue memory leak recording stats for mirror
+</I>&gt;<i>         queue slaves
+</I>&gt;<i>
+</I>&gt;<i>         However, in our case, it seems that the management plugin may
+</I>&gt;<i>         still have
+</I>&gt;<i>         a memory leak. We have a monitoring agent that hits the REST API to
+</I>&gt;<i>         gather information about the broker (number of queues, queue depth,
+</I>&gt;<i>         etc.). With the monitoring agent running and making requests
+</I>&gt;<i>         against the
+</I>&gt;<i>         API, memory consumption steadily increased; when we stopped the
+</I>&gt;<i>         agent,
+</I>&gt;<i>         memory consumption in the management plugin leveled off.
+</I>&gt;<i>
+</I>&gt;<i>         Here a couple graphs detailing memory consumption in the broker (the
+</I>&gt;<i>         figures are parsed from rabbitmqctl report). The first graph
+</I>&gt;<i>         shows the
+</I>&gt;<i>         ebb and flow of memory consumption in a number of components and the
+</I>&gt;<i>         second shows just consumption by the management plugin. You can see
+</I>&gt;<i>         pretty clearly where we stopped the monitoring agent at 1:20.
+</I>&gt;<i>
+</I>&gt;<i>         <A HREF="https://dl.dropboxusercontent.__com/u/7022167/Screenshots/n-__np6obt-m9f.png">https://dl.dropboxusercontent.__com/u/7022167/Screenshots/n-__np6obt-m9f.png</A>
+</I>&gt;<i>         &lt;<A HREF="https://dl.dropboxusercontent.com/u/7022167/Screenshots/n-np6obt-m9f.png">https://dl.dropboxusercontent.com/u/7022167/Screenshots/n-np6obt-m9f.png</A>&gt;
+</I>&gt;<i>         <A HREF="https://dl.dropboxusercontent.__com/u/7022167/Screenshots/__an6dpup33xvx.png">https://dl.dropboxusercontent.__com/u/7022167/Screenshots/__an6dpup33xvx.png</A>
+</I>&gt;<i>         &lt;<A HREF="https://dl.dropboxusercontent.com/u/7022167/Screenshots/an6dpup33xvx.png">https://dl.dropboxusercontent.com/u/7022167/Screenshots/an6dpup33xvx.png</A>&gt;
+</I>&gt;<i>
+</I>&gt;<i>         We have two clustered brokers, both running RabbitMQ 3.1.1 on Erlang
+</I>&gt;<i>         R14B-04.1. There are typically around 200 queues, about 20 of
+</I>&gt;<i>         which are
+</I>&gt;<i>         mirrored. There are generally about 200 consumers. Messages are
+</I>&gt;<i>         rarely
+</I>&gt;<i>         queued and most queues typically sit idle.
+</I>&gt;<i>
+</I>&gt;<i>         I'll be happy to provide any further diagnostic information.
+</I>&gt;<i>
+</I>&gt;<i>         Thanks!
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>         _________________________________________________
+</I>&gt;<i>         rabbitmq-discuss mailing list
+</I>&gt;<i>         <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.__rabbitmq.com</A>
+</I>&gt;<i>         &lt;mailto:<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>&gt;
+</I>&gt;<i>         <A HREF="https://lists.rabbitmq.com/__cgi-bin/mailman/listinfo/__rabbitmq-discuss">https://lists.rabbitmq.com/__cgi-bin/mailman/listinfo/__rabbitmq-discuss</A>
+</I>&gt;<i>         &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>&gt;
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>     --
+</I>&gt;<i>     Simon MacMullen
+</I>&gt;<i>     RabbitMQ, Pivotal
+</I>&gt;<i>
+</I>&gt;<i>
+</I>
+
+-- 
+Simon MacMullen
+RabbitMQ, Pivotal
+</PRE>
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="027917.html">[rabbitmq-discuss] Possible memory leak in the management plugin
+</A></li>
+	<LI>Next message: <A HREF="027922.html">[rabbitmq-discuss] Possible memory leak in the management plugin
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#27919">[ date ]</a>
+              <a href="thread.html#27919">[ thread ]</a>
+              <a href="subject.html#27919">[ subject ]</a>
+              <a href="author.html#27919">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,402 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] BUG: Failing nodes with HA-queue stops message	flow
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20BUG%3A%20Failing%20nodes%20with%20HA-queue%20stops%20message%0A%09flow&In-Reply-To=%3C20121001120316.GJ560%40kaka.it.su.se%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="022755.html">
+   <LINK REL="Next"  HREF="022757.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] BUG: Failing nodes with HA-queue stops message	flow</H1>
+    <B>Simon Lundstr&#246;m</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20BUG%3A%20Failing%20nodes%20with%20HA-queue%20stops%20message%0A%09flow&In-Reply-To=%3C20121001120316.GJ560%40kaka.it.su.se%3E"
+       TITLE="[rabbitmq-discuss] BUG: Failing nodes with HA-queue stops message	flow">simlu at su.se
+       </A><BR>
+    <I>Mon Oct  1 13:03:16 BST 2012</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="022755.html">[rabbitmq-discuss] RabbitMQ STOMP Adapter - How to get the RPC reply messages?
+</A></li>
+        <LI>Next message: <A HREF="022757.html">[rabbitmq-discuss] BUG: Failing nodes with HA-queue stops message flow
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#22756">[ date ]</a>
+              <a href="thread.html#22756">[ thread ]</a>
+              <a href="subject.html#22756">[ subject ]</a>
+              <a href="author.html#22756">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hello!
+
+As per requested by Emile on IRC:
+
+We get stale messages in the queue when the node that is &quot;master&quot; in a
+HA-queue gets restarted, details below:
+
+We are running two nodes, ram01 and disk01, on 2.8.7.
+ram01 is a ram node and, surprise surprise, disk01 is a disc node.
+
+We are using the amqp gem on Ruby for producer and consumer
+(sourcecode available on demand).
+
+The producer connects to ram01 and creates a fanout exchange which is
+durable.  It then publishes X # of messages on the exchange.
+
+The consumer connects to disk01 connects to disk01 and sets up an error
+handler to reconnect if it gets an 320 error.
+The consumer creates a durable queue which has x-ha-policy = all. It
+when binds to the exchange.
+
+The queue has disk01 as a node and ram01 as a mirror.
+
+Reproduceable steps:
+# Restart disk01 (via `rabbitmqctl stop` and start it up again).
+# The consumer reconnects because it noticed the 320.
+consumer log:
+[connection.close] Reply code = 320, reply text = CONNECTION_FORCED - broker forced connection closure with reason 'shutdown'
+[connection.close] Setting up a periodic reconnection timer...
+# In the queue, ram01 is now node and disk01 is a mirror.
+# Restart ram01 (via the same procedure as disk01)
+# In the management web GUI under the queue (simlu.queue) the consumer is not listed as connected to the queue.
+However, if I go to &quot;Connections&quot; I can see that the consumer is connected to disk01. According to the log the consumer is also connected.
+# Publish message via the producer
+# We now have 1 message &quot;Ready&quot; in the queue.
+The consumer does not get any message.
+# If we either:
+* Restart disk01 or
+* Restart consumer
+the message gets delivered.
+In this case, we restarted disk01.
+# Message is delivered.
+On ram01 we get this message in the log:
+=ERROR REPORT==== 1-Oct-2012::13:55:35 ===
+Discarding message {'$gen_call',{&lt;0.173.0&gt;,#Ref&lt;0.0.0.967&gt;},{notify_down,&lt;6733.320.0&gt;}} from &lt;0.173.0&gt; to &lt;0.200.0&gt; in an old incarnation (1) of this node (2)
+
+Log output from disk01 and ram01 is attached.
+
+Thanks!
+- Simon
+
+---
+
+Simon Lundstr&#246;m
+IT Services
+Stockholm University
+-------------- next part --------------
+
+=INFO REPORT==== 1-Oct-2012::13:50:10 ===
+Mirrored-queue (queue 'simlu.queue' in vhost '/'): Slave &lt;'<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at rabbitmq-test-ram01.it.su.se</A>'.1.200.0&gt; saw deaths of mirrors &lt;'<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at rabbitmq-test-disk01.it.su.se</A>'.2.250.0&gt; 
+
+=INFO REPORT==== 1-Oct-2012::13:50:10 ===
+Mirrored-queue (queue 'simlu.queue' in vhost '/'): Promoting slave &lt;'<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at rabbitmq-test-ram01.it.su.se</A>'.1.200.0&gt; to master
+
+=INFO REPORT==== 1-Oct-2012::13:50:10 ===
+rabbit on node '<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at rabbitmq-test-disk01.it.su.se</A>' down
+
+=INFO REPORT==== 1-Oct-2012::13:50:10 ===
+only running disc node went down
+
+=INFO REPORT==== 1-Oct-2012::13:50:14 ===
+rabbit on node '<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at rabbitmq-test-disk01.it.su.se</A>' up
+
+=INFO REPORT==== 1-Oct-2012::13:50:14 ===
+cluster contains disc nodes again
+
+=INFO REPORT==== 1-Oct-2012::13:50:42 ===
+Stopping Rabbit
+
+=INFO REPORT==== 1-Oct-2012::13:50:42 ===
+    application: rabbitmq_management_agent
+    exited: stopped
+    type: permanent
+
+=INFO REPORT==== 1-Oct-2012::13:50:42 ===
+stopped SSL Listener on [::]:5671
+
+=INFO REPORT==== 1-Oct-2012::13:50:42 ===
+    application: rabbit
+    exited: stopped
+    type: permanent
+
+=INFO REPORT==== 1-Oct-2012::13:50:42 ===
+    application: os_mon
+    exited: stopped
+    type: permanent
+
+=INFO REPORT==== 1-Oct-2012::13:50:42 ===
+    application: mnesia
+    exited: stopped
+    type: permanent
+
+=INFO REPORT==== 1-Oct-2012::13:50:42 ===
+Halting Erlang VM
+
+=INFO REPORT==== 1-Oct-2012::13:50:44 ===
+Limiting to approx 924 file handles (829 sockets)
+
+=INFO REPORT==== 1-Oct-2012::13:50:45 ===
+Memory limit set to 805MB of 2013MB total.
+
+=INFO REPORT==== 1-Oct-2012::13:50:45 ===
+Disk free limit set to 1000MB
+
+=INFO REPORT==== 1-Oct-2012::13:50:45 ===
+Management plugin upgraded statistics to fine.
+
+=INFO REPORT==== 1-Oct-2012::13:50:45 ===
+msg_store_transient: using rabbit_msg_store_ets_index to provide index
+
+=INFO REPORT==== 1-Oct-2012::13:50:45 ===
+msg_store_persistent: using rabbit_msg_store_ets_index to provide index
+
+=WARNING REPORT==== 1-Oct-2012::13:50:45 ===
+msg_store_persistent: recovery terms differ from present
+rebuilding indices from scratch
+
+=INFO REPORT==== 1-Oct-2012::13:50:45 ===
+Adding mirror of queue 'simlu.queue' in vhost '/' on node '<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at rabbitmq-test-ram01.it.su.se</A>': &lt;0.200.0&gt;
+
+=INFO REPORT==== 1-Oct-2012::13:50:45 ===
+started SSL Listener on [::]:5671
+
+=INFO REPORT==== 1-Oct-2012::13:50:45 ===
+rabbit on node '<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at rabbitmq-test-disk01.it.su.se</A>' up
+
+=INFO REPORT==== 1-Oct-2012::13:50:45 ===
+cluster contains disc nodes again
+
+=INFO REPORT==== 1-Oct-2012::13:50:45 ===
+Management agent started.
+
+=INFO REPORT==== 1-Oct-2012::13:53:35 ===
+accepting AMQP connection &lt;0.253.0&gt; (130.237.95.133:55630 -&gt; 77.238.35.70:5671)
+
+=INFO REPORT==== 1-Oct-2012::13:53:36 ===
+closing AMQP connection &lt;0.253.0&gt; (130.237.95.133:55630 -&gt; 77.238.35.70:5671)
+
+=ERROR REPORT==== 1-Oct-2012::13:55:35 ===
+Discarding message {'$gen_call',{&lt;0.173.0&gt;,#Ref&lt;0.0.0.967&gt;},{notify_down,&lt;6733.320.0&gt;}} from &lt;0.173.0&gt; to &lt;0.200.0&gt; in an old incarnation (1) of this node (2)
+
+
+=INFO REPORT==== 1-Oct-2012::13:55:35 ===
+Mirrored-queue (queue 'simlu.queue' in vhost '/'): Slave &lt;'<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at rabbitmq-test-ram01.it.su.se</A>'.2.200.0&gt; saw deaths of mirrors &lt;'<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at rabbitmq-test-disk01.it.su.se</A>'.3.250.0&gt; 
+
+=INFO REPORT==== 1-Oct-2012::13:55:35 ===
+Mirrored-queue (queue 'simlu.queue' in vhost '/'): Promoting slave &lt;'<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at rabbitmq-test-ram01.it.su.se</A>'.2.200.0&gt; to master
+
+=INFO REPORT==== 1-Oct-2012::13:55:35 ===
+rabbit on node '<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at rabbitmq-test-disk01.it.su.se</A>' down
+
+=INFO REPORT==== 1-Oct-2012::13:55:35 ===
+only running disc node went down
+
+=INFO REPORT==== 1-Oct-2012::13:55:39 ===
+rabbit on node '<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at rabbitmq-test-disk01.it.su.se</A>' up
+
+=INFO REPORT==== 1-Oct-2012::13:55:39 ===
+cluster contains disc nodes again
+
+-------------- next part --------------
+
+=INFO REPORT==== 1-Oct-2012::13:50:10 ===
+Stopping Rabbit
+
+=INFO REPORT==== 1-Oct-2012::13:50:10 ===
+    application: rabbitmq_management
+    exited: stopped
+    type: permanent
+
+=INFO REPORT==== 1-Oct-2012::13:50:10 ===
+    application: rabbitmq_management_agent
+    exited: stopped
+    type: permanent
+
+=INFO REPORT==== 1-Oct-2012::13:50:10 ===
+stopped SSL Listener on [::]:5671
+
+=INFO REPORT==== 1-Oct-2012::13:50:10 ===
+    application: rabbit
+    exited: stopped
+    type: permanent
+
+=INFO REPORT==== 1-Oct-2012::13:50:10 ===
+    application: os_mon
+    exited: stopped
+    type: permanent
+
+=INFO REPORT==== 1-Oct-2012::13:50:10 ===
+    application: mnesia
+    exited: stopped
+    type: permanent
+
+=INFO REPORT==== 1-Oct-2012::13:50:10 ===
+Halting Erlang VM
+
+=INFO REPORT==== 1-Oct-2012::13:50:14 ===
+Limiting to approx 924 file handles (829 sockets)
+
+=INFO REPORT==== 1-Oct-2012::13:50:14 ===
+Memory limit set to 805MB of 2013MB total.
+
+=INFO REPORT==== 1-Oct-2012::13:50:14 ===
+Disk free limit set to 1000MB
+
+=INFO REPORT==== 1-Oct-2012::13:50:14 ===
+Management plugin upgraded statistics to fine.
+
+=INFO REPORT==== 1-Oct-2012::13:50:14 ===
+msg_store_transient: using rabbit_msg_store_ets_index to provide index
+
+=INFO REPORT==== 1-Oct-2012::13:50:14 ===
+msg_store_persistent: using rabbit_msg_store_ets_index to provide index
+
+=WARNING REPORT==== 1-Oct-2012::13:50:14 ===
+msg_store_persistent: recovery terms differ from present
+rebuilding indices from scratch
+
+=INFO REPORT==== 1-Oct-2012::13:50:14 ===
+Adding mirror of queue 'simlu.queue' in vhost '/' on node '<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at rabbitmq-test-disk01.it.su.se</A>': &lt;0.250.0&gt;
+
+=INFO REPORT==== 1-Oct-2012::13:50:14 ===
+started SSL Listener on [::]:5671
+
+=INFO REPORT==== 1-Oct-2012::13:50:14 ===
+rabbit on node '<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at rabbitmq-test-ram01.it.su.se</A>' up
+
+=INFO REPORT==== 1-Oct-2012::13:50:14 ===
+Management agent started.
+
+=INFO REPORT==== 1-Oct-2012::13:50:14 ===
+Management plugin started. Port: 443, path: /
+
+=INFO REPORT==== 1-Oct-2012::13:50:14 ===
+Statistics database started.
+
+=INFO REPORT==== 1-Oct-2012::13:50:15 ===
+accepting AMQP connection &lt;0.315.0&gt; (130.237.95.133:55602 -&gt; 77.238.35.76:5671)
+
+=INFO REPORT==== 1-Oct-2012::13:50:42 ===
+Mirrored-queue (queue 'simlu.queue' in vhost '/'): Slave &lt;'<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at rabbitmq-test-disk01.it.su.se</A>'.3.250.0&gt; saw deaths of mirrors &lt;'<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at rabbitmq-test-ram01.it.su.se</A>'.1.200.0&gt; 
+
+=INFO REPORT==== 1-Oct-2012::13:50:42 ===
+Mirrored-queue (queue 'simlu.queue' in vhost '/'): Promoting slave &lt;'<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at rabbitmq-test-disk01.it.su.se</A>'.3.250.0&gt; to master
+
+=INFO REPORT==== 1-Oct-2012::13:50:42 ===
+rabbit on node '<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at rabbitmq-test-ram01.it.su.se</A>' down
+
+=INFO REPORT==== 1-Oct-2012::13:50:45 ===
+rabbit on node '<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at rabbitmq-test-ram01.it.su.se</A>' up
+
+=INFO REPORT==== 1-Oct-2012::13:55:35 ===
+Stopping Rabbit
+
+=INFO REPORT==== 1-Oct-2012::13:55:35 ===
+    application: rabbitmq_management
+    exited: stopped
+    type: permanent
+
+=INFO REPORT==== 1-Oct-2012::13:55:35 ===
+    application: rabbitmq_management_agent
+    exited: stopped
+    type: permanent
+
+=INFO REPORT==== 1-Oct-2012::13:55:35 ===
+stopped SSL Listener on [::]:5671
+
+=INFO REPORT==== 1-Oct-2012::13:55:35 ===
+    application: rabbit
+    exited: stopped
+    type: permanent
+
+=INFO REPORT==== 1-Oct-2012::13:55:35 ===
+    application: os_mon
+    exited: stopped
+    type: permanent
+
+=INFO REPORT==== 1-Oct-2012::13:55:35 ===
+    application: mnesia
+    exited: stopped
+    type: permanent
+
+=INFO REPORT==== 1-Oct-2012::13:55:35 ===
+Halting Erlang VM
+
+=INFO REPORT==== 1-Oct-2012::13:55:39 ===
+Limiting to approx 924 file handles (829 sockets)
+
+=INFO REPORT==== 1-Oct-2012::13:55:39 ===
+Memory limit set to 805MB of 2013MB total.
+
+=INFO REPORT==== 1-Oct-2012::13:55:39 ===
+Disk free limit set to 1000MB
+
+=INFO REPORT==== 1-Oct-2012::13:55:39 ===
+Management plugin upgraded statistics to fine.
+
+=INFO REPORT==== 1-Oct-2012::13:55:39 ===
+msg_store_transient: using rabbit_msg_store_ets_index to provide index
+
+=INFO REPORT==== 1-Oct-2012::13:55:39 ===
+msg_store_persistent: using rabbit_msg_store_ets_index to provide index
+
+=WARNING REPORT==== 1-Oct-2012::13:55:39 ===
+msg_store_persistent: recovery terms differ from present
+rebuilding indices from scratch
+
+=INFO REPORT==== 1-Oct-2012::13:55:39 ===
+Adding mirror of queue 'simlu.queue' in vhost '/' on node '<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at rabbitmq-test-disk01.it.su.se</A>': &lt;0.250.0&gt;
+
+=INFO REPORT==== 1-Oct-2012::13:55:39 ===
+started SSL Listener on [::]:5671
+
+=INFO REPORT==== 1-Oct-2012::13:55:39 ===
+rabbit on node '<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at rabbitmq-test-ram01.it.su.se</A>' up
+
+=INFO REPORT==== 1-Oct-2012::13:55:39 ===
+Management agent started.
+
+=INFO REPORT==== 1-Oct-2012::13:55:39 ===
+Management plugin started. Port: 443, path: /
+
+=INFO REPORT==== 1-Oct-2012::13:55:39 ===
+Statistics database started.
+
+=INFO REPORT==== 1-Oct-2012::13:55:40 ===
+accepting AMQP connection &lt;0.315.0&gt; (130.237.95.133:55642 -&gt; 77.238.35.76:5671)
+
+</PRE>
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="022755.html">[rabbitmq-discuss] RabbitMQ STOMP Adapter - How to get the RPC reply messages?
+</A></li>
+	<LI>Next message: <A HREF="022757.html">[rabbitmq-discuss] BUG: Failing nodes with HA-queue stops message flow
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#22756">[ date ]</a>
+              <a href="thread.html#22756">[ thread ]</a>
+              <a href="subject.html#22756">[ subject ]</a>
+              <a href="author.html#22756">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

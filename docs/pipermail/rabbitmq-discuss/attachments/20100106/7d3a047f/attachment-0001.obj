@@ -1,0 +1,91 @@
+import com.rabbitmq.client.*;
+
+import java.io.IOException;
+
+
+/**
+ * Created by IntelliJ IDEA.
+ * User: dsinclair
+ * Date: Dec 31, 2009
+ * Time: 3:29:10 PM
+ * To change this template use File | Settings | File Templates.
+ */
+public class RabbitMQProducer {
+    private static final int NUMBER_MESSAGES = 100000;
+
+    private static void quietClose(Connection connection) {
+        if(connection != null) {
+            try {
+                connection.close();
+            } catch (IOException e) {
+                // quiet
+            }
+        }
+    }
+
+    private static void quietClose(Channel channel) {
+        if(channel != null) {
+            try {
+                channel.close();
+            } catch (IOException e) {
+                // quiet
+            }
+        }
+    }
+
+    public static void main(String[] args) throws Exception {
+
+        String exchangeName = "myExchange";
+        String routingKey = "testRoute";
+
+        Connection conn = getConnection();
+        Channel channel = conn.createChannel();
+
+        long startTime = System.currentTimeMillis();
+
+        for (int i = 0; i < NUMBER_MESSAGES; ) {
+            byte[] messageBodyBytes = ("Hello," + i + " world!").getBytes();
+
+            try {
+                channel.basicPublish(exchangeName, routingKey, MessageProperties.PERSISTENT_TEXT_PLAIN, messageBodyBytes);
+                ++i;
+                //Thread.sleep(1000);
+            } catch (ShutdownSignalException sds) {
+                System.out.println(sds + " trying to connect");
+                quietClose(channel);
+                quietClose(conn);
+
+                conn = getConnection();
+                channel = conn.createChannel();
+            } catch(IOException ioe) {
+                System.out.println(ioe + " trying to connect");
+                quietClose(channel);
+                quietClose(conn);
+
+                conn = getConnection();
+                channel = conn.createChannel();
+            }
+        }
+
+        long endTime = System.currentTimeMillis();
+        System.out.println("Total time: " + (endTime - startTime));
+        System.out.println("Avg Msgs sent per second: " + NUMBER_MESSAGES /((endTime - startTime) / 1000));
+
+        channel.close();
+        conn.close();
+    }
+
+    private static Connection getConnection() throws IOException {
+        ConnectionParameters params = new ConnectionParameters();
+        params.setUsername("guest");
+        params.setPassword("guest");
+        params.setVirtualHost("/");
+        params.setRequestedHeartbeat(0);
+        ConnectionFactory factory = new ConnectionFactory(params);
+
+        Address[] addresses = {new Address("192.168.44.129", 5672),
+                new Address("192.168.44.1", 5672)};
+
+        return factory.newConnection(addresses, 1);
+    }
+}

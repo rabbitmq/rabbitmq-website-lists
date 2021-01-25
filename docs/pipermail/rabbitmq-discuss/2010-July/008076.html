@@ -1,0 +1,204 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Consumers stopped consuming messages
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Consumers%20stopped%20consuming%20messages&In-Reply-To=%3C4C45BBCF.7030008%40rabbitmq.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="008069.html">
+   <LINK REL="Next"  HREF="008077.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Consumers stopped consuming messages</H1>
+    <B>Simon MacMullen</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Consumers%20stopped%20consuming%20messages&In-Reply-To=%3C4C45BBCF.7030008%40rabbitmq.com%3E"
+       TITLE="[rabbitmq-discuss] Consumers stopped consuming messages">simon at rabbitmq.com
+       </A><BR>
+    <I>Tue Jul 20 16:07:59 BST 2010</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="008069.html">[rabbitmq-discuss] Consumers stopped consuming messages
+</A></li>
+        <LI>Next message: <A HREF="008077.html">[rabbitmq-discuss] Consumers stopped consuming messages
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#8076">[ date ]</a>
+              <a href="thread.html#8076">[ thread ]</a>
+              <a href="subject.html#8076">[ subject ]</a>
+              <a href="author.html#8076">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi Florence. As far as I can see this is reasonable. It's always worth 
+setting the prefetch count when using basic.consume (add a line like:
+
+channel.basicQos(100);
+
+before the channel.basicConsume line in order to ensure you never have 
+more than 100 messages queued up in your QueueingConsumer). However, I 
+don't think that's your problem.
+
+I assume you have checked that the consumers are idle and waiting for 
+message deliveries (with Ctrl+Break / SIGQUIT). Does anything appear in 
+the server logs when consumers stop consuming?
+
+Cheers, Simon
+
+On 20/07/10 11:38, Florence Chabanois wrote:
+&gt;<i>
+</I>&gt;<i> Hi Simon (sorry for answering twice),
+</I>&gt;<i>
+</I>&gt;<i> Thanks for your reply. We didn't find how to configure the basic.qos in
+</I>&gt;<i> the java API. Here is our spike code :
+</I>&gt;<i>
+</I>&gt;<i> private void consommeEvenements() throws IOException {
+</I>&gt;<i> Channel channel = acteurRabbitMQ.chaines.get(QUEUE_PRINCIPALE);
+</I>&gt;<i> QueueingConsumer consumer = new QueueingConsumer(channel);
+</I>&gt;<i> channel.basicConsume(QUEUE_PRINCIPALE.name(), consumer);
+</I>&gt;<i> while (channel.isOpen()) {
+</I>&gt;<i> QueueingConsumer.Delivery evenementBrut = null;
+</I>&gt;<i> EvenementStat evenementRecu = null;
+</I>&gt;<i> try {
+</I>&gt;<i> evenementBrut = consumer.nextDelivery();
+</I>&gt;<i> evenementRecu = decode(evenementBrut);
+</I>&gt;<i> logger.info(&quot;evenement recu : &quot; + evenementRecu);
+</I>&gt;<i> simuleErreurBaseDeDonnees(evenementRecu);
+</I>&gt;<i> } catch (IOException e) {
+</I>&gt;<i> logger.fatal(&quot;Soucis de deserialize&quot;, e);
+</I>&gt;<i> } catch (Exception e) {
+</I>&gt;<i> logger.error(&quot;Soucis d'&#233;criture en base&quot;, e);
+</I>&gt;<i> if (evenementRecu.estReinjectable()) {
+</I>&gt;<i> logger.info(&quot;--&gt; renvoi de &quot; + evenementRecu);
+</I>&gt;<i> programmeRepublication(evenementRecu);
+</I>&gt;<i> } else {
+</I>&gt;<i> logger.info(&quot;--&gt; DEAD LETTER &quot; + evenementRecu);
+</I>&gt;<i> acteurRabbitMQ.publie(evenementRecu, QUEUE_DEAD_LETTER);
+</I>&gt;<i> }
+</I>&gt;<i> }
+</I>&gt;<i> boolean ackMultiple = false;
+</I>&gt;<i> final long deliveryTag = evenementBrut.getEnvelope().getDeliveryTag();
+</I>&gt;<i> logger.info(&quot;ACK &quot; + deliveryTag);
+</I>&gt;<i> channel.basicAck(deliveryTag, ackMultiple);
+</I>&gt;<i> }
+</I>&gt;<i> acteurRabbitMQ.ferme();
+</I>&gt;<i> }
+</I>&gt;<i>
+</I>&gt;<i> Yet, I'm not sure the basic.qos is the issue as long as the 6 consumers
+</I>&gt;<i> sometimes keep consuming the messages during the 10 minutes bench, and
+</I>&gt;<i> sometimes not.
+</I>&gt;<i>
+</I>&gt;<i> When the problem occurs, the list_queues option displays that the queue
+</I>&gt;<i> starts growing because the &quot;active&quot; (the ones that keep on consuming)
+</I>&gt;<i> consumers cannot insert in DB the overall messages load fast enough.
+</I>&gt;<i>
+</I>&gt;<i> Cheers,
+</I>&gt;<i> Florence.
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> --- En date de : *Mar 20.7.10, Florence Chabanois
+</I>&gt;<i> /&lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">flocha2000-agile at yahoo.fr</A>&gt;/* a &#233;crit :
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>         De: Simon MacMullen &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">simon at rabbitmq.com</A>&gt;
+</I>&gt;<i>         Objet: Re: [rabbitmq-discuss] Consumers stopped consuming messages
+</I>&gt;<i>         &#192;: <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;<i>         Date: Mardi 20 juillet 2010, 11h26
+</I>&gt;<i>
+</I>&gt;<i>         On 20/07/10 09:55, Florence Chabanois wrote:
+</I>&gt;<i>         &lt;snip&gt;
+</I>&gt;<i>          &gt; We noticed that /*sometimes*/, consumers hang (well, they are not
+</I>&gt;<i>          &gt; blocked, but they dont consume messages anymore). We can see that
+</I>&gt;<i>          &gt; because each consumer save around 100 msg/sec in database, so
+</I>&gt;<i>         when one
+</I>&gt;<i>          &gt; is stopping consumming, the overall messages saved per
+</I>&gt;<i>         seconds in DB
+</I>&gt;<i>          &gt; fall down with the same ratio (if let say 3 consumers stop,
+</I>&gt;<i>         we fall
+</I>&gt;<i>          &gt; around 600 msg/sec to 300 msg/sec).
+</I>&gt;<i>         &lt;snip&gt;
+</I>&gt;<i>          &gt; FYI there has been a similar issue here, but it wasn't resolved :
+</I>&gt;<i>          &gt;
+</I>&gt;<i>         <A HREF="http://old.nabble.com/Consumer-stop-to-receive-messages-but-continue-listening-queue-problem.-td27872888.html">http://old.nabble.com/Consumer-stop-to-receive-messages-but-continue-listening-queue-problem.-td27872888.html</A>
+</I>&gt;<i>
+</I>&gt;<i>         Hi Florence. One possibility that was considered in the linked
+</I>&gt;<i>         thread was that all the messages were being sent to some
+</I>&gt;<i>         consumers due to basic.qos not being set (in the absence of
+</I>&gt;<i>         basic.qos, Rabbit is allowed to do that).
+</I>&gt;<i>
+</I>&gt;<i>         So:
+</I>&gt;<i>
+</I>&gt;<i>         * Are you setting the basic.qos prefetch count?
+</I>&gt;<i>         * What does rabbitmqctl lists_queues say about he queue when the
+</I>&gt;<i>         system is in this state?
+</I>&gt;<i>         * Are you able to post your spike code anywhere?
+</I>&gt;<i>
+</I>&gt;<i>         Cheers, Simon
+</I>&gt;<i>
+</I>&gt;<i>         -- Simon MacMullen
+</I>&gt;<i>         Staff Engineer, RabbitMQ
+</I>&gt;<i>         SpringSource, a division of VMware
+</I>&gt;<i>
+</I>&gt;<i>         _______________________________________________
+</I>&gt;<i>         rabbitmq-discuss mailing list
+</I>&gt;<i>         <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;<i>         <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>
+
+-- 
+Simon MacMullen
+Staff Engineer, RabbitMQ
+SpringSource, a division of VMware
+
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="008069.html">[rabbitmq-discuss] Consumers stopped consuming messages
+</A></li>
+	<LI>Next message: <A HREF="008077.html">[rabbitmq-discuss] Consumers stopped consuming messages
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#8076">[ date ]</a>
+              <a href="thread.html#8076">[ thread ]</a>
+              <a href="subject.html#8076">[ subject ]</a>
+              <a href="author.html#8076">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

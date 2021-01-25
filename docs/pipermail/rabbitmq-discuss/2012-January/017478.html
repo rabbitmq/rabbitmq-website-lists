@@ -1,0 +1,187 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Lost messages in cluster
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Lost%20messages%20in%20cluster&In-Reply-To=%3Cbed11f07-ea23-4c32-94ff-b9b6a2c411dd%40strongmad.batnest.org%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="017448.html">
+   <LINK REL="Next"  HREF="017483.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Lost messages in cluster</H1>
+    <B>Jerry Kuch</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Lost%20messages%20in%20cluster&In-Reply-To=%3Cbed11f07-ea23-4c32-94ff-b9b6a2c411dd%40strongmad.batnest.org%3E"
+       TITLE="[rabbitmq-discuss] Lost messages in cluster">jerryk at vmware.com
+       </A><BR>
+    <I>Wed Jan 18 18:53:34 GMT 2012</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="017448.html">[rabbitmq-discuss]  Lost messages in cluster
+</A></li>
+        <LI>Next message: <A HREF="017483.html">[rabbitmq-discuss] Lost messages in cluster
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#17478">[ date ]</a>
+              <a href="thread.html#17478">[ thread ]</a>
+              <a href="subject.html#17478">[ subject ]</a>
+              <a href="author.html#17478">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi, st0rm...
+
+I'm a bit confused by parts of your post...  Could we walk through
+your configuration a bit so that I might get a handle on what you're
+doing and what you're having trouble with?
+
+&gt;<i> I have a cluster with 4 disk nodes. Topology is similar to
+</I>&gt;<i> many-to-many:
+</I>
+When you say the &quot;topology&quot; in this context, what do you mean exactly?
+
+&gt;<i> The only exchange distributed over all nodes.
+</I>
+Exchanges in a clustered RabbitMQ environment are recorded in the
+Mnesia database that's distributed amongst the nodes that participate
+in the cluster, so in some sense any exchange in a cluster is always
+&quot;distributed over all nodes.&quot;  Note that the exchange is basically
+static data in Mnesia; all of the active work done in routing messages
+through exchanges actually happens on a channel process associated
+with a connection, as there's no exchange process per se.
+
+&gt;<i> Two
+</I>&gt;<i> queues(one of them is durable) declared per node and bound to above
+</I>&gt;<i> mentioned exchange. So each node is able to publish messages and they
+</I>&gt;<i> will be delivered to other nodes of cluster.
+</I>
+Are you using the new HA/mirrored-queues feature, and have declared
+replication of queues across cluster nodes explicitly? Or are you
+using &quot;regular&quot; clustering of the older type? If the latter then the
+queue processes and queue contents will 'really' live only on a single
+node in the cluster, although of course they can be published by, or
+delivered to clients who happen to be connected to any node in the
+cluster.
+
+&gt;<i> Recently I've discovered some problems when I have network failures.
+</I>&gt;<i> If node lose network connection (or network device is down) for
+</I>&gt;<i> approx. 1 minute ( or net_ticktime period of time), this node doesn't
+</I>&gt;<i> receive message that were published to exchange while network was
+</I>&gt;<i> down.
+</I>
+By &quot;node&quot; do you mean one of your producers or consumers, or one of
+the Rabbit cluster members? If you mean a Rabbit cluster member then
+you can't publish to, or consume from, a queue as long as the node on
+which it lives is down. If you use the new active-active,
+mirrored-queues HA system then you can specify that a queue be
+replicated across multiple nodes in a cluster, and the loss of the
+master queue replica leads to one of the replicated slaves taking
+over.  There's also an older active-passive HA system where you use
+something like Pacemaker to switch over from a failed cluster node to
+a hot standby, that was sharing storage with its backup brethren.
+
+&gt;<i> I've read that &quot;RabbitMQ clustering does not tolerate network partions
+</I>&gt;<i> well&quot;.
+</I>
+When people say that, they usually mean that the Mnesia database that
+holds the metadata defining queues, bindings, exchanges and the like
+doesn't handle partitions well, as a Rabbit cluster relies on a
+consistent view of this information to do its work sensibly.  Hence,
+we don't try to Rabbit cluster over wide areas and high latency or low
+reliability links, because those don't play well with the assumptions
+that Mnesia's design makes.
+
+&gt;<i> I suppose that federation plugin can help me, but I can't
+</I>&gt;<i> understand what network topology have to be built to preserve current
+</I>&gt;<i> functionality - what upstreams should exist and etc.
+</I>
+Again I'm a bit confused when you say &quot;network topology.&quot;  One often
+uses the Federation or Shovel plugins to bridge between brokers (or
+clusters of brokers) over a potentially high-latency, and low
+reliability WAN connection, typically between geographically disparate
+locations.  Is this the scenario you have, i.e. brokers or clusters
+thereof in geographically separate datacenters?  If so, the first
+task is to identify which parts of your message traffic you need
+moved from one site to the other and think through the setup of your
+federations or shovels from that starting point...
+
+&gt;<i> Could somebody help me to avoid losing messages?
+</I>
+Answering this fully depends on what potential causes of message loss
+you want to immunize yourself against.  If you're worried about the
+failure of a cluster node on which a queue resides rendering that
+queue unavailable, your options are either:
+
+  - the new active/active mirrored queues HA
+
+  - the old active/passive system with shared storage and something
+    like Pacemaker handling the failover
+
+If you need messages to be moved over potentially high latency or
+flaky WAN links, then you want to consider Shovel or Federation for
+bridging the wild network waters between the islands on which your
+clusters live.
+
+Both are documented on the RabbitMQ website, and the latter is
+discussed in the Manning book &quot;RabbitMQ in Action&quot; (currently
+available as a preview eBook, final print version due out later this
+Spring).
+
+Does this help at all?
+
+Best regards,
+Jerry
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="017448.html">[rabbitmq-discuss]  Lost messages in cluster
+</A></li>
+	<LI>Next message: <A HREF="017483.html">[rabbitmq-discuss] Lost messages in cluster
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#17478">[ date ]</a>
+              <a href="thread.html#17478">[ thread ]</a>
+              <a href="subject.html#17478">[ subject ]</a>
+              <a href="author.html#17478">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

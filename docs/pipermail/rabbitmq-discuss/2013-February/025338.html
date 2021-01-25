@@ -1,0 +1,174 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] RabbitMQ Producer Flow Control
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20RabbitMQ%20Producer%20Flow%20Control&In-Reply-To=%3C5110EB26.9060704%40rabbitmq.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="025333.html">
+   <LINK REL="Next"  HREF="025307.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] RabbitMQ Producer Flow Control</H1>
+    <B>Simon MacMullen</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20RabbitMQ%20Producer%20Flow%20Control&In-Reply-To=%3C5110EB26.9060704%40rabbitmq.com%3E"
+       TITLE="[rabbitmq-discuss] RabbitMQ Producer Flow Control">simon at rabbitmq.com
+       </A><BR>
+    <I>Tue Feb  5 11:21:10 GMT 2013</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="025333.html">[rabbitmq-discuss] RabbitMQ Producer Flow Control
+</A></li>
+        <LI>Next message: <A HREF="025307.html">[rabbitmq-discuss] Appear ''SharedQueue closed&quot; Error when i send RabbitMQ Message in MonoProject(iOS)
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#25338">[ date ]</a>
+              <a href="thread.html#25338">[ thread ]</a>
+              <a href="subject.html#25338">[ subject ]</a>
+              <a href="author.html#25338">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi Aaron - there's currently no way to turn RabbitMQ's flow control off 
+since it's doing something different from ActiveMQ's flow control 
+(assuming I read their documentation correctly).
+
+RabbitMQ's flow control is there to make sure that messages are accepted 
+by the broker at no more than the rate that the queues can enqueue them. 
+In other words, if flow control were turned off, messages would back up 
+very quickly in the channel and connection processes, and memory use 
+shoots for the sky very quickly.
+
+As I understand it ActiveMQ uses flow control to limit message ingress 
+rates to prevent queues from becoming too big - in other words it kicks 
+in earlier than RabbitMQ's control. The consequence of turning it off is 
+just that queues get bigger - in other words, ActiveMQ with flow control 
+off is equivalent to RabbitMQ with flow control on. I think.
+
+The real question then is why your queue is only able to accept 4k 
+messages / sec. If they are persistent messages in a durable queue I 
+would expect that - that's the cost of getting the messages onto disc. 
+Ditto if the messages are non-persistent but the queues are large enough 
+to need to page to disc. Oh, and mirrored queues were quite slow in 2.x 
+too, they're much faster now. Could any of these things account for the 
+performance you're seeing?
+
+Cheers, Simon
+
+On 04/02/13 18:48, Aaron Blew wrote:
+&gt;<i> Hey Simon,
+</I>&gt;<i> Thanks for getting back to me.  After upgrading to 2.8.7 I'm still
+</I>&gt;<i> unable to flow messages in to the head node faster than 4,000/sec while
+</I>&gt;<i> the consumer is working.  I appreciate that flow control is trying to
+</I>&gt;<i> prevent the server from being over-run, but in some situations it would
+</I>&gt;<i> be very beneficial for an administrator to override this behavior.  Are
+</I>&gt;<i> there any plans to add this kind of behavior?  I'm currently seriously
+</I>&gt;<i> considering a switch to ActiveMQ/stomp since it gives me the knobs to
+</I>&gt;<i> tweak this behavior both in real time and via configuration.
+</I>&gt;<i>
+</I>&gt;<i> Thanks!
+</I>&gt;<i> -Aaron
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> On Mon, Feb 4, 2013 at 3:30 AM, Simon MacMullen &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">simon at rabbitmq.com</A>
+</I>&gt;<i> &lt;mailto:<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">simon at rabbitmq.com</A>&gt;&gt; wrote:
+</I>&gt;<i>
+</I>&gt;<i>     Hi. There's a bug in versions of RabbitMQ prior to 2.8.4 where under
+</I>&gt;<i>     some circumstances queues can over-prioritise getting rid of message
+</I>&gt;<i>     to such an extent that they don't accept any more until empty.
+</I>&gt;<i>
+</I>&gt;<i>     I recommend an upgrade to 2.8.7 at least, or preferably 3.0.2.
+</I>&gt;<i>
+</I>&gt;<i>     And in this case flow control is just the messenger, so you don't
+</I>&gt;<i>     want to shoot it :-)
+</I>&gt;<i>
+</I>&gt;<i>     Cheers, Simon
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>     On 01/02/13 17:31, Aaron Blew wrote:
+</I>&gt;<i>
+</I>&gt;<i>         Hi all,
+</I>&gt;<i>         I'm currently using RabbitMQ 2.8.1 as the backbone of my Logstash
+</I>&gt;<i>         architecture.  Currently I've got 5 RabbitMQ servers running shovels
+</I>&gt;<i>         that push messages onto the &quot;mothership&quot;, where data is consumed
+</I>&gt;<i>         by a
+</I>&gt;<i>         Logstash agent that feeds into various endpoints.
+</I>&gt;<i>
+</I>&gt;<i>         The issue is that under high load the Logstash consumer on the
+</I>&gt;<i>         mothership isn't fast enough at to keep up with the data coming in
+</I>&gt;<i>         (generally above 4,000 messages/sec).  Normally this wouldn't be a
+</I>&gt;<i>         problem since we've got capacity to buffer things on the
+</I>&gt;<i>         mothership, but
+</I>&gt;<i>         RabbitMQ starts rate limiting the shovels that are sending data in,
+</I>&gt;<i>         which compounds the issue since the nodes shoveling data don't
+</I>&gt;<i>         have as
+</I>&gt;<i>         much IO capacity as the mothership does.  If I stop the slow
+</I>&gt;<i>         consumer on
+</I>&gt;<i>         the mothership, the shovels play data in as fast as they can
+</I>&gt;<i>         acknowledge it.
+</I>&gt;<i>
+</I>&gt;<i>         Ideally I'd be able to turn off producer flow control on the
+</I>&gt;<i>         mothership
+</I>&gt;<i>         side so the shovels wouldn't be slowed down except in cases
+</I>&gt;<i>         where I'm
+</I>&gt;<i>         approaching high watermarks or something along those lines.
+</I>&gt;<i>
+</I>&gt;<i>         Can anyone offer any suggestions on how I might be able to
+</I>&gt;<i>         adjust the
+</I>&gt;<i>         behavior?
+</I>&gt;<i>
+</I>&gt;<i>         Thanks,
+</I>&gt;<i>         -Aaron
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>         _________________________________________________
+</I>&gt;<i>         rabbitmq-discuss mailing list
+</I>&gt;<i>         <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.__rabbitmq.com</A>
+</I>&gt;<i>         &lt;mailto:<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>&gt;
+</I>&gt;<i>         <A HREF="https://lists.rabbitmq.com/__cgi-bin/mailman/listinfo/__rabbitmq-discuss">https://lists.rabbitmq.com/__cgi-bin/mailman/listinfo/__rabbitmq-discuss</A>
+</I>&gt;<i>         &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>&gt;
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>     --
+</I>&gt;<i>     Simon MacMullen
+</I>&gt;<i>     RabbitMQ, VMware
+</I>&gt;<i>
+</I>&gt;<i>
+</I>
+
+-- 
+Simon MacMullen
+RabbitMQ, VMware
+</PRE>
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="025333.html">[rabbitmq-discuss] RabbitMQ Producer Flow Control
+</A></li>
+	<LI>Next message: <A HREF="025307.html">[rabbitmq-discuss] Appear ''SharedQueue closed&quot; Error when i send RabbitMQ Message in MonoProject(iOS)
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#25338">[ date ]</a>
+              <a href="thread.html#25338">[ thread ]</a>
+              <a href="subject.html#25338">[ subject ]</a>
+              <a href="author.html#25338">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

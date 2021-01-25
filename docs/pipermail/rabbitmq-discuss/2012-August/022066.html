@@ -1,0 +1,119 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] .Net Client locks trying to create a channel on	a blocked connection
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20.Net%20Client%20locks%20trying%20to%20create%20a%20channel%20on%0A%09a%20blocked%20connection&In-Reply-To=%3CD1C94A3B2D4C11419728BBB11348CBEE57E03D59%40RNLN-MBX01.teamphone.priv%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="022073.html">
+   <LINK REL="Next"  HREF="022075.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] .Net Client locks trying to create a channel on	a blocked connection</H1>
+    <B>Kenneth Ross</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20.Net%20Client%20locks%20trying%20to%20create%20a%20channel%20on%0A%09a%20blocked%20connection&In-Reply-To=%3CD1C94A3B2D4C11419728BBB11348CBEE57E03D59%40RNLN-MBX01.teamphone.priv%3E"
+       TITLE="[rabbitmq-discuss] .Net Client locks trying to create a channel on	a blocked connection">K.Ross at Resilientplc.com
+       </A><BR>
+    <I>Thu Aug 23 15:45:45 BST 2012</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="022073.html">[rabbitmq-discuss] RabbitMQ sources release
+</A></li>
+        <LI>Next message: <A HREF="022075.html">[rabbitmq-discuss] .Net Client locks trying to create a channel	on	a blocked connection
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#22066">[ date ]</a>
+              <a href="thread.html#22066">[ thread ]</a>
+              <a href="subject.html#22066">[ subject ]</a>
+              <a href="author.html#22066">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>I'm using the RabbitMQ .Net client in C# and have noticed that if I try to create a channel (IModel) on a connection that is already established but in a blocking state then the code will just sit and wait.
+
+Here is the C# code, nothing special:
+
+        IModel channel = connection.CreateModel();
+
+I've taken a look at the source of the RabbitMQ .Net Client and have traced it down to this:
+
+Calling CreateModel() does the following:
+
+        public IModel CreateModel()
+        {
+            ISession session = CreateSession();
+            IFullModel model = (IFullModel)Protocol.CreateModel(session);
+            model._Private_ChannelOpen(&quot;&quot;);
+            return model;
+        }
+
+When model._Private_ChannelOpen(&quot;&quot;); is called it ends up in this block of code:
+
+SimpleBlockingRpcContinuation k = new SimpleBlockingRpcContinuation();
+TransmitAndEnqueue(new Command(method, header, body), k);
+return k.GetReply().Method;
+
+The problem appears to be with the last line, which ends up trying to get the Value of a BlockingCell object, which is basically a while(true) loop like this:
+
+get {
+        lock (this) {
+        while (!m_valueSet) {
+        Monitor.Wait(this);
+        }
+       	return m_value;
+        }
+}
+
+And because the m_valueSet is never true this code never returns :-( and the call to CreateModel stays in a blocked condition - presumably until the connection is unblocked.
+
+Does anyone have any advice on how best to handle this situation?
+
+Many thanks!
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="022073.html">[rabbitmq-discuss] RabbitMQ sources release
+</A></li>
+	<LI>Next message: <A HREF="022075.html">[rabbitmq-discuss] .Net Client locks trying to create a channel	on	a blocked connection
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#22066">[ date ]</a>
+              <a href="thread.html#22066">[ thread ]</a>
+              <a href="subject.html#22066">[ subject ]</a>
+              <a href="author.html#22066">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

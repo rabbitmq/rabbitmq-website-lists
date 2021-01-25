@@ -1,0 +1,127 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Synchronous confirmation of delivery to the queue
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Synchronous%20confirmation%20of%20delivery%20to%20the%0A%20queue&In-Reply-To=%3C20100705131453.GB19296%40rabbitmq.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="007860.html">
+   <LINK REL="Next"  HREF="007862.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Synchronous confirmation of delivery to the queue</H1>
+    <B>Matthew Sackman</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Synchronous%20confirmation%20of%20delivery%20to%20the%0A%20queue&In-Reply-To=%3C20100705131453.GB19296%40rabbitmq.com%3E"
+       TITLE="[rabbitmq-discuss] Synchronous confirmation of delivery to the queue">matthew at rabbitmq.com
+       </A><BR>
+    <I>Mon Jul  5 22:14:54 BST 2010</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="007860.html">[rabbitmq-discuss] Synchronous confirmation of delivery to the	queue
+</A></li>
+        <LI>Next message: <A HREF="007862.html">[rabbitmq-discuss] rabbitmq 1.8.0 on ubuntu lucid
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#7861">[ date ]</a>
+              <a href="thread.html#7861">[ thread ]</a>
+              <a href="subject.html#7861">[ subject ]</a>
+              <a href="author.html#7861">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi,
+
+On Mon, Jul 05, 2010 at 03:39:54PM +0300, Andrius Norkaitis wrote:
+&gt;<i> I tried it, but BasicPublish and TxCommit completes event if there are no
+</I>&gt;<i> queues to route.
+</I>&gt;<i> 
+</I>&gt;<i> public bool Publish() {
+</I>&gt;<i>           try{
+</I>&gt;<i> 	ch.TxSelect();
+</I>&gt;<i> 	bool Mandatory = true; Immediate = false;
+</I>&gt;<i> 	ch.BasicPublish(&quot;direct&quot;, routingKey,Mandatory, Immediate,
+</I>&gt;<i> basicProperties, body);
+</I>&gt;<i> 	ch.TxCommit();
+</I>&gt;<i> 	return true;
+</I>&gt;<i>           }
+</I>&gt;<i> 	catch { return false; }
+</I>&gt;<i> }
+</I>&gt;<i> 
+</I>&gt;<i> I always get TRUE event I there is no consumer/query available.
+</I>
+Hmm, we do the basic.return first - the following is a transcript, using
+the erlang client:
+
+6&gt; Conn = amqp_connection:start_network_link().
+&lt;0.58.0&gt;
+
+=INFO REPORT==== 5-Jul-2010::14:09:15 ===
+Negotiated maximums: (Channel = 0, Frame= 131072, Heartbeat=0)
+7&gt; Chan = amqp_connection:open_channel(Conn).  
+&lt;0.63.0&gt;
+8&gt; amqp_channel:call(Chan, #'tx.select'{}).    
+#'tx.select_ok'{}
+9&gt; amqp_channel:call(Chan, #'basic.publish'{ routing_key =
+&lt;&lt;&quot;no_such_queue&quot;&gt;&gt;, mandatory = true }, #amqp_msg{ payload = &lt;&lt;&gt;&gt;,
+props = #'P_basic'{} }).
+ok
+10&gt; 
+=ERROR REPORT==== 5-Jul-2010::14:10:28 ===
+Channel (&lt;0.63.0&gt;): received {{'basic.return',312,&lt;&lt;&quot;NO_ROUTE&quot;&gt;&gt;,&lt;&lt;&gt;&gt;,
+                                  &lt;&lt;&quot;no_such_queue&quot;&gt;&gt;}, {amqp_msg,
+                                                         {'P_basic',
+                                                          undefined,undefined,
+                                                          undefined,undefined,
+                                                          undefined,undefined,
+                                                          undefined,undefined,
+                                                          undefined,undefined,
+                                                          undefined,undefined,
+                                                          undefined,undefined},
+                                                         &lt;&lt;&gt;&gt;}} but
+there is no return handler registered
+10&gt; amqp_channel:call(Chan, #'tx.commit'{}).                                                                                                            
+#'tx.commit_ok'{}
+
+The commit comes back ok because the message never got stored as part of
+the commit because we detected the missing queue early and returned it.
+Thus the txn ended up being empty, which is why the commit happened
+without error.
+
+&gt;<i> How to detect that message wasn't published to the queue in same method
+</I>&gt;<i> calling BasicPublish? I need to return bool flag after trying to publish.
+</I>
+You should install a return handler on the Channel:
+ChannelN.setReturnListener. I think you can depend on that being called
+before the result of the commit comes back. You'll need to be careful
+with different threads, but you should effectively be able to have the
+return listener set some sort of boolean, and then only check that
+boolean after the commit has returned.
+
+Matthew
+</PRE>
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="007860.html">[rabbitmq-discuss] Synchronous confirmation of delivery to the	queue
+</A></li>
+	<LI>Next message: <A HREF="007862.html">[rabbitmq-discuss] rabbitmq 1.8.0 on ubuntu lucid
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#7861">[ date ]</a>
+              <a href="thread.html#7861">[ thread ]</a>
+              <a href="subject.html#7861">[ subject ]</a>
+              <a href="author.html#7861">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

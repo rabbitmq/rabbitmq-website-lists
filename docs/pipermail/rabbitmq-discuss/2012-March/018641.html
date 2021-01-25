@@ -1,0 +1,179 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Looking for clarification on acknowledgements, channels, and connections
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Looking%20for%20clarification%20on%0A%20acknowledgements%2C%20channels%2C%20and%20connections&In-Reply-To=%3CCAOn7oW-xUTYs4NPA%2BkewKbagntvbvH9SB3B%3DDrcM0fByQWxsqA%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="018640.html">
+   <LINK REL="Next"  HREF="018648.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Looking for clarification on acknowledgements, channels, and connections</H1>
+    <B>Simone Busoli</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Looking%20for%20clarification%20on%0A%20acknowledgements%2C%20channels%2C%20and%20connections&In-Reply-To=%3CCAOn7oW-xUTYs4NPA%2BkewKbagntvbvH9SB3B%3DDrcM0fByQWxsqA%40mail.gmail.com%3E"
+       TITLE="[rabbitmq-discuss] Looking for clarification on acknowledgements, channels, and connections">simone.busoli at gmail.com
+       </A><BR>
+    <I>Wed Mar  7 20:52:00 GMT 2012</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="018640.html">[rabbitmq-discuss] Looking for clarification on acknowledgements, channels, and connections
+</A></li>
+        <LI>Next message: <A HREF="018648.html">[rabbitmq-discuss] Rabbitmq, LDAP and SSL
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#18641">[ date ]</a>
+              <a href="thread.html#18641">[ thread ]</a>
+              <a href="subject.html#18641">[ subject ]</a>
+              <a href="author.html#18641">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi Alexis, I've had to deal with the same situation as Matt describes in
+the past and in the end the scenarios in case of channel closure were:
+
+   - discard messages delivered to the consumer but not yet dispatched to
+   the application, assuming they will be redelivered
+   - dispatch them to the application and not bother acking them as acking
+   wouldn't obviously succeed
+   - dispatch them to the application and try acking them anyway, catching
+   errors that inevitably will be raised due to the channel being closed
+
+Although it's not the cleanest solution I've chosen the third one (assuming
+a sensible prefect-count value, as swallowing lots of ack errors would
+likely affect the application performance) for a couple of reasons - quite
+dependent on the context btw:
+
+   - I wanted my application to see the messages the consumer had received
+   as soon as possible, without waiting for them to be eventually redelivered
+   - Not treating the scenario in which messages are acked on a closed
+   channel as a special case helped keep simplicity
+   - You have to deal with deduplication anyway compared to option 1 above
+   (which may create the false assumption that you wouldn't have to do so in
+   that case)
+
+Simone
+
+On Wed, Mar 7, 2012 at 21:25, Alexis Richardson &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">alexis at rabbitmq.com</A>&gt; wrote:
+
+&gt;<i> Matt
+</I>&gt;<i>
+</I>&gt;<i> Could you achieve what you want by lifting 'ack' to the application layer?
+</I>&gt;<i>
+</I>&gt;<i> alexis
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> On Wed, Mar 7, 2012 at 8:20 PM, Simone Busoli &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">simone.busoli at gmail.com</A>&gt;
+</I>&gt;<i> wrote:
+</I>&gt;<i> &gt; Hi Matt, your understanding is correct, acknowledgements are meaningful
+</I>&gt;<i> only
+</I>&gt;<i> &gt; within the context of the same channel, therefore the answer to your last
+</I>&gt;<i> &gt; question is no.
+</I>&gt;<i> &gt; If the connection bounces or the channel closes for any other reasons you
+</I>&gt;<i> &gt; should not acknowledge the messages your consumer was delivered already
+</I>&gt;<i> and
+</I>&gt;<i> &gt; just assume they will be redelivered to the next consumer which will
+</I>&gt;<i> start
+</I>&gt;<i> &gt; consuming to the same queue.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; On Wed, Mar 7, 2012 at 21:00, Matt Pietrek &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">mpietrek at skytap.com</A>&gt; wrote:
+</I>&gt;<i> &gt;&gt;
+</I>&gt;<i> &gt;&gt; I thought I understood this topic clearly, but some recent experiences
+</I>&gt;<i> &gt;&gt; have me seeking more info, as I can't find this exact topic explicitly
+</I>&gt;<i> &gt;&gt; described.
+</I>&gt;<i> &gt;&gt;
+</I>&gt;<i> &gt;&gt; When a message is delivered on a particular connection/channel
+</I>&gt;<i> &gt;&gt; combination, can it ever be successfully acknowledged on a different
+</I>&gt;<i> &gt;&gt; connection?
+</I>&gt;<i> &gt;&gt;
+</I>&gt;<i> &gt;&gt; My current understanding is &quot;no&quot;.
+</I>&gt;<i> &gt;&gt;
+</I>&gt;<i> &gt;&gt; Some background: In our messaging layer, we want to hide the connection
+</I>&gt;<i> &gt;&gt; drops from the upper application layer. That is, if we try to use a
+</I>&gt;<i> &gt;&gt; previously working connection/channel, and it fails, we'll simply catch
+</I>&gt;<i> the
+</I>&gt;<i> &gt;&gt; exception and try to reconnect.
+</I>&gt;<i> &gt;&gt;
+</I>&gt;<i> &gt;&gt; So the question is, after the reconnect, should we even attempt to
+</I>&gt;<i> &gt;&gt; acknowledge messages read from the original connection?
+</I>&gt;<i> &gt;&gt;
+</I>&gt;<i> &gt;&gt;
+</I>&gt;<i> &gt;&gt;
+</I>&gt;<i> &gt;&gt; _______________________________________________
+</I>&gt;<i> &gt;&gt; rabbitmq-discuss mailing list
+</I>&gt;<i> &gt;&gt; <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;<i> &gt;&gt; <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>&gt;<i> &gt;&gt;
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; _______________________________________________
+</I>&gt;<i> &gt; rabbitmq-discuss mailing list
+</I>&gt;<i> &gt; <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;<i> &gt; <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>&gt;<i> &gt;
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20120307/dc05f826/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20120307/dc05f826/attachment.htm</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="018640.html">[rabbitmq-discuss] Looking for clarification on acknowledgements, channels, and connections
+</A></li>
+	<LI>Next message: <A HREF="018648.html">[rabbitmq-discuss] Rabbitmq, LDAP and SSL
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#18641">[ date ]</a>
+              <a href="thread.html#18641">[ thread ]</a>
+              <a href="subject.html#18641">[ subject ]</a>
+              <a href="author.html#18641">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

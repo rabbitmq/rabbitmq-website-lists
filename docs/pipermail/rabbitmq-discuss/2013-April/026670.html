@@ -1,0 +1,195 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Durability and consumer acknowledgement	extremely slow
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Durability%20and%20consumer%20acknowledgement%0A%09extremely%20slow&In-Reply-To=%3C5c6d72b4-ba54-495b-ab0e-2747dea619bd%40googlegroups.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="026703.html">
+   <LINK REL="Next"  HREF="026702.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Durability and consumer acknowledgement	extremely slow</H1>
+    <B>Karl Rieb</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Durability%20and%20consumer%20acknowledgement%0A%09extremely%20slow&In-Reply-To=%3C5c6d72b4-ba54-495b-ab0e-2747dea619bd%40googlegroups.com%3E"
+       TITLE="[rabbitmq-discuss] Durability and consumer acknowledgement	extremely slow">karl.rieb at gmail.com
+       </A><BR>
+    <I>Wed Apr 24 17:26:42 BST 2013</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="026703.html">[rabbitmq-discuss] Freely licensed specs
+</A></li>
+        <LI>Next message: <A HREF="026702.html">[rabbitmq-discuss] Durability and consumer acknowledgement extremely slow
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#26670">[ date ]</a>
+              <a href="thread.html#26670">[ thread ]</a>
+              <a href="subject.html#26670">[ subject ]</a>
+              <a href="author.html#26670">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi,
+
+I am trying to improve the message throughput for a RabbitMQ queue in an 
+Amazon cloud instance and am noticing a *significant* drop in performance 
+when enabling acknowledgements for consumer of a durable queue (with 
+persisted messages).  The real problem is that the bottleneck appears to be 
+on the rabbit node and not with the consumers, so adding more consumers 
+does not improve the throughput (or help drain the queue any quicker).  As 
+a matter of fact, adding new consumers will just slow down existing 
+consumers so everyone ends up consuming at a slower rate, preventing 
+overall throughput from changing.
+
+Trying to do batch acknowledgements using the Multiple flag helps a bit (8k 
+msgs/s vs 5.5k msgs/s) but not much compared to the initial drop.  It is 
+only when I turn on *auto_ack* for the consumers that I see the performance 
+shoot *way *back up and when I start seeing a linear increase in throughput 
+as I add more consumers.
+
+Is this expected behavior?  Is there a way to configure the rabbit node so 
+it doesn't hit this bottleneck with acknowledgements?
+
+Here is the sample code I'm using to test the throughput:
+
+Publisher:
+
+#!/usr/bin/python
+
+import pika
+
+creds = pika.PlainCredentials('guest','guest')
+conn  = 
+pika.BlockingConnection(pika.ConnectionParameters(host='10.10.1.123', 
+credentials=creds))
+chan  = conn.channel()
+
+while True:
+    chan.basic_publish(exchange='simple_exchange', 
+routing_key='simple_queue', body='', 
+properties=pika.BasicProperties(delivery_mode=2))
+
+
+Consumer:
+
+ #!/usr/bin/python
+
+import pika
+
+def callback(chan, method, properties, body):
+    chan.basic_ack(delivery_tag=method.delivery_tag, multiple=False)
+
+creds = pika.PlainCredentials('guest','guest')
+conn  = 
+pika.BlockingConnection(pika.ConnectionParameters(host='10.10.1.123', 
+credentials=creds))
+chan  = conn.channel()
+
+chan.basic_consume(callback, queue='simple_queue', no_ack=False)
+chan.basic_qos(prefetch_count=1000)
+chan.start_consuming()
+
+
+I spawn multiple processes for the producers and multiple for the consumer 
+(so there is no python interpreter locking issues since each runs in its 
+own interpreter instance).  I'm using an an Amazon *c1.xlarge *(8 virtual 
+cores and &quot;high&quot; IO) Ubuntu 12.04 LTS instance with RabbitMQ version 
+3.0.4-1 and an Amazon ephemeral disk (in production we would use an EBS 
+volume instead).  The queue is marked *Durable* and my messages all use *
+delivery_mode* 2 (persist).  
+
+Below are the performance numbers.  For each test I use 2 publishers 
+processes and 6 consumer processes (where 3 different machines host 2 
+consumers each).  The producers and consumers are all on *separate*machines from the rabbit node.  Throughput measurements were done using the 
+RabbitMQ management UI and linux utility top.  Python was compiled to pyc 
+files before running.
+
+*no_ack = True:*  
+    rate = 24,000/s 
+    single consumer CPU   =  65% 
+    single publisher CPU  =  80% (flow control enabled and being enforced)
+    (beam.smp) rabbit CPU = 400% (of 800%, 8 cores) -&gt; 0.0%wa 11.5%sy
+
+*no_ack = False (manual acks per message):*
+    rate =  5,500/s
+    single consumer CPU   =  20%
+    single publisher CPU  =  20% (flow control enabled and being enforced)
+    (beam.smp) rabbit CPU = 300% (of 800%, 8 cores) -&gt; 4.5%wa 10.0%sy
+    
+The most notable difference besides the throughput are the I/O waits when 
+ACKs are enabled (4.5% vs 0.0%).  This leads me to believe that the rabbit 
+node is being bottlenecked by performing I/O operations for ACK 
+bookkeeping.  The I/O doesn't appear to be a problem for persisting the 
+published messages since I'm *guessing* that rabbit is buffering those and 
+syncing them to disk in batches.  Does this mean the acknowledgements are 
+not also being buffered before synced with disk?  Can I configure the 
+rabbit node to change this behavior to help speed up the acknowledgements? 
+  I'm not using transactions in the example code above, so I don't need any 
+strict guarantees that ACKs were written to disk before returning.
+
+Thanks,
+Karl
+
+P.S. I wrote the same sample consumer code in Ruby to see if there was a 
+difference (in case there was a Python issue), but the numbers were about 
+the same.
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20130424/9f2a468c/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20130424/9f2a468c/attachment.htm</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="026703.html">[rabbitmq-discuss] Freely licensed specs
+</A></li>
+	<LI>Next message: <A HREF="026702.html">[rabbitmq-discuss] Durability and consumer acknowledgement extremely slow
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#26670">[ date ]</a>
+              <a href="thread.html#26670">[ thread ]</a>
+              <a href="subject.html#26670">[ subject ]</a>
+              <a href="author.html#26670">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,173 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] request for help!
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20request%20for%20help%21&In-Reply-To=">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="007161.html">
+   <LINK REL="Next"  HREF="007178.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] request for help!</H1>
+    <B>Tim Fox</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20request%20for%20help%21&In-Reply-To="
+       TITLE="[rabbitmq-discuss] request for help!">tim.fox at jboss.com
+       </A><BR>
+    <I>Mon May 10 14:37:04 BST 2010</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="007161.html">[rabbitmq-discuss] Silverlight application with RabbitMQ
+</A></li>
+        <LI>Next message: <A HREF="007178.html">[rabbitmq-discuss] request for help!
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#7173">[ date ]</a>
+              <a href="thread.html#7173">[ thread ]</a>
+              <a href="subject.html#7173">[ subject ]</a>
+              <a href="author.html#7173">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>I've spent this morning going through the 1.0. PR3 spec, firstly, it's 
+considerably simpler than 0.10, which is great news :)
+
+Here's my 2p:
+
+One thing I find quite strange is that the core spec doesn't actually 
+seem to mandate any queueing semantics anywhere. I've nothing 
+particularly against that - in fact, the idea that a node can do 
+different types of ordering is actually quite nice, however it's not a 
+queueing protocol. Shouldn't AMQP therefore be renamed to AMTP (Advanced 
+Message Transfer Protocol) ? ;)
+
+On a more serious note, my main concerns are mainly around complexity, 
+and verbosity of the wire format. The latter I suppose is not completely 
+independent from the former.
+
+Regarding complexity. IMO a large part of the complexity in the spec. 
+seems to come from the way it tries to provide a once and only once 
+delivery guarantee. AIUI the way the spec. implements this guarantee is 
+something like the following when transferring a message from A to B:
+
+a) message to be sent from A--&gt;B
+b) ack sent back from B--&gt;A
+c) &quot;ack of ack&quot; sent from A--&gt;B - now the delivery tag can be removed 
+from the senders cache
+
+This results in a complex set of message states, and puts the burden on 
+both sides of the link to maintain a map of delivery tags, which would 
+also have to be persisted in order to provide once and only delivery 
+guarantee in event of failures of node(s). This will also require 
+several syncs to storage at each transition (for durable messaging). 
+I.e. slow
+
+Perhaps a simpler way of getting the once and only guarantee is to 
+forget the delivery tag altogether and allow the sender to specify a 
+de-duplication-id - this is just a user generated id - e.g. a String or 
+a byte[], (can be generated from user application domain concepts - e.g. 
+order number).
+
+When sending a message this id can be specified on the transfer. The 
+receiving end can then maintain a de-duplication cache. The 
+de-duplication cache can be implemented as a circular buffer which just 
+overwrites itself when full (this is what we do in HornetQ for reliable 
+bridging between nodes), this means the interaction c) is not necessary 
+or can just be sent intermittently to allow the cache to be cleared. The 
+de-dup cache still requires syncing to non volatile storage to give the 
+once and only once (for durable messages), however it requires less 
+writes than the method described in the spec, and it it has one less 
+interaction (you can get rid of the &quot;ack of ack&quot;)
+
+On recovery after system failure, the sender just blindly sends the 
+messages again, on receipt at the server any messages seen before will 
+just be rejected. No need for reattaching, sending maps of unsettled 
+transfers or other complex stuff like that.
+
+By removing all this delivery tag book-keeping and session re-attachment 
+stuff, which seems unnecessary to me, would result in a dramatic 
+simplification.
+
+Regarding verbosity of the wire format for message transfer; if you're 
+just passing a 12 byte message (e.g. stock price - 4 byte identifier + 8 
+byte price) then the overall encoded size is much higher than 12 bytes.
+
+This will kill performance for small messages, making any AMQP compliant 
+implementation unable to compete in the world of lightweight 
+publish/subscribe messaging with other, non AMQP implementations which 
+don't have to conform to the AMQP wire format and can produce much more 
+lightweight encodings. The key to perf with lightweight pub/sub is to 
+make the encoded message size as small as possible and cram as many 
+messages as you can into single socket writes.
+
+Now, lightweight pub/sub may not be the target domain for AMQP, in which 
+case it does not need to worry about it, however if a particular 
+messaging system supports multiple protocols including AMQP, it will not 
+do much for the adoption of AMQP if the best performance is not 
+achievable using the AMQP protocol - users will fall back to using the 
+proprietary protocol offered by the vendor.
+
+A short comment on transactions. I have to be honest here, I spent about 
+30 mins reading the chapter on transactions several times. I have to say 
+at the end of it I am not much further understanding it. :(
+
+However maybe that is moot - a part of me is thinking that transactions 
+don't really belong in the core spec. Perhaps the core spec should be 
+concerned with allowing the reliable movement of messages between nodes. 
+With that in place, transactions could be layered on top in another spec (?)
+
+
+
+
+
+-- 
+Sent from my BBC Micro Model B
+
+Tim Fox
+JBoss
+
+HornetQ - putting the buzz in messaging <A HREF="http://hornetq.org">http://hornetq.org</A>
+<A HREF="http://hornetq.blogspot.com/">http://hornetq.blogspot.com/</A>
+<A HREF="http://twitter.com/hornetq">http://twitter.com/hornetq</A>
+<A HREF="irc://irc.freenode.net:6667#hornetq">irc://irc.freenode.net:6667#hornetq</A>	
+<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">fox at redhat.com</A>
+
+
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="007161.html">[rabbitmq-discuss] Silverlight application with RabbitMQ
+</A></li>
+	<LI>Next message: <A HREF="007178.html">[rabbitmq-discuss] request for help!
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#7173">[ date ]</a>
+              <a href="thread.html#7173">[ thread ]</a>
+              <a href="subject.html#7173">[ subject ]</a>
+              <a href="author.html#7173">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

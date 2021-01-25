@@ -1,0 +1,159 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Load Balanced Consumers?
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Load%20Balanced%20Consumers%3F&In-Reply-To=%3CCAJreXKDn1ATsxotponp3LmmRoQM5%2BJB8DR9RuUk43tKURveXyA%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="014569.html">
+   <LINK REL="Next"  HREF="014534.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Load Balanced Consumers?</H1>
+    <B>James Carr</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Load%20Balanced%20Consumers%3F&In-Reply-To=%3CCAJreXKDn1ATsxotponp3LmmRoQM5%2BJB8DR9RuUk43tKURveXyA%40mail.gmail.com%3E"
+       TITLE="[rabbitmq-discuss] Load Balanced Consumers?">james.r.carr at gmail.com
+       </A><BR>
+    <I>Tue Aug 16 17:15:45 BST 2011</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="014569.html">[rabbitmq-discuss] Load Balanced Consumers?
+</A></li>
+        <LI>Next message: <A HREF="014534.html">[rabbitmq-discuss] major failure when clearing large queue backlog
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#14571">[ date ]</a>
+              <a href="thread.html#14571">[ thread ]</a>
+              <a href="subject.html#14571">[ subject ]</a>
+              <a href="author.html#14571">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>We Completed some experiments and here was our findings.
+
+We set up a 3 node broker (rabbitmq running on three separate boxes)
+and clustered them together. The publisher publishes to a load
+balancer (crescendo) while the consumer defined a queue on one node
+and subscriber to all three nodes. The behavior we saw is the consumer
+got unique messages from all three nodes. for example it might get
+messages 1,2, and 4 from node one, 3,7 from node 2, and 5, 6 from node
+3. The publisher messages reached the broker as fast as they were
+published (1,000/s on average) and performed well. Likewise the
+consumer also performed well and got messages as fast as they came in.
+We also tried just connected a consumer to one broker and got similar
+results.
+
+Putting the consumer behind a load balancer however resulted in slow
+as snot consuming. For now we've decided against that approach.
+
+You're right, my aim is to be able to take any node on the cluster
+down for maintanence without impacting application performance or
+message delivery. All of our apps are using spring-amqp which
+auto-reconnects if their connects get reset.
+
+So far it seems like having the consumer connect to each of the boxes
+is the best approach, albeit slightly heavy. I'd definitely like to
+know some of the approaches others have taken to achieve HA. :)
+
+
+Thanks,
+James
+
+
+On Tue, Aug 16, 2011 at 9:36 AM, Michael Bridgen &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">mikeb at rabbitmq.com</A>&gt; wrote:
+&gt;&gt;<i> In all the material I've read on clustering and load balancing the
+</I>&gt;&gt;<i> setup I always see is publishers publishing through a load balancer
+</I>&gt;&gt;<i> while consumers consume all the nodes on the cluster.
+</I>&gt;<i>
+</I>&gt;&gt;<i> Is it possible to place the consumers behind a load balancer? I'm
+</I>&gt;&gt;<i> just asking, we plan on trying it on Monday with our cluster at work.
+</I>&gt;&gt;<i> The setup we're thinking of is one balancer for publishers, two forWell, We
+</I>&gt;&gt;<i> consumers (which consumers will consume on both) and divide the
+</I>&gt;&gt;<i> cluster into segments that the consumer balancers forward to.
+</I>&gt;<i>
+</I>&gt;<i> Load-balancing for publishers is for handling high throughput,
+</I>&gt;<i> the theory being that more connections can be opened and more messages
+</I>&gt;<i> processed. &#160;Routing is done by channel processes, so that will to some
+</I>&gt;<i> extent[1] scale along with the number of connections.
+</I>&gt;<i>
+</I>&gt;<i> The overall scaling behaviour is probably[2] mostly dependent on the
+</I>&gt;<i> routing topology; i.e., to how many queues each message is routed. If
+</I>&gt;<i> messages are being fanned out to many queues, that will of course
+</I>&gt;<i> mitigate the benefit of handling many publishers and incoming messages at
+</I>&gt;<i> once.
+</I>&gt;<i>
+</I>&gt;<i> You're right that no-one has really gone into load-balancing consumers (or
+</I>&gt;<i> at least, has not reported doing so here). Possibly this is because how
+</I>&gt;<i> queues and consumers are deployed is more tied in with application logic
+</I>&gt;<i> (e.g., routing) than publishing is -- i.e., it's different for everyone, and
+</I>&gt;<i> no one scheme works across the board. Publishing isn't stateful but
+</I>&gt;<i> consuming is.
+</I>&gt;<i>
+</I>&gt;<i> From a throughput point of view, taking a single use case -- let's say
+</I>&gt;<i> publishing to a single queue and consuming from it -- I guess the idea would
+</I>&gt;<i> be to consume on more than one connection, on the basis that the queue would
+</I>&gt;<i> load-balance across those connections and each connection would be on a
+</I>&gt;<i> different node. I'm not sure how much this would improve performance, since
+</I>&gt;<i> the queue (located on one node) still has to deliver messages across nodes.
+</I>&gt;<i> See [2] though.
+</I>&gt;<i>
+</I>&gt;<i> It sounds from your brief description you are more interested in failover --
+</I>&gt;<i> e.g., if a node fails, another node will continue to deliver messages. Since
+</I>&gt;<i> queues are located at a particular node, this won't work in that mode,
+</I>&gt;<i> presently[3]; unless you are, somewhere, prepared to duplicate messages
+</I>&gt;<i> (e.g., with a fanout exchange and a queue bound to it from each segment) and
+</I>&gt;<i> deduplicate at the clients (and even then, it doesn't quite work, as the
+</I>&gt;<i> round-robin at each queue wouldn't be the same). But perhaps I have
+</I>&gt;<i> misunderstood what you're trying to achieve.
+</I>&gt;<i>
+</I>&gt;<i> [1] To some extent because it does involve database reads and other
+</I>&gt;<i> overheads.
+</I>&gt;<i>
+</I>&gt;<i> [2] Nothing beats actually measuring.
+</I>&gt;<i>
+</I>&gt;<i> [3] Replicated queues are coming soon.
+</I>&gt;<i>
+</I>&gt;&gt;<i> Is this an ideal solution? The only problem comes when the nodes
+</I>&gt;&gt;<i> that both connect to go down at the same time but I am putting money
+</I>&gt;&gt;<i> on that not happening. We'll see. :)
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Thanks, James _______________________________________________
+</I>&gt;&gt;<i> rabbitmq-discuss mailing list <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>&gt;<i>
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>&gt;<i>
+</I></PRE>
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="014569.html">[rabbitmq-discuss] Load Balanced Consumers?
+</A></li>
+	<LI>Next message: <A HREF="014534.html">[rabbitmq-discuss] major failure when clearing large queue backlog
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#14571">[ date ]</a>
+              <a href="thread.html#14571">[ thread ]</a>
+              <a href="subject.html#14571">[ subject ]</a>
+              <a href="author.html#14571">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

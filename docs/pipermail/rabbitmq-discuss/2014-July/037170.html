@@ -1,0 +1,135 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Possible memory leak in the management plugin
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Possible%20memory%20leak%20in%20the%20management%20plugin&In-Reply-To=%3C1405388360295-36797.post%40n5.nabble.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="037192.html">
+   <LINK REL="Next"  HREF="037171.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Possible memory leak in the management plugin</H1>
+    <B>Pavel</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Possible%20memory%20leak%20in%20the%20management%20plugin&In-Reply-To=%3C1405388360295-36797.post%40n5.nabble.com%3E"
+       TITLE="[rabbitmq-discuss] Possible memory leak in the management plugin">pmaisenovich at blizzard.com
+       </A><BR>
+    <I>Tue Jul 15 02:39:20 BST 2014</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="037192.html">[rabbitmq-discuss] Implement guaranteed delivery with ReturnListener and ConfirmListener
+</A></li>
+        <LI>Next message: <A HREF="037171.html">[rabbitmq-discuss] test results on 3.1.5 + Erlang 15
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#37170">[ date ]</a>
+              <a href="thread.html#37170">[ thread ]</a>
+              <a href="subject.html#37170">[ subject ]</a>
+              <a href="author.html#37170">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi again,
+
+I finally got back to these tests and have some results to share.
+
+TL/DR: baring some oddities there is a clear change of pattern in agg_stats
+table growth when using 3.3.4 comparing to 3.1.5. While in 3.1.5 it grows
+seemingly unbounded, 3.3.4 keeps it stable at certain level. More details
+below.
+
+I have two identical boxes in the lab one running Erlang 15B + RabbitMQ
+3.1.5 and other one on Erlang 17 +  RabbitMQ 3.3.4. In both environments I
+run my load generation test (slightly modified from what was shared earlier
+in this thread) using JDK7 + com.rabbitmq:amqp-client:3.3.4 with the
+following parameters:
+
+RabbitSmasher 500 100 10000000 499 false false
+
+What this does is:
+- creates 499 exchanges
+- creates 499 queues and binds them 1-1 to exchanges
+- creates 1 connection with 500 channels
+- publishes messages at the rate of 100/s rotating through 500 channels and
+picking exchange/routing key sequentially (so that each of 249500
+channel/queue permutations is hit once every ~40 minutes)
+
+During the test I'm sampling mgmt_db memory on both boxes every 5 seconds
+using this query:
+
+/usr/sbin/rabbitmqctl eval
+'{process_info(global:whereis_name(rabbit_mgmt_db),memory),[{T,
+ets:info(T,size), ets:info(T,memory)} || T &lt;-lists:sort(ets:all()),
+rabbit_mgmt_db &lt;- [ets:info(T, name)]]}.'
+
+Running this for 24+ hours produced these results:
+
+- Box running 3.1.5 crashed after ~38 hours, it's unclear though what caused
+the crash (could be unrelated to the test)
+- Box running 3.3.4 continued to execute the test after ~69 hours 
+
+- 3.1.5 had agg_stats memory constantly growing for the entire test duration
+(38h), ending at ~269K words
+- 3.3.4 had agg_stats memory stabilized around ~65K words at ~5 hours mark
+-- that said, 3.3.4 had a few huge outliers, reaching up to ~600K words
+
+There are also quite interesting observations for total mgmt_db memory in
+both tests:
+
+- In 3.1.5 mgmt_db had a ~2 hour long spike/plateau at 2.5Gb, then went back
+to under 1Gb for the remainder of the test
+- In 3.3.4 mgmt_db never went above 700Mb, but after ~60 hours of run
+dramatically changed the pattern staying under 100Mb for the remainder of
+the test (except few outliers)
+
+The most odd thing in these results is number of records in agg_stats table
+in 3.3.4: after reaching certain limit (which remained stable for the entire
+duration of test on 3.1.5), it began to jump between 253642 and
+500046.
+
+Attaching excel file with data, will post images next.
+
+Test_5_-_charts.zip
+&lt;<A HREF="http://rabbitmq.1065348.n5.nabble.com/file/n36797/Test_5_-_charts.zip">http://rabbitmq.1065348.n5.nabble.com/file/n36797/Test_5_-_charts.zip</A>&gt;  
+
+
+
+--
+View this message in context: <A HREF="http://rabbitmq.1065348.n5.nabble.com/Possible-memory-leak-in-the-management-plugin-tp27414p36797.html">http://rabbitmq.1065348.n5.nabble.com/Possible-memory-leak-in-the-management-plugin-tp27414p36797.html</A>
+Sent from the RabbitMQ mailing list archive at Nabble.com.
+</PRE>
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="037192.html">[rabbitmq-discuss] Implement guaranteed delivery with ReturnListener and ConfirmListener
+</A></li>
+	<LI>Next message: <A HREF="037171.html">[rabbitmq-discuss] test results on 3.1.5 + Erlang 15
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#37170">[ date ]</a>
+              <a href="thread.html#37170">[ thread ]</a>
+              <a href="subject.html#37170">[ subject ]</a>
+              <a href="author.html#37170">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

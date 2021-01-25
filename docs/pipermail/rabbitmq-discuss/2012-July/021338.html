@@ -1,0 +1,185 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Publisher Confirms support in Rabbitmq-c	client.
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Publisher%20Confirms%20support%20in%20Rabbitmq-c%0A%09client.&In-Reply-To=%3CCAAt2poJAiH19FxCnGp4tnVsa51%3DxzpYOJkesws88nGBWQ5eb1g%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="021336.html">
+   <LINK REL="Next"  HREF="021339.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Publisher Confirms support in Rabbitmq-c	client.</H1>
+    <B>Alan Antonuk</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Publisher%20Confirms%20support%20in%20Rabbitmq-c%0A%09client.&In-Reply-To=%3CCAAt2poJAiH19FxCnGp4tnVsa51%3DxzpYOJkesws88nGBWQ5eb1g%40mail.gmail.com%3E"
+       TITLE="[rabbitmq-discuss] Publisher Confirms support in Rabbitmq-c	client.">alan.antonuk at gmail.com
+       </A><BR>
+    <I>Wed Jul 18 05:04:00 BST 2012</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="021336.html">[rabbitmq-discuss] Publisher Confirms support in Rabbitmq-c	client.
+</A></li>
+        <LI>Next message: <A HREF="021339.html">[rabbitmq-discuss] Publisher Confirms support in Rabbitmq-c	client.
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#21338">[ date ]</a>
+              <a href="thread.html#21338">[ thread ]</a>
+              <a href="subject.html#21338">[ subject ]</a>
+              <a href="author.html#21338">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>rabbitmq-c does support publisher confirms, its not as easy to use as on
+the other clients.
+
+On the channel you want to turn on confirms (error handling elided):
+amqp_channel_t channel = 1;
+amqp_channel_open(conn, channel);
+amqp_confirm_select(conn, channel);
+
+Then to handle the publish confirms:
+amqp_basic_publish(...);
+// You then need to wait for either a basic.ack or then a basic.return
+followed by a message, followed by basic.ack in the case of a delivery
+failure:
+
+amqp_frame_t frame;
+amqp_simple_wait_frame(conn, &amp;frame);
+// Check that frame is on channel 1
+if (frame.method == AMQP_BASIC_ACK)
+{
+  // Message successfully delivered
+}
+else
+{
+ // Read properties
+ amqp_simple_wait_frame(conn, &amp;frame);
+ // Check that frame is on channel 1, and that its a properties type
+ uint64_t body_size = frame.properties.body_size;
+
+ uint64_t body_read = 0;
+ // Read body frame
+ while (body_read &lt; body_size)
+ {
+   amqp_simple_wait_frame(conn, &amp;frame);
+   // Check frame is on channel 1, and that is a body frame
+   body_read += frame.body_fragment.len;
+ }
+
+ // Read basic.ack
+ amqp_simple_wait_frame(conn, &amp;frame);
+ // Check frame is on channel 1, and that its a basic.ack
+}
+
+
+This is used in SimpleAmqpClient, see BasicPublish function for details:
+<A HREF="https://github.com/alanxz/SimpleAmqpClient/blob/master/src/Channel.cpp#L287">https://github.com/alanxz/SimpleAmqpClient/blob/master/src/Channel.cpp#L287</A>
+
+-Alan
+
+On Tue, Jul 17, 2012 at 6:28 PM, Jerry Kuch &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">jerryk at rbcon.com</A>&gt; wrote:
+
+&gt;<i> Publisher confirms are a quite recent Rabbit extension to AMQP and the C
+</I>&gt;<i> clients tend to lag behind a bit, unfortunately.
+</I>&gt;<i>
+</I>&gt;<i> I'm not aware of current plans to support them or any existing patches.
+</I>&gt;<i>  Anybody else?  What happens at the wire level is pretty straightforward so
+</I>&gt;<i> really the work will all be in handling them asynchronously I'd think.
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> Sent from my iPad.
+</I>&gt;<i>
+</I>&gt;<i> On Jul 17, 2012, at 1:55 PM, rohit &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">mailrohitp at gmail.com</A>&gt; wrote:
+</I>&gt;<i>
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; Hi,
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; After looking in rabbitmq-c client source code, I feel there is no
+</I>&gt;<i> &gt; implementation of Publisher confirms in the client. Can someone confirm
+</I>&gt;<i> &gt; this?
+</I>&gt;<i> &gt; Also does anyone know if it is ever going to be implemented as part of
+</I>&gt;<i> the
+</I>&gt;<i> &gt; client, or a third party patch to achieve this.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; Thanks in advance.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; --Rohit
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; --
+</I>&gt;<i> &gt; View this message in context:
+</I>&gt;<i> <A HREF="http://rabbitmq.1065348.n5.nabble.com/Publisher-Confirms-support-in-Rabbitmq-c-client-tp20862.html">http://rabbitmq.1065348.n5.nabble.com/Publisher-Confirms-support-in-Rabbitmq-c-client-tp20862.html</A>
+</I>&gt;<i> &gt; Sent from the RabbitMQ mailing list archive at Nabble.com.
+</I>&gt;<i> &gt; _______________________________________________
+</I>&gt;<i> &gt; rabbitmq-discuss mailing list
+</I>&gt;<i> &gt; <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;<i> &gt; <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20120718/84075fa7/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20120718/84075fa7/attachment.htm</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="021336.html">[rabbitmq-discuss] Publisher Confirms support in Rabbitmq-c	client.
+</A></li>
+	<LI>Next message: <A HREF="021339.html">[rabbitmq-discuss] Publisher Confirms support in Rabbitmq-c	client.
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#21338">[ date ]</a>
+              <a href="thread.html#21338">[ thread ]</a>
+              <a href="subject.html#21338">[ subject ]</a>
+              <a href="author.html#21338">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

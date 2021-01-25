@@ -1,0 +1,142 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Fairness wrt queues under heavy load
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Fairness%20wrt%20queues%20under%20heavy%20load&In-Reply-To=%3CCANVKUrU%3D358iaydYmNE%2BHSWQkeuyxwx7PXcY7dQ12HxMxpDn_Q%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="015451.html">
+   <LINK REL="Next"  HREF="015462.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Fairness wrt queues under heavy load</H1>
+    <B>Eugene Kirpichov</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Fairness%20wrt%20queues%20under%20heavy%20load&In-Reply-To=%3CCANVKUrU%3D358iaydYmNE%2BHSWQkeuyxwx7PXcY7dQ12HxMxpDn_Q%40mail.gmail.com%3E"
+       TITLE="[rabbitmq-discuss] Fairness wrt queues under heavy load">ekirpichov at gmail.com
+       </A><BR>
+    <I>Wed Oct 12 06:19:33 BST 2011</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="015451.html">[rabbitmq-discuss] Fairness wrt queues under heavy load
+</A></li>
+        <LI>Next message: <A HREF="015462.html">[rabbitmq-discuss] Fairness wrt queues under heavy load
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#15461">[ date ]</a>
+              <a href="thread.html#15461">[ thread ]</a>
+              <a href="subject.html#15461">[ subject ]</a>
+              <a href="author.html#15461">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hello,
+
+I have some more information to share.
+
+* The messages taking long to deliver are sitting in the queues
+(&quot;ready&quot;), according to the management interface.
+* I looked in the logs for the scenario where my &quot;high-priority&quot;
+messages were taking ages to deliver. There was absolutely nothing
+suspicious; not a single warning report.
+* I replaced usage of transactions with a simple
+WaitForConfirmsOrDie() call after publishing the message. This didn't
+change anything, the message was still taking ages to deliver, and
+still nothing in the logs.
+* However, moving the queues for high-priority messages to a different
+server solved the problem immediately. So the problem is *not* in my
+consumers or producers of these messages - it's probably really in
+rabbit.
+* To add information about producers/consumers - producers shared a
+connection (though not a channel) with the activity of publishing a
+lot of other messages; the consumer only listened to the high-priority
+messages.
+
+On Tue, Oct 11, 2011 at 2:20 PM, Matthias Radestock
+&lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">matthias at rabbitmq.com</A>&gt; wrote:
+&gt;<i> On 11/10/11 10:47, Eugene Kirpichov wrote:
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> On Tue, Oct 11, 2011 at 12:09 PM, Matthias Radestock
+</I>&gt;&gt;<i> &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">matthias at rabbitmq.com</A>&gt; &#160;wrote:
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i> If the publishing rate exceeds the rabbit capacity, the broker will
+</I>&gt;&gt;&gt;<i> eventually hit its memory threshold and throttle producers. The logs will
+</I>&gt;&gt;&gt;<i> tell you when that happens. Memory pressure can take a while to
+</I>&gt;&gt;&gt;<i> dissipate,
+</I>&gt;&gt;&gt;<i> sometimes several minutes. The cure for this is to set up a bigger
+</I>&gt;&gt;&gt;<i> rabbit.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> This could be the case, actually, though I'm limiting the number of
+</I>&gt;&gt;<i> unconfirmed publishes on each queue, but I don't limit it on a global
+</I>&gt;&gt;<i> level. Thanks, I'll look at the logs.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> What somewhat disproves this is that this *only* happens with
+</I>&gt;&gt;<i> transactional messages (establish channel, start transaction, publish
+</I>&gt;&gt;<i> message, commit, close channel - though the connection may be shared).
+</I>&gt;<i>
+</I>&gt;<i> Hmm. It should be quite difficult to hit the memory limit when publishing in
+</I>&gt;<i> tx or confirm mode and committing/waiting after every message.
+</I>&gt;<i>
+</I>&gt;<i> Anyway, check the logs for memory alarms.
+</I>&gt;<i>
+</I>&gt;<i> Also, you should avoid sharing connections between producers and consumers.
+</I>&gt;<i> Otherwise the throttling of producers will also starve consumers.
+</I>&gt;<i>
+</I>&gt;&gt;&gt;<i> Messages pile up in queues when consumers don't consume them fast enough.
+</I>&gt;&gt;&gt;<i> Since queues are FIFO structures that manifests itself as a delay. To
+</I>&gt;&gt;&gt;<i> avoid
+</I>&gt;&gt;&gt;<i> this delay for high priority messages, make sure they get routed to a
+</I>&gt;&gt;&gt;<i> separate queue and code consumers s.t. they consume from that queue in
+</I>&gt;&gt;&gt;<i> addition to the regular queues.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> I am routing to a separate queue already.
+</I>&gt;<i>
+</I>&gt;<i> When you experience the delay for a high priority message, check whether the
+</I>&gt;<i> message is sitting in the queue. If it is then there is a problem at the
+</I>&gt;<i> consuming side, i.e. rabbit thinks there is no consumer ready to accept the
+</I>&gt;<i> message.
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> Matthias.
+</I>&gt;<i>
+</I>
+
+
+-- 
+Eugene Kirpichov
+Principal Engineer, Mirantis Inc. <A HREF="http://www.mirantis.com/">http://www.mirantis.com/</A>
+Editor, <A HREF="http://fprog.ru/">http://fprog.ru/</A>
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="015451.html">[rabbitmq-discuss] Fairness wrt queues under heavy load
+</A></li>
+	<LI>Next message: <A HREF="015462.html">[rabbitmq-discuss] Fairness wrt queues under heavy load
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#15461">[ date ]</a>
+              <a href="thread.html#15461">[ thread ]</a>
+              <a href="subject.html#15461">[ subject ]</a>
+              <a href="author.html#15461">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

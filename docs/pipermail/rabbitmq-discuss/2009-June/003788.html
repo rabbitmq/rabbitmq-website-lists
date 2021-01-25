@@ -1,0 +1,150 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] .NET client SimpleRpcServer question
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20.NET%20client%20SimpleRpcServer%20question&In-Reply-To=4A2EB25D.10907%40acceleration.net">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003785.html">
+   <LINK REL="Next"  HREF="003789.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] .NET client SimpleRpcServer question</H1>
+    <B>Ryan Davis</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20.NET%20client%20SimpleRpcServer%20question&In-Reply-To=4A2EB25D.10907%40acceleration.net"
+       TITLE="[rabbitmq-discuss] .NET client SimpleRpcServer question">ryan at acceleration.net
+       </A><BR>
+    <I>Tue Jun  9 23:03:33 BST 2009</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003785.html">[rabbitmq-discuss] .NET client SimpleRpcServer question
+</A></li>
+        <LI>Next message: <A HREF="003789.html">[rabbitmq-discuss] .NET client SimpleRpcServer question
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3788">[ date ]</a>
+              <a href="thread.html#3788">[ thread ]</a>
+              <a href="subject.html#3788">[ subject ]</a>
+              <a href="author.html#3788">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Ok, last one today, I promise.
+
+I solved this problem my adding some explicit locks in Subscription and
+SimpleRpcServer.  I tried to checkout the latest source (on linux,
+cygwin, and tortoiseHG) but kept getting a zlib error, so this patch is
+against the source in rabbitmq-dotnet-client-1.5.3.zip downloaded from
+<A HREF="http://www.rabbitmq.com/dotnet.html.">http://www.rabbitmq.com/dotnet.html.</A>
+
+This patch makes SimpleRpcServer.Close threadsafe by adding:
+
+   1. locking SimpleRpcServer.m_subscription around the body of
+      SimpleRpcServer.MainLoop's foreach (so we can't close while
+      processing)
+   2. checking for a null Subscription.Consumer before processing a
+      message in SimpleRpcServer.MainLoop, but after we've locked
+      m_subscription (to ensure we don't process after we've closed)
+   3. locking this around the body of Subscription.Close (to ensure we
+      don't close that same subscription at the same time)
+
+I *think* that solves the potential race conditions.  It certainly makes
+my tests work, and running &quot;nant unit&quot; on the 1.5.3 source gives 2
+failures in TestSharedQueue.cs that look timing-related.
+
+Thanks,
+
+Ryan Davis
+Acceleration.net
+Director of Programming Services
+2831 NW 41st street, suite B
+Gainesville, FL 32606
+
+Office: 352-335-6500 x 124
+Fax: 352-335-6506
+
+
+
+Ryan Davis wrote:
+&gt;<i> Ryan Davis wrote:
+</I>&gt;<i>   
+</I>&gt;&gt;<i> I'm going to add a flag and test out calling Close() from various points
+</I>&gt;&gt;<i> in HandleCall/HandleCast/ProcessRequest.
+</I>&gt;&gt;<i>   
+</I>&gt;&gt;<i>     
+</I>&gt;<i> Wow, I really didn't think that one through. 
+</I>&gt;<i> HandleCall/HandleCast/ProcessRequest are only called when there is a
+</I>&gt;<i> message to process.  If there is no message to process, the
+</I>&gt;<i> SimpleRpcServer is blocked on Subscription.Next(), and will never
+</I>&gt;<i> exit.   My current test case starts a SimpleRpcServer, then tries to
+</I>&gt;<i> stop it, without sending any messages.
+</I>&gt;<i>
+</I>&gt;<i> I changed my code so if the SimpleRpcServer sees a certain byte[]
+</I>&gt;<i> message (stored as ShutdownKey), it will close itself:
+</I>&gt;<i>
+</I>&gt;<i> public override void HandleCast(bool isRedelivered, IBasicProperties
+</I>&gt;<i> requestProperties, byte[] body)
+</I>&gt;<i> {
+</I>&gt;<i>   for (var i = 0; i &lt; body.Length; i++) {
+</I>&gt;<i>      if (body[i] != ShutdownKey[i]) return;
+</I>&gt;<i>   }
+</I>&gt;<i>   Close(); //we must have matched, shut down.
+</I>&gt;<i> }
+</I>&gt;<i>
+</I>&gt;<i> As I expected, this throws a different exception:
+</I>&gt;<i> System.InvalidOperationException: Operation is not valid due to the current state of the object.
+</I>&gt;<i>    at RabbitMQ.Client.MessagePatterns.Subscription.Next() in d:\Projects\rabbitmq-dotnet-client-1.5.3\src\client\messagepatterns\Subscription.cs:line 323
+</I>&gt;<i>    at RabbitMQ.Client.MessagePatterns.Subscription.System.Collections.IEnumerator.MoveNext() in d:\Projects\rabbitmq-dotnet-client-1.5.3\src\client\messagepatterns\Subscription.cs:line 437
+</I>&gt;<i>    at RabbitMQ.Client.MessagePatterns.SimpleRpcServer.MainLoop() in d:\Projects\rabbitmq-dotnet-client-1.5.3\src\client\messagepatterns\SimpleRpcServer.cs:line 206
+</I>&gt;<i>
+</I>&gt;<i> I'm going to start mucking about in SimpleRpcServer.cs/Subscription.cs
+</I>&gt;<i> to see what's the smalled change I can make to fix it.
+</I>&gt;<i>
+</I>&gt;<i> Thanks,
+</I>&gt;<i>
+</I>&gt;<i> Ryan Davis
+</I>&gt;<i> Acceleration.net
+</I>&gt;<i> Director of Programming Services
+</I>&gt;<i> 2831 NW 41st street, suite B
+</I>&gt;<i> Gainesville, FL 32606
+</I>&gt;<i>
+</I>&gt;<i> Office: 352-335-6500 x 124
+</I>&gt;<i> Fax: 352-335-6506
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;<i> <A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;<i> <A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>&gt;<i>   
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: <A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20090609/a5f582cc/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20090609/a5f582cc/attachment.htm</A> 
+-------------- next part --------------
+An embedded and charset-unspecified text was scrubbed...
+Name: threadsafe-rpcserver.patch
+Url: <A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20090609/a5f582cc/attachment.txt">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20090609/a5f582cc/attachment.txt</A> 
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003785.html">[rabbitmq-discuss] .NET client SimpleRpcServer question
+</A></li>
+	<LI>Next message: <A HREF="003789.html">[rabbitmq-discuss] .NET client SimpleRpcServer question
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3788">[ date ]</a>
+              <a href="thread.html#3788">[ thread ]</a>
+              <a href="subject.html#3788">[ subject ]</a>
+              <a href="author.html#3788">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

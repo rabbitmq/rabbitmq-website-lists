@@ -1,0 +1,196 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Confusing disk free space limit warning
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Confusing%20disk%20free%20space%20limit%20warning&In-Reply-To=%3C5056C685.4040709%40vardr.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="022518.html">
+   <LINK REL="Next"  HREF="022520.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Confusing disk free space limit warning</H1>
+    <B>Mark Hingston</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Confusing%20disk%20free%20space%20limit%20warning&In-Reply-To=%3C5056C685.4040709%40vardr.com%3E"
+       TITLE="[rabbitmq-discuss] Confusing disk free space limit warning">mark.hingston at vardr.com
+       </A><BR>
+    <I>Mon Sep 17 07:43:17 BST 2012</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="022518.html">[rabbitmq-discuss] Confusing disk free space limit warning
+</A></li>
+        <LI>Next message: <A HREF="022520.html">[rabbitmq-discuss] Confusing disk free space limit warning
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#22519">[ date ]</a>
+              <a href="thread.html#22519">[ thread ]</a>
+              <a href="subject.html#22519">[ subject ]</a>
+              <a href="author.html#22519">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Thanks for the reply Matthias. The log change sounds like a good idea.
+
+
+As for our situation here, the two log messages that I posted were the 
+only messages that existed in the log file. That log file covered the 
+24-hour period previous to when I noticed the issue and at least 24 
+hours before that, most likely back to when rabbitmq was started. We 
+didn't see a log saying that the alarm was 'set' previous to the clear 
+message. We also didn't see that alarm set afterwards, though we did 
+observe that for the next ~24 hours after the 'clear' log, 
+rabbitmq/celery were acting very much like the way others have described 
+in discussions such as:
+
+<A HREF="https://groups.google.com/forum/#!msg/celery-users/G-tq8SsHkuA/01Ndr2VBZhwJ">https://groups.google.com/forum/#!msg/celery-users/G-tq8SsHkuA/01Ndr2VBZhwJ</A>
+
+The most important behaviour we observed was that our celery worker was 
+not receiving rabbit messages, although they seemed to be being sent by 
+the producers. So that make me think it's quite likely that rabbitmq did 
+think that it was above the disk space threshold and was rate limiting 
+producers.
+
+Is it possible we need to change our logging settings in order to see 
+these logs?
+
+
+Some more information about the issue that we saw:
+
+
+As commented above, this was the only contents of the log when we 
+noticed the issue:
+
+=INFO REPORT==== 16-Sep-2012::06:49:17 ===
+Disk free space limit now below limit. Free bytes:2000396288 
+Limit:1000000000
+
+=INFO REPORT==== 16-Sep-2012::06:49:17 ===
+     alarm_handler: {clear,{<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">resource_limit,disk,rabbit at mq1</A>}}
+
+
+Then we restarted our single celery worker process and we saw these logs:
+
+=INFO REPORT==== 17-Sep-2012::01:16:58 ===
+closing AMQP connection &lt;0.1053.112&gt; (10.255.115.80:59994 -&gt; 
+10.255.115.80:5672)
+
+=INFO REPORT==== 17-Sep-2012::01:16:58 ===
+closing AMQP connection &lt;0.1045.112&gt; (10.255.115.80:59993 -&gt; 
+10.255.115.80:5672)
+
+=INFO REPORT==== 17-Sep-2012::01:16:59 ===
+accepting AMQP connection &lt;0.11515.221&gt; (10.255.115.80:58122 -&gt; 
+10.255.115.80:5672)
+
+=ERROR REPORT==== 17-Sep-2012::01:17:02 ===
+closing AMQP connection &lt;0.11515.221&gt; (10.255.115.80:58122 -&gt; 
+10.255.115.80:5672):
+{channel0_error,opening,
+                 {error,{badarg,{error,bad_module}},
+                        'connection.open',
+                        [{rabbit_reader,control_throttle,1},
+                         {rabbit_reader,handle_method0,2},
+                         {rabbit_reader,handle_method0,3},
+                         {rabbit_reader,handle_input,3},
+                         {rabbit_reader,recvloop,2},
+                         {rabbit_reader,start_connection,7},
+                         {proc_lib,init_p_do_apply,3}]}}
+
+and the two &quot;accept&quot; / &quot;closing (badarg, bad_module)&quot; logs kept 
+repeating as our celery client tried to reconnect. However it was never 
+able to reconnect. This message had us a bit baffled.
+
+
+Then when we restarted rabbitmq, we saw the normal startup logs for 
+rabbit, including:
+
+...
+
+=INFO REPORT==== 17-Sep-2012::01:25:27 ===
+Memory limit set to 677MB of 1692MB total.
+
+=INFO REPORT==== 17-Sep-2012::01:25:27 ===
+Disk free limit set to 953MB
+
+...
+
+
+followed by:
+
+=INFO REPORT==== 17-Sep-2012::01:25:27 ===
+accepting AMQP connection &lt;0.287.0&gt; (10.255.115.80:59031 -&gt; 
+10.255.115.80:5672)
+
+=INFO REPORT==== 17-Sep-2012::01:25:27 ===
+accepting AMQP connection &lt;0.295.0&gt; (10.255.115.80:59032 -&gt; 
+10.255.115.80:5672)
+
+=INFO REPORT==== 17-Sep-2012::01:25:33 ===
+accepting STOMP connection &lt;0.350.0&gt; (10.255.115.80:42428 -&gt; 
+10.255.115.80:61613)
+
+=INFO REPORT==== 17-Sep-2012::01:29:24 ===
+accepting AMQP connection &lt;0.2291.0&gt; (10.255.115.80:59376 -&gt; 
+10.255.115.80:5672)
+
+=INFO REPORT==== 17-Sep-2012::05:17:54 ===
+accepting AMQP connection &lt;0.18051.3&gt; (10.255.115.80:47455 -&gt; 
+10.255.115.80:5672)
+
+
+And this seemed to be the point at which our celery worker was happy 
+again and could receive messages.
+
+However, at this point the messages that had not been delivered to the 
+celery worker process were not all of a sudden delivered - they appeared 
+to have vanished. This happened despite the fact that I'm confident that 
+our celery queue and messages on that queue were both marked as 
+persistent. I'm not sure I understand rate limiting well enough to know 
+whether or not I should have expected to see these messages be sent to 
+our consumer when we restarted rabbitmq.
+
+
+
+Also BTW, maybe I have this wrong, but it seems strange that the rabbit 
+documentation (<A HREF="http://www.rabbitmq.com/configure.html">http://www.rabbitmq.com/configure.html</A>) refers to the 
+default Disk free limit as 1GB but that our default install has it set 
+to 1000000000 , which rabbit reports on startup as &quot;Disk free limit set 
+to 953MB&quot;. Prob should be 1073741824? (Sorry for the massive nitpick) :)
+
+Thanks,
+Mark
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="022518.html">[rabbitmq-discuss] Confusing disk free space limit warning
+</A></li>
+	<LI>Next message: <A HREF="022520.html">[rabbitmq-discuss] Confusing disk free space limit warning
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#22519">[ date ]</a>
+              <a href="thread.html#22519">[ thread ]</a>
+              <a href="subject.html#22519">[ subject ]</a>
+              <a href="author.html#22519">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

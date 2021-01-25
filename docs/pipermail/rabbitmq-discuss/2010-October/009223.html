@@ -1,0 +1,130 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] last sticky wicket on map/reduce
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20last%20sticky%20wicket%20on%20map/reduce&In-Reply-To=%3CAANLkTin%3Dt7zWOaME6uORk7yBzbwamZCgqFRUoC_Lq98J%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="009219.html">
+   <LINK REL="Next"  HREF="009227.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] last sticky wicket on map/reduce</H1>
+    <B>Marek Majkowski</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20last%20sticky%20wicket%20on%20map/reduce&In-Reply-To=%3CAANLkTin%3Dt7zWOaME6uORk7yBzbwamZCgqFRUoC_Lq98J%40mail.gmail.com%3E"
+       TITLE="[rabbitmq-discuss] last sticky wicket on map/reduce">majek04 at gmail.com
+       </A><BR>
+    <I>Fri Oct  1 15:31:03 BST 2010</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="009219.html">[rabbitmq-discuss] How to use more than 4GB of RAM ?
+</A></li>
+        <LI>Next message: <A HREF="009227.html">[rabbitmq-discuss] last sticky wicket on map/reduce
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#9223">[ date ]</a>
+              <a href="thread.html#9223">[ thread ]</a>
+              <a href="subject.html#9223">[ subject ]</a>
+              <a href="author.html#9223">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>On Thu, Sep 30, 2010 at 21:41, Jon Brisbin
+&lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">jon.brisbin at npcinternational.com</A>&gt; wrote:
+&gt;<i> I've got a pest of a sticky wicket in my map/reduce implementation that's
+</I>&gt;<i> using Groovy for the logic and RabbitMQ for the plumbing. It's frustrating
+</I>&gt;<i> because I'm so close.
+</I>&gt;<i> The problem I'm having is knowing when I'm finished. Using data like this:
+</I>&gt;<i> 1
+</I>&gt;<i> 2
+</I>&gt;<i> 3
+</I>&gt;<i> 4
+</I>&gt;<i> 5
+</I>&gt;<i> 6
+</I>&gt;<i> 7
+</I>&gt;<i> 8
+</I>&gt;<i> 9
+</I>&gt;<i> 10
+</I>&gt;<i> END
+</I>&gt;<i> The &quot;END&quot; goes through a separate consumer thread because it goes out on a
+</I>&gt;<i> fanout exchange (it has to go to all workers), so it comes in out-of-order
+</I>&gt;<i> from the other data:
+</I>&gt;<i> 1 &#160; &#160;2 &#160; &#160;3
+</I>&gt;<i> &#160;&#160; &#160; &#160; &#160; &#160;END
+</I>&gt;<i> 4 &#160; &#160;5 &#160; &#160;6
+</I>&gt;<i> END &#160;END
+</I>&gt;<i> 7 &#160; &#160;8 &#160; &#160;9
+</I>&gt;<i> ...etc...
+</I>&gt;<i> I can sort of work around this by keeping track of id changes in my
+</I>&gt;<i> consumers using the classic &quot;if this.id != last.id&quot; approach. But the last
+</I>&gt;<i> record is a tricky one because there's no key change event to trigger
+</I>&gt;<i> sending the response back. Unless I simply wait until a timeout has
+</I>&gt;<i> occurred, I'm not sure how I can tell when I've collected all the responses
+</I>&gt;<i> I'm going to get.
+</I>
+
+Interesting problem. If you're using a single queue to handle tasks, you can
+never be sure that all the tasks have been done. Well, there always can be
+a hanged consumer that got one task and never had done it fully!
+
+The simplest approach would be to keep a timeout. If you haven't received
+a message in some time - your worker is ready to quit. But that's wrong -
+it won't handle the 'hanged worker' situation.
+
+So before exiting the last 'behaving' worker we should make sure that there
+are no other 'misbehaving' workers left. The simplest way to know if we're
+the last broker is by doing &quot;queue.declare&quot; and looking at the consumer
+count for that particular queue. If it's more than one - we're not the last
+consumer.
+
+The trick is how to know if the consumers that are left alone are 'behaving'
+or not and how to avoid race condition - many workers quitting in exactly
+the same moment.
+
+I'd solve it by sending a message 'QUIT' to the queue once we're sure
+that no other work is left in the queue. A worker that receives that
+QUIT message may think - okay, there is at least one more 'behaving'
+worker, I can't see any work to do, he also can't see any more work,
+one of us can happily go home.
+
+That approach works fine until a worker receives it's own message.
+If that happens that might mean:
+ - we're the only left 'behaving' consumer
+ - we have a bad luck and the message always gets randomly dispatched
+to ourselves.
+
+In the first case, if we're the only one 'behaving' consumer and if
+'queue.declare' doesn't claim any left misbehaving consumers, we may
+happily quit.
+
+I hope I answered the right question.
+
+Cheers,
+  Marek Majkowski
+</PRE>
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="009219.html">[rabbitmq-discuss] How to use more than 4GB of RAM ?
+</A></li>
+	<LI>Next message: <A HREF="009227.html">[rabbitmq-discuss] last sticky wicket on map/reduce
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#9223">[ date ]</a>
+              <a href="thread.html#9223">[ thread ]</a>
+              <a href="subject.html#9223">[ subject ]</a>
+              <a href="author.html#9223">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

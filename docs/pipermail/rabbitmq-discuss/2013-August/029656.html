@@ -1,0 +1,159 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] A weird case of &quot;PRECONDITION_FAILED - unknown delivery tag&quot;
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20A%20weird%20case%20of%20%22PRECONDITION_FAILED%20-%0A%20unknown%20delivery%20tag%22&In-Reply-To=%3CCAPVCTfPXK%3D7EYrhFpAaK5uUngjMbq-GbQ5biG9dmT8f8iVbkww%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="029653.html">
+   <LINK REL="Next"  HREF="029658.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] A weird case of &quot;PRECONDITION_FAILED - unknown delivery tag&quot;</H1>
+    <B>Razvan Dinu</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20A%20weird%20case%20of%20%22PRECONDITION_FAILED%20-%0A%20unknown%20delivery%20tag%22&In-Reply-To=%3CCAPVCTfPXK%3D7EYrhFpAaK5uUngjMbq-GbQ5biG9dmT8f8iVbkww%40mail.gmail.com%3E"
+       TITLE="[rabbitmq-discuss] A weird case of &quot;PRECONDITION_FAILED - unknown delivery tag&quot;">drazvan at gmail.com
+       </A><BR>
+    <I>Wed Aug 28 16:39:19 BST 2013</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="029653.html">[rabbitmq-discuss] A weird case of &quot;PRECONDITION_FAILED - unknown delivery tag&quot;
+</A></li>
+        <LI>Next message: <A HREF="029658.html">[rabbitmq-discuss] A weird case of &quot;PRECONDITION_FAILED - unknown delivery tag&quot;
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#29656">[ date ]</a>
+              <a href="thread.html#29656">[ thread ]</a>
+              <a href="subject.html#29656">[ subject ]</a>
+              <a href="author.html#29656">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi Emile, thanks for your reply.
+
+As I mentioned I'm on a python oriented environment, so can't use the
+Tracer you provided directly. I look for an equivalent or if not I'll try
+to use that one. However, i'm pretty sure that the ACKs are sent correctly
+(there's only one line with basic_ack in my code, and from the logging
+messages it looks like it is called correctly). Nevertheless I'll use the
+tracer approach just to make sure.
+
+About synchronizing the two threads that are using the channel I don't
+think it's possible. I could synchronize sending the ACK messages on the
+worker thread but the consumer thread can wait indefinitely for messages to
+come. And I don't see where I would have the opportunity to take a lock
+since once the consumer thread starts listening, we have no control over
+it. We only get the callback when a message arrives. I guess the general
+question here would be: what is the correct way of fetching the messages on
+one thread and doing the work on another (from a synchronization point of
+view)?
+
+And to explain a bit more the &quot;peeking at messages&quot; scenario, here's the
+reason. Imagine each task requires fetching some data from a database
+(located on a different server). As always, doing bulk operations is a lot
+faster. So when the worker needs to fetch data for one task, from the
+database server, it will check if there are other tasks in the local queue
+that also need data, and request everything in bulk. So when the 1st task
+is processed, data is fetched also for task 2,3,4..10. So the processing
+for those tasks will be much faster afterwards, because they'll find the
+data they need in a local cache. Then task 11 will probably fetch the data
+for tasks 11 to 20 and so on. It's an optimization I'm making on the client
+side improve the speed.
+
+I guess in a few words what I'm trying to implement is bulk processing on
+the client side. Maybe there's a different way to do this.
+
+Cheers,
+Raz
+
+
+On Wed, Aug 28, 2013 at 4:21 PM, Emile Joubert &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">emile at rabbitmq.com</A>&gt; wrote:
+
+&gt;<i>
+</I>&gt;<i> Hi,
+</I>&gt;<i>
+</I>&gt;<i> On 28/08/13 13:30, Razvan Dinu wrote:
+</I>&gt;<i>
+</I>&gt;<i> &gt; it's usually because of double ack-ing, ack-ing on wrong channels or
+</I>&gt;<i> &gt; ack-ing messages that should not be ack-ed. I've checked at least a
+</I>&gt;<i> &gt; dozen times, and it doesn't seem to be the case for me.
+</I>&gt;<i>
+</I>&gt;<i> A good way to verify that claim independently from the client code is to
+</I>&gt;<i> connect to the broker via the Tracer:
+</I>&gt;<i>
+</I>&gt;<i> <A HREF="http://www.rabbitmq.com/javadoc/com/rabbitmq/tools/Tracer.html">http://www.rabbitmq.com/javadoc/com/rabbitmq/tools/Tracer.html</A>
+</I>&gt;<i>
+</I>&gt;<i> The protocol trace will show whether messages are being acknowledged
+</I>&gt;<i> correctly.
+</I>&gt;<i>
+</I>&gt;<i> &gt; I think it has something to do with ACK-ing from one thread using the
+</I>&gt;<i> &gt; same channel that is used for listening on another thread.
+</I>&gt;<i>
+</I>&gt;<i> If you use multiple threads to access the same channel then you must
+</I>&gt;<i> make sure they are synchronised. A better solution is to provide each
+</I>&gt;<i> thread with its own channel.
+</I>&gt;<i>
+</I>&gt;<i> &gt; it's because I need the worker to be able to take a peak at some of
+</I>&gt;<i> &gt; the tasks in the queues.
+</I>&gt;<i>
+</I>&gt;<i> Can the criteria being peeked at be placed in a header or the routing
+</I>&gt;<i> key instead? Try to route those messages differently and avoid the need
+</I>&gt;<i> for peeking.
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> -Emile
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20130828/b9d5cc47/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20130828/b9d5cc47/attachment.htm</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="029653.html">[rabbitmq-discuss] A weird case of &quot;PRECONDITION_FAILED - unknown delivery tag&quot;
+</A></li>
+	<LI>Next message: <A HREF="029658.html">[rabbitmq-discuss] A weird case of &quot;PRECONDITION_FAILED - unknown delivery tag&quot;
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#29656">[ date ]</a>
+              <a href="thread.html#29656">[ thread ]</a>
+              <a href="subject.html#29656">[ subject ]</a>
+              <a href="author.html#29656">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

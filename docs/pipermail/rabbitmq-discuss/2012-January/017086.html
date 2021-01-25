@@ -1,0 +1,160 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Performance on ec2
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Performance%20on%20ec2&In-Reply-To=%3CE3DA278C-ECCD-4D84-BDE2-1DA52B432D05%40burtcorp.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="017095.html">
+   <LINK REL="Next"  HREF="017191.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Performance on ec2</H1>
+    <B>Srdan Kvrgic</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Performance%20on%20ec2&In-Reply-To=%3CE3DA278C-ECCD-4D84-BDE2-1DA52B432D05%40burtcorp.com%3E"
+       TITLE="[rabbitmq-discuss] Performance on ec2">srdan at burtcorp.com
+       </A><BR>
+    <I>Mon Jan  2 18:40:29 GMT 2012</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="017095.html">[rabbitmq-discuss] Brining cluster node back up after stop
+</A></li>
+        <LI>Next message: <A HREF="017191.html">[rabbitmq-discuss] Performance on ec2
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#17086">[ date ]</a>
+              <a href="thread.html#17086">[ thread ]</a>
+              <a href="subject.html#17086">[ subject ]</a>
+              <a href="author.html#17086">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi
+
+So, I've done a bunch more tests, graphs of which can be found here: <A HREF="http://goo.gl/wmEmD">http://goo.gl/wmEmD</A>
+
+The takeaway:
+	* You can load/drain a maximum of 8000 1000-byte messages per second, regardless of the amount of mq-servers or the speed of the machine.
+	* Making the messages 100 times smaller gained  25% per message speed increase, but loss in total throughput.
+	* Making the messages 10 times bigger (i.e. batching) dropped message rate by 50%, but gained 500% in overall throughput.
+
+
+I can replicate the behavior on my mac pretty well with the server instances on ec2, if I only run one instance of loader and one instance of drainer. I can publish 1000 byte messages on the server as fast as I can drain them (@about 7000/s). My machine had a single mq instance, the ec2 server was running against two mq servers in a cluster. Same performance. 
+
+When running 3 loader and 3 drainer instances everything was fine for the rate limited upload of 2000/s. I loaded at 6000/s and I drained at 6000/s.
+
+However, when I cranked the loader instance's rate to 3000/s, I noticed the effect I noticed earlier - the drain speed was much lower until the 1 000 000 messages were queued, and then it popped back up to about 8000/s
+
+At load rate of 5000/s per instance (15000 in total), the effect was even clearer. 
+
+I tried lowering the size of the messages to 10 bytes, instead of 1000. That improved the peak drain speed from about 8000/s  to 10 000/s. Not a huge increase, considering I'd hacked the message size down to 1%.
+
+I also tried bumping up the message size to 10 000 bytes. That killed the message rate, obviously. But not that much. At 1200/s per instance, everything was running smoothly. I had a stable throughput of 3600 messages per second, or 36 000 messages per second unpacked.
+
+At the rate of 2000/s I&#8230; I ran into some problems. It all seemed to work well. I wasn't maxing out the loading, but I was only able to push some 4000 messages per second in total. I was even reasonably sure that was due to bandwidth on the mq servers (they ware pushing 30 megs per second each (at peak)). Then the server started getting out of memory. This stopped the loading, and the drain part screamed in at 6500 messages per second. This freed up memory. So the loaders loaded more, which killed the drainer's speed. Which caused memory errors. This eventually stabilized at a disappointing ~1200 messages per second in total.
+
+
+
+
+On Dec 29, 2011, at 23:03 , Srdan Kvrgic wrote:
+
+&gt;<i> Nope, can't say that I have. 
+</I>&gt;<i> 
+</I>&gt;<i> It's not really the use case though - in real life the queues are actually significant.
+</I>&gt;<i> 
+</I>&gt;<i> I'll try it though. If that'll yield some insight. Hell, I'd try eating a balanced diet and getting plenty of sleep if that could help.
+</I>&gt;<i> 
+</I>&gt;<i> //S
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> On Dec 29, 2011, at 17:53 , Alexis Richardson wrote:
+</I>&gt;<i> 
+</I>&gt;&gt;<i> Srdan
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;<i> I just had a quick look through your slides.  Have you tried using one
+</I>&gt;&gt;<i> loader and one drainer and one queue, on one core, and gradually
+</I>&gt;&gt;<i> increasing their rates?  What do you see?
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;<i> alexis
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;<i> On Wed, Dec 28, 2011 at 9:05 PM, Srdan Kvrgic &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">srdan at burtcorp.com</A>&gt; wrote:
+</I>&gt;&gt;&gt;<i> 
+</I>&gt;&gt;&gt;<i> On Dec 28, 2011, at 19:48 , Tony Garnock-Jones wrote:
+</I>&gt;&gt;&gt;<i> 
+</I>&gt;&gt;&gt;<i> On 28 December 2011 12:49, Srdan Kvrgic &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">srdan at burtcorp.com</A>&gt; wrote:
+</I>&gt;&gt;&gt;&gt;<i> 
+</I>&gt;&gt;&gt;&gt;<i> My question is as simple as it is complex: 'Is that it?' What can I do to
+</I>&gt;&gt;&gt;&gt;<i> tweak these numbers? Massively.
+</I>&gt;&gt;&gt;<i> 
+</I>&gt;&gt;&gt;<i> 
+</I>&gt;&gt;&gt;<i> Is this a transient-messaging use case (RabbitMQ as router, not relying
+</I>&gt;&gt;&gt;<i> particularly on disk storage), or a persistent-messaging use case (where you
+</I>&gt;&gt;&gt;<i> die in flames if a single message is dropped), or somewhere in-between?
+</I>&gt;&gt;&gt;<i> 
+</I>&gt;&gt;&gt;<i> 
+</I>&gt;&gt;&gt;<i> Well, it is transient in so fact that we use it to distribute messages to a
+</I>&gt;&gt;&gt;<i> large number of workers. In that way it is a router. But it also functions
+</I>&gt;&gt;&gt;<i> as a buffer. If we for instance update the workers we like to be able to
+</I>&gt;&gt;&gt;<i> stop and restart them without throwing messages away.
+</I>&gt;&gt;&gt;<i> 
+</I>&gt;&gt;&gt;<i> Each individual message is not that important in itself. And if we loose a
+</I>&gt;&gt;&gt;<i> larger amount of messages, we can re-queue the affected blocks. We're big on
+</I>&gt;&gt;&gt;<i> idempotence and can cut ourselves some slack if we need to.
+</I>&gt;&gt;&gt;<i> 
+</I>&gt;&gt;&gt;<i> That said, once you get to sending thousands of messages per second and the
+</I>&gt;&gt;&gt;<i> system goes all fishy on you for an indeterminate length of time, the
+</I>&gt;&gt;&gt;<i> re-queueing becomes&#8230; inconvenient. Inconvenient to the degree that it for
+</I>&gt;&gt;&gt;<i> most practical purposes stops being an option and you become prepared to
+</I>&gt;&gt;&gt;<i> 'invest' yourself away from those problems if at all possible.
+</I>&gt;&gt;&gt;<i> 
+</I>&gt;&gt;&gt;<i> 
+</I>&gt;&gt;&gt;<i> //S
+</I>&gt;&gt;&gt;<i> 
+</I>&gt;&gt;&gt;<i> _______________________________________________
+</I>&gt;&gt;&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;&gt;&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;&gt;&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>&gt;&gt;&gt;<i> 
+</I>&gt;<i> 
+</I>
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="017095.html">[rabbitmq-discuss] Brining cluster node back up after stop
+</A></li>
+	<LI>Next message: <A HREF="017191.html">[rabbitmq-discuss] Performance on ec2
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#17086">[ date ]</a>
+              <a href="thread.html#17086">[ thread ]</a>
+              <a href="subject.html#17086">[ subject ]</a>
+              <a href="author.html#17086">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,160 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] One Producer, X Consumers where X can change
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20One%20Producer%2C%20X%20Consumers%20where%20X%20can%20change&In-Reply-To=%3C50F3D1CF.1070104%40rabbitmq.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="024905.html">
+   <LINK REL="Next"  HREF="024907.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] One Producer, X Consumers where X can change</H1>
+    <B>Tim Watson</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20One%20Producer%2C%20X%20Consumers%20where%20X%20can%20change&In-Reply-To=%3C50F3D1CF.1070104%40rabbitmq.com%3E"
+       TITLE="[rabbitmq-discuss] One Producer, X Consumers where X can change">tim at rabbitmq.com
+       </A><BR>
+    <I>Mon Jan 14 09:37:19 GMT 2013</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="024905.html">[rabbitmq-discuss] One Producer, X Consumers where X can change
+</A></li>
+        <LI>Next message: <A HREF="024907.html">[rabbitmq-discuss] One Producer, X Consumers where X can change
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#24906">[ date ]</a>
+              <a href="thread.html#24906">[ thread ]</a>
+              <a href="subject.html#24906">[ subject ]</a>
+              <a href="author.html#24906">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi,
+
+On 01/14/2013 08:34 AM, Shadowalker wrote:
+&gt;<i> Hi again,
+</I>&gt;<i> Been doing a lot of googling on the queue/topic/listening for consumed 
+</I>&gt;<i> messages count an found this on activemq :
+</I>&gt;<i>
+</I>&gt;<i> <A HREF="http://activemq.apache.org/cms/handling-advisory-messages.html">http://activemq.apache.org/cms/handling-advisory-messages.html</A> 
+</I>&gt;<i> &lt;<A HREF="http://activemq.apache.org/cms/handling-advisory-messages.html">http://activemq.apache.org/cms/handling-advisory-messages.html</A>&gt;
+</I>&gt;<i> It allows one to check the count of currently listening consumer a 
+</I>&gt;<i> queue/topic.
+</I>&gt;<i>
+</I>
+I would not recommend an architecture for distributed resource tracking 
+based on that. What happens if a consumer is temporarily disconnected 
+when you go into the check, but reconnects after (or whilst) the rest of 
+the participants are being updated? You've introduced even more 
+possibilities for race conditions than before.
+
+What I would suggest is that you carefully consider whether you actually 
+need synchronous communications here, as messaging based architectures 
+inherently de-couple producers from consumers, yet you've repeatedly 
+attempted to force some 'awareness' of consumers into the producer 
+whilst discussing this design. I would like to posit that this reveals 
+an 'impedance mismatch' between your requirements and the inherently 
+disconnected nature of a queue based solution. Of course distributed 
+locking is often implemented using asynchronous communication protocols, 
+but this is usually done at a *much lower protocol level* - I'd suggest 
+researching Paxos or similar distributed consensus algorithms to get an 
+idea of what's involved in designing a reliable solution to this kind of 
+problem.
+
+&gt;<i> Is there anything like this in rabbit mq ?
+</I>
+Not that I know of, although it's possible to use the HTTP APIs in order 
+to track consumers but that is, as I mentioned above, subject to lots of 
+*nasty* race conditions. You *could* look at using Tony G's presence 
+exchange (<A HREF="https://github.com/tonyg/presence-exchange">https://github.com/tonyg/presence-exchange</A>) to track bindings 
+- although this would complicate your topology quite a lot, it might 
+make tracking the various participants plausibly useful, providing you 
+use a known set of binding keys.
+
+&gt;<i> This might allow me to create a listener that would only send a 
+</I>&gt;<i> message to notify the first manager that the references were removed.
+</I>
+I'm not clear on how that helps!? I did have a bit of an early start 
+this morning though... ;)
+
+&gt;<i> Another could be to define the &quot;delete referenrences&quot; message to live 
+</I>&gt;<i> for x consumptions (x being the number of listener on the &quot;delete 
+</I>&gt;<i> references&quot; queue) and add an advisory listener on the deletion of the 
+</I>&gt;<i> message from the queue to process deletion of initial data.
+</I>
+That doesn't help at all unless you've actually tracked the number of 
+acquired messages in the first place. Plus you *can* do that without 
+'detecting' the number of consumers. You just insist on getting a 
+'make-ref' message from the consumer (with some unique id) before 
+incrementing the reference count. There's no real difference between 
+*detecting* the consumer's connection/channel and providing a ref/lock 
+acquisition queue, except that the latter is probably more structured, 
+architecturally clearer and quite likely to be more reliable.
+
+Even if you used ActiveMQ's detection functionality or RabbitMQ's 
+management HTTP APIs, the fundamental problem of race conditions 
+wouldn't go away. Before we go much further discussing various ways you 
+can design a solution - and I *am* interested in this discussion BTW - 
+please read 
+<A HREF="http://en.wikipedia.org/wiki/Byzantine_fault_tolerance#Byzantine_failures">http://en.wikipedia.org/wiki/Byzantine_fault_tolerance#Byzantine_failures</A> and 
+make sure you've understood the consequences of nodes *just 
+disappearing* and then *maybe* coming back later on.
+
+You've also still not explained what the consequences of loosing track 
+of resources actually are. If one of your nodes dies, when it comes back 
+to life has any state been persisted and will that state thus be used to 
+try and re-acquire or release the 'lock count' for this resource? What 
+happens if your node sends an 'acquire' request asynchronously, then 
+starts to write the resource/lock state to its own local database and 
+dies (e.g., the machine crashes) before committing the transaction? 
+Because the 'acquire' request was not synchronous, the master now thinks 
+that your node holds the lock, whilst the node does *not* think the 
+same. If you bring the node back online and then start asking for the 
+resource lock, you're breaking the contract for lock acquisition on that 
+node unless you're willing to make 'acquire' idempotent, which has its 
+own pitfalls. If you don't make 'acquire' idempotent, then acquisition 
+will fail. If you try to handle this by making 'acquire' re-entrant and 
+then try to release the node's locl, the master will be confused as it 
+thinks you hold the lock twice and the *lost lock acquisition* will 
+never be released.
+
+tldr; this is not a simple problem.
+
+Cheers,
+Tim
+
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20130114/c3dfa35a/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20130114/c3dfa35a/attachment.htm</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="024905.html">[rabbitmq-discuss] One Producer, X Consumers where X can change
+</A></li>
+	<LI>Next message: <A HREF="024907.html">[rabbitmq-discuss] One Producer, X Consumers where X can change
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#24906">[ date ]</a>
+              <a href="thread.html#24906">[ thread ]</a>
+              <a href="subject.html#24906">[ subject ]</a>
+              <a href="author.html#24906">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

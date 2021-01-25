@@ -1,0 +1,142 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] erlang client problem (badarg in {amqp_channel, handle_regular_method, 3})
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20erlang%20client%20problem%20%28badarg%20in%0A%20%7Bamqp_channel%2C%20handle_regular_method%2C%203%7D%29&In-Reply-To=FAD558EA-6D60-4A38-A5CF-ADC4C3E530A1%40gmail.com">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="006712.html">
+   <LINK REL="Next"  HREF="006713.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] erlang client problem (badarg in {amqp_channel, handle_regular_method, 3})</H1>
+    <B>Matthew Sackman</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20erlang%20client%20problem%20%28badarg%20in%0A%20%7Bamqp_channel%2C%20handle_regular_method%2C%203%7D%29&In-Reply-To=FAD558EA-6D60-4A38-A5CF-ADC4C3E530A1%40gmail.com"
+       TITLE="[rabbitmq-discuss] erlang client problem (badarg in {amqp_channel, handle_regular_method, 3})">matthew at lshift.net
+       </A><BR>
+    <I>Wed Mar 24 11:10:04 GMT 2010</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="006712.html">[rabbitmq-discuss] erlang client problem (badarg in {amqp_channel,	handle_regular_method, 3})
+</A></li>
+        <LI>Next message: <A HREF="006713.html">[rabbitmq-discuss] rabbitmq-public-umbrella make error on debian
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#6714">[ date ]</a>
+              <a href="thread.html#6714">[ thread ]</a>
+              <a href="subject.html#6714">[ subject ]</a>
+              <a href="author.html#6714">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>On Wed, Mar 24, 2010 at 01:15:07AM +0300, Alexander Sviridov wrote:
+&gt;<i> my code:
+</I>&gt;<i> listen_loop(Channel, Q, Ticket) -&gt;
+</I>&gt;<i>  BasicConsume = #'basic.consume'{ticket = Ticket,
+</I>&gt;<i>                                  queue = Q,
+</I>&gt;<i>                                  nowait = true},
+</I>
+I'd recommend you ignore all tickets stuff, and nowait is by default
+false - unless you have good reason to set it true, leave it false.
+
+&gt;<i>  ok
+</I>&gt;<i>      = amqp_channel:call(Channel, BasicConsume),
+</I>
+Unfortunately, this is wrong. We have corrected this so that the error
+is more meaningful (literally done on the same day as the revision
+you're running - you were mere hours too soon to pick it up! Try a pull
+and update -C default).
+
+You should actually use amqp_channel:subscribe/3. This is the only case
+where you can't just pass the method through with a :call or :cast and
+expect it all to work. You want something like:
+
+#'basic.consume_ok'{} =
+        amqp_channel:subscribe(Chan,
+                               #'basic.consume'{ queue = Q },
+                               Pid).
+
+Where Pid is the Pid of the process that'll receive all the messages.
+
+&gt;<i> 
+</I>&gt;<i>  %% If the registration was sucessful, the consumer will
+</I>&gt;<i>  %% be notified
+</I>&gt;<i> 
+</I>&gt;<i>  receive
+</I>&gt;<i>        #'basic.consume_ok'{consumer_tag = Tag} -&gt; ok
+</I>&gt;<i>  end,
+</I>&gt;<i>  receive
+</I>&gt;<i>       {#'basic.deliver'{exchange  =  Exchange},
+</I>&gt;<i>        Content}  -&gt;
+</I>&gt;<i>           #content{payload_fragments_rev  =  [Payload]}
+</I>&gt;<i>            =  Content,
+</I>&gt;<i>           io:format(&quot;Message  received:  ~p~n&quot;,  [Payload])
+</I>&gt;<i>  end,
+</I>&gt;<i> 
+</I>&gt;<i>  listen_loop(Channel, Q, Ticket).
+</I>
+This too is wrong. Once the consumer is set up, it'll receive
+*everything* the server sends it, without any further interaction from
+you - i.e. you don't need to resubscribe after every message.
+
+My standard drain-loop is:
+
+spawn_drain(Chan, Q, N, Notify) -&gt;
+    Pid = spawn(fun() -&gt;
+                        receive
+                            #'basic.consume_ok'{ consumer_tag = Tag } -&gt;
+                                drain(Chan, Tag, N, Notify)
+                        end
+                end),
+    #'basic.consume_ok'{} =
+        amqp_channel:subscribe(Chan,
+                               #'basic.consume'{ queue = Q, exclusive = true },
+                               Pid).
+
+drain(Chan, Tag, 0, Notify) -&gt;
+    CancelOk = #'basic.cancel_ok'{ consumer_tag = Tag } =
+        amqp_channel:call(Chan, #'basic.cancel'{ consumer_tag = Tag }),
+    ok = receive CancelOk -&gt; ok end,
+    Notify ! done;
+drain(Chan, Tag, N, Notify) -&gt;
+    receive
+        {#'basic.deliver'{ consumer_tag = Tag, delivery_tag = AckTag },
+         _Content} -&gt;
+            ok = amqp_channel:call(Chan, #'basic.ack'{ delivery_tag = AckTag }),
+            drain(Chan, Tag, N-1, Notify)
+    end.
+
+If you call spawn_drain, it'll set up a new process that tries to
+receive N messages. Once it's done that, it cancels the subscription,
+and then, sends a 'done' message to Notify (which should be a pid).
+It also acks as it goes.
+
+Hope that helps.
+
+Matthew
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="006712.html">[rabbitmq-discuss] erlang client problem (badarg in {amqp_channel,	handle_regular_method, 3})
+</A></li>
+	<LI>Next message: <A HREF="006713.html">[rabbitmq-discuss] rabbitmq-public-umbrella make error on debian
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#6714">[ date ]</a>
+              <a href="thread.html#6714">[ thread ]</a>
+              <a href="subject.html#6714">[ subject ]</a>
+              <a href="author.html#6714">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

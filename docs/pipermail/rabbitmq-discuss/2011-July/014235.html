@@ -1,0 +1,121 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Consumer Callback
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Consumer%20Callback&In-Reply-To=%3C1C266D3D-0BD7-4422-ABA5-5DC944491D8A%40rabbitmq.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="014193.html">
+   <LINK REL="Next"  HREF="014060.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Consumer Callback</H1>
+    <B>Steve Powell</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Consumer%20Callback&In-Reply-To=%3C1C266D3D-0BD7-4422-ABA5-5DC944491D8A%40rabbitmq.com%3E"
+       TITLE="[rabbitmq-discuss] Consumer Callback">steve at rabbitmq.com
+       </A><BR>
+    <I>Fri Jul 29 10:20:56 BST 2011</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="014193.html">[rabbitmq-discuss] Consumer Callback
+</A></li>
+        <LI>Next message: <A HREF="014060.html">[rabbitmq-discuss] publish/suscribe model with typed consumers
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#14235">[ date ]</a>
+              <a href="thread.html#14235">[ thread ]</a>
+              <a href="subject.html#14235">[ subject ]</a>
+              <a href="author.html#14235">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Dear Fang,
+
+Your scheme should work, although it might involve rather more threads than are necessary.  (I assume you are still using the QueueingConsumer and in the loop in your consumer threads you are calling QueueingConsumer.nextDelivery().)
+
+This is fine, especially if you are going to do some work in the consumer threads that you cannot do directly in the Consumer.handleDelivery() method -- something that has to run on a separate thread from the Channel.
+
+However, you only say that you are going to
+&gt;<i> automatically retrieve the results
+</I>
+and I cannot tell what this might entail -- what do you do with the results when you retrieve them? At some point you are going to accumulate them and output something (I presume) and the Java question then arises about how you coordinate the threads you have to safely share this state and terminate correctly?  These questions cannot be easily divorced from the Consumer interface choices you make.
+
+In your final client configuration (the application thread and the consumer thread) there are, of course, other threads in the Java Client.  Having a separate consumer thread cleanly separates the problems on the Consumer interface, but leaves you with the issue of coordinating application and consumer thread issues.  If the messages sent (application thread?) and received (consumer thread) are part of the same conversation, you are going to have to share state and synchronise the sending and receiving of messages.  That is why we produced the QueueingConsumer class in the first place.  This allows you to take the received messages only when you want to process them, and if this is part of the application thread you can request them whenever you want to devote time to processing them. You don't need another thread.
+
+On the other hand, if your client is not an end-point in an application, but offers a service, then it might want to process received messages (and pass them on, say) independently of sending messages.  Then you multiple thread design seems appropriate: you want to process received messages as soon as they arrive, and not wait until the sender thread can spare some time.
+
+Incidentally, the best book on multi-threaded programming in Java is probably still Goetz, et al.: Java Concurrency in Practice.
+
+The System.currentTimeMillis() gives a (rough) measure of elapsed time (not CPU time) and so (by subtraction) can help you to measure how much time is spent waiting in a thread (or calling long-running stuff).  It is rough and ready, and intentionally independent of thread. CPU Time isn't really of interest here, since not a lot of CPU is being used -- most of the time is spent waiting, so elapsed time is the most interesting measure.
+
+If you want more accurate measurements (provided the hardware can support it, which most can) you can use System.nanoTime() which returns the most accurate time point it can -- this is only to be used for measuring elapsed time -- and will allow you to measure really quite small intervals.
+
+Regards,
+Steve Powell  (a happy bunny)
+----------some definitions from the SPD----------
+Rigatoni n. A prime-ministerial grin.
+Nigella n. The next bottle-size up from a Nebuchadnezzar.
+Homily adv. Rather like a frenchman.
+
+On 26 Jul 2011, at 22:33, fangbot wrote:
+
+&gt;<i> 
+</I>&gt;<i> Hi Steve,
+</I>&gt;<i> Sorry, a few clarifications. First of all, yes, I am using the Java client.
+</I>&gt;<i> Also, when I say two threads, I meant two threads per box. Finally,
+</I>&gt;<i> getTimeMillis() = System.currentTimeMillis().
+</I>&gt;<i> Thanks again,
+</I>&gt;<i> -Fang
+</I>&gt;<i> -- 
+</I>&gt;<i> View this message in context: <A HREF="http://old.nabble.com/Consumer-Callback-tp32103305p32143565.html">http://old.nabble.com/Consumer-Callback-tp32103305p32143565.html</A>
+</I>&gt;<i> Sent from the RabbitMQ mailing list archive at Nabble.com.
+</I>&gt;<i> 
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>and
+&gt;<i> Thanks for the response. After reviewing some other posts on this forum,
+</I>&gt;<i> I've decided to use multithreading in order to achieve the behavior I'm
+</I>&gt;<i> looking for. Essentially, for every consumer, I create a new thread and
+</I>&gt;<i> inside the run() method, I am calling an infinite while loop in order to
+</I>&gt;<i> automatically retrieve the results. All of this is just to familiarize
+</I>&gt;<i> myself with how RabbitMQ works - in the future, I suspect that every client
+</I>&gt;<i> will run on a different machine and thus there will be only two threads max
+</I>&gt;<i> (the application thread and the consumer thread).
+</I>&gt;<i> 
+</I>&gt;<i> Another question - I am doing some performance testing on the messaging
+</I>&gt;<i> speeds, and my tests are roughly modeled after those in MulticastMain.
+</I>&gt;<i> However, I've noticed that to record the speeds, getTimeMillis() is being
+</I>&gt;<i> used. However, if there are other threads (outside of my process) that are
+</I>&gt;<i> also running, won't they throw off (i.e. increase) the recorded time since
+</I>&gt;<i> getTimeMillis() isn't thread-specific? Shouldn't something like
+</I>&gt;<i> ThreadMXBean.getCurrentThreadCPUTime() be used instead?
+</I>&gt;<i> 
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20110729/81de80e7/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20110729/81de80e7/attachment.htm</A>&gt;
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="014193.html">[rabbitmq-discuss] Consumer Callback
+</A></li>
+	<LI>Next message: <A HREF="014060.html">[rabbitmq-discuss] publish/suscribe model with typed consumers
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#14235">[ date ]</a>
+              <a href="thread.html#14235">[ thread ]</a>
+              <a href="subject.html#14235">[ subject ]</a>
+              <a href="author.html#14235">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,133 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Design for global data ingestion
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Design%20for%20global%20data%20ingestion&In-Reply-To=%3C5283854E.8000808%40rabbitmq.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="031776.html">
+   <LINK REL="Next"  HREF="031778.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Design for global data ingestion</H1>
+    <B>Simon MacMullen</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Design%20for%20global%20data%20ingestion&In-Reply-To=%3C5283854E.8000808%40rabbitmq.com%3E"
+       TITLE="[rabbitmq-discuss] Design for global data ingestion">simon at rabbitmq.com
+       </A><BR>
+    <I>Wed Nov 13 13:57:34 GMT 2013</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="031776.html">[rabbitmq-discuss] Design for global data ingestion
+</A></li>
+        <LI>Next message: <A HREF="031778.html">[rabbitmq-discuss] webmachine error
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#31914">[ date ]</a>
+              <a href="thread.html#31914">[ thread ]</a>
+              <a href="subject.html#31914">[ subject ]</a>
+              <a href="author.html#31914">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>On 07/11/13 17:47, Dustin wrote:
+&gt;<i> We have ran into 2 problems which won't allow us to scale any further.
+</I>&gt;<i>   The first is the max bandwidth for a single TCP connection across the
+</I>&gt;<i> globe (specifically between the US and China).  The second is we have
+</I>&gt;<i> maxed out the CPU for the federation clients on the downstream (SSL is
+</I>&gt;<i> enabled, I'm not sure how much CPU overhead that adds).
+</I>
+First of all: federation has seen some optimisations going in to 3.2.x 
+so hopefully your CPU use should drop somewhat just from an upgrade 
+(I've seen throughput increase by 50% to 100%).
+
+&gt;<i> For the CPU issue, I figured the newly added federated queues would be a
+</I>&gt;<i> perfect solution to the problem.  I can setup additional Rabbits on the
+</I>&gt;<i> downstream side, setup the federation links, and have everything load
+</I>&gt;<i> balance nicely.  The only thing it doesn't address is the max bandwidth
+</I>&gt;<i> for a single TCP connection.  Because of our initial design, we would
+</I>&gt;<i> run into max bandwidth problems for each queue.
+</I>
+Federated queues in the downstream might not be necessary to get more 
+TCP connections in use. You should be able to get away with just 
+defining multiple upstreams per real upstream each with the same URI. 
+The only slight downside to that is that each upstream will think it 
+&quot;owns&quot; the upstream internal exchange and will rewire it when it starts 
+up. But in practice having that happen more than once should not be a 
+problem.
+
+Oh, and it will (obviously) break ordering, but you said you don't care 
+about that.
+
+However, I suspect the next bottleneck you might find would be the 
+downstream queue(s) - each queue can only utilise a single CPU. So 
+federating together multiple queues on your downstream is likely to be 
+useful there.
+
+&gt;<i> Our current objective is to be able to send 20k/sec messages from each
+</I>&gt;<i> datacenter for a single application.  In China, the most we can do is
+</I>&gt;<i> around 2.5k/sec (ends up being around 1.6MB/sec, this is on a good day).
+</I>&gt;<i> Because this message load will be from a single application, with the
+</I>&gt;<i> current design, it will be tied to a single routing key.  So for China,
+</I>&gt;<i> I would need around 8 TCP connections to do this.
+</I>&gt;<i>
+</I>&gt;<i> For this use case, message order doesn't matter.  Does anyone have any
+</I>&gt;<i> ideas on how I can setup multiple federation links that will be load
+</I>&gt;<i> balanced?  Here are some ideas I have, but they all feel hacky.
+</I>&gt;<i>
+</I>&gt;<i> 1) On the upstreams, use a consistent hash exchange, with exchange to
+</I>&gt;<i> exchange bindings to 8 direct exchanges, which would be federated.
+</I>&gt;<i> 2) Run multiple instances of RMQ on the downstream machines, and use
+</I>&gt;<i> federated queues.  Total number of instances across all machines should
+</I>&gt;<i> be greater than 8.
+</I>
+So as discussed above, I don't think this is needed. But if you do start 
+needing federated queues in the downstream cluster then that does not 
+mean you need to run multiple copies of RabbitMQ - you can federate 
+queues with each other within the same cluster.
+
+Just use a URI of &quot;<A HREF="amqp://&quot;">amqp://&quot;</A> and specify the &quot;queue&quot; key in the upstream 
+to specify a different queue name (otherwise you federate the queue with 
+itself, which is harmless but not exactly useful).
+
+Cheers, Simon
+
+-- 
+Simon MacMullen
+RabbitMQ, Pivotal
+</PRE>
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="031776.html">[rabbitmq-discuss] Design for global data ingestion
+</A></li>
+	<LI>Next message: <A HREF="031778.html">[rabbitmq-discuss] webmachine error
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#31914">[ date ]</a>
+              <a href="thread.html#31914">[ thread ]</a>
+              <a href="subject.html#31914">[ subject ]</a>
+              <a href="author.html#31914">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

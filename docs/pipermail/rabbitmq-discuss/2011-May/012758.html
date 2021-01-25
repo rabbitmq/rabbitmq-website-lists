@@ -1,0 +1,183 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Problems With OCF Script - Race between start and wait
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Problems%20With%20OCF%20Script%20-%20Race%20between%0A%20start%20and%20wait&In-Reply-To=%3C1C7E61787A08F34BBBBD9E7A7CBC368B0A2FE22A%40EXMB02OSG.eclg.org%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="012749.html">
+   <LINK REL="Next"  HREF="012845.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Problems With OCF Script - Race between start and wait</H1>
+    <B>Chris Chew</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Problems%20With%20OCF%20Script%20-%20Race%20between%0A%20start%20and%20wait&In-Reply-To=%3C1C7E61787A08F34BBBBD9E7A7CBC368B0A2FE22A%40EXMB02OSG.eclg.org%3E"
+       TITLE="[rabbitmq-discuss] Problems With OCF Script - Race between start and wait">chrisch at ecollege.com
+       </A><BR>
+    <I>Tue May 10 00:23:28 BST 2011</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="012749.html">[rabbitmq-discuss] Problems With OCF Script - Race between start and wait
+</A></li>
+        <LI>Next message: <A HREF="012845.html">[rabbitmq-discuss] Problems With OCF Script - Race between start and wait
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#12758">[ date ]</a>
+              <a href="thread.html#12758">[ thread ]</a>
+              <a href="subject.html#12758">[ subject ]</a>
+              <a href="author.html#12758">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Thanks, Matthew.
+
+It seems like an edge case that would be easy to miss...  I should reiterate that my shared volume is slow.  slooowww, as in 4 MB/sec according to dd.  This is also just a test instance and not a production installation, so the priority is pretty low (except for the case when there is a large amount of data in the queue?).
+
+&gt;<i> ________________________________________
+</I>&gt;<i> From: <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss-bounces at lists.rabbitmq.com</A> [<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss-bounces at lists.rabbitmq.com</A>] on behalf of Matthew Sackman [<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">matthew at rabbitmq.com</A>]
+</I>&gt;<i> Sent: Monday, May 09, 2011 9:54 AM
+</I>&gt;<i> 
+</I>&gt;<i> Hi Chris,
+</I>&gt;<i> 
+</I>&gt;<i> On Fri, May 06, 2011 at 04:27:40PM +0000, Chris Chew wrote:
+</I>&gt;<i> &gt; Doing some testing on 2.4.1 towards upgrading from 2.2, I've noticed an odd behavior when using the OCF scripts to start Rabbit ala the Pacemaker guide.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; There seems to be a race condition in the time I call `rabbitmq-server...` and then call `rabbitmqctl -n &lt;host&gt; wait`:  If the erlang node hasn't started up yet, then `rabbitmqctl -n &lt;host&gt; wait` will fail saying the node is down.  This failure causes the OCF process to fail and then falsely report that Rabbit is not running (rabbit still starts up just fine).
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; I fixed this temporarily on my installation by adding `sleep 2` in the rabbit_start() method of the rabbitmq-server OCF script between the lines where the server is started and the rabbit_wait function is invoked.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; Interesting, and this through off the path for a while, the race condition is only lost when I install the management plugin &amp;&amp; set mnesia_base to a shared (network-attached) volume.  Just one or the other is not enough to lose the race, but both are.  This might also helps explain why this might not have been seen before.
+</I>&gt;<i> 
+</I>&gt;<i> Having thought about this some more, I'm now puzzled. ctl -n &lt;host&gt; wait
+</I>&gt;<i> should wait for a minimum of 5 seconds before giving up on the host.
+</I>&gt;<i> This should be enough time for the rabbit erlang node to start (if not
+</I>&gt;<i> fully boot). As long as the erlang node is contactable in some form
+</I>&gt;<i> within 5 seconds then the wait will then wait forever for the erlang
+</I>&gt;<i> node to fully boot and then report if rabbit's managed to start up ok or
+</I>&gt;<i> not.
+</I>&gt;<i> 
+</I>&gt;<i> What you're reporting seems to be the inverse: i.e. if the server starts
+</I>&gt;<i> too quickly then you encounter a problem.
+</I>&gt;<i> 
+</I>&gt;<i> Could you clarify?
+</I>
+Yes, I am seeing that 5 second wait behavior from rabbitmqctl, it's just that apparently 5 seconds is not long enough for the rabbit node to boot when using this shared volume as the mnesia_base.  I'm wondering if the rabbit_start() function should have a &quot;spinner&quot; built in just like the rabbit_stop() function has.
+
+Here's a more detailed description of the behavior I'm seeing:
+
+With a stock 2.4.1 setup, the problem is that crm_mon thinks the rabbit process did not start up, even though it actually has.  The Pacemaker logs look like this:
+
+========================================================================
+May  5 16:04:27 sm6nic02 lrmd: [1339]: info: rsc:rabbitmq-service:116: start
+May  5 16:04:27 sm6nic02 crmd: [1342]: info: process_lrm_event: LRM operation rabbitmq-ip_monitor_10000 (call=115, rc=0, cib-update=214, confirmed=false) ok
+May  5 16:04:32 sm6nic02 rabbitmq-server[30971]: INFO: rabbitmq-server start failed: 7
+May  5 16:04:32 sm6nic02 crmd: [1342]: info: process_lrm_event: LRM operation rabbitmq-service_start_0 (call=116, rc=1, cib-update=215, confirmed=true) unknown error
+========================================================================
+
+...where the &quot;7&quot; return code on the third line seems to be $OCF_NOT_RUNNING, as returned by the rabbitmqctl_action() function.  However, rabbit does actually get up and fully-functional even though Pacemaker thinks startup failed.
+
+When I modify the rabbitmqctl_action() function to send the output and timestamps to /tmp/log, I can confirm the 5 second delay is occurring inside the `rabbitmqctl -n ... wait` command.  For example, I added two `date` calls and appended them along with the output from the rabbitmqctl call into /tmp/log:
+
+========================================================================
+rabbitmqctl_action() {
+    ...
+    ocf_log info &quot;executing $RABBITMQ_CTL $NODENAME_ARG $action &gt; /dev/null 2&gt; /dev/null&quot;
+    echo `date` &gt;&gt; /tmp/log
+    $RABBITMQ_CTL $NODENAME_ARG $action &gt;&gt; /tmp/log 2&gt;&gt; /tmp/log
+    rc=$?
+    echo `date` &gt;&gt; /tmp/log
+    ...
+========================================================================
+
+...which produces this output in /tmp/log:
+
+========================================================================
+Mon May 9 12:49:24 MDT 2011
+Status of node <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at localhost</A> ...
+Error: unable to connect to node <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at localhost</A>: nodedown
+diagnostics:
+- nodes and their ports on localhost: [{rabbitmqctl13264,38158}]
+- current node: <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmqctl13264 at sm6nic02</A>
+- current node home dir: /var/lib/rabbitmq
+- current node cookie hash: M+L/i5fJ87oOQ373piDAXQ==
+Mon May 9 12:49:25 MDT 2011
+Mon May 9 12:49:25 MDT 2011
+Waiting for <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at localhost</A> ...
+Error: unable to connect to node <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at localhost</A>: nodedown
+diagnostics:
+- nodes and their ports on localhost: [{rabbitmqprelaunch13333,36527},
+                                       {rabbitmqctl13346,49342}]
+- current node: <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmqctl13346 at sm6nic02</A>
+- current node home dir: /var/lib/rabbitmq
+- current node cookie hash: M+L/i5fJ87oOQ373piDAXQ==
+Mon May 9 12:49:30 MDT 2011
+Mon May 9 12:49:30 MDT 2011
+Status of node <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at localhost</A> ...
+Error: unable to connect to node <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at localhost</A>: nodedown
+diagnostics:
+- nodes and their ports on localhost: [{rabbitmqprelaunch13333,36527},
+                                       {rabbitmqctl13447,43772}]
+- current node: <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmqctl13447 at sm6nic02</A>
+- current node home dir: /var/lib/rabbitmq
+- current node cookie hash: M+L/i5fJ87oOQ373piDAXQ==
+Mon May 9 12:49:30 MDT 2011
+========================================================================
+
+...note the 5 second jump in the timestamp between lines 10 and 19 which indicates the 5 second wait inside `rabbitmqctl wait`.
+
+
+I can &quot;fix&quot; the problem by simply adding a `sleep 2` inside the rabbit_start() function like this:
+
+========================================================================
+rabbit_start() {
+    ...
+    setsid sh -c &quot;$RABBITMQ_SERVER &gt; ${RABBITMQ_LOG_BASE}/startup_log 2&gt; ${RABBITMQ_LOG_BASE}/startup_err&quot; &amp;
+
+    # Wait for the server to come up.
+    # Let the CRM/LRM time us out if required
+    
+    sleep 2  #Chris: Just like Pete Rose, we want rabbitmqctl to lose the race between it and the rabbit-server vm startup...
+
+    rabbit_wait
+    ...
+========================================================================
+
+...of course the &quot;sleep &lt;arbitrary amount of time&gt;&quot; is not a proper fix.  I noticed the rabbit_stop() function has a &quot;spinner&quot; that waits for rabbit to shut down, deferring to the cluster stack to abort the process upon timeout...does it make sense to add the same type of wait loop for rabbit_start() and push the concern of the timeout into the cluster stack?
+
+Hopefully this helps clarify...and thanks for your time!
+
+-Chris
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="012749.html">[rabbitmq-discuss] Problems With OCF Script - Race between start and wait
+</A></li>
+	<LI>Next message: <A HREF="012845.html">[rabbitmq-discuss] Problems With OCF Script - Race between start and wait
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#12758">[ date ]</a>
+              <a href="thread.html#12758">[ thread ]</a>
+              <a href="subject.html#12758">[ subject ]</a>
+              <a href="author.html#12758">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

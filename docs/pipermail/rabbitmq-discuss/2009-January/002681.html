@@ -1,0 +1,168 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Is there a use case for a queue with	auto_delete=True and durable=True?
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20Is%20there%20a%20use%20case%20for%20a%20queue%20with%0A%09auto_delete%3DTrue%20and%20durable%3DTrue%3F&In-Reply-To=269388e30901230302p24433d09xc23940e2fdc3d280%40mail.gmail.com">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002682.html">
+   <LINK REL="Next"  HREF="002685.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Is there a use case for a queue with	auto_delete=True and durable=True?</H1>
+    <B>Darien Kindlund</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20Is%20there%20a%20use%20case%20for%20a%20queue%20with%0A%09auto_delete%3DTrue%20and%20durable%3DTrue%3F&In-Reply-To=269388e30901230302p24433d09xc23940e2fdc3d280%40mail.gmail.com"
+       TITLE="[rabbitmq-discuss] Is there a use case for a queue with	auto_delete=True and durable=True?">darien at kindlund.com
+       </A><BR>
+    <I>Fri Jan 23 15:32:58 GMT 2009</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002682.html">[rabbitmq-discuss] Is there a use case for a queue	with	auto_delete=True and durable=True?
+</A></li>
+        <LI>Next message: <A HREF="002685.html">[rabbitmq-discuss] Is there a use case for a queue with auto_delete=True and durable=True?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2681">[ date ]</a>
+              <a href="thread.html#2681">[ thread ]</a>
+              <a href="subject.html#2681">[ subject ]</a>
+              <a href="author.html#2681">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi Ben,
+
+Just my $0.02, but, I got the impression a (durable=True,
+auto_delete=True) use case means: &quot;Delete the queue ONLY after all
+messages have been removed from the queue -- once the queue is empty.&quot;
+
+A condition where this would apply is: Consider a producer/consumer
+scenario.  The consumer creates a static exchange/queue (durable=True,
+auto_delete=False) such that in the event of a network error, the
+consumer can reconnect and resync with the queue.  Upon receipt of a
+new message, the consumer sends an ACK message (part of the
+application -- not the AMQP spec) back to the producer (using the
+reply-to: header).
+
+The producer creates a temporary exchange/queue (durable=True,
+auto_delete=True) for receiving these ACK messages such that in the
+event of a network error, the producer can reconnect and resync with
+the queue.  From the producer's point of view, it wants a queue that
+*remains alive until all messages have been flushed* from the queue.
+In this case, lost messages are not acceptable.
+
+A downside to this approach (obviously) are cases where logic errors
+in the producer cause the producing app to die, which becomes a more
+common problem than network errors.  In this case, RabbitMQ ends up
+with a bunch of temporary producer queues with (maybe) one or 1 ACK
+messages in each queue, that stick around forever.  In this case,
+you'd have to write some sort of utility script to purge the
+no-longer-used queues.
+
+Therefore, (durable=True, auto_delete=True) comes in handy in cases
+where the producing app:
+
+1) has no logic errors (that cause it to disconnect without emptying its queue)
+2) is talking across a network that is prone to channel disconnects
+
+A couple of side notes:
+- In this scenario, it maybe possible to 'timeout' a (durable=True,
+auto_delete=True) queue, where if it has messages and has no
+consumers, wait X minutes before deleting (configurable).
+
+- If (durable=True, auto_delete=True) becomes an invalid configuration
+in the next version of the AMQP specification, then the producing app
+would have to contain application-level logic to deal with network
+disconnects (rather than rely on AMQP to do the right thing).  Or, it
+would have to switch to declaring a static queue and not rely on the
+auto_delete option.
+
+Regards,
+-- Darien
+
+On Fri, Jan 23, 2009 at 6:02 AM, Ben Hood &lt;<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">0x6e6562 at gmail.com</A>&gt; wrote:
+&gt;<i> Brian,
+</I>&gt;<i>
+</I>&gt;<i> Just posting this back via the mailing list because you did not choose
+</I>&gt;<i> LShift's $10000 per question option ;-)
+</I>&gt;<i>
+</I>&gt;<i> On Fri, Jan 23, 2009 at 9:05 AM, Ben Hood &lt;<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">ben at lshift.net</A>&gt; wrote:
+</I>&gt;&gt;<i> ----- Forwarded message from Brian Sullivan &lt;<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">bsullivan at lindenlab.com</A>&gt; -----
+</I>&gt;&gt;<i> I was just explaining scenarios for the various persistence settings, and
+</I>&gt;&gt;<i> couldn't come up with a use case for creating an auto-delete queue (which
+</I>&gt;&gt;<i> is the default), but setting durable = true.
+</I>&gt;<i>
+</I>&gt;<i> Have you read what the 0.8/0.9.1 spec says on what effect each flag
+</I>&gt;<i> has for the queue.declare command?
+</I>&gt;<i>
+</I>&gt;<i> Though the spec does not specify default values, our internally
+</I>&gt;<i> generated commands use a JSON version of the actual specification that
+</I>&gt;<i> has been augmented with Rabbit considers to be *sensible* default
+</I>&gt;<i> values.
+</I>&gt;<i>
+</I>&gt;<i> In the file amqp-0.8.json the auto_delete flag on queue.declare is off.
+</I>&gt;<i>
+</I>&gt;<i> The relevance of this is marginal because it is up to what the client
+</I>&gt;<i> library actually puts on the wire.
+</I>&gt;<i>
+</I>&gt;&gt;<i> Upon restart after a server
+</I>&gt;&gt;<i> crash, I'd assume that the client would take a little bit of time to
+</I>&gt;&gt;<i> reconnect, in which case the queue would be deleted, even if it was
+</I>&gt;&gt;<i> durable, correct?
+</I>&gt;<i>
+</I>&gt;<i> The events that trigger a consideration of the auto_delete flag in
+</I>&gt;<i> Rabbit are subscription cancellations and the channel going down.
+</I>&gt;<i>
+</I>&gt;&gt;<i> Is there a use case for this combination of settings?  I have seen some
+</I>&gt;&gt;<i> posts that have been confused by not having queues remain when
+</I>&gt;&gt;<i> durable=true if people forget to set auto-delete=false, so it seems odd to
+</I>&gt;&gt;<i> have the defaults set the way they are (at least as they appear to be in
+</I>&gt;&gt;<i> the python lib)
+</I>&gt;<i>
+</I>&gt;<i> I would consider it to be odd, but I'm not a lawyer.
+</I>&gt;<i>
+</I>&gt;<i> Though the exact behavior of this scenario is IMHO not clearly defined
+</I>&gt;<i> in the spec, I think that most implementations would take a common
+</I>&gt;<i> sense approach.
+</I>&gt;<i>
+</I>&gt;<i> From the perspective of py-amqplib, I would say that it's over to
+</I>&gt;<i> Barry to make a call on this.
+</I>&gt;<i>
+</I>&gt;<i> BTW, feel free to question any spec related aspect of AMQP, we'll do
+</I>&gt;<i> our best to try an explain why it is like it is, although we didn't
+</I>&gt;<i> write it.
+</I>&gt;<i>
+</I>&gt;<i> HTH,
+</I>&gt;<i>
+</I>&gt;<i> Ben
+</I>&gt;<i>
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;<i> <A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;<i> <A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>&gt;<i>
+</I>
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002682.html">[rabbitmq-discuss] Is there a use case for a queue	with	auto_delete=True and durable=True?
+</A></li>
+	<LI>Next message: <A HREF="002685.html">[rabbitmq-discuss] Is there a use case for a queue with auto_delete=True and durable=True?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2681">[ date ]</a>
+              <a href="thread.html#2681">[ thread ]</a>
+              <a href="subject.html#2681">[ subject ]</a>
+              <a href="author.html#2681">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

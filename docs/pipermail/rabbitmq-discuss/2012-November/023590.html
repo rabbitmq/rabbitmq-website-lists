@@ -1,0 +1,176 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] rabbitmq-c amqp_table_t (high availability	configuration params)
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20rabbitmq-c%20amqp_table_t%20%28high%20availability%0A%09configuration%20params%29&In-Reply-To=%3Ca8e46feb-8f99-4e79-94ea-c97d4f648b16%40googlegroups.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="023589.html">
+   <LINK REL="Next"  HREF="023591.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] rabbitmq-c amqp_table_t (high availability	configuration params)</H1>
+    <B>Arun Chandrasekaran</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20rabbitmq-c%20amqp_table_t%20%28high%20availability%0A%09configuration%20params%29&In-Reply-To=%3Ca8e46feb-8f99-4e79-94ea-c97d4f648b16%40googlegroups.com%3E"
+       TITLE="[rabbitmq-discuss] rabbitmq-c amqp_table_t (high availability	configuration params)">visionofarun at gmail.com
+       </A><BR>
+    <I>Mon Nov  5 17:05:30 GMT 2012</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="023589.html">[rabbitmq-discuss] rabbitmq-c with high availability
+</A></li>
+        <LI>Next message: <A HREF="023591.html">[rabbitmq-discuss] rabbitmq-c amqp_table_t (high availability configuration params)
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#23590">[ date ]</a>
+              <a href="thread.html#23590">[ thread ]</a>
+              <a href="subject.html#23590">[ subject ]</a>
+              <a href="author.html#23590">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi all,
+
+Has anyone used rabbitmq-c with high availability configuration?
+
+I am stuck with a memory corruption when using rabbitmq-c with high 
+availability configuration in my own code (the crash is not in 
+librabbitmq). For HA, since the nodes names have to be taken from a config 
+file, I have implemented the following way of getting the key value params.
+
+
+   std::map&lt;std::string, std::vector&lt;std::string&gt; &gt;ha_map;
+   // Load the map here. Typical values:
+   // x-ha-policy - nodes; x-ha-policy-params - <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at centos</A><A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">,rabbit at centos</A>
+
+   amqp_table_t table;
+   std::vector&lt;amqp_field_value_t_ *&gt; array_ptrs;
+
+   memset(&amp;table, 0, sizeof(table));
+   table.num_entries = ha_map.size();
+   if (table.num_entries)
+       table.entries = (amqp_table_entry_t *) calloc(1, 
+sizeof(amqp_table_entry_t) * table.num_entries);
+   int i = 0;
+
+   std::map&lt;std::string, std::vector&lt;std::string&gt; &gt;::const_iterator it;
+   for (it = ha_map.begin(); it != ha_map.end(); it++, i++) {
+      table.entries[i].key.len = (*it).first.size();
+      table.entries[i].key.bytes = (void *) (*it).first.c_str();
+
+      if ((*it).second.size() == 1) {
+         table.entries[i].value.kind = AMQP_FIELD_KIND_UTF8;
+         table.entries[i].value.value.bytes.len = (*it).second[0].size();
+         table.entries[i].value.value.bytes.bytes = (void *) 
+(*it).second[0].c_str();
+
+      } else if ((*it).second.size() &gt; 1) {
+         table.entries[i].value.kind = AMQP_FIELD_KIND_ARRAY;
+         table.entries[i].value.value.array.num_entries = 
+(*it).second.size();
+         amqp_field_value_t *f = (amqp_field_value_t_ *) 
+malloc(sizeof(amqp_field_value_t_) * (*it).second.size());
+         array_ptrs.push_back(f);
+         table.entries[i].value.value.array.entries = f;
+         LogInfo((&quot;Before pointer: %p&quot;, 
+table.entries[i].value.value.array.entries));
+         for (size_t j = 0; j &lt; (*it).second.size(); j++) {
+            table.entries[i].value.value.array.entries[j].kind = 
+AMQP_FIELD_KIND_UTF8;
+            table.entries[i].value.value.array.entries[j].value.bytes.len = 
+(*it).second[j].size();
+            table.entries[i].value.value.array.entries[j].value.bytes.bytes 
+= (void *) (*it).second[j].c_str();
+         }
+         LogInfo((&quot;Before1 pointer: %p&quot;, 
+table.entries[i].value.value.array.entries));
+      }
+   }
+
+   amqp_queue_declare_ok_t *r =
+      amqp_queue_declare(m_conn, m_channel, 
+amqp_cstring_bytes(m_queue.c_str()), 0, 1, 0, 0, table);
+
+   for (size_t i = 0; i &lt; array_ptrs.size(); i++) {
+      free(array_ptrs[i]);
+   }
+   free(table.entries);
+
+This works perfectly fine. But the crash happens when I replace
+
+   for (size_t i = 0; i &lt; array_ptrs.size(); i++) {
+      free(array_ptrs[i]);
+   }
+
+with
+   for (int k = 0; k &lt; table.num_entries; k++) {
+       LogInfo((&quot;After pointer: %p&quot;, 
+table.entries[i].value.value.array.entries));
+*       free(table.entries[k].value.value.array.entries);*
+   }
+
+The &quot;After pointer:&quot; is never the same as &quot;Before pointer:&quot;. What wrong am 
+I doing here?
+
+Thanks,
+Arun
+
+PS: I'm using the following diagnostic log library: 
+<A HREF="https://github.com/visionofarun/CPPLogger">https://github.com/visionofarun/CPPLogger</A>
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20121105/39407934/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20121105/39407934/attachment.htm</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="023589.html">[rabbitmq-discuss] rabbitmq-c with high availability
+</A></li>
+	<LI>Next message: <A HREF="023591.html">[rabbitmq-discuss] rabbitmq-c amqp_table_t (high availability configuration params)
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#23590">[ date ]</a>
+              <a href="thread.html#23590">[ thread ]</a>
+              <a href="subject.html#23590">[ subject ]</a>
+              <a href="author.html#23590">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

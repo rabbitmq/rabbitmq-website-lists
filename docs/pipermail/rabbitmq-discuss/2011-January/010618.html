@@ -1,0 +1,126 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Implementing a &quot;processing&quot; queue with	message expiry
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Implementing%20a%20%22processing%22%20queue%20with%0A%09message%20expiry&In-Reply-To=%3CAANLkTim0i-oeF%3DuN9qzTZ6fxg9-PdToNN-ztMmWs-%3Dmn%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="010614.html">
+   <LINK REL="Next"  HREF="010623.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Implementing a &quot;processing&quot; queue with	message expiry</H1>
+    <B>Marek Majkowski</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Implementing%20a%20%22processing%22%20queue%20with%0A%09message%20expiry&In-Reply-To=%3CAANLkTim0i-oeF%3DuN9qzTZ6fxg9-PdToNN-ztMmWs-%3Dmn%40mail.gmail.com%3E"
+       TITLE="[rabbitmq-discuss] Implementing a &quot;processing&quot; queue with	message expiry">majek04 at gmail.com
+       </A><BR>
+    <I>Tue Jan 11 11:31:25 GMT 2011</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="010614.html">[rabbitmq-discuss] Implementing a &quot;processing&quot; queue with message	expiry
+</A></li>
+        <LI>Next message: <A HREF="010623.html">[rabbitmq-discuss] Implementing a &quot;processing&quot; queue with message expiry
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#10618">[ date ]</a>
+              <a href="thread.html#10618">[ thread ]</a>
+              <a href="subject.html#10618">[ subject ]</a>
+              <a href="author.html#10618">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>On Tue, Jan 11, 2011 at 00:15, Sami Samhuri &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">sami at samhuri.net</A>&gt; wrote:
+&gt;<i> The system is pretty simple and will only have 2 persistent queues, 1
+</I>&gt;<i> producer, and 1 consumer (initially anyway). Our frontend machine will act
+</I>&gt;<i> on requests from our users and queue up jobs on request. The worker machine
+</I>&gt;<i> will get jobs from that queue, process them, and then place the results in a
+</I>&gt;<i> 2nd queue which the frontend machine will consume, making the results
+</I>&gt;<i> available to our users. So far it's pretty straightforward and RabbitMQ
+</I>&gt;<i> handles this with ease.
+</I>&gt;<i> ,----------, &#160; &#160; &#160; &#160; &#160; &#160; &#160; &#160; &#160; &#160;,--------,
+</I>&gt;<i> | &#160; &#160; &#160; &#160; &#160;| &#160;--- Queue #1 ---&gt; | &#160; &#160; &#160; &#160;| &#160; Work to be done goes in Queue #1
+</I>&gt;<i> | Frontend | &#160; &#160; &#160; &#160; &#160; &#160; &#160; &#160; &#160; &#160;| Worker |
+</I>&gt;<i> | &#160; &#160; &#160; &#160; &#160;| &lt;--- Queue #2 --- &#160;| &#160; &#160; &#160; &#160;| &#160; Completed work goes in Queue #2
+</I>&gt;<i> `----------` &#160; &#160; &#160; &#160; &#160; &#160; &#160; &#160; &#160; &#160;`--------`
+</I>&gt;<i> Now real life has to come along and mess it all up.&#160;When a worker is struck
+</I>&gt;<i> by lightning in the simple system above the job it was working on would be
+</I>&gt;<i> lost, which is bad. To me it seems like we need a 3rd &quot;queue&quot; that holds
+</I>&gt;<i> jobs that are currently being processed, and a timeout so that if a job
+</I>&gt;<i> being processed hasn't completed within N minutes it's put back into the
+</I>&gt;<i> first queue so another worker can pick up the job.
+</I>
+That's a strange idea. Rabbitmq deals with this problem by using 'acks'.
+A worker first gets a message (request), does the job, replies,
+and after sending the reply it 'acks' the initial request message.
+The request is removed from Rabbit only after it received an ack.
+
+That way when your worker dies during processing of the request,
+the request will be redelivered and hopefully handled by another worker.
+
+&gt;<i> This queue must also be
+</I>&gt;<i> persistent. The problem is that this 3rd thing isn't really a queue at all.
+</I>&gt;<i> I'd like to remove any specific item from this thing, whether the job was
+</I>&gt;<i> completed or timed out, and thus I need to find and remove arbitrary
+</I>&gt;<i> messages/items.
+</I>
+Rabbit can't do it - you can't 'find arbitrary messages'. Rabbit queues
+are FIFO-like structures. You append new messages to one end.
+You pop messages from the other end.
+
+&gt;<i> I feel like I need to write a bit of code that handles the list of
+</I>&gt;<i> jobs-in-progress and persists it to our main data store (distributed, backed
+</I>&gt;<i> up, etc). If I do all of that when not just put the other 2 queues in our
+</I>&gt;<i> main data store as well? Rabbit still buys us a little for those 2 queues,
+</I>&gt;<i> but not very much. It's easy enough for me to add authenticated HTTP
+</I>&gt;<i> endpoints and distributed, fault-tolerance persistence for a couple of
+</I>&gt;<i> queues.
+</I>&gt;<i> Is there some other solution that makes this easier, or does Rabbit have
+</I>&gt;<i> something to handle these sorts of cases? If I can't use Rabbit for all of
+</I>&gt;<i> this it may not be worth adding Rabbit to our infrastructure for the 2 very
+</I>&gt;<i> simple queues illustrated above.
+</I>&gt;<i> Thanks for reading this far :)
+</I>
+Alternative solution would be to make requests idempotent and re-send
+the request when the client decides it's waiting too long (ie: message
+was lost).
+
+This is worse solution, in practice you can never assume how long
+will it take to handle a request.
+
+Cheers,
+  Marek
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="010614.html">[rabbitmq-discuss] Implementing a &quot;processing&quot; queue with message	expiry
+</A></li>
+	<LI>Next message: <A HREF="010623.html">[rabbitmq-discuss] Implementing a &quot;processing&quot; queue with message expiry
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#10618">[ date ]</a>
+              <a href="thread.html#10618">[ thread ]</a>
+              <a href="subject.html#10618">[ subject ]</a>
+              <a href="author.html#10618">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

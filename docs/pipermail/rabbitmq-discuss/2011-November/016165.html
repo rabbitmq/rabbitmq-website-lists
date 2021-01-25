@@ -1,0 +1,179 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Crash in rabbit_management_agent-2.7.0
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Crash%20in%20rabbit_management_agent-2.7.0&In-Reply-To=%3CCACmxXrCmbFzGMYa4Q1emOnA-f1Ypxhmj73peWQyfaXFJ8pX2Ew%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="016160.html">
+   <LINK REL="Next"  HREF="016168.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Crash in rabbit_management_agent-2.7.0</H1>
+    <B>Richard Jones</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Crash%20in%20rabbit_management_agent-2.7.0&In-Reply-To=%3CCACmxXrCmbFzGMYa4Q1emOnA-f1Ypxhmj73peWQyfaXFJ8pX2Ew%40mail.gmail.com%3E"
+       TITLE="[rabbitmq-discuss] Crash in rabbit_management_agent-2.7.0">rj at metabrew.com
+       </A><BR>
+    <I>Fri Nov 11 13:08:50 GMT 2011</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="016160.html">[rabbitmq-discuss] Crash in rabbit_management_agent-2.7.0
+</A></li>
+        <LI>Next message: <A HREF="016168.html">[rabbitmq-discuss] Crash in rabbit_management_agent-2.7.0
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#16165">[ date ]</a>
+              <a href="thread.html#16165">[ thread ]</a>
+              <a href="subject.html#16165">[ subject ]</a>
+              <a href="author.html#16165">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Ah, got it - bit of a weird one:
+
+This erlang install has the beam.smp process setcap'ed to allow it to
+bind ports &lt;1024 without running as root.
+
+# getcap /usr/local/lib/erlang/erts-5.8.1/bin/beam.smp
+/usr/local/lib/erlang/erts-5.8.1/bin/beam.smp = cap_net_bind_service+ep
+
+Once I do this to remove the capability:
+# setcap cap_net_bind_service=-ep /usr/local/lib/erlang/erts-5.8.1/bin/beam.smp
+
+this fixes the problem, and everything in proc/pid is owned by
+rabbitmq as expected.
+
+If i &quot;setcap cap_net_bind_service=+ep vim&quot; the same thing happens, so
+looks like a general setcap issue.
+
+Setcap isn't like suid, the process wasn't running as root or really
+with root perms (just that it can bind ports &lt;1024), but apparently it
+was confused enough to break proc ownership. Don't know what the
+intended behaviour is, can't find any warnings in the setcap docs
+(which are sparse).
+
+Sorry for the wild goose chase.. As it happens, I'm using an iptables
+redirect now anyway, so don't need the setcap anymore.
+
+I put the cap back on, and tested your fixed plugin: it boots up fine
+with the fixed management_agent plugin installed. Might be worth
+leaving that in as a fallback (and anywhere else that checks
+/proc/self)
+
+
+No idea why this happened after the upgrade - that setcap has been set
+for ages, long before I upgraded to 2.7.0.
+
+Thanks,
+RJ
+
+
+
+On 11 November 2011 12:52, Simon MacMullen &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">simon at rabbitmq.com</A>&gt; wrote:
+&gt;<i> On 11/11/11 12:19, Richard Jones wrote:
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Conversely, if I just start vim, like so:
+</I>&gt;&gt;<i> &#160; su rabbitmq -s /bin/sh -c &quot;vim&quot;
+</I>&gt;&gt;<i> then everything in the /proc/PID dir *is* owned by rabbitmq.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> If I just start erl, it's the same as starting rabbit (proc/PID/fd
+</I>&gt;&gt;<i> owned by root)
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> At a bit of a loss.
+</I>&gt;<i>
+</I>&gt;<i> Yeah, that doesn't make sense to me either.
+</I>&gt;<i>
+</I>&gt;&gt;<i> /usr/local/lib/erlang/erts-5.8.1/bin/beam.smp
+</I>&gt;<i>
+</I>&gt;<i> This is the only thing to leap out - you have a self compiled Erlang but you
+</I>&gt;<i> installed RabbitMQ using the .deb? I still don't see how that would be the
+</I>&gt;<i> issue though.
+</I>&gt;<i>
+</I>&gt;<i> Anyway, I've put a management agent plugin that should handle failure to
+</I>&gt;<i> open /proc/&lt;pid&gt;/fd at:
+</I>&gt;<i>
+</I>&gt;<i> <A HREF="http://www.rabbitmq.com/releases/plugins/v2.7.0/rabbitmq_management_agent-2.7.0.proc-fix.ez">http://www.rabbitmq.com/releases/plugins/v2.7.0/rabbitmq_management_agent-2.7.0.proc-fix.ez</A>
+</I>&gt;<i>
+</I>&gt;<i> - could you download this to
+</I>&gt;<i> /usr/lib/rabbitmq/lib/rabbitmq_server-2.7.0/plugins/, delete the other
+</I>&gt;<i> management-agent, and see if this fixes the problem?
+</I>&gt;<i>
+</I>&gt;<i> Cheers, Simon
+</I>&gt;<i>
+</I>&gt;<i> --
+</I>&gt;<i> Simon MacMullen
+</I>&gt;<i> RabbitMQ, VMware
+</I>&gt;<i>
+</I></PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="016160.html">[rabbitmq-discuss] Crash in rabbit_management_agent-2.7.0
+</A></li>
+	<LI>Next message: <A HREF="016168.html">[rabbitmq-discuss] Crash in rabbit_management_agent-2.7.0
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#16165">[ date ]</a>
+              <a href="thread.html#16165">[ thread ]</a>
+              <a href="subject.html#16165">[ subject ]</a>
+              <a href="author.html#16165">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

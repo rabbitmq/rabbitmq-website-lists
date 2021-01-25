@@ -1,0 +1,183 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] rabbitmq-c for a reliable rabbitmq client in production environment.
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20rabbitmq-c%20for%20a%20reliable%20rabbitmq%20client%20in%0A%20production%20environment.&In-Reply-To=%3CCAAt2poJD20QZiebR%2BcrY6OxxK4QZHRztjibwmCHwWjZFKYjeBw%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="017417.html">
+   <LINK REL="Next"  HREF="017488.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] rabbitmq-c for a reliable rabbitmq client in production environment.</H1>
+    <B>Alan Antonuk</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20rabbitmq-c%20for%20a%20reliable%20rabbitmq%20client%20in%0A%20production%20environment.&In-Reply-To=%3CCAAt2poJD20QZiebR%2BcrY6OxxK4QZHRztjibwmCHwWjZFKYjeBw%40mail.gmail.com%3E"
+       TITLE="[rabbitmq-discuss] rabbitmq-c for a reliable rabbitmq client in production environment.">alan.antonuk at gmail.com
+       </A><BR>
+    <I>Tue Jan 17 15:52:38 GMT 2012</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="017417.html">[rabbitmq-discuss] rabbitmq-c for a reliable rabbitmq client in	production environment.
+</A></li>
+        <LI>Next message: <A HREF="017488.html">[rabbitmq-discuss] rabbitmq-c for a reliable rabbitmq client in	production environment.
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#17431">[ date ]</a>
+              <a href="thread.html#17431">[ thread ]</a>
+              <a href="subject.html#17431">[ subject ]</a>
+              <a href="author.html#17431">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Responses inlined
+
+On Mon, Jan 16, 2012 at 5:02 AM, TZHA &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">sophiewenxizhang at googlemail.com</A>&gt;wrote:
+
+&gt;<i> Hi,
+</I>&gt;<i>
+</I>&gt;<i> i am working with rabbitmq-c (downloaded from github/newest version -
+</I>&gt;<i> cmake/VS2010 rebuild under windows) and would like to prepare a
+</I>&gt;<i> rabbitmq/c/c++ based solution for a production environment.
+</I>&gt;<i>
+</I>&gt;<i> However for a real application, we still have some reliability
+</I>&gt;<i> requirements that are apparently not yet supported by rabbitmq-c.
+</I>&gt;<i>
+</I>&gt;<i> The first requirement is to get &#8220;cancellation notification&#8221; in case,
+</I>&gt;<i> e.g. whenever a queue is down &#8211; so that the client/consumer can
+</I>&gt;<i> reconnect to the broker.
+</I>&gt;<i>
+</I>&gt;<i> For this purpose &#8211; as I understood, the client has to send  the
+</I>&gt;<i> &#8220;client-capabilities&#8221; with
+</I>&gt;<i>
+</I>&gt;<i>   ...
+</I>&gt;<i>   consumer_cancel_notify = true,
+</I>&gt;<i>   publisher_confirms = true
+</I>&gt;<i>
+</I>&gt;<i> For the consumer_cancel_notify - the client does need to tell the broker
+</I>that it wants to turn this on.
+
+For the publisher_confirms - the client is not required to tell the broker
+to enable this.  To enabled it on a channel you should send send a
+confirm.select to enable publisher_confirms for a channel. You can send the
+client capabilities to query the broker to see if it supports this
+extension before continuing connecting to a broker.
+
+For some more info how rabbit supports these extensions:
+<A HREF="http://www.rabbitmq.com/extensions.html">http://www.rabbitmq.com/extensions.html</A>
+
+for the connection setup. In  case of of rabbitmq-c, I saw that one
+&gt;<i> shall set the capabilities in amqp_login (amqp_socket.c)  method.
+</I>&gt;<i> Current this is set to NULL.
+</I>&gt;<i>
+</I>&gt;<i>  amqp_connection_open_t s
+</I>&gt;<i>  s.capabilities.len = 0;
+</I>&gt;<i>  s.capabilities.bytes = NULL;
+</I>&gt;<i>
+</I>
+The format of that field is I believe a shortstr.  However that's not where
+you want to send capabilities.  When you get the connection.start method
+from the broker, you need to examine the server-properties (which is a
+table) parameter to see if the broker supports the extensions you want.
+ When you respond with a connection.start-ok, you need to put the
+extensions you want to enable in the client-properties parameter, which is
+also a table.
+
+
+&gt;<i>
+</I>&gt;<i> Can some expert tell me what kind of syntax can be used for the
+</I>&gt;<i> s.capabilities.bytes field?
+</I>&gt;<i>
+</I>&gt;<i> The next requirement is to receive publisher_confirms. I guess that
+</I>&gt;<i> the client-capabilities is also a pre-condition, and I have to set the
+</I>&gt;<i> &#8220;mandatory&#8221; parameter for the amqp_basic_publish method to 1. Is there
+</I>&gt;<i> anything else I have to set?
+</I>&gt;<i>
+</I>
+In order to enable publisher confirms,
+
+You need to do the confirm.select (amqp_confirm_select(...) ) method on the
+channel you want to enable publisher confirms on.
+After which anytime you do a basic.publish, (amqp_basic_publish(...)) you
+will eventually get a basic.ack back from the broker once the message has
+been processed*.
+* Note: processed does not mean delivered, it just means that the broker
+received it and did something with it (routed to a queue, returned it,
+dropped it etc).  If you want ensure that the message got routed a queue -
+send the mandatory flag.  If the message isn't routed to a queue the
+message will returned to the client with a basic.return, then you will be a
+basic.ack.
+
+More information on publisher confirms:
+<A HREF="http://www.rabbitmq.com/amqp-0-9-1-reference.html#class.confirm">http://www.rabbitmq.com/amqp-0-9-1-reference.html#class.confirm</A>
+More information on the basic publish fields:
+<A HREF="http://www.rabbitmq.com/amqp-0-9-1-reference.html#basic.publish">http://www.rabbitmq.com/amqp-0-9-1-reference.html#basic.publish</A>
+Finally an example client that leverages rabbitmq-c and uses publisher
+confirms:
+<A HREF="https://github.com/alanxz/SimpleAmqpClient/blob/master/src/Channel.cpp#L282">https://github.com/alanxz/SimpleAmqpClient/blob/master/src/Channel.cpp#L282</A>
+
+
+&gt;<i> Thanks in advance for any advices.
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20120117/cfc969b1/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20120117/cfc969b1/attachment.htm</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="017417.html">[rabbitmq-discuss] rabbitmq-c for a reliable rabbitmq client in	production environment.
+</A></li>
+	<LI>Next message: <A HREF="017488.html">[rabbitmq-discuss] rabbitmq-c for a reliable rabbitmq client in	production environment.
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#17431">[ date ]</a>
+              <a href="thread.html#17431">[ thread ]</a>
+              <a href="subject.html#17431">[ subject ]</a>
+              <a href="author.html#17431">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

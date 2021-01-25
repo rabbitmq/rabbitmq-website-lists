@@ -1,0 +1,131 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] RabbitMQ Shovel Connections
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20RabbitMQ%20Shovel%20Connections&In-Reply-To=%3C20111107105054.GB4248%40southbank.eng.vmware.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="015958.html">
+   <LINK REL="Next"  HREF="016209.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] RabbitMQ Shovel Connections</H1>
+    <B>Alexandru Scvor&#355;ov</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20RabbitMQ%20Shovel%20Connections&In-Reply-To=%3C20111107105054.GB4248%40southbank.eng.vmware.com%3E"
+       TITLE="[rabbitmq-discuss] RabbitMQ Shovel Connections">alexandru at rabbitmq.com
+       </A><BR>
+    <I>Mon Nov  7 10:50:54 GMT 2011</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="015958.html">[rabbitmq-discuss] RabbitMQ Shovel Connections
+</A></li>
+        <LI>Next message: <A HREF="016209.html">[rabbitmq-discuss] RabbitMQ Shovel Connections
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#16016">[ date ]</a>
+              <a href="thread.html#16016">[ thread ]</a>
+              <a href="subject.html#16016">[ subject ]</a>
+              <a href="author.html#16016">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi,
+
+Looking at report, I see the following:
+  * there's one channel with 1524 unconfirmed messages:
+    &lt;'<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at server02</A>'.3.374.49&gt;    &lt;'<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at server02</A>'.3.366.49&gt;    1   guest   /   false   false   1   1524    0   0   0   0   false
+
+    These are messages that were sent to a consumer but not ack'd (so
+    they can't be delivered to other consumers);
+
+  * the broker currently has 1524 messages sitting on two queues:
+    &lt;'<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at server02</A>'.3.241.0&gt;   number_3    true    false   []  0 1524    1524    1   ...
+    &lt;'<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at server02</A>'.3.244.0&gt; number_6    true    false   []  1524    0   1524    0
+  
+    Both queues have 1524 messages sitting on them, but the kinds of
+    messages are different.  The messages on number_6 are all ready,
+    which means that once a consumer connects to the queue, they will
+    all be delivered (but no consumer was connected to the queues).  The
+    messages on number_3, on the other hand, are unacknowledged; so,
+    they were delivered to the sole consumer, but it didn't acknowledge
+    them.
+
+    This is consistent with what you describe, since a broker restart
+    will mark the unacknowledged messages as ready again, and deliver
+    them to a consumer.
+
+This means that the consumer for number_3 has received messages, but
+hasn't acknowledged them.  This can only happen if you set ack_mode in
+the shovel configuration:
+  * if ack_mode is on_publish, the shovel is having trouble forwarding
+    consumed messages to their destination;
+  * if ack_mode is on_confirm, the destination is not confirming the
+    messages the shovel sent it.
+
+The former could be caused by a network issue (the logs list a
+connection failing with a timeout), while the latter
+shouldn't be possible (the RabbitMQ broker guarantees it will eventually
+confirm all received messages).
+
+So, to fix this, you could try:
+  * playing around with the ack_mode setting;
+  * upgrading (the other poster mentioned this fixed his problem).
+
+What versions of RabbitMQ are you running (both on the source and
+destination brokers)?  Is there any chance you could send us your shovel
+config? (or at least describe what it does)
+
+Cheers,
+Alex
+
+
+On Wed, Nov 02, 2011 at 06:31:34AM -0700, Jelle Smet wrote:
+&gt;<i> Hi Alex,
+</I>&gt;<i> 
+</I>&gt;<i> The requested output is in attachment.  I have string replaced server and 
+</I>&gt;<i> queue names with fictional names.
+</I>&gt;<i> 
+</I>&gt;<i> I could find following non INFO report in the <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at server02.log</A> file:
+</I>&gt;<i> 
+</I>&gt;<i> ... snip ...
+</I>&gt;<i> =WARNING REPORT==== 2-Nov-2011::13:56:10 ===
+</I>&gt;<i> exception on TCP connection &lt;0.24639.172&gt; from 10.96.72.91:58172
+</I>&gt;<i> connection_closed_abruptly
+</I>&gt;<i> ... snip ...
+</I>&gt;<i> 
+</I>&gt;<i> Issuing &quot;rabbitmqctl stop&quot; gave following output and kept hanging endless:
+</I>&gt;<i> Stopping and halting node '<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at server02</A>' ...
+</I>&gt;<i> 
+</I>&gt;<i> When doing a strace -p on the open running rabbitmq process I get following 
+</I>&gt;<i> output for each one of them:
+</I>&gt;<i> #strace -p 26367
+</I>&gt;<i> Process 26367 attached - interrupt to quit
+</I>&gt;<i> select(0, NULL, NULL, NULL, NULL
+</I>&gt;<i> 
+</I>&gt;<i> The only thing left at this stage is kill all processes and restart server02
+</I>
+</PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="015958.html">[rabbitmq-discuss] RabbitMQ Shovel Connections
+</A></li>
+	<LI>Next message: <A HREF="016209.html">[rabbitmq-discuss] RabbitMQ Shovel Connections
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#16016">[ date ]</a>
+              <a href="thread.html#16016">[ thread ]</a>
+              <a href="subject.html#16016">[ subject ]</a>
+              <a href="author.html#16016">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,153 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Creating an auth plugin (Kerberos)
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Creating%20an%20auth%20plugin%20%28Kerberos%29&In-Reply-To=%3CFAB8F1EB-D36C-4555-989E-0CFDA47FCDFE%40rabbitmq.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="024357.html">
+   <LINK REL="Next"  HREF="024359.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Creating an auth plugin (Kerberos)</H1>
+    <B>Tim Watson</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Creating%20an%20auth%20plugin%20%28Kerberos%29&In-Reply-To=%3CFAB8F1EB-D36C-4555-989E-0CFDA47FCDFE%40rabbitmq.com%3E"
+       TITLE="[rabbitmq-discuss] Creating an auth plugin (Kerberos)">tim at rabbitmq.com
+       </A><BR>
+    <I>Wed Dec  5 15:04:42 GMT 2012</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="024357.html">[rabbitmq-discuss] Creating an auth plugin (Kerberos)
+</A></li>
+        <LI>Next message: <A HREF="024359.html">[rabbitmq-discuss] Creating an auth plugin (Kerberos)
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#24358">[ date ]</a>
+              <a href="thread.html#24358">[ thread ]</a>
+              <a href="subject.html#24358">[ subject ]</a>
+              <a href="author.html#24358">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Simon
+
+Personally, I think you should do this another way. Write a Native Implemented Function (NIF) in C and wrap it up as an Erlang module. Then you can just call the NIF directly from your auth module. You don't have to do all this spawning and looping and exit handling and insulating. It's *much* easier.
+
+Having said that, I can't help you with writing a NIF at the moment as we're all quite busy getting 3.0.1 ready. I'd suggest going over to the erlang-questions mailing list and saying &quot;I want to do kerberos authentication using a NIF - can somebody point me in the right direction...&quot;. Honestly it's much simpler than all this open_port malarky, especially if you're comfortable writing C, which you do seem to be. The erlang part of it is minimal, and the rabbit auth module you've written just calls the NIF stub functions as though they were regular erlang functions. No processes, no message handling: simple.
+
+Cheers,
+Tim
+
+On 5 Dec 2012, at 14:48, Tim Watson wrote:
+
+&gt;<i> Simon,
+</I>&gt;<i> 
+</I>&gt;<i> This is why I suggested using an insulator process. The process that calls open_port is the controlling process and when the port is closed, it will send the controlling process and exit signal. You override that by passing exit_status, but you also supply 'eof' and the ordering between the eof and exit_status messages is not guaranteed. When you time out in the after clause, you have *no idea* whether or not the port program is still running, which could lead to any of
+</I>&gt;<i> 
+</I>&gt;<i> - leaking resources such as file descriptors used for the port
+</I>&gt;<i> - erroneous messages sent to the reader process (such as the 'EXIT' that is arriving when you call port_close)
+</I>&gt;<i> 
+</I>&gt;<i> I would strongly suggest considering an insulator process for this. Do you need some pointers to doing that? Let me cook something up for you.....
+</I>&gt;<i> 
+</I>&gt;<i> In this code, notice that the command I'm running is guaranteed to finish within the 2000 ms timeout. I don't care about that, because it is only the exit status that matters to me. If you need to examine the stdio, then that's another matter but you aren't currently doing that. 
+</I>&gt;<i> 
+</I>&gt;<i> Now if you change the command to something that will run for a *long* time such as `ls -laR /` it will *not* finish quickly enough and yes all is still well and there are no stray messages. BUT ..... that command `ls -laR /` will not respond to stdin and will therefore *continue running even AFTER the port is closed* - so you need to be very careful to ensure that your program will actually terminate. I use hack to enforce this sometimes:
+</I>&gt;<i> 
+</I>&gt;<i> Cmd = &quot;/usr/bin/env sh -c \&quot;(cat; kill 0) | &quot; ++ Exec ++ &quot; \&quot;&quot;
+</I>&gt;<i> 
+</I>&gt;<i> Anyway, here is the module. Note that lots of the wait_for_this and that is just to demonstrate what's going on. Hope this helps.
+</I>&gt;<i> 
+</I>&gt;<i> &lt;code&gt;
+</I>&gt;<i> 
+</I>&gt;<i> -module(foo).
+</I>&gt;<i> 
+</I>&gt;<i> -export([main/1]).
+</I>&gt;<i> 
+</I>&gt;<i> main(_) -&gt;
+</I>&gt;<i>    Result = run_insulator(),
+</I>&gt;<i>    io:format(&quot;Result = ~p~n&quot;, [Result]),
+</I>&gt;<i>    wait_for_stray_messages().
+</I>&gt;<i> 
+</I>&gt;<i> wait_for_stray_messages() -&gt;
+</I>&gt;<i>    receive
+</I>&gt;<i>        Any -&gt; io:format(&quot;got stray message ~p~n&quot;, [Any]),
+</I>&gt;<i>               wait_for_stray_messages()
+</I>&gt;<i>    after 5000 -&gt;
+</I>&gt;<i>        io:format(&quot;we're done - no stray messages/EXIT's and we're good to go...~n&quot;)
+</I>&gt;<i>    end.
+</I>&gt;<i> 
+</I>&gt;<i> run_insulator() -&gt;
+</I>&gt;<i>    {Pid, MRef} = spawn_monitor(fun insulated/0),
+</I>&gt;<i>    receive
+</I>&gt;<i>        {'DOWN', MRef, process, Pid, Reason} -&gt;
+</I>&gt;<i>            case Reason of
+</I>&gt;<i>                {done, Result} -&gt; Result;
+</I>&gt;<i>                Other          -&gt; {error, Other}
+</I>&gt;<i>            end
+</I>&gt;<i>    after 2000 -&gt;
+</I>&gt;<i>        %% get rid of any pending monitor notifications
+</I>&gt;<i>        erlang:demonitor(MRef, [flush]),
+</I>&gt;<i>        exit(Pid, shutdown),
+</I>&gt;<i>        false
+</I>&gt;<i>    end.
+</I>&gt;<i> 
+</I>&gt;<i> insulated() -&gt;
+</I>&gt;<i>    process_flag(trap_exit, true),
+</I>&gt;<i>    Port = open_port({spawn, &quot;ls -la&quot;}, [
+</I>&gt;<i>                     exit_status, use_stdio, eof,
+</I>&gt;<i>                     {line, 1024}]),
+</I>&gt;<i>    Result = loop(Port),
+</I>&gt;<i>    erlang:port_close(Port),
+</I>&gt;<i>    exit({done, Result}).
+</I>&gt;<i> 
+</I>&gt;<i> loop(Port) -&gt;
+</I>&gt;<i>    Self = self(),
+</I>&gt;<i>    receive
+</I>&gt;<i>        %% we do not appear to care about the stdio
+</I>&gt;<i>        {Port, {data, {_, _}}}    -&gt; loop(Port);
+</I>&gt;<i>        {Port, eof}               -&gt; loop(Port);
+</I>&gt;<i>        {Port, {exit_status, 0}}  -&gt; true;
+</I>&gt;<i>        {Port, {exit_status, _N}} -&gt; false;
+</I>&gt;<i>        {'EXIT', Self, shutdown}  -&gt; false
+</I>&gt;<i>    end.
+</I>&gt;<i> 
+</I>&gt;<i> &lt;/code&gt;
+</I>&gt;<i> 
+</I>&gt;<i> Cheers,
+</I>&gt;<i> 
+</I>&gt;<i> Tim
+</I>&gt;<i> 
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>
+</PRE>
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="024357.html">[rabbitmq-discuss] Creating an auth plugin (Kerberos)
+</A></li>
+	<LI>Next message: <A HREF="024359.html">[rabbitmq-discuss] Creating an auth plugin (Kerberos)
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#24358">[ date ]</a>
+              <a href="thread.html#24358">[ thread ]</a>
+              <a href="subject.html#24358">[ subject ]</a>
+              <a href="author.html#24358">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

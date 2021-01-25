@@ -1,0 +1,161 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Pulling RabbitMQ out of service
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Pulling%20RabbitMQ%20out%20of%20service&In-Reply-To=%3CAANLkTinqO4gQ-kT7yfaoKituECaZNu6rkRBk6bkYRqkK%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="011068.html">
+   <LINK REL="Next"  HREF="011070.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Pulling RabbitMQ out of service</H1>
+    <B>Bill Moseley</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Pulling%20RabbitMQ%20out%20of%20service&In-Reply-To=%3CAANLkTinqO4gQ-kT7yfaoKituECaZNu6rkRBk6bkYRqkK%40mail.gmail.com%3E"
+       TITLE="[rabbitmq-discuss] Pulling RabbitMQ out of service">moseley at hank.org
+       </A><BR>
+    <I>Fri Feb  4 15:00:09 GMT 2011</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="011068.html">[rabbitmq-discuss] Pulling RabbitMQ out of service
+</A></li>
+        <LI>Next message: <A HREF="011070.html">[rabbitmq-discuss] Pulling RabbitMQ out of service
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#11069">[ date ]</a>
+              <a href="thread.html#11069">[ thread ]</a>
+              <a href="subject.html#11069">[ subject ]</a>
+              <a href="author.html#11069">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>On Fri, Feb 4, 2011 at 5:10 AM, Matthew Sackman &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">matthew at rabbitmq.com</A>&gt;wrote:
+
+&gt;<i> On Mon, Jan 31, 2011 at 07:26:34AM -0800, Bill Moseley wrote:
+</I>&gt;<i> &gt; For those of you running multiple RabbitMQ servers in a cluster, what is
+</I>&gt;<i> &gt; your procedure when you want to shut one of the servers down (e.g. for
+</I>&gt;<i> &gt; maintenance) but not disrupt overall service?   Queues only live on one
+</I>&gt;<i> &gt; server so I'm wondering how (or if) you do something to flush out the
+</I>&gt;<i> queue
+</I>&gt;<i> &gt; before stopping the machine.
+</I>&gt;<i>
+</I>&gt;<i> Usual best practise is to force clients to reconnect elsewhere,
+</I>&gt;<i> recreating the resources they need. This may need some careful thought
+</I>&gt;<i> with ordering of events etc. Frequent best practise is that publishers
+</I>&gt;<i> create exchanges, and consumers create the queues they need and bind
+</I>&gt;<i> them as necessary. To avoid missing any messages you'll need to start up
+</I>&gt;<i> new consumers before taking down the old ones.
+</I>
+
+Thanks for responding -- I had just this morning thought about this question
+and here was your response!
+
+Configuration on the clients is something I'm trying to reduce -- as well as
+the need to trigger a reconnect on all clients manually.  Maybe what I need
+is better configuration management.
+
+One approach I was considering is having all clients (producers and
+consumers) connect to a load balancer in front of two independent RabbitMQ
+brokers.  They would not be in a cluster (although each one could be its own
+cluster of machines for scaling).   The balancer only uses one RabbitMQ
+broker and the second is hot-standby.  The consumers connect to a different
+IP than the producers.   Clients know to reconnect upon loss of a
+connection.
+
+Then the trick is to use the load balancer to make the producers move to the
+new broker, move some consumers as well, and leave some other consumers to
+drain the queues on the old broker before pulling out of service.
+
+
+But they must create new
+&gt;<i> queues, not on the to-die node. So this requires the queue names must be
+</I>&gt;<i> fresh, but then you're going to have to deal with the possibilities of
+</I>&gt;<i> duplicate messages during the period that multiple sets of consumers are
+</I>&gt;<i> up etc.
+</I>&gt;<i>
+</I>
+Renaming the queues is only needed if pulling a machine out of cluster (for
+the queues that were created on that machine), correct?  I would not need
+that with two separate brokers as I describe above, if I follow what you are
+saying.
+
+
+
+&gt;<i> The &quot;or-else&quot; routing semantics of RabbitMQ's &quot;Alternate Exchanges&quot; may
+</I>&gt;<i> well be of use here.
+</I>&gt;<i> <A HREF="http://www.rabbitmq.com/extensions.html#alternate-exchange">http://www.rabbitmq.com/extensions.html#alternate-exchange</A>
+</I>
+
+Yes, I've been looking at those.  Are you saying that if the queue is not
+durable then once all the consumers of that queue go away then could use the
+alternate-exchange as a type of fail-over?
+
+
+&gt;<i> &gt; Now, this is a bit tougher: How about catastrophic failures?  I'm
+</I>&gt;<i> wondering
+</I>&gt;<i> &gt; about using the complexity of Pacemaker and DRBD vs. tracking incomplete
+</I>&gt;<i> &gt; jobs and resubmitting after some time.
+</I>&gt;<i>
+</I>&gt;<i> Horses for courses really. We know of a number of clients who are using
+</I>&gt;<i> the pacemaker stuff, though frequently with NAS/SAN rather than DRBD. If
+</I>&gt;<i> you can work out what failures you can withstand and what you can't and
+</I>&gt;<i> then pick the best approach to match.
+</I>&gt;<i>
+</I>
+The story from our IT department is we don't like DRBD and NAS/SAN is too
+expensive. ;)  But, they want to be able to yank the plug on a RabbitMQ box
+and have the application continue with no disruption.  Basically, no message
+is ever lost.
+
+Yes, the key might be knowing what failures we can withstand.  My current
+thinking has shifted a bit.  I think that instead of trying to build
+something that never fails, just assume it's not very likely to fail but
+design the application to handle a queue failure.  What that means is that
+for messages (really &quot;jobs&quot; in this case) that must complete, the producer,
+or some agent of the producer (perhaps a cron job) will see the job was not
+completed in a timely way and send a new message.
+
+Maybe that's not so pretty if the queue has a million messages pending when
+it fails, but if that's the case then there's other more serious
+problems....
+
+
+-- 
+Bill Moseley
+<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">moseley at hank.org</A>
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20110204/148f8846/attachment-0001.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20110204/148f8846/attachment-0001.htm</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="011068.html">[rabbitmq-discuss] Pulling RabbitMQ out of service
+</A></li>
+	<LI>Next message: <A HREF="011070.html">[rabbitmq-discuss] Pulling RabbitMQ out of service
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#11069">[ date ]</a>
+              <a href="thread.html#11069">[ thread ]</a>
+              <a href="subject.html#11069">[ subject ]</a>
+              <a href="author.html#11069">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

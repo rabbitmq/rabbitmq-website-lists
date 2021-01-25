@@ -1,0 +1,164 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Active-Active implementation issues
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Active-Active%20implementation%20issues&In-Reply-To=%3C51D14867.9000203%40rabbitmq.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="028193.html">
+   <LINK REL="Next"  HREF="028194.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Active-Active implementation issues</H1>
+    <B>Simon MacMullen</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Active-Active%20implementation%20issues&In-Reply-To=%3C51D14867.9000203%40rabbitmq.com%3E"
+       TITLE="[rabbitmq-discuss] Active-Active implementation issues">simon at rabbitmq.com
+       </A><BR>
+    <I>Mon Jul  1 10:14:15 BST 2013</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="028193.html">[rabbitmq-discuss] Active-Active implementation issues
+</A></li>
+        <LI>Next message: <A HREF="028194.html">[rabbitmq-discuss] HiPE compilation error with rabbitmq 3.1.3 and erlang R16B01: Cannot find ssl_record.beam file.
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#28195">[ date ]</a>
+              <a href="thread.html#28195">[ thread ]</a>
+              <a href="subject.html#28195">[ subject ]</a>
+              <a href="author.html#28195">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi. Couple of points:
+
+1) It's not *guaranteed* that after you acknowledge a message you will 
+never see it again after failover - the ack has to travel across the 
+network and be received by the broker, and if failover happens between 
+the broker sending the message out and receiving an ack then you will 
+see the message again.
+
+2) If this is not happening, make sure you are acknowledging the 
+messages correctly - make sure they vanish from the console when 
+failover is not an issue.
+
+Cheers, Simon
+
+On 01/07/2013 09:33, Gomathi Nayagam wrote:
+&gt;<i> I am trying to implement the active-active High availability Queue and i
+</I>&gt;<i> have some issues in the implementation. The problem is when we consume
+</I>&gt;<i> messages from the Mirrored queue if any one of the node is down, we can
+</I>&gt;<i> able to consume the messages after the node failure. But the consumed
+</I>&gt;<i> messages after the node failure are still available in the rabbitmq
+</I>&gt;<i> console even after acking all of the messages.
+</I>&gt;<i>
+</I>&gt;<i> Some information about the overview of the configuration to test
+</I>&gt;<i> active-active queues
+</I>&gt;<i>
+</I>&gt;<i> I have NODE1 in Host1 and NODE2 in Host2. Both of the nodes are in
+</I>&gt;<i> cluster. I have a Queue named TestQ in NODE1, since i have made this
+</I>&gt;<i> queue (TestQ) as Mirrored Queue through the policies it is available in
+</I>&gt;<i> Node2 which is running in Host2.
+</I>&gt;<i>
+</I>&gt;<i> I am passing the array of Address(Host1, Host2) to get the connection in
+</I>&gt;<i> my consumer. the code snippet is
+</I>&gt;<i>
+</I>&gt;<i> Address address1 = new Address(Host1, 5672);
+</I>&gt;<i> Address address2 = new Address(Host2, 5672);
+</I>&gt;<i>
+</I>&gt;<i> RabbitmqConsumer consumer = new RabbitmqConsumer(new Address[]{address1,
+</I>&gt;<i> address2}, queue);
+</I>&gt;<i>
+</I>&gt;<i> While getting the connection,
+</I>&gt;<i> Connection conn = connectionFactory.newConnection(addresses);
+</I>&gt;<i>
+</I>&gt;<i> My use case is as below.
+</I>&gt;<i>
+</I>&gt;<i> I have 30 messages in TestQ and i can see it in the RabbitMQ console of
+</I>&gt;<i> Host1,Host2 looks like below
+</I>&gt;<i>
+</I>&gt;<i> Host1:
+</I>&gt;<i> Name    Node
+</I>&gt;<i> TestQ    <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at Node2</A>
+</I>&gt;<i>
+</I>&gt;<i> Host2:
+</I>&gt;<i> Name    Node
+</I>&gt;<i> TestQ    <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at Node2</A>
+</I>&gt;<i>
+</I>&gt;<i> In my consumer, I have implemented my own consumer as below.
+</I>&gt;<i>
+</I>&gt;<i> class MyConsumer extends QueueingConsumer{
+</I>&gt;<i>
+</I>&gt;<i>      Channel channel;
+</I>&gt;<i>      public MyConsumer(Channel ch) {
+</I>&gt;<i>          super(ch);
+</I>&gt;<i>          this.channel = ch;
+</I>&gt;<i>      }
+</I>&gt;<i>
+</I>&gt;<i>      @Override
+</I>&gt;<i>      public void handleCancel(String consumerTag)  {
+</I>&gt;<i>          System.out.println(&quot;handleCancel :: consumertag &quot;+consumerTag+&quot;
+</I>&gt;<i> channel opened &quot;+channel.isOpen()+&quot;,channel &quot;+channel+&quot;, rabbitmq
+</I>&gt;<i> consumer ch &quot;+RabbitmqConsumer.ch);
+</I>&gt;<i>
+</I>&gt;<i>      }
+</I>&gt;<i> }
+</I>&gt;<i>
+</I>&gt;<i> If i run my consumer, it creates a channel with the reference of
+</I>&gt;<i> AMQChannel(<A HREF="amqp://guest@Host1:5672/,1">amqp://guest@Host1:5672/,1</A>) and it consumes the messasges
+</I>&gt;<i> from the TestQ. I have checked the consumer tag of the channel in both
+</I>&gt;<i> of the host and both are same.
+</I>&gt;<i>
+</I>&gt;<i> After some of the messages (assume 10 messages) are consumed, i
+</I>&gt;<i> explicitly down the Node2 by giving the below command
+</I>&gt;<i>
+</I>&gt;<i> node2$ ./rabbitmqctl stop_app
+</I>&gt;<i>
+</I>&gt;<i> After the failure of Node2, i can see the print statements which i added
+</I>&gt;<i> in the handleCancel() method and consumer consumes all of the messages
+</I>&gt;<i> with out any error. The problem is the even though the remaining 20
+</I>&gt;<i> messages are consumed and acked in the consumer, but if i check it in
+</I>&gt;<i> the rabbitmq console, the 20 messages are still exists in the TestQ.
+</I>&gt;<i>
+</I>&gt;<i> What i have to do in this scenario to overcome this issue.
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>&gt;<i>
+</I>
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="028193.html">[rabbitmq-discuss] Active-Active implementation issues
+</A></li>
+	<LI>Next message: <A HREF="028194.html">[rabbitmq-discuss] HiPE compilation error with rabbitmq 3.1.3 and erlang R16B01: Cannot find ssl_record.beam file.
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#28195">[ date ]</a>
+              <a href="thread.html#28195">[ thread ]</a>
+              <a href="subject.html#28195">[ subject ]</a>
+              <a href="author.html#28195">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

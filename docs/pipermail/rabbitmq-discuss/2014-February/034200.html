@@ -1,0 +1,173 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Unexaplainable behaviour with shovel plugin.
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Unexaplainable%20behaviour%20with%20shovel%20plugin.&In-Reply-To=%3CCAK%2BmrqoXbz%3DLwOGB7URXDH%2B0GseewDy%3DzNaRFz094yrg8yEe7w%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="034199.html">
+   <LINK REL="Next"  HREF="034201.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Unexaplainable behaviour with shovel plugin.</H1>
+    <B>Claire Fautsch</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Unexaplainable%20behaviour%20with%20shovel%20plugin.&In-Reply-To=%3CCAK%2BmrqoXbz%3DLwOGB7URXDH%2B0GseewDy%3DzNaRFz094yrg8yEe7w%40mail.gmail.com%3E"
+       TITLE="[rabbitmq-discuss] Unexaplainable behaviour with shovel plugin.">cfautsch at goodgamestudios.com
+       </A><BR>
+    <I>Thu Feb 27 12:11:13 GMT 2014</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="034199.html">[rabbitmq-discuss] Unexaplainable behaviour with shovel plugin.
+</A></li>
+        <LI>Next message: <A HREF="034201.html">[rabbitmq-discuss] Unexaplainable behaviour with shovel plugin.
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#34200">[ date ]</a>
+              <a href="thread.html#34200">[ thread ]</a>
+              <a href="subject.html#34200">[ subject ]</a>
+              <a href="author.html#34200">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi Simon
+
+thanks for your feedback. This is also what we finally thought. I actually
+made a small mistake in my comment above, delivery rate on source !=
+publish rate on destination, and confirm and ack rate are equal (so the
+other way round).
+
+So we are currently thinking of setting the prefetch_count.
+
+Probably this will not really solve the situation, as we will see then the
+messages waiting as &quot;Ready&quot; instead of as &quot;Unacknowledged&quot;, but on the
+other hand, maybe it avoids the shovel connections to the destination
+brokers to get in a &quot;flow&quot; or even &quot;blocked&quot; state, where the publishs are
+limited. (any opinion on this?)
+
+Thanks,
+Claire
+
+
+2014-02-27 13:03 GMT+01:00 Simon MacMullen &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">simon at rabbitmq.com</A>&gt;:
+
+&gt;<i> On 26/02/14 08:57, Claire Fautsch wrote:
+</I>&gt;<i>
+</I>&gt;&gt;<i> Hello,
+</I>&gt;&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> Hi!
+</I>&gt;<i>
+</I>&gt;<i>  This leads to the fact, that we have on the destination servers a total
+</I>&gt;&gt;<i> of two hanful of messages that are not yet confirmed, however on the
+</I>&gt;&gt;<i> source servers we have millions of messages that are waiting for
+</I>&gt;&gt;<i> confirmation (acknowledgement)
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> We would expect with some threshold that
+</I>&gt;&gt;<i> delivery rate on source = publish rate on destination (which is the case)
+</I>&gt;&gt;<i> confirm rate on destination = acknowledge rate on source (which shows
+</I>&gt;&gt;<i> considerable difference)
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Does anyone have an idea or suggestion what could be the reason for
+</I>&gt;&gt;<i> this? Is it a bad idea to have load balancer as destination in the
+</I>&gt;&gt;<i> shovel, or should that work fine? Network issue?
+</I>&gt;&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> I doubt the load balancer is the problem. I think I have a reasonable idea
+</I>&gt;<i> where the problem lies.
+</I>&gt;<i>
+</I>&gt;<i> The issue is that the shovel does not enforce any form of flow control
+</I>&gt;<i> other than (optionally) using prefetch limiting, which you are not using.
+</I>&gt;<i>
+</I>&gt;<i> So your source servers are delivering messages into the shovel as fast as
+</I>&gt;<i> they can, and your destination servers are accepting messages as fast as
+</I>&gt;<i> *they* can, but they are ending up being a bit slower. Nothing is creating
+</I>&gt;<i> any back pressure on the source servers, and so messages are queuing up
+</I>&gt;<i> inside the shovel. Since you are using on_confirm ack mode, these show as
+</I>&gt;<i> unacknowledged messages on the source.
+</I>&gt;<i>
+</I>&gt;<i>  Here some more details on our shovel setup:
+</I>&gt;&gt;<i> ack_mode=on_confirm
+</I>&gt;&gt;<i> prefetch_count=0 (default)
+</I>&gt;&gt;<i> reconnect_delay=5
+</I>&gt;&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> I suspect that if you set prefetch_count to some high-but-not-insane
+</I>&gt;<i> number (exactly how high depends on your message size + rate but I might
+</I>&gt;<i> start the bidding at 1,000) this might solve your problem.
+</I>&gt;<i>
+</I>&gt;<i> Of course, if your destination servers are actually slower than your
+</I>&gt;<i> source ones, then you might need to do something about that. But turning on
+</I>&gt;<i> prefetch limiting would make the system better-behaved and make it clearer
+</I>&gt;<i> where your issues are.
+</I>&gt;<i>
+</I>&gt;<i> There might be another issue though - on all released versions of RabbitMQ
+</I>&gt;<i> turning on prefetch limiting reduces performance somewhat. This will get
+</I>&gt;<i> fixed in the next release.
+</I>&gt;<i>
+</I>&gt;<i> Cheers, Simon
+</I>&gt;<i>
+</I>&gt;<i> --
+</I>&gt;<i> Simon MacMullen
+</I>&gt;<i> RabbitMQ, Pivotal
+</I>&gt;<i>
+</I>
+
+
+-- 
+
+
+*Claire Fautsch*
+Server Developer
+<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">cfautsch at goodgamestudios.com</A>
+
+Goodgame Studios
+Theodorstr. 42-90, House 9
+22761 Hamburg, Germany
+Phone: +49 (0)40 219 880 -0
+
+*www.goodgamestudios.com &lt;<A HREF="http://www.goodgamestudios.com">http://www.goodgamestudios.com</A>&gt;*
+
+
+Goodgame Studios is a branch of Altigi GmbH
+Altigi GmbH, District court Hamburg, HRB 99869
+Board of directors: Dr. Kai Wawrzinek, Dr. Christian Wawrzinek, Fabian
+Ritter
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20140227/c18c1295/attachment.html">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20140227/c18c1295/attachment.html</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="034199.html">[rabbitmq-discuss] Unexaplainable behaviour with shovel plugin.
+</A></li>
+	<LI>Next message: <A HREF="034201.html">[rabbitmq-discuss] Unexaplainable behaviour with shovel plugin.
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#34200">[ date ]</a>
+              <a href="thread.html#34200">[ thread ]</a>
+              <a href="subject.html#34200">[ subject ]</a>
+              <a href="author.html#34200">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

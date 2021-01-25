@@ -1,0 +1,182 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] separating wheat from chaff inside the stats from rabbitmq_management
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20separating%20wheat%20from%20chaff%20inside%20the%20stats%0A%20from%20rabbitmq_management&In-Reply-To=%3C5162935A.7060405%40rabbitmq.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="026387.html">
+   <LINK REL="Next"  HREF="026388.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] separating wheat from chaff inside the stats from rabbitmq_management</H1>
+    <B>Simon MacMullen</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20separating%20wheat%20from%20chaff%20inside%20the%20stats%0A%20from%20rabbitmq_management&In-Reply-To=%3C5162935A.7060405%40rabbitmq.com%3E"
+       TITLE="[rabbitmq-discuss] separating wheat from chaff inside the stats from rabbitmq_management">simon at rabbitmq.com
+       </A><BR>
+    <I>Mon Apr  8 10:52:26 BST 2013</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="026387.html">[rabbitmq-discuss] separating wheat from chaff inside the stats from rabbitmq_management
+</A></li>
+        <LI>Next message: <A HREF="026388.html">[rabbitmq-discuss] RabbitMQ unable to talk to remote server
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#26398">[ date ]</a>
+              <a href="thread.html#26398">[ thread ]</a>
+              <a href="subject.html#26398">[ subject ]</a>
+              <a href="author.html#26398">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>On 05/04/13 16:27, ed anderson wrote:
+&gt;<i> I'm using rabbitmq version 2.8.7, and i'm curious about what some of the
+</I>&gt;<i> stats that come out of the management plugin mean..
+</I>
+Hi!
+
+&gt;<i> These are the things that I don't grok ( please direct me to the decoder
+</I>&gt;<i> ring if it exists, I'm happy to read about this topic, but I haven't
+</I>&gt;<i> found much via google-search ):
+</I>&gt;<i> FWIW, I'm interested in monitoring operational readiness, and throughput.
+</I>&gt;<i>
+</I>&gt;<i> inside /api/nodes ..
+</I>&gt;<i>   *  Is it good/bad/neither that mem_atom_used is 99% of mem_atom? Does
+</I>&gt;<i> this tell me anything about performance or availability?
+</I>
+In 2.x most of these mem_ things are taken straight from the figures 
+reported by the underlying Erlang VM, without much regard for usefulness 
+- see <A HREF="http://www.erlang.org/doc/man/erlang.html#memory-0.">http://www.erlang.org/doc/man/erlang.html#memory-0.</A>
+
+In 3.0 this was rewritten to give a (somewhat) more RabbitMQ-centric and 
+thus hopefully useful view of things.
+
+&gt;<i>          &quot;mem_atom&quot;: 1547217,
+</I>&gt;<i>          &quot;mem_atom_used&quot;: 1536812,
+</I>
+&gt;<i>   * mem_alarm ( not listed ) , is clearly valuable for availability
+</I>&gt;<i> monitoring, but how is it triggered?
+</I>
+See memory based flow control at <A HREF="http://www.rabbitmq.com/memory.html">http://www.rabbitmq.com/memory.html</A>
+
+&gt;<i>          &quot;mem_binary&quot;: 6349904,
+</I>&gt;<i>          &quot;mem_code&quot;: 17345156,
+</I>&gt;<i>          &quot;mem_ets&quot;: 1961472,
+</I>&gt;<i>          &quot;mem_limit&quot;: 787570688,
+</I>&gt;<i>          &quot;mem_proc&quot;: 18586392,
+</I>&gt;<i>          &quot;mem_proc_used&quot;: 18559872,
+</I>&gt;<i>          &quot;mem_used&quot;: 47203120,
+</I>&gt;<i>   * mem_atom_used + mem_binary + mem_code + mem_ets + mem_proc is
+</I>&gt;<i> _almost_ equal to mem_used, but not quite. It doesn't appear to be off
+</I>&gt;<i> by any reported counter.   Do I even care about that?  What matters from
+</I>&gt;<i> these counters?
+</I>&gt;<i>   * is mem_used / mem_limit  enough to keep track of my memory-related
+</I>&gt;<i> utilization and health?
+</I>
+Pretty much so. We occasionally might want to use the others for 
+debugging, but they're quite obscure.
+
+&gt;<i>   * run_queue ?  What is this a reference to ?
+</I>
+Again, quite obscure. This is an approximate equivalent of load average 
+for Erlang processes inside the VM.
+
+&gt;<i> inside /api/queues/{vhost}
+</I>&gt;<i>   * sometimes message_stats is in the output, and sometimes not.
+</I>
+...depending on whether any channels currently exist that are publishing 
+to / consuming from the queue.
+
+&gt;<i>   * if present, message_stats has two possible formats.
+</I>
+...depending on whether that's been going on long enough to calculate rates.
+
+&gt;<i>     When rate is present, is it messages/sec?
+</I>
+Yes.
+
+&gt;<i>     What does &quot;publish&quot; mean?
+</I>
+That's the raw count of publishes to that queue - but only those from 
+channels which are still open. We'll be fixing that and making it 
+monotonic in 3.1 (as well as adding a history).
+
+&gt;<i>    (1)   &quot;message_stats&quot;: {
+</I>&gt;<i>                &quot;publish&quot;: 20
+</I>&gt;<i>           },
+</I>&gt;<i>    (2)  &quot;message_stats&quot;: {
+</I>&gt;<i>               &quot;publish_details&quot;: {
+</I>&gt;<i>                   &quot;rate&quot;: 2.2547070391502824,
+</I>&gt;<i>                   &quot;interval&quot;: 4435166,
+</I>&gt;<i>                   &quot;last_event&quot;: 1365091799843
+</I>&gt;<i>             },
+</I>&gt;<i>            &quot;publish&quot;: 40
+</I>&gt;<i>   * inside the backing_queue_status block, does the difference between
+</I>&gt;<i> q1 .. q4 matter ( from an operational point of view )
+</I>
+Probably not. Again backing_queue_status is mostly for debugging. q1 - 
+q4 and delta are the internal queues that make up the AMQP queue, 
+representing different levels of paged-outness.
+
+&gt;<i>   * messages vs messages_ready vs messages_unacknowledged - what's with
+</I>&gt;<i> that?  Also, could their respective _details have changed as in the
+</I>&gt;<i> example above for message.
+</I>
+messages_ready - messages which could be consumed. 
+messages_unacknowledged - messages which have already been consumed and 
+are held waiting for the client to acknowledge. messages - the total of 
+the two.
+
+And yes, the code that adds _details is generic.
+
+&gt;<i>   * why doesn't message_stats have a correlating &quot;message&quot; key?
+</I>
+What would that key represent?
+
+Cheers, Simon
+
+-- 
+Simon MacMullen
+RabbitMQ, VMware
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="026387.html">[rabbitmq-discuss] separating wheat from chaff inside the stats from rabbitmq_management
+</A></li>
+	<LI>Next message: <A HREF="026388.html">[rabbitmq-discuss] RabbitMQ unable to talk to remote server
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#26398">[ date ]</a>
+              <a href="thread.html#26398">[ thread ]</a>
+              <a href="subject.html#26398">[ subject ]</a>
+              <a href="author.html#26398">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

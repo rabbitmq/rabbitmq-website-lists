@@ -1,0 +1,85 @@
+import java.io.IOException;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
+
+import com.rabbitmq.client.Channel;
+import com.rabbitmq.client.Connection;
+import com.rabbitmq.client.ConnectionFactory;
+import com.rabbitmq.client.GetResponse;
+
+public class RabbitMqTest {
+
+    private static final ScheduledExecutorService service = Executors.newScheduledThreadPool(50);
+    private static final String queueName = "queueName";
+    private static final String exchangeName = "exchangeName";
+    private static final String routingKey = "routingKey";
+    
+    public static void main(String [] args) throws Exception {
+        Connection connection = new ConnectionFactory().newConnection("localhost", 5672);
+        
+        AtomicLong received = new AtomicLong(0);
+        
+        setupConsumer(connection, received);
+        
+        Channel channel = connection.createChannel();
+        for (int i=0; i < 100; i++) {
+            channel.basicPublish(exchangeName, routingKey, null, "hello world".getBytes());
+        }
+        
+        System.out.println("Sleeping for 45 seconds...");
+        Thread.sleep(45000);
+        
+        System.out.println("Received: "+received.get());
+        
+        service.shutdown();
+        service.awaitTermination(5, TimeUnit.SECONDS);
+        
+        connection.close();
+    }
+    
+    private static void setupConsumer(Connection connection, AtomicLong counter) throws IOException {
+        Channel channel = connection.createChannel();
+        channel.exchangeDeclare(exchangeName, "direct");
+        channel.queueDeclare(queueName);
+        channel.queueBind(queueName, exchangeName, routingKey);
+        service.scheduleWithFixedDelay(new TestConsumer(queueName, channel, counter), 5, 3, TimeUnit.SECONDS);
+    }
+    
+    private static class TestConsumer implements Runnable {
+        
+        private final String queueName;
+        private final Channel channel;
+        private final AtomicLong counter;
+        
+        public TestConsumer(String queueName, Channel channel, AtomicLong counter) {
+            this.queueName = queueName;
+            this.channel = channel;
+            this.counter = counter;
+        }
+
+        @Override
+        public void run() {
+            int messageCount = 30;
+            int sent = 0;
+            try {
+                GetResponse response = channel.basicGet(queueName, false);
+                if (response == null) {
+                    System.out.println("Response is null");
+                }
+                while (response != null && sent < messageCount) {
+                    sent++;
+                    counter.incrementAndGet();
+                    channel.basicAck(response.getEnvelope().getDeliveryTag(), false);
+                    response = channel.basicGet(queueName, false);
+                }
+                System.out.println("Processed "+sent+" messages");
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+        }
+    }
+
+}
+

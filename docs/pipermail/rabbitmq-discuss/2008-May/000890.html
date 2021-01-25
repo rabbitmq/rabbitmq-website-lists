@@ -1,0 +1,153 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Durable queues for STOMP broker
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20Durable%20queues%20for%20STOMP%20broker&In-Reply-To=">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000889.html">
+   
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Durable queues for STOMP broker</H1>
+    <B>Sean Treadway</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20Durable%20queues%20for%20STOMP%20broker&In-Reply-To="
+       TITLE="[rabbitmq-discuss] Durable queues for STOMP broker">sean at soundcloud.com
+       </A><BR>
+    <I>Wed May 28 13:55:32 BST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000889.html">[rabbitmq-discuss] OT: TLS Support in the AS3 AMQP Client
+</A></li>
+        
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#890">[ date ]</a>
+              <a href="thread.html#890">[ thread ]</a>
+              <a href="subject.html#890">[ subject ]</a>
+              <a href="author.html#890">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi all,
+
+I was pleased to find a STOMP broker to rabbitmq is under works,  
+however the default queue creation parameters didn't meet my initial  
+assumptions for using the broker as a reliable task dispatcher.   
+Digging through the code, I found that the queues were always being  
+created as non-durable and auto-deleted - any persistent messages  
+would be discarded when no consumers were subscribed.  For our  
+application, we needed to save these messages and process them at well  
+defined intervals as well as have restart tolerant reliability.
+
+Attached are 2 patches from my findings on how to expose some of the  
+method parameters as STOMP headers.  They include the following changes:
+
+  * utility function to extract boolean header values
+  * expose 'passive', 'durable', 'auto-delete', 'exclusive' parameters  
+of the AMQP 'queue.declare' method as STOMP headers in SUBSCRIBE
+  * persist non AMQP binary content properties
+  * test sender and receiver for durable queues
+
+The simple reproduction case is as follows:
+
+  * Connect a consumer and subscribe with the following headers:
+
+SUBSCRIBE
+destination: /queue/test
+auto-delete: false
+durable: true
+
+  * Disconnect the consumer
+  * Start a producer and send some persistent messages:
+
+SEND
+destination: /queue/test
+delivery-mode: 2
+content-length: 5
+content-type: text/plain
+
+ohai!
+
+* Connect a consumer and subscribe to the queue with any headers
+
+You should receive the persisted message sent to /queue/test.  There  
+are 2 files in priv/tests-ruby that show this behavior a little bit  
+better.  Comments are in persistent-sender.rb.
+
+I also found a bug in message persistence over server restarts in  
+rabbitmq-1.3.0.  In the comments for the content record, it states  
+that at most, one of properties and properties_bin can be 'none'.   
+During message persistence, it looked like there was an assumption  
+that all properties came from AMQP binary packed blobs and the parsed  
+headers were always cleared without checking that they could be  
+restored later.  This patch will maintain the existing content/ 
+properties when properties_bin is 'none'.  As well as fixing the stomp  
+broker, this may fix persistence bugs with other erlang brokers that  
+speak directly to rabbit_channel:do/3.
+
+Without the patch, when the durable queues were restored and the  
+persisted messages were resent, the content properties (including the  
+STOMP headers) were lost and no longer matched by  
+rabbit_stomp:send_reply/3 - logging an error and consuming the  
+message.  With the patch, the persisted messages are are properly  
+restored and resent to the first subscriber.
+
+To reproduce this:
+
+Run persistent-receiver.rb once - interrupt.
+Run persistent-sender.rb once
+Stop all running nodes of rabbitmq
+Start rabbitmq
+Run persistent-receiver.rb - you should receive the messages
+
+Big thanks to you all at LShift for building this beautiful code.  My  
+familiarity with AMQP is still fresh so feedback on the applicability  
+of these patches is very welcome.  Points I am unsure about are - the  
+role of the 'passive' parameter to queue.declare, whether or not to  
+expose the 'nowait' parameter, whether or not to try and match  
+ActiveMQ's STOMP header names or stick with the AMQP naming,  
+interoperability of the properties patch for brokers such as HTTP and  
+regression of the properties patch against AMQP messages with binary  
+properties.  Also, the STOMP spec gives no insight for queue deletion  
+when a durable queue is no longer needed.  Any ideas for that one?
+
+Thanks,
+-Sean
+
+-------------- next part --------------
+A non-text attachment was scrubbed...
+Name: rabbitmq-stomp_durable_headers.patch
+Type: application/octet-stream
+Size: 3943 bytes
+Desc: not available
+Url : <A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20080528/86c0b7ce/attachment.obj">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20080528/86c0b7ce/attachment.obj</A> 
+-------------- next part --------------
+A non-text attachment was scrubbed...
+Name: rabbitmq-1.3.0_persistent_headers.patch
+Type: application/octet-stream
+Size: 1630 bytes
+Desc: not available
+Url : <A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20080528/86c0b7ce/attachment-0001.obj">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20080528/86c0b7ce/attachment-0001.obj</A> 
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000889.html">[rabbitmq-discuss] OT: TLS Support in the AS3 AMQP Client
+</A></li>
+	
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#890">[ date ]</a>
+              <a href="thread.html#890">[ thread ]</a>
+              <a href="subject.html#890">[ subject ]</a>
+              <a href="author.html#890">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

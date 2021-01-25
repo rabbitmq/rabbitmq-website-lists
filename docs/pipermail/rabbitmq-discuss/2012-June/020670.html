@@ -1,0 +1,614 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Pika for Asynchronous Consuming and Publishing	using multiple queues
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Pika%20for%20Asynchronous%20Consuming%20and%20Publishing%0A%09using%20multiple%20queues&In-Reply-To=%3CCABPX_bcAQV99BhkUPp7Dc9eqwxAVrFEvd9DXq73U3yiBSjNU1g%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="020712.html">
+   <LINK REL="Next"  HREF="020711.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Pika for Asynchronous Consuming and Publishing	using multiple queues</H1>
+    <B>Charles Law</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Pika%20for%20Asynchronous%20Consuming%20and%20Publishing%0A%09using%20multiple%20queues&In-Reply-To=%3CCABPX_bcAQV99BhkUPp7Dc9eqwxAVrFEvd9DXq73U3yiBSjNU1g%40mail.gmail.com%3E"
+       TITLE="[rabbitmq-discuss] Pika for Asynchronous Consuming and Publishing	using multiple queues">charles.law at openx.com
+       </A><BR>
+    <I>Mon Jun 18 18:26:44 BST 2012</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="020712.html">[rabbitmq-discuss] RabbitMQ crash: where do i check for errors?
+</A></li>
+        <LI>Next message: <A HREF="020711.html">[rabbitmq-discuss] Pika for Asynchronous Consuming and	Publishing using multiple queues
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#20670">[ date ]</a>
+              <a href="thread.html#20670">[ thread ]</a>
+              <a href="subject.html#20670">[ subject ]</a>
+              <a href="author.html#20670">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>I am writing a consumer (and producer) using Pika.  I want to write
+asynchronous code, but I'm having trouble getting everything working.  I
+started with regular I pulled off the Pika docs, then made it work with
+multiple queues.  To get it working with multiple queues I had to add some
+checks that make sure all the queues are declared and bound before trying
+to publish any messages.  That worked very well.
+
+
+Our code also performs some time consuming logic, and we want our consumer
+to publish to another queue that will go to some logger.  I tried to add
+this on the same channel that was consuming code, but that did not work.  I
+wasn't sure if I needed a separate channel, so I tried using 2 channels on
+the same connections - 1 channel to consume, and 1 channel to produce, but
+that is not working.  I notice when the code is trying to publish the 2nd
+log message that everything seems to stop.  Can anyone give me any insight
+into what's going on?
+
+
+Attached are sections of my code:
+
+
+This code is setup so a lot of the multiple queue setup is handled without
+duplicating any code:
+
+from pika import spec
+
+
+
+EXCHANGE = 'customers'
+
+EXCHANGEACK = 'logs' #keep this seperate for now
+
+
+
+class ChannelContainer(object):
+
+    def __init__(self, channel, exchange, append, queue_list, callback):
+
+        self.channel = channel
+
+        self.exchange = exchange
+
+        self.append_str = append
+
+        self.queue_list = queue_list
+
+        self.goodQueues = 0
+
+        self.channelReady = False
+
+        self.try_to_continue = callback
+
+
+
+
+
+    def exchange_declare(self):
+
+        self.channel.exchange_declare(exchange=self.exchange,
+
+                                          type='direct', \
+
+                                          callback=self.on_exchange_declare)
+
+
+
+    # Step #4
+
+    def on_exchange_declare(self, frame):
+
+        &quot;&quot;&quot;
+
+        Called when our exchange has been created
+
+        &quot;&quot;&quot;
+
+        for queue_name in self.queue_list:
+
+            full_queue_name = queue_name + self.append_str
+
+
+
+            self.channel.queue_declare(queue=full_queue_name, durable=True,
+\
+
+                                       exclusive=False, auto_delete=False, \
+
+                                       callback=self.on_queue_declared)
+
+
+
+
+
+    # Step #5
+
+    def on_queue_declared(self, frame):
+
+        &quot;&quot;&quot;
+
+        Bind the queues to the channel
+
+        &quot;&quot;&quot;
+
+        if type(frame.method) == spec.Queue.DeclareOk:
+
+            # Get the queue name
+
+            queue_name = frame.method.queue
+
+
+
+            print self.append_str, &quot;binding&quot;, queue_name
+
+
+
+            self.channel.queue_bind(exchange=self.exchange,
+
+                                    queue=queue_name,
+
+                                    routing_key=queue_name,
+
+                                    callback=self.on_queue_bound)
+
+
+
+    # Step #6
+
+    def on_queue_bound(self, frame):
+
+        &quot;&quot;&quot;
+
+        Called when RabbitMQ has told us our Queue has been declared,
+
+            frame is the response from RabbitMQ
+
+        &quot;&quot;&quot;
+
+        print &quot;bound queue&quot;
+
+        self.goodQueues += 1
+
+
+
+        if self.goodQueues == len(self.queue_list):
+
+            self.channelReady = True
+
+
+
+            #tell owner to try to continue
+
+            self.try_to_continue()
+
+
+
+class TxChannel(ChannelContainer):
+
+
+    def __init__(self, channel, exchange, append, queue_list, callback):
+
+        ChannelContainer.__init__(self, channel, exchange, append,
+queue_list, callback)
+
+
+
+
+
+    def acknowledge(self, queue_name, body):
+
+        &quot;&quot;&quot;
+
+        Send the action and object to the acknowledgement queue.
+
+        &quot;&quot;&quot;
+
+        full_queue_name = '%s--ack' % queue_name
+
+        print &quot;sending ack&quot;, full_queue_name
+
+
+
+        self.channel.basic_publish(exchange=self.exchange,
+
+                                   routing_key=full_queue_name,
+
+                                   body=body)
+
+
+
+
+
+class RxChannel(ChannelContainer):
+
+
+    def __init__(self, channel, exchange, append, queue_list, callback):
+
+        ChannelContainer.__init__(self, channel, exchange, append,
+queue_list, callback)
+
+
+
+    # Step #6
+
+    def consume(self, callback):
+
+        &quot;&quot;&quot;
+
+        Called when RabbitMQ has told us our Queue has been declared,
+
+            frame is the response from RabbitMQ
+
+        &quot;&quot;&quot;
+
+
+        #consume on all queues now
+
+        for queue_name in self.queue_list:
+
+            self.channel.basic_consume(callback, queue=queue_name)
+
+
+
+
+
+
+Here is the consumer code.  I tried to take out everything irrelevant:
+
+import pika
+
+from pika.adapters import SelectConnection
+
+
+from ChannelContainer import RxChannel, TxChannel
+
+
+
+EXCHANGE = 'customers'
+
+EXCHANGEACK = 'logs' #keep this seperate for now
+
+
+
+
+class RabbitConsumer(object):
+
+
+
+    def __init__(self):
+
+        #initialize some variables
+
+        self.queue_list = []
+
+        self.goodQueues = 0
+
+        self.channel_rx = None
+
+        self.channel_tx = None
+
+        self.connection = None
+
+
+
+        self.parse_config()
+
+
+
+        #get the queue_list
+
+        self.gather_queue_names()
+
+
+
+
+
+
+
+    &quot;&quot;&quot;
+
+    Functions to parse data and load config
+
+    &quot;&quot;&quot;
+
+
+    def parse_config(self):
+
+        &quot;&quot;&quot;
+
+        Parse the variables in the config file into the instance.
+
+        &quot;&quot;&quot;
+
+        self.rabbitmq_host = 'localhost'
+
+
+
+
+
+    def gather_queue_names(self):
+
+        &quot;&quot;&quot;
+
+        Gather the names of the queues.
+
+        &quot;&quot;&quot;
+
+        #These are just for testing
+
+        self.queue_list = ['1a', '2b', '3c-4d-5e-6f-7g']
+
+
+
+
+
+
+
+
+
+
+    &quot;&quot;&quot;
+
+    Functions to connect to RabbitMQ
+
+    &quot;&quot;&quot;
+
+    # Step #2
+
+    def on_connected(self, connection):
+
+        &quot;&quot;&quot;
+
+        Called when we are fully connected to RabbitMQ
+
+        &quot;&quot;&quot;
+
+        # Open a channel for tx and rx
+
+        self.connection.channel(self.on_channel_open)
+
+        self.connection.channel(self.on_channel_open)
+
+
+
+
+
+    # Step #3
+
+    def on_channel_open(self, new_channel):
+
+        &quot;&quot;&quot;
+
+        Called when our channel has opened
+
+        &quot;&quot;&quot;
+
+        if self.channel_rx is None:
+
+            #rx channel
+
+            self.channel_rx = RxChannel(new_channel, EXCHANGE,
+
+                                     '', self.queue_list, self
+.start_listening)
+
+            self.channel_rx.exchange_declare()
+
+        else:
+
+            self.channel_tx = TxChannel(new_channel, EXCHANGEACK,
+
+                                     '--ack', self.queue_list, self
+.start_listening)
+
+            self.channel_tx.exchange_declare()
+
+
+
+
+
+    # Step #7
+
+    def start_listening(self):
+
+        &quot;&quot;&quot;
+
+        Called when all queues for a channel are declared
+
+        &quot;&quot;&quot;
+
+        print &quot;test_allset&quot;
+
+
+
+        if self.channel_rx.channelReady and self.channel_tx.channelReady:
+
+            #both channels are ready, try to continue
+
+            self.channel_rx.consume(self.handle_consume)
+
+
+
+
+
+    def handle_consume(self, channel, method, properties, body):
+
+        print &quot;received message&quot;
+
+        queue_name = method.routing_key
+
+
+
+        # Insert some long and complicated code goes here
+
+        result = 'I finished!'
+
+
+
+        #have the tx channel send an ack
+
+        self.channel_tx.acknowledge(queue_name, result)
+
+
+
+    # Step #1
+
+    def start_consumer(self):
+
+        # Step #1: Connect to RabbitMQ
+
+        self.connection = SelectConnection(pika.ConnectionParameters(\
+
+                host=self.rabbitmq_host), self.on_connected)
+
+
+
+        try:
+
+            # Loop so we can communicate with RabbitMQ
+
+            self.connection.ioloop.start()
+
+        except KeyboardInterrupt:
+
+            # Gracefully close the connection
+
+            self.connection.close()
+
+            # Loop until we're fully closed, will stop on its own
+
+            self.connection.ioloop.start()
+
+
+
+
+if __name__ == '__main__':
+
+    consumer = RabbitConsumer()
+
+    consumer.start_consumer()
+
+Thanks!
+
+-- 
+Charles Law
+Watch how we make online advertising simple: <A HREF="http://bit.ly/Ent_vid">http://bit.ly/Ent_vid</A>
+www.openx.com &lt;<A HREF="http://www.openx.org/">http://www.openx.org/</A>&gt;   |   follow us on:
+Twitter&lt;<A HREF="http://twitter.com/openx">http://twitter.com/openx</A>&gt;
+   Facebook &lt;<A HREF="http://www.facebook.com/OpenX">http://www.facebook.com/OpenX</A>&gt;
+LinkedIn&lt;<A HREF="http://www.linkedin.com/company/openx/products">http://www.linkedin.com/company/openx/products</A>&gt;
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20120618/8848d6cb/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20120618/8848d6cb/attachment.htm</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="020712.html">[rabbitmq-discuss] RabbitMQ crash: where do i check for errors?
+</A></li>
+	<LI>Next message: <A HREF="020711.html">[rabbitmq-discuss] Pika for Asynchronous Consuming and	Publishing using multiple queues
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#20670">[ date ]</a>
+              <a href="thread.html#20670">[ thread ]</a>
+              <a href="subject.html#20670">[ subject ]</a>
+              <a href="author.html#20670">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

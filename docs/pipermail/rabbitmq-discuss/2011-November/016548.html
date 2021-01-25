@@ -1,0 +1,287 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Federation help
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Federation%20help&In-Reply-To=%3C4ED12F78.2090501%402600hz.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="016542.html">
+   <LINK REL="Next"  HREF="016557.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Federation help</H1>
+    <B>James Aimonetti</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Federation%20help&In-Reply-To=%3C4ED12F78.2090501%402600hz.com%3E"
+       TITLE="[rabbitmq-discuss] Federation help">james at 2600hz.com
+       </A><BR>
+    <I>Sat Nov 26 18:27:04 GMT 2011</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="016542.html">[rabbitmq-discuss] Presence exchange updated
+</A></li>
+        <LI>Next message: <A HREF="016557.html">[rabbitmq-discuss] Federation help
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#16548">[ date ]</a>
+              <a href="thread.html#16548">[ thread ]</a>
+              <a href="subject.html#16548">[ subject ]</a>
+              <a href="author.html#16548">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>-----BEGIN PGP SIGNED MESSAGE-----
+Hash: SHA1
+
+Hey all,
+
+Wanting to add federation to existing brokers but not sure I'm
+understanding the semantics involved.
+
+Let's say I have three exchanges, {events, topic}, {control, direct},
+and {config, topic}, all three of which are on both brokers (in
+different datacenters).
+
+My current rabbit.config looks like:
+
+[{rabbitmq_federation
+  ,[{exchanges, [
+		 [{exchange, &quot;config&quot;}
+		  ,{type, &quot;topic&quot;}
+		  ,{upstream_set, &quot;config_exchanges&quot;}
+		 ]
+		 ,[{exchange, &quot;control&quot;}
+		  ,{type, &quot;direct&quot;}
+		  ,{upstream_set, &quot;control_exchanges&quot;}
+		 ]
+		 ,[{exchange, &quot;events&quot;}
+		  ,{type, &quot;topic&quot;}
+		  ,{upstream_set, &quot;events_exchanges&quot;}
+		 ]
+                ]
+         ,{upstream_sets, [{&quot;control_exchanges&quot;, [[{connection,
+&quot;broker2&quot;}]]}
+                          ,{&quot;events_exchanges&quot;, [[{connection, &quot;broker2&quot;}]]}
+		          ,{&quot;config_exchanges&quot;, [[{connection, &quot;broker2&quot;}]]}
+	]}
+    ,{connections, [{&quot;broker2&quot;, [{host, &quot;broker2.example.com&quot;}]}]}
+    ,{local_nodename, &quot;broker1.example.com&quot;}
+  ]}
+ ...more config
+
+
+I have an almost identical config on brokers 1 and 2 (with hostnames
+obviously adapted). Both startup fine (*sidenote: I had to set
+ERL_LIBS=/path/to/rabbit/plugins to get the federation plugin to work -
+the VM couldn't find the amqp_connection module, even after enabling the
+amqp_client plugin). I see both brokers communicating about the
+exchanges - lines similar to:
+
+=INFO REPORT==== 26-Nov-2011::18:04:01 ===
+Federation exchange 'control' in vhost '/' connected to
+broker2.example.com:/:control
+
+I start my application (in a separate VM) connecting to broker1, try to
+declare my exchanges as part of my app's init, and get errors like:
+
+...snip...
+{server_initiated_close,406,
+                      &lt;&lt;&quot;PRECONDITION_FAILED - cannot redeclare exchange
+'control' in vhost '/' with different type, durable, internal or
+autodelete value&quot;&gt;&gt;}},
+              {gen_server,call,
+                  [&lt;0.78.0&gt;,
+                   {call,
+                       {'exchange.declare',1,&lt;&lt;&quot;control&quot;&gt;&gt;,&lt;&lt;&quot;direct&quot;&gt;&gt;,
+                           false,false,false,false,false,[]},
+...snip...
+
+So I explicitly set type, durable, internal, and autodelete to 'false'
+in my federation configs, but to no avail. I should note I have no
+durable exchanges or queues in this system; everything is ephemeral.
+Neither broker is clustered with any others.
+
+I do see errors when I restart a broker similar to:
+
+=ERROR REPORT==== 26-Nov-2011::18:04:00 ===
+connection &lt;0.2064.0&gt;, channel 2 - error:
+{amqp_error,not_found,
+            &quot;no exchange 'federation: control -&gt; broker2.example.com B'
+in vhost '/'&quot;,
+            'exchange.delete'}
+
+My understanding (which may be bass-ackwards) is that by setting up the
+'control' exchange to federate with broker2, broker1 will receive
+payloads from broker2's 'control' exchange and route them to any queues
+bound to broker1's 'control' exchange, and that my application code
+remains relatively unchanged to take advantage of that. The converse
+too: since broker2 is connecting to broker1, any payloads my apps on
+broker1 send to the 'control' exchange will be relayed to broker2.
+
+Thanks for any guidance; sorry for the wall of text.
+
+James
+
+PS: My broker output when starting up:
+
+Activating RabbitMQ plugins ...
+2 plugins activated:
+* amqp_client-2.7.0
+* rabbitmq_federation-2.7.0
+
+
++---+   +---+
+|<i>   |   |   |
+</I>|<i>   |   |   |
+</I>|<i>   |   |   |
+</I>|<i>   +---+   +-------+
+</I>|<i>                   |
+</I>|<i> RabbitMQ  +---+   |
+</I>|<i>           |   |   |
+</I>|<i>   v2.7.0  +---+   |
+</I>|<i>                   |
+</I>+-------------------+
+AMQP 0-9-1 / 0-9 / 0-8
+Copyright (C) 2007-2011 VMware, Inc.
+Licensed under the MPL.  See <A HREF="http://www.rabbitmq.com/">http://www.rabbitmq.com/</A>
+
+node           : <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at broker1.example.com</A>
+app descriptor :
+/var/lib/rabbitmq/rabbitmq_server-2.7.0/sbin/../ebin/rabbit.app
+home dir       : /var/lib/rabbitmq
+config file(s) : /etc/rabbitmq/rabbitmq.config
+cookie hash    : SgcmwZTTAvznNXVC3eUfkQ==
+log            : /var/log/rabbitmq/<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at broker1.example.com.log</A>
+sasl log       : /var/log/rabbitmq/<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at broker1.example.com-sasl.log</A>
+database dir   : /var/lib/rabbitmq/mnesia/<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at broker1.example.com</A>
+erlang version : 5.8.4
+
+- -- rabbit boot start
+starting file handle cache server
+...done
+starting worker pool
+...done
+starting database
+...done
+starting codec correctness check
+...done
+- -- external infrastructure ready
+starting plugin registry
+...done
+starting auth mechanism cr-demo
+...done
+starting auth mechanism amqplain
+...done
+starting auth mechanism plain
+...done
+starting statistics event manager
+...done
+starting logging server
+...done
+starting exchange type direct
+...done
+starting exchange type fanout
+...done
+starting exchange type headers
+...done
+starting exchange type topic
+...done
+- -- kernel ready
+starting alarm handler
+...done
+starting node monitor
+...done
+starting cluster delegate
+...done
+starting guid generator
+...done
+starting memory monitor
+...done
+- -- core initialized
+starting empty DB check
+...done
+starting federation
+...done
+starting federation exchange type
+...done
+starting exchange, queue and binding recovery
+...done
+starting mirror queue slave sup
+...done
+starting adding mirrors to queues
+...done
+- -- message delivery logic ready
+starting error log relay
+...done
+starting networking
+...done
+starting direct_client
+...done
+starting notify cluster nodes
+...done
+
+broker running
+
+
+- -- 
+James Aimonetti
+Distributed Systems Engineer / DJ MC_
+
+2600hz | <A HREF="http://2600hz.com">http://2600hz.com</A>
+sip:<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">james at 2600hz.com</A>
+tel: 415.886.7905
+-----BEGIN PGP SIGNATURE-----
+Version: GnuPG v1.4.10 (GNU/Linux)
+Comment: Using GnuPG with Mozilla - <A HREF="http://enigmail.mozdev.org/">http://enigmail.mozdev.org/</A>
+
+iQEcBAEBAgAGBQJO0S94AAoJENc77s1OYoGg79gIAJwI7bN1cgq2vgz+Wk/rtqUm
+KWxKdMvn6tH4kfPK6LPEw2lviXBesE9KJ7oSv/4GCWKlRRxoQ5DqKyIWyfuJDZ15
+HYpbq8Ne1hdDzmtFCtUR6FhTBg5Oor9atO9EMdCZCQ3IKWLE3rsE71Mek4lvFtYu
+8QMxHHTZ1lDWUJtHpzrpUNG0KLKkpz67gACP4cXsjLDggFZHwc1wZpcFko7odgld
+0LSoPA7qZzqPfwnZ8LabPmD3tCKGelTQolkl8P6YGtMGrbwzFDhav/KFVUYTEGuP
+JOqOmyPi6d4X+/gCtxiRwtde1X4EPaEVQpB4BC7ttmny7rbimLLz6Vjwc4biFGE=
+=OppA
+-----END PGP SIGNATURE-----
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="016542.html">[rabbitmq-discuss] Presence exchange updated
+</A></li>
+	<LI>Next message: <A HREF="016557.html">[rabbitmq-discuss] Federation help
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#16548">[ date ]</a>
+              <a href="thread.html#16548">[ thread ]</a>
+              <a href="subject.html#16548">[ subject ]</a>
+              <a href="author.html#16548">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,229 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Performance of &quot;blocking publisher-confirms&quot; vs. transactions
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Performance%20of%20%22blocking%20publisher-confirms%22%0A%20vs.%20transactions&In-Reply-To=%3CCACLE7ix7c7NakYoaKc1_%2B9zhiGMZXNUo4aDL%3DSevqZQk5TQHgw%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="018211.html">
+   <LINK REL="Next"  HREF="018215.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Performance of &quot;blocking publisher-confirms&quot; vs. transactions</H1>
+    <B>Matt Pietrek</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Performance%20of%20%22blocking%20publisher-confirms%22%0A%20vs.%20transactions&In-Reply-To=%3CCACLE7ix7c7NakYoaKc1_%2B9zhiGMZXNUo4aDL%3DSevqZQk5TQHgw%40mail.gmail.com%3E"
+       TITLE="[rabbitmq-discuss] Performance of &quot;blocking publisher-confirms&quot; vs. transactions">mpietrek at skytap.com
+       </A><BR>
+    <I>Thu Feb 16 21:44:14 GMT 2012</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="018211.html">[rabbitmq-discuss] Performance of &quot;blocking publisher-confirms&quot; vs. transactions
+</A></li>
+        <LI>Next message: <A HREF="018215.html">[rabbitmq-discuss] Performance of &quot;blocking publisher-confirms&quot; vs. transactions
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#18212">[ date ]</a>
+              <a href="thread.html#18212">[ thread ]</a>
+              <a href="subject.html#18212">[ subject ]</a>
+              <a href="author.html#18212">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi Simone,
+
+|<i> Can you describe why you think publisher confirms are not appropriate in
+</I>your scenario?
+
+I think if you read the paragraph that starts with &quot;At the heart of things&quot;
+it describes the scenario in enough detail. In a follow up, Simon MacMullen
+appears to agree that publisher confirms aren't ideal for us.
+
+In short, when we publish a message, we must know that the broker safely
+has it. With transactions, OR a blocking publisher-confirm model, the
+client is assured it has it.
+
+HOWEVER, all the publisher-confirm descriptions/examples I've seen assume
+an async model: Publish a message and some time later you'll be told that
+the message is safely in the broker's hands. However, that window between
+those two events is the crux of the problem in our environment.
+
+Assume we went with the async publisher-confirm model as suggested. What if
+our client dies and is not around to re-send the message? Or what if the
+client dies, and milliseconds later the broker dies? No publisher confirm
+would be forthcoming, and hence, lost messages.
+
+Top level problem for us: Our state machine, which persists every critical
+change of state to a database, will be incorrect. We will have recorded
+&quot;Yup, that message was sent&quot;, when in reality it might not have made it to
+broker, or the broker died before the confirm could be sent.
+
+By not recording that we've sent the message until AFTER a
+transaction/publisher-confirm completes, we can guarantee the integrity of
+our state-machine. However, as we've all seen, transactions impose a limit
+on message throughput. I'm simply trying to understand if there's any
+non-trivial message rate difference expected between using a transaction
+vs. waiting in my publish routine for the confirm.
+
+
+|<i> If you happen to be using the .NET API this is already implemented, the
+</I>WaitForConfirms and WaitForConfirmsOrDie on the IModel interface provide
+this behavior.
+
+Unfortunately, I'm not on a .NET client. I'm using Python/Pika. I'd
+consider going to the c-library (wrapped from Python) if there's some
+non-trivial benefit to using a synchronous publisher-confirm.
+
+Thanks,
+
+Matt
+
+On Thu, Feb 16, 2012 at 1:08 PM, Simone Busoli &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">simone.busoli at gmail.com</A>&gt;wrote:
+
+&gt;<i> Hi Matt, I've gone through the old thread very quickly so forgive me if
+</I>&gt;<i> I'm missing something. Your first sentence leaves me with some doubts:
+</I>&gt;<i>
+</I>&gt;<i> As I've detailed in other posts to this DL (<A HREF="http://bit.ly/zf6sKC">http://bit.ly/zf6sKC</A>), we
+</I>&gt;&gt;<i> have situation where straightforward publisher-confirms aren't appropriate
+</I>&gt;&gt;<i> in our scenario. We need to know the broker has received the message, and
+</I>&gt;&gt;<i> we have to assume our client can die at any moment, so retransmitting
+</I>&gt;&gt;<i> messages is not an option for us.
+</I>&gt;&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> Publisher confirms guarantee that the broker has taken care of the message
+</I>&gt;<i> and it has been either delivered to a queue or to a consumer. This is a
+</I>&gt;<i> strong delivery guarantee, even if the client dies. Coupled with persistent
+</I>&gt;<i> messages and durable exchange/queues, it guarantees at-least-once delivery.
+</I>&gt;<i> Can you describe why you think publisher confirms are not appropriate in
+</I>&gt;<i> your scenario?
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;&gt;<i> What I'd like to know is: Is there any benefit to creating our own
+</I>&gt;&gt;<i> &quot;blocking publisher-confirm publishing&quot;? That is, we'd do the following:
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Publish a single message
+</I>&gt;&gt;<i> Block on an event 'X'
+</I>&gt;&gt;<i> When the publisher confirm comes in, signal 'X'
+</I>&gt;&gt;<i> Return from the publish call
+</I>&gt;&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> If you happen to be using the .NET API this is already implemented, the
+</I>&gt;<i> WaitForConfirms and WaitForConfirmsOrDie on the IModel interface provide
+</I>&gt;<i> this behavior.
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;&gt;<i> In a mirrored queue scenario, is there any advantage to doing this vs.
+</I>&gt;&gt;<i> using straight-up transactions?
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Matt
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> p.s. I realize in the above pseudocode that multiple threads would be
+</I>&gt;&gt;<i> necessary - One to block and the other to listen for the publisher-confirm.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> _______________________________________________
+</I>&gt;&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i>
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20120216/9d241271/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20120216/9d241271/attachment.htm</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="018211.html">[rabbitmq-discuss] Performance of &quot;blocking publisher-confirms&quot; vs. transactions
+</A></li>
+	<LI>Next message: <A HREF="018215.html">[rabbitmq-discuss] Performance of &quot;blocking publisher-confirms&quot; vs. transactions
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#18212">[ date ]</a>
+              <a href="thread.html#18212">[ thread ]</a>
+              <a href="subject.html#18212">[ subject ]</a>
+              <a href="author.html#18212">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

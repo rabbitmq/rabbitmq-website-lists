@@ -1,0 +1,156 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Failed upgrade from 1.8.1 to 2.1.0
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Failed%20upgrade%20from%201.8.1%20to%202.1.0&In-Reply-To=%3C20101008121207.GP28336%40rabbitmq.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="009333.html">
+   <LINK REL="Next"  HREF="009367.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Failed upgrade from 1.8.1 to 2.1.0</H1>
+    <B>Matthew Sackman</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Failed%20upgrade%20from%201.8.1%20to%202.1.0&In-Reply-To=%3C20101008121207.GP28336%40rabbitmq.com%3E"
+       TITLE="[rabbitmq-discuss] Failed upgrade from 1.8.1 to 2.1.0">matthew at rabbitmq.com
+       </A><BR>
+    <I>Fri Oct  8 13:12:07 BST 2010</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="009333.html">[rabbitmq-discuss] Failed upgrade from 1.8.1 to 2.1.0
+</A></li>
+        <LI>Next message: <A HREF="009367.html">[rabbitmq-discuss] Failed upgrade from 1.8.1 to 2.1.0
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#9352">[ date ]</a>
+              <a href="thread.html#9352">[ thread ]</a>
+              <a href="subject.html#9352">[ subject ]</a>
+              <a href="author.html#9352">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi David,
+
+Glad you're well.
+
+On Thu, Oct 07, 2010 at 05:32:36PM -0700, David King wrote:
+&gt;<i> At first (about 15:10 on the graph), almost all of the queues started
+</I>&gt;<i> growing. Consumers would hang, unaided by restarts. But some of the
+</I>&gt;<i> queues (like commenstree_q and register_vote_q) didn't have any
+</I>&gt;<i> trouble at all.
+</I>
+Ok, how much memory is in the box, and what are the average sizes of
+these messages? Are you setting the memory_high_watermark to anything
+non-default (of 0.4)? When rabbit starts, there should be entries in the
+logs saying things like:
+
+=INFO REPORT==== 8-Oct-2010::12:47:52 ===
+Memory limit set to 4816MB.
+
+What does it say in your case?
+
+I suspect that you're maybe hitting the memory high watermark - are
+there any entries in the logs like:
+
+=INFO REPORT==== 7-Oct-2010::17:41:43 ===
+    alarm_handler: {set,{vm_memory_high_watermark,[]}}
+
+?
+
+Also, are you publishing messages transient or persistent (what's the
+delivery_mode when you publish messages)?. And your consumers that
+blocked, are these the ones using basic.get or basic.consume? And are
+they acking messages or using autoack? Are any of the consumers doing
+any publishes too?
+
+&gt;<i> At about 15:50, after about 30 minutes of trying to figure out what
+</I>&gt;<i> was going on I restarted rabbit. This time, some of the queues that
+</I>&gt;<i> were uncomsumable before (like spam_q and corrections_q) were now
+</I>&gt;<i> working, but other queues (like indextank_changes) would still hang on
+</I>&gt;<i> consuming.
+</I>
+Interesting. What actions other than basic.consume (I assume) are these
+consumers doing when they connect? Do they try and redeclare the queue
+or create any other resources?
+
+&gt;<i> At 16:20 I gave up and started reverting back to the other queue
+</I>&gt;<i> machine (running rabbit 1.8.1). As that happened, some of the queues
+</I>&gt;<i> that were unconsumable finally started shrinkining and their consumers
+</I>&gt;<i> unhung. Some of them (newcomments_q) processed all of the items in the
+</I>&gt;<i> queue basically instantly, so this isn't a case of our own app not
+</I>&gt;<i> being able to keep up. By about 16:30 I'd completed moving back to the
+</I>&gt;<i> old machine.
+</I>
+Ok, what was the disk activity during this exercise in general? The new
+persister is much better at coping with memory pressure. However, that
+has a few interesting and possibly surprising facets:
+
+1. Eventually, if memory pressure continues to build, all messages have
+to be written to disk.
+
+2. At no point do we want the queue to become unresponsive. This means
+that we have to batch work, and actually start writing messages to disk
+fairly early on, in the general scheme of things: we don't want to get
+to the point where we suddenly realise we have to write out millions of
+items to disk: we want a smooth transition to occur.
+
+3. Short fast queues are prioritised. This is because they probably
+won't be able to maintain their rates if they're having to go via the
+disk, whereas slower queues probably can. That said, we work as hard as
+possible to avoid having to do any reads until things get really bad,
+memory wise. Most of the time, it should just be appends.
+
+Of course, all of this is only relevant if you're actually seeing the
+disk thrashing itself to death and you're running out of memory.
+
+We have recently identified and fixed some memory issues with queues in
+general, however, they're only really relevant if you're using thousands
+of queues, so I don't think it's these that are biting you.
+
+&gt;<i> Also, this is unrelated, but I'd provisioned the new machine a couple
+</I>&gt;<i> of weeks ago, and it's been sitting literally 100% idle until I tried
+</I>&gt;<i> moving today. But look at its memory usage over the last week
+</I>&gt;<i> &lt;<A HREF="http://i.imgur.com/M7x6m.png">http://i.imgur.com/M7x6m.png</A>&gt;. What on earth could it be doing that
+</I>&gt;<i> it's growing in memory when *not used*? This machine is identical to
+</I>&gt;<i> our other machines (it's an EC2 node from the same AMI), but only this
+</I>&gt;<i> node has this problem, and all it's running is rabbit.
+</I>
+Now that is interesting. What version of Erlang are you running?
+
+Matthew
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="009333.html">[rabbitmq-discuss] Failed upgrade from 1.8.1 to 2.1.0
+</A></li>
+	<LI>Next message: <A HREF="009367.html">[rabbitmq-discuss] Failed upgrade from 1.8.1 to 2.1.0
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#9352">[ date ]</a>
+              <a href="thread.html#9352">[ thread ]</a>
+              <a href="subject.html#9352">[ subject ]</a>
+              <a href="author.html#9352">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

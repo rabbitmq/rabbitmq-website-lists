@@ -1,0 +1,60 @@
+diff -r 17fa29bd2dfb src/com/rabbitmq/client/impl/AMQConnection.java
+--- a/src/com/rabbitmq/client/impl/AMQConnection.java	Wed Feb 09 15:32:14 2011 +0000
++++ b/src/com/rabbitmq/client/impl/AMQConnection.java	Fri Feb 11 11:12:41 2011 +0000
+@@ -37,8 +37,6 @@
+ import com.rabbitmq.utility.BlockingCell;
+ import com.rabbitmq.utility.Utility;
+ 
+-import javax.security.sasl.SaslClient;
+-
+ /**
+  * Concrete class representing and managing an AMQP connection to a broker.
+  * <p>
+@@ -259,43 +257,10 @@
+             throw AMQChannel.wrap(sse);
+         }
+ 
+-        String[] mechanisms = connStart.getMechanisms().toString().split(" ");
+-        SaslClient sc = _factory.getSaslConfig().getSaslClient(mechanisms);
+-        if (sc == null) {
+-            throw new IOException("No compatible authentication mechanism found - " +
+-                    "server offered [" + connStart.getMechanisms() + "]");
+-        }
+-
+-        LongString challenge = null;
+-        LongString response = LongStringHelper.asLongString(
+-                sc.hasInitialResponse() ? sc.evaluateChallenge(new byte[0]) : null);
+-        AMQP.Connection.Tune connTune = null;
+-        do {
+-            Method method = (challenge == null)
+-                ? new AMQImpl.Connection.StartOk(_clientProperties,
+-                                                 sc.getMechanismName(),
+-                                                 response, "en_US")
+-                : new AMQImpl.Connection.SecureOk(response);
+-
+-            try {
+-                Method serverResponse = _channel0.rpc(method).getMethod();
+-                if (serverResponse instanceof AMQP.Connection.Tune) {
+-                    connTune = (AMQP.Connection.Tune) serverResponse;
+-                } else {
+-                    challenge = ((AMQP.Connection.Secure) serverResponse).getChallenge();
+-                    response = LongStringHelper.asLongString(sc.evaluateChallenge(challenge.getBytes()));
+-                }
+-            } catch (ShutdownSignalException e) {
+-                throw new PossibleAuthenticationFailureException(e);
+-            }
+-        } while (connTune == null);
+-
+-        sc.dispose();
+-
+-        if (!sc.isComplete()) {
+-            throw new RuntimeException(sc.getMechanismName() +
+-                    " did not complete, server thought it did");
+-        }
++        LongString response = LongStringHelper.asLongString("\0" + _factory.getUsername() +
++                                                            "\0" + _factory.getPassword());
++        Method method = new AMQImpl.Connection.StartOk(_clientProperties, "PLAIN", response, "en_US");
++        AMQP.Connection.Tune connTune = (AMQP.Connection.Tune) _channel0.rpc(method).getMethod();
+ 
+         int channelMax =
+             negotiatedMaxValue(_factory.getRequestedChannelMax(),

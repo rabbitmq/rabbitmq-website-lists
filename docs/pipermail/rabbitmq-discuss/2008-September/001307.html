@@ -1,0 +1,203 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] performance
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20performance&In-Reply-To=48BC4C0B.9010101%40imatix.com">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001298.html">
+   <LINK REL="Next"  HREF="001309.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] performance</H1>
+    <B>Edwin Fine</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20performance&In-Reply-To=48BC4C0B.9010101%40imatix.com"
+       TITLE="[rabbitmq-discuss] performance">rabbitmq-discuss_efine at usa.net
+       </A><BR>
+    <I>Mon Sep  1 23:23:07 BST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001298.html">[rabbitmq-discuss] performance
+</A></li>
+        <LI>Next message: <A HREF="001309.html">[rabbitmq-discuss] performance
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1307">[ date ]</a>
+              <a href="thread.html#1307">[ thread ]</a>
+              <a href="subject.html#1307">[ subject ]</a>
+              <a href="author.html#1307">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>If you run with such short messages, what you are also indirectly measuring
+is the maximum efficiency of the AMQP protocol because almost all of the
+data will be AMQP PDU data.
+
+Another consideration is that when you run using basic.consume, RabbitMQ
+will push messages to the consumer as fast as possible. If the consumer is
+an Erlang process, all that achieves is to fill up the Erlang  consumer's
+process message queue as fast as Erlang can take it (which is pretty fast).
+This only reflects the speed at which RabbitMQ can publish messages, not the
+end-to-end throughput of the system as such. However, I can think of a
+possible way around this (described later).
+
+I think we need a number of different approaches taken together.
+
+The first approach, which we could call the &quot;pedal-to-the-metal&quot; approach,
+would be to measure the theoretical maximum performance envelope for a
+specific hardware/OS platform, by running Erlang-only clients in-process
+with the Rabbit server (i.e. in the same VM). This would eliminate all
+networking because data would be passed between RabbitMQ and clients
+internally via Erlang. This probably represents the fastest possible model.
+At the same time, we would use the 1-byte data suggested by Martin, because
+that represents the smallest possible packets. The result of this benchmark
+would be a messages/second number that would represent the theoretical peak
+one could approach (for one producer and consumer).
+
+The above very synthetic benchmark could be used to probe system (i.e.
+hardware + OS + Erlang) specific parameters to push performance. Nobody
+would consider it to be realistic, but it's still useful. For example, using
++S 1 with multiple RMQ + client nodes; showing the effects of using kernel
+poll (should be nil because there are no sockets being used); pre-allocated
+Erlang process heaps; SMP Erlang vs single-CPU Erlang with and without
+processor affinity; and so on.
+
+Of course, what if you have multiple producers and consumers? How many
+channels do you use? How do you configure the exchange(s)? It rapidly
+becomes very complicated.
+
+The next approach could be to move the Erlang clients to a TCP/IP networking
+model (different VM, but on the same physical host, so hopefully it's only
+the TCP/IP stack at play and no Ethernet hardware) and see the difference.
+Of course, this is tricky because the clients and servers are both on the
+same machine and may contend for resources.
+
+Then we could move the clients to a different host altogether and hope the
+Ethernet speed is not a significant limitation. The resource bottleneck
+probably becomes the LAN hardware here.
+
+Then we could start trying clustered RabbitMQ servers on multiple hosts, and
+this is where it stops for most people (including me) because they don't
+have the resources.
+
+For each test, we could vary the message sizes and see the effect on message
+rate and throughput. We could also try persistent vs. non-persistent,
+basic.get vs basic.consume, and so on. There are so many possible variations
+that this could become a full-time job!
+
+As Martin points out, measuring throughput can be tricky. I suggest some
+sort of feedback mechanism to adjust the speed at which messages are sent.
+For example, the Erlang client could write its message consumption rate each
+second into an ets table, which the producer could read. As long as the rate
+goes up, the producer keeps pumping more through. As soon as the producer
+sees the rate plateau or even drop, averaged over a few measurements to
+prevent hysteresis, it cuts back. When the Erlang client is in a different
+VM, this is more complicated, but you get the idea. Also, a problem is that
+the feedback mechanism itself has CPU and networking overhead which will
+have to be taken into account.
+
+If the benchmarks are run for long enough (hours or even days), I think we
+might overcome some of the statistical issues that Martin mentions.
+
+My 2c worth.
+
+On Mon, Sep 1, 2008 at 4:09 PM, Martin Sustrik &lt;<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">sustrik at imatix.com</A>&gt; wrote:
+
+&gt;<i>
+</I>&gt;<i> Just few hints:
+</I>&gt;<i>
+</I>&gt;<i> 1. Measuring maximal throughput is tricky for various reasons, queueing
+</I>&gt;<i> being only one of them. There are statistical and methodological
+</I>&gt;<i> problems like hidden average, non-stability of the metric etc. However,
+</I>&gt;<i> simple way to get *some* results is to run the tests with publisher
+</I>&gt;<i> publishing messages at various rates. Maximal rate where latency doesn't
+</I>&gt;<i> increase ad infinitum can be considered &quot;maximal throughput&quot;.
+</I>&gt;<i>
+</I>&gt;<i> 2. 380,000 256-byte messages a second is a nice result, however, it
+</I>&gt;<i> doesn't tell much about the messaging system. It simply means that the
+</I>&gt;<i> system is able to exhaust 1GbE with messages 256 bytes long. To get more
+</I>&gt;<i> interesting results, test should be run with smaller messages
+</I>&gt;<i> (preferably 0 or 1 bytes long) where processing power will be the
+</I>&gt;<i> bottleneck rather than the networking infrastructure.
+</I>&gt;<i>
+</I>&gt;<i> HTH.
+</I>&gt;<i> Martin
+</I>&gt;<i>
+</I>&gt;<i> Matthias Radestock wrote:
+</I>&gt;<i> &gt; Michael,
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; Mayne, Michael wrote:
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt;&gt; Red has produced a paper recently (June 2008) explaining its performance
+</I>&gt;<i> &gt;&gt; testing lab that it did recently to show how optimised Red Hat on Intel
+</I>&gt;<i> &gt;&gt; Xeon hardware can process very high message rates:
+</I>&gt;<i> &gt;&gt;
+</I>&gt;<i> <A HREF="http://www.redhat.com/f/pdf/mrg/Reference_Architecture_MRG_Messaging_Thr">http://www.redhat.com/f/pdf/mrg/Reference_Architecture_MRG_Messaging_Thr</A>
+</I>&gt;<i> &gt;&gt; oughput.pdf
+</I>&gt;<i> &gt;&gt;
+</I>&gt;<i> &gt;&gt; This paper was presented at an Intel FasterCITY - fasterMESSAGING event
+</I>&gt;<i> &gt;&gt; in London on 23 June.
+</I>&gt;<i> &gt;&gt; <A HREF="http://www.intelfasterfs.com/fastermessaging/">http://www.intelfasterfs.com/fastermessaging/</A>
+</I>&gt;<i> &gt;&gt; It contains a description of the test bench it used to generate its
+</I>&gt;<i> &gt;&gt; figures - which were a repeatable ingress rate of 380,000 (256 byte)
+</I>&gt;<i> &gt;&gt; messages per second. There is obviously a lot more to it - see the paper
+</I>&gt;<i> &gt;&gt; for details.
+</I>&gt;<i> &gt;&gt;
+</I>&gt;<i> &gt;&gt; That could be a starter for ten.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; I am familiar with that report. The tests conducted are pretty similar
+</I>&gt;<i> &gt; to the ones we did with Intel last year and earlier this year (see
+</I>&gt;<i> &gt; <A HREF="http://www.rabbitmq.com/resources/AMQP_Solution_Brief_final.pdf">http://www.rabbitmq.com/resources/AMQP_Solution_Brief_final.pdf</A>).
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; Unfortunately the test setup - &quot;producers reliably en-queues messages
+</I>&gt;<i> &gt; onto the broker as fast as they can, consumers reliably de-queue
+</I>&gt;<i> &gt; messages from the broker as fast as they can&quot; - isn't addressing the key
+</I>&gt;<i> &gt; problem I described, namely controlling and adapting the ingress rate in
+</I>&gt;<i> &gt; order to maximise throughput.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; Matthias.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; _______________________________________________
+</I>&gt;<i> &gt; rabbitmq-discuss mailing list
+</I>&gt;<i> &gt; <A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;<i> &gt; <A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;<i> <A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;<i> <A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>
+
+-- 
+For every expert there is an equal and opposite expert - Arthur C. Clarke
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: <A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20080901/a6153f1d/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20080901/a6153f1d/attachment.htm</A> 
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001298.html">[rabbitmq-discuss] performance
+</A></li>
+	<LI>Next message: <A HREF="001309.html">[rabbitmq-discuss] performance
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1307">[ date ]</a>
+              <a href="thread.html#1307">[ thread ]</a>
+              <a href="subject.html#1307">[ subject ]</a>
+              <a href="author.html#1307">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

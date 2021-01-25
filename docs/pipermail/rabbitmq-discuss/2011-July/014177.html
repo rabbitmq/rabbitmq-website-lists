@@ -1,0 +1,123 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] RabbitMQ-C: amqp_simple_rpc blocks waiting	for frames already received
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20RabbitMQ-C%3A%20amqp_simple_rpc%20blocks%20waiting%0A%09for%20frames%20already%20received&In-Reply-To=%3CB576FDCB-4C7D-43A0-9CCB-F106E789B520%40rtcreativegroup.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="014176.html">
+   <LINK REL="Next"  HREF="014180.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] RabbitMQ-C: amqp_simple_rpc blocks waiting	for frames already received</H1>
+    <B>Clint Miller</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20RabbitMQ-C%3A%20amqp_simple_rpc%20blocks%20waiting%0A%09for%20frames%20already%20received&In-Reply-To=%3CB576FDCB-4C7D-43A0-9CCB-F106E789B520%40rtcreativegroup.com%3E"
+       TITLE="[rabbitmq-discuss] RabbitMQ-C: amqp_simple_rpc blocks waiting	for frames already received">clint at rtcreativegroup.com
+       </A><BR>
+    <I>Tue Jul 26 16:17:25 BST 2011</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="014176.html">[rabbitmq-discuss] RabbitMQ-C: amqp_simple_rpc blocks waiting	for frames already received
+</A></li>
+        <LI>Next message: <A HREF="014180.html">[rabbitmq-discuss] RabbitMQ-C: amqp_simple_rpc blocks waiting	for frames already received
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#14177">[ date ]</a>
+              <a href="thread.html#14177">[ thread ]</a>
+              <a href="subject.html#14177">[ subject ]</a>
+              <a href="author.html#14177">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hmm... I think I follow you. I'm correct thinking that AMQPcpp is maintained by someone not associated with VMWare/RabbitMQ?
+
+Regardless, thanks for your work looking into this issue.
+
+Clint
+
+On Jul 26, 2011, at 10:13 AM, David Wragg wrote:
+
+&gt;<i> Hi Clint,
+</I>&gt;<i> 
+</I>&gt;<i> Clint Miller &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">clint at rtcreativegroup.com</A>&gt; writes:
+</I>&gt;&gt;<i> OK, here's the basic example. It shows how the basic.consume method of
+</I>&gt;&gt;<i> the C++ library is not functioning correctly, but the basic.get works
+</I>&gt;&gt;<i> correctly.
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;<i> There's a basic Makefile that will probably require a little tweaking to get it working. It also depends on the 2 following libraries:
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;<i> - RabbitMQ-C (from the official repository, I built it at rev/changeset ef4df46cc0db)
+</I>&gt;&gt;<i> - AMQPcpp (from <A HREF="https://github.com/akalend/amqpcpp.git">https://github.com/akalend/amqpcpp.git</A> I built it at
+</I>&gt;&gt;<i> rev/changeset 80b17375f5bed6965acc07477499285b6851c92f)
+</I>&gt;<i> 
+</I>&gt;<i> Thanks, I got it building quite easily.  I'm not sure if I'm able to
+</I>&gt;<i> reproduce the problem that you described in your original mail, but I
+</I>&gt;<i> can confirm that it doesn't work for me.
+</I>&gt;<i> 
+</I>&gt;<i> This isn't primarily due to the use of librabbitmq in amqpcpp.  That
+</I>&gt;<i> looks basically sound (there are some calls to amqp_release_buffers in
+</I>&gt;<i> AMQPQueue.cpp that should be amqp_maybe_release_buffers, but otherwise I
+</I>&gt;<i> haven't found anything specifically wrong).
+</I>&gt;<i> 
+</I>&gt;<i> But when I run the program, it aborts.  Running it inside gdb, I get
+</I>&gt;<i> double free errors reported.  So I ran it under valgrind.  And valgrind
+</I>&gt;<i> finds many problems in amqpcpp.  (In fairness, it also complains about
+</I>&gt;<i> some things in librabbitmq, but they are about the use of uninitialized
+</I>&gt;<i> data, and may be harmless.)
+</I>&gt;<i> 
+</I>&gt;<i> The critical issue is a double free of the message buffer in
+</I>&gt;<i> AMQPQueue::sendConsumeCommand: At AMQPQueue.cpp#L512, buf is handed to
+</I>&gt;<i> the AMQPMessage object, and then freed.  But AMQPMessage holds on to
+</I>&gt;<i> this pointer, and frees it again in its destructor (called via the
+</I>&gt;<i> message auto_ptr).
+</I>&gt;<i> 
+</I>&gt;<i> valgrind also revealed a lot of cases of amqpcpp trying to use freed
+</I>&gt;<i> data (e.g. by passing a char* to AMQPQueue::setConsumerTag, you invoke
+</I>&gt;<i> the implicit conversion to string, and the string data is freed after
+</I>&gt;<i> the call; but setConsumerTag then uses c_str to get a pointer to the
+</I>&gt;<i> string data, which is saved in consumer_tag and only used later in
+</I>&gt;<i> sendConsumeCommand).
+</I>&gt;<i> 
+</I>&gt;<i> I think amqpcpp needs cleaning up with valgrind in order to work
+</I>&gt;<i> reliably.
+</I>&gt;<i> 
+</I>&gt;<i> David
+</I>&gt;<i> 
+</I>&gt;<i> -- 
+</I>&gt;<i> David Wragg
+</I>&gt;<i> Staff Engineer, RabbitMQ
+</I>&gt;<i> VMware, Inc.
+</I>&gt;<i> 
+</I>
+</PRE>
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="014176.html">[rabbitmq-discuss] RabbitMQ-C: amqp_simple_rpc blocks waiting	for frames already received
+</A></li>
+	<LI>Next message: <A HREF="014180.html">[rabbitmq-discuss] RabbitMQ-C: amqp_simple_rpc blocks waiting	for frames already received
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#14177">[ date ]</a>
+              <a href="thread.html#14177">[ thread ]</a>
+              <a href="subject.html#14177">[ subject ]</a>
+              <a href="author.html#14177">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

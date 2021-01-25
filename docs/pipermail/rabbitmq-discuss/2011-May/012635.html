@@ -1,0 +1,131 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] difficulties with prefetch count
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20difficulties%20with%20prefetch%20count&In-Reply-To=%3C840D5188-98CF-4414-BE74-00AAB0AC764D%40setf.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="012644.html">
+   <LINK REL="Next"  HREF="012636.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] difficulties with prefetch count</H1>
+    <B>james anderson</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20difficulties%20with%20prefetch%20count&In-Reply-To=%3C840D5188-98CF-4414-BE74-00AAB0AC764D%40setf.de%3E"
+       TITLE="[rabbitmq-discuss] difficulties with prefetch count">james.anderson at setf.de
+       </A><BR>
+    <I>Mon May  2 13:01:41 BST 2011</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="012644.html">[rabbitmq-discuss] Pika and XML-RPC
+</A></li>
+        <LI>Next message: <A HREF="012636.html">[rabbitmq-discuss] difficulties with prefetch count
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#12635">[ date ]</a>
+              <a href="thread.html#12635">[ thread ]</a>
+              <a href="subject.html#12635">[ subject ]</a>
+              <a href="author.html#12635">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>good afternoon, gentlemen;
+
+
+we find that a qos request with prefetch count of 1 does not reliably  
+achieve &quot;fair dispatch&quot; and seek advice, what we should reconfigure  
+in order to achieve it.
+
+the specification page[1] indicates that rmq supports local prefetch  
+limits, but not global ones. the BasicQosDesign[2] wiki entry  
+describes some restrictions, in particular qos/consume ordering. the  
+work queue tutorial describes how to use prefetch constraints to  
+achieve &quot;fair dispatch&quot;.
+
+despite adhering to these understandings, we observe the following  
+with rmq 2.1.1:
+
+a server process establishes four worker threads, each of which
+  - creates a connection to the rmq broker
+  - creates a shared work queue (most likely redundantly)
+  - a private sub-task queue for responses to delegated tasks
+  - creates two channels on its connection;
+    - one channel is for task messages; there it requests qos 
+(prefetch=1), consume(work queue).
+    - one channel is used to delegate tasks; on this one just consume 
+(delegated response queue).
+  - accepts delivery of task messages, processes them, publishes  
+results to a task-identified response queue.
+
+a front-end process establishes equivalent threads, each of which  
+supports http requests and mediates them to the server.
+for each front-end request, a thread
+  - creates a connection to the rmq server
+  - creates a task-specific queue (as per routing) for an eventual  
+response
+  - subscribes to the response queue
+  - publishes a task message with routing to the work queue
+  - accepts delivery of task responses
+  - tears down the task response subscription and queue.
+
+in this particular situation, no delegation occurs. that is, no  
+messages pass through the delegated work queue.
+
+we observe that, if a posted task takes an &quot;long&quot; time, not only its  
+front-end thread will wait until that processing completes, but one  
+additional front-end task hangs was well.
+
+while the long task transpires, other http requests are processed  
+without delay. that is, their setup, request, subscription, delivery,  
+and tear-down, all complete as normal. their task messages are  
+delivered to one of the three unoccupied server threads which does  
+the work and produces the response.
+
+independent of whether the front-end leaves the hung task to wait for  
+a response or aborts it, by canceling the subscription, deleting the  
+queue, and closing the connection, once the long-running server  
+thread completes its task, the next message delivered to it is that  
+message from the waiting-or-aborted front-end thread.
+
+if we use rabbitmqctl to display the connection/subscription/queue  
+state during the long task processing, we observe that
+- the work queue has one unacknowledged message, but zero ready messages
+- the server task channels have a prefetch window of 1
+- no connection has a send pending
+
+that is, it appears as if one single message is held up until the  
+long task complete, but is no where to be seen.
+what do we not understand about prefetch windows?
+
+---------------
+
+[1] <A HREF="http://www.rabbitmq.com/specification.html">http://www.rabbitmq.com/specification.html</A>
+[2] <A HREF="https://dev.rabbitmq.com/wiki/BasicQosDesign">https://dev.rabbitmq.com/wiki/BasicQosDesign</A>
+[3] <A HREF="http://www.rabbitmq.com/tutorials/tutorial-two-python.html">http://www.rabbitmq.com/tutorials/tutorial-two-python.html</A>
+
+</PRE>
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="012644.html">[rabbitmq-discuss] Pika and XML-RPC
+</A></li>
+	<LI>Next message: <A HREF="012636.html">[rabbitmq-discuss] difficulties with prefetch count
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#12635">[ date ]</a>
+              <a href="thread.html#12635">[ thread ]</a>
+              <a href="subject.html#12635">[ subject ]</a>
+              <a href="author.html#12635">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

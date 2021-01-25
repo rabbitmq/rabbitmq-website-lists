@@ -1,0 +1,207 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Use a mysql databse table as the provider for rabbitmq queue
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Use%20a%20mysql%20databse%20table%20as%20the%20provider%0A%20for%20rabbitmq%20queue&In-Reply-To=%3C507E7F6B.8090003%40rabbitmq.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="023098.html">
+   <LINK REL="Next"  HREF="023096.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Use a mysql databse table as the provider for rabbitmq queue</H1>
+    <B>Tim Watson</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Use%20a%20mysql%20databse%20table%20as%20the%20provider%0A%20for%20rabbitmq%20queue&In-Reply-To=%3C507E7F6B.8090003%40rabbitmq.com%3E"
+       TITLE="[rabbitmq-discuss] Use a mysql databse table as the provider for rabbitmq queue">tim at rabbitmq.com
+       </A><BR>
+    <I>Wed Oct 17 10:50:35 BST 2012</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="023098.html">[rabbitmq-discuss] Use a mysql databse table as the provider for rabbitmq queue
+</A></li>
+        <LI>Next message: <A HREF="023096.html">[rabbitmq-discuss] the cost of creating a queue?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#23102">[ date ]</a>
+              <a href="thread.html#23102">[ thread ]</a>
+              <a href="subject.html#23102">[ subject ]</a>
+              <a href="author.html#23102">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi,
+
+On 10/17/2012 09:58 AM, Shadowalker wrote:
+&gt;<i> Hi,
+</I>&gt;<i>
+</I>&gt;<i> I've just stumbled upon rabbitmq and I think it could very well help 
+</I>&gt;<i> in a project that I'm currently working on. But there's one thing that 
+</I>&gt;<i> I'd like to get some input about though :
+</I>&gt;<i>
+</I>&gt;<i> My project consist of one, two or more applications that, though 
+</I>&gt;<i> separated, need to keep some of their datas synchronized.
+</I>&gt;<i>
+</I>&gt;<i> For example say I have two use cases that could happen at the same time :
+</I>&gt;<i>
+</I>&gt;<i> First project has a app A and a app B : when app A insert some 
+</I>&gt;<i> specific data in its db i need to get a meesage to appB to do the 
+</I>&gt;<i> corresponding action on its own db
+</I>&gt;<i> Second project has only app A and when I insert stuff in A's db it 
+</I>&gt;<i> shouldn't send anything anywhere.
+</I>&gt;<i>
+</I>&gt;<i> In both cases, I'll like to have app A and app B identical : I don't 
+</I>&gt;<i> want to have to change app A's code jsut because app B is here.
+</I>&gt;<i>
+</I>&gt;<i> So my question is : Is there anyway to plug the raabitmq consumer 
+</I>&gt;<i> directly onto a specific table in app A's database so that every time  
+</I>&gt;<i> something happens appB can come and consume the data.
+</I>&gt;<i>
+</I>
+Well, I'm not sure I would choose this approach personally, and I'll 
+explain why. But as I'm rather attention deficit I'll cut to the chase 
+first and say &quot;yes - it is *possible* to do this - but you'll have to 
+put in a lot of work to make it happen&quot; and as I said, I certainly 
+wouldn't recommend doing it. Now I'll explain why it's a bad idea IMHO 
+and then I'll explain how you can do it if you insist on following this 
+path.
+
+First of all, you are creating a very tight coupling between the 
+application and the database schema, which will be difficult to work 
+with if the design changes (which most do) over time. Secondly, you are 
+going to be running code *inside the database server* which is fraught 
+with danger. Thirdly, it's going to be very difficult to test and/or 
+debug when things go wrong. Our industry tends to favour integrating 
+systems using messaging technology so much because doing so decouples 
+applications from one another, at least to a certain extent.
+
+The deceptively simple alternative to messaging, and it is often 
+ineffective and costly to develop and maintain, is to share data using 
+files and/or a shared database. Both applications share tables and/or 
+schemas and either poll for changes using worker processes (or threads) 
+on the one hand, or utilise notification features of the database system 
+itself on the other (e,g., Microsoft SQL Server Notification Services). 
+But this approach is full of problems, ranging from contention for 
+reads/writes on shared tables, to timing issues where both applications 
+make very subtle implicit assumptions about the order in which the 
+various participants in the system are interacting with the database, 
+leading to functional errors.
+
+One reason that messaging based integration has been so successful is 
+that it gets us *away* from these problems, and allows applications to 
+simplify their model of interaction with the outside world. AMQP in 
+particular allows an application developer to think in terms of 
+asynchronously publishing events (for consumption elsewhere) or 
+consuming data in a variety of ways, based purely on the usage pattern 
+required.
+
+Let's assume that you did implement this capability and whenever your 
+publishing application writes to the database, a message gets sent to an 
+exchange on a rabbit broker somewhere, which the other application is 
+consuming via some queue. What happens if the machine or data centre the 
+broker is running on crashes? What happens if the broker becomes 
+overloaded and starts to assert tcp back-pressure on the publisher - 
+which, remember, is running inside a database!? What happens if the 
+database server has to be restarted? And each of these 'what happens' 
+questions must be answered from the perspective of
+
+1. the code running inside the database server
+2. the application writing to the database
+3. the application listening to the queue(s)
+4. the RabbitMQ broker itself
+
+That is an *awful* lot of moving parts, one of which is critical to your 
+infrastructure (i.e., the database server) and largely not under you 
+control (in so much as the semantics for running user defined code 
+inside the database server and the error handling behaviour of such, are 
+likely to be highly constrained). Even in an environment where you're 
+running your user defined function in an external operating system 
+process (e.g., Oracle UDFs written in java) the failure modes are 
+terrifying. Even in an environment which gives you a very clear picture 
+of the constrained runtime in which you're operating (e.g., custom .NET 
+code running inside MS SQL Server as a UDF or stored procedure) there 
+are questions about how stable and safe this approach is. And even in 
+those environments, where stability and safety *can* be understood and 
+controlled to some extent, there is still the question of semantics. If 
+the publication fails, what does the application writing to the database 
+see? Does the insert/update fail? Doing so would require making a 
+synchronous call in the trigger/callback, which would block the database 
+server and create contention for the table! Failing to make the call 
+synchronous would lead to silent failures however! There are no happy 
+endings here, I can assure you.
+
+Now that I hope I've put you off this idea, here's how you can do it if 
+you disagree. Write a user defined function in C (consulting 
+<A HREF="http://dev.mysql.com/doc/refman/5.1/en/adding-udf.html">http://dev.mysql.com/doc/refman/5.1/en/adding-udf.html</A> or whatever 
+resources you have available to assist in this) and in your user defined 
+function, use the RabbitMQ native/C client (librabbitmq) to talk to 
+rabbit. The details of doing all of this are left as an exercise to the 
+daring. Do bare in mind that MySQL UDFs *must* be thread safe, that 
+librabbitmq has no explicit support for threading whatsoever and that 
+blocking in a udf is probably the first step on the road to bedlam.
+
+Cheers,
+Tim
+&gt;<i> Cheers,
+</I>&gt;<i> Shadowalker.
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20121017/3faf4694/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20121017/3faf4694/attachment.htm</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="023098.html">[rabbitmq-discuss] Use a mysql databse table as the provider for rabbitmq queue
+</A></li>
+	<LI>Next message: <A HREF="023096.html">[rabbitmq-discuss] the cost of creating a queue?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#23102">[ date ]</a>
+              <a href="thread.html#23102">[ thread ]</a>
+              <a href="subject.html#23102">[ subject ]</a>
+              <a href="author.html#23102">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

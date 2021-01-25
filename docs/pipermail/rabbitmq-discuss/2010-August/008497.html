@@ -1,0 +1,282 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Authenticate client using certificate only
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Authenticate%20client%20using%20certificate%20only&In-Reply-To=%3C20100819105108.159445k87zfxqpic%40webmail.active24.cz%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="008481.html">
+   <LINK REL="Next"  HREF="008498.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Authenticate client using certificate only</H1>
+    <B>jiri at krutil.com</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Authenticate%20client%20using%20certificate%20only&In-Reply-To=%3C20100819105108.159445k87zfxqpic%40webmail.active24.cz%3E"
+       TITLE="[rabbitmq-discuss] Authenticate client using certificate only">jiri at krutil.com
+       </A><BR>
+    <I>Thu Aug 19 09:51:08 BST 2010</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="008481.html">[rabbitmq-discuss] Authenticate client using certificate only
+</A></li>
+        <LI>Next message: <A HREF="008498.html">[rabbitmq-discuss] Authenticate client using certificate only
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#8497">[ date ]</a>
+              <a href="thread.html#8497">[ thread ]</a>
+              <a href="subject.html#8497">[ subject ]</a>
+              <a href="author.html#8497">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>&gt;<i> Just take the output of 'hg diff' and post it here or somewhere else  
+</I>&gt;<i> we can see. Thanks.
+</I>
+Attached is a patch against the default branch. I'm new to Erlang so  
+please forgive my coding style and feel free to change the code as you  
+see fit.
+
+Please let me know if this could become official.
+
+Cheers
+Jiri
+-------------- next part --------------
+diff -r a11bf1f62fbb include/rabbit.hrl
+--- a/include/rabbit.hrl	Wed Aug 18 17:40:19 2010 +0100
++++ b/include/rabbit.hrl	Thu Aug 19 09:49:35 2010 +0100
+@@ -68,7 +68,7 @@
+ -record(basic_message, {exchange_name, routing_key, content, guid,
+                         is_persistent}).
+ 
+--record(ssl_socket, {tcp, ssl}).
++-record(ssl_socket, {tcp, ssl, cn}).
+ -record(delivery, {mandatory, immediate, txn, sender, message}).
+ -record(amqp_error, {name, explanation, method = none}).
+ 
+diff -r a11bf1f62fbb src/rabbit_access_control.erl
+--- a/src/rabbit_access_control.erl	Wed Aug 18 17:40:19 2010 +0100
++++ b/src/rabbit_access_control.erl	Thu Aug 19 09:49:35 2010 +0100
+@@ -33,7 +33,7 @@
+ -include_lib(&quot;stdlib/include/qlc.hrl&quot;).
+ -include(&quot;rabbit.hrl&quot;).
+ 
+--export([check_login/2, user_pass_login/2,
++-export([check_login/3, user_pass_login/2,
+          check_vhost_access/2, check_resource_access/3]).
+ -export([add_user/2, delete_user/1, change_password/2, list_users/0,
+          lookup_user/1]).
+@@ -52,10 +52,11 @@
+ -type(password() :: binary()).
+ -type(regexp() :: binary()).
+ -type(scope() :: binary()).
++-type(socket() :: rabbit_networking:ip_port() | rabbit_types:ssl_socket()).
+ 
+--spec(check_login/2 ::
+-        (binary(), binary()) -&gt; rabbit_types:user() |
+-                                rabbit_types:channel_exit()).
++-spec(check_login/3 ::
++        (binary(), binary(), socket()) -&gt; rabbit_types:user() |
++                                          rabbit_types:channel_exit()).
+ -spec(user_pass_login/2 ::
+         (username(), password())
+         -&gt; rabbit_types:user() | rabbit_types:channel_exit()).
+@@ -95,33 +96,54 @@
+ 
+ %% SASL PLAIN, as used by the Qpid Java client and our clients. Also,
+ %% apparently, by OpenAMQ.
+-check_login(&lt;&lt;&quot;PLAIN&quot;&gt;&gt;, Response) -&gt;
+-    [User, Pass] = [list_to_binary(T) ||
+-                       T &lt;- string:tokens(binary_to_list(Response), [0])],
+-    user_pass_login(User, Pass);
++check_login(&lt;&lt;&quot;PLAIN&quot;&gt;&gt;, Response, Sock) -&gt;
++    case is_record(Sock, ssl_socket) andalso Sock#ssl_socket.cn /= none of
++        true -&gt;
++            certificate_login(Sock);
++        false -&gt;
++            [User, Pass] = [list_to_binary(T) ||
++                               T &lt;- string:tokens(binary_to_list(Response), [0])],
++            user_pass_login(User, Pass)
++    end;
+ %% AMQPLAIN, as used by Qpid Python test suite. The 0-8 spec actually
+ %% defines this as PLAIN, but in 0-9 that definition is gone, instead
+ %% referring generically to &quot;SASL security mechanism&quot;, i.e. the above.
+-check_login(&lt;&lt;&quot;AMQPLAIN&quot;&gt;&gt;, Response) -&gt;
+-    LoginTable = rabbit_binary_parser:parse_table(Response),
+-    case {lists:keysearch(&lt;&lt;&quot;LOGIN&quot;&gt;&gt;, 1, LoginTable),
+-          lists:keysearch(&lt;&lt;&quot;PASSWORD&quot;&gt;&gt;, 1, LoginTable)} of
+-        {{value, {_, longstr, User}},
+-         {value, {_, longstr, Pass}}} -&gt;
+-            user_pass_login(User, Pass);
+-        _ -&gt;
+-            %% Is this an information leak?
+-            rabbit_misc:protocol_error(
+-              access_refused,
+-              &quot;AMQPPLAIN auth info ~w is missing LOGIN or PASSWORD field&quot;,
+-              [LoginTable])
++check_login(&lt;&lt;&quot;AMQPLAIN&quot;&gt;&gt;, Response, Sock) -&gt;
++    case is_record(Sock, ssl_socket) andalso Sock#ssl_socket.cn /= none of
++        true -&gt;
++            certificate_login(Sock);
++        false -&gt;
++            LoginTable = rabbit_binary_parser:parse_table(Response),
++            case {lists:keysearch(&lt;&lt;&quot;LOGIN&quot;&gt;&gt;, 1, LoginTable),
++                  lists:keysearch(&lt;&lt;&quot;PASSWORD&quot;&gt;&gt;, 1, LoginTable)} of
++                {{value, {_, longstr, User}},
++                 {value, {_, longstr, Pass}}} -&gt;
++                    user_pass_login(User, Pass);
++                _ -&gt;
++                    %% Is this an information leak?
++                    rabbit_misc:protocol_error(
++                      access_refused,
++                      &quot;AMQPPLAIN auth info ~w is missing LOGIN or PASSWORD field&quot;,
++                      [LoginTable])
++            end
+     end;
+ 
+-check_login(Mechanism, _Response) -&gt;
++check_login(Mechanism, _Response, _Sock) -&gt;
+     rabbit_misc:protocol_error(
+       access_refused, &quot;unsupported authentication mechanism '~s'&quot;,
+       [Mechanism]).
+ 
++certificate_login(Sock) -&gt;
++    CN = list_to_binary(Sock#ssl_socket.cn),
++    ?LOGDEBUG(&quot;Login with cert (CN=~s)~n&quot;, [CN]),
++    case lookup_user(CN) of
++        {ok, U} -&gt;
++            U;
++        {error, not_found} -&gt;
++            rabbit_misc:protocol_error(
++              access_refused, &quot;certificate login refused for Common Name '~s'&quot;, [CN])
++    end.
++
+ user_pass_login(User, Pass) -&gt;
+     ?LOGDEBUG(&quot;Login with user ~p pass ~p~n&quot;, [User, Pass]),
+     case lookup_user(User) of
+diff -r a11bf1f62fbb src/rabbit_networking.erl
+--- a/src/rabbit_networking.erl	Wed Aug 18 17:40:19 2010 +0100
++++ b/src/rabbit_networking.erl	Thu Aug 19 09:49:35 2010 +0100
+@@ -45,6 +45,7 @@
+          start_client/1, start_ssl_client/2]).
+ 
+ -include(&quot;rabbit.hrl&quot;).
++-include_lib(&quot;public_key/include/OTP-PUB-KEY.hrl&quot;).
+ -include_lib(&quot;kernel/include/inet.hrl&quot;).
+ 
+ -define(RABBIT_TCP_OPTS, [
+@@ -216,19 +217,65 @@
+     start_client(
+       Sock,
+       fun (Sock1) -&gt;
+-              case catch ssl:ssl_accept(Sock1, SslOpts, ?SSL_TIMEOUT * 1000) of
+-                  {ok, SslSock} -&gt;
+-                      rabbit_log:info(&quot;upgraded TCP connection ~p to SSL~n&quot;,
+-                                      [self()]),
+-                      {ok, #ssl_socket{tcp = Sock1, ssl = SslSock}};
+-                  {error, Reason} -&gt;
+-                      {error, {ssl_upgrade_error, Reason}};
+-                  {'EXIT', Reason} -&gt;
+-                      {error, {ssl_upgrade_failure, Reason}}
++         case catch ssl:ssl_accept(Sock1, SslOpts, ?SSL_TIMEOUT * 1000) of
++             {ok, SslSock} -&gt;
++                 % authenticate with certificate or password?
++                 case proplists:get_value(authentication, SslOpts, password) of
++                     cert -&gt;
++                         % retrieve client certificate and extract subject Common Name
++                         case ssl:peercert(SslSock, [ssl]) of
++                             {ok, Cert} -&gt;
++                                 case extract_common_name(Cert) of
++                                     error -&gt;
++                                         {error, {ssl_upgrade_error,
++                                             &quot;Could not extract CommonName from client cert&quot;}};
++                                     CommonName -&gt;
++                                         rabbit_log:info(
++                                             &quot;upgraded TCP connection ~p to SSL (CN=~p)~n&quot;,
++                                             [self(), CommonName]),
++                                         {ok, #ssl_socket{
++                                             tcp = Sock1, ssl = SslSock, cn = CommonName}}
++                                 end;
++                             {error, Reason} -&gt;
++                                 {error, {ssl_upgrade_error, Reason}}
++                         end;
++                     _ -&gt;
++                         rabbit_log:info(&quot;upgraded TCP connection ~p to SSL~n&quot;,
++                                         [self()]),
++                         {ok, #ssl_socket{tcp = Sock1, ssl = SslSock, cn = none}}
++                 end;
++             {error, Reason} -&gt;
++                 {error, {ssl_upgrade_error, Reason}};
++             {'EXIT', Reason} -&gt;
++                 {error, {ssl_upgrade_failure, Reason}}
+ 
+-              end
++         end
+       end).
+ 
++extract_common_name(Cert) -&gt;
++    case is_record(Cert, 'OTPCertificate') of
++        true -&gt;
++            TbsCert = Cert#'OTPCertificate'.tbsCertificate,
++            case is_record(TbsCert, 'OTPTBSCertificate') of
++                true -&gt;
++                    Subject = TbsCert#'OTPTBSCertificate'.subject,
++                    case Subject of
++                        {rdnSequence, Attributes} -&gt;
++                            find_attribute(Attributes, ?'id-at-commonName');
++                        _ -&gt; error
++                    end;
++                false -&gt; error
++            end;
++        false -&gt; error
++    end.
++
++find_attribute([], _) -&gt; error;
++find_attribute([Attr | Tail], Key) -&gt;
++    case Attr of
++        [{'AttributeTypeAndValue', Key, {printableString, Value}}] -&gt; Value;
++        _ -&gt; find_attribute(Tail, Key)
++    end.
++
+ connections() -&gt;
+     [Pid || {_, Pid, _, _} &lt;- supervisor:which_children(
+                                 rabbit_tcp_client_sup)].
+diff -r a11bf1f62fbb src/rabbit_reader.erl
+--- a/src/rabbit_reader.erl	Wed Aug 18 17:40:19 2010 +0100
++++ b/src/rabbit_reader.erl	Thu Aug 19 09:49:35 2010 +0100
+@@ -719,7 +719,7 @@
+                            connection = Connection =
+                                #connection{protocol = Protocol},
+                            sock = Sock}) -&gt;
+-    User = rabbit_access_control:check_login(Mechanism, Response),
++    User = rabbit_access_control:check_login(Mechanism, Response, Sock),
+     Tune = #'connection.tune'{channel_max = 0,
+                               frame_max = ?FRAME_MAX,
+                               heartbeat = 0},
+</PRE>
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="008481.html">[rabbitmq-discuss] Authenticate client using certificate only
+</A></li>
+	<LI>Next message: <A HREF="008498.html">[rabbitmq-discuss] Authenticate client using certificate only
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#8497">[ date ]</a>
+              <a href="thread.html#8497">[ thread ]</a>
+              <a href="subject.html#8497">[ subject ]</a>
+              <a href="author.html#8497">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

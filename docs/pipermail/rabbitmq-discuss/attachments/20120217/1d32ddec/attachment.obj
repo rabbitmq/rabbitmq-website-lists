@@ -1,0 +1,66 @@
+diff -r fb6fca832fd2 examples/amqp_consumer.c
+--- a/examples/amqp_consumer.c	Fri Feb 03 13:05:01 2012 +0000
++++ b/examples/amqp_consumer.c	Sat Feb 18 10:43:44 2012 +0530
+@@ -40,6 +40,12 @@
+ #include <stdio.h>
+ #include <string.h>
+ 
++#include <sys/time.h>
++#include <sys/types.h>
++#include <unistd.h>
++#include <errno.h>
++#include <fcntl.h>
++
+ #include <stdint.h>
+ #include <amqp.h>
+ #include <amqp_framing.h>
+@@ -62,9 +68,16 @@
+   int result;
+   size_t body_received;
+   size_t body_target;
++   int flags;
++   int ret;
+ 
+   uint64_t now;
+ 
++   int sock = amqp_get_sockfd(conn);
++   printf("socket: %d\n", sock);
++   flags = fcntl(sock, F_GETFL, 0);
++   fcntl(sock, F_SETFL, flags | O_NONBLOCK);
++
+   while (1) {
+     now = now_microseconds();
+     if (now > next_summary_time) {
+@@ -78,8 +91,32 @@
+       next_summary_time += SUMMARY_EVERY_US;
+     }
+ 
++      if (!amqp_frames_enqueued(conn) && !amqp_data_in_buffer(conn)) {
++         /* Watch socket fd to see when it has input. */
++         fd_set read_flags;
++         FD_ZERO(&read_flags);
++         FD_SET(amqp_get_sockfd(conn), &read_flags);
++         do {
++            struct timeval timeout;
++
++            /* Wait upto a second. */
++            timeout.tv_sec = 1;
++            timeout.tv_usec = 0;
++
++            ret = select(sock+1, &read_flags, NULL, NULL, &timeout);
++            if (ret == -1)
++               printf("select: %s\n", strerror(errno));
++            else if (ret == 0)
++               printf("select timedout\n");
++            if (FD_ISSET(sock, &read_flags)) {
++               printf("Flag is set\n");
++            }
++         } while (ret == 0);
++      }
++
+     amqp_maybe_release_buffers(conn);
+     result = amqp_simple_wait_frame(conn, &frame);
++      perror("simple_wait");
+     if (result < 0)
+       return;
+ 

@@ -1,0 +1,146 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Managing channels,	esp wrt short lived publishers/consumers
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Managing%20channels%2C%0A%09esp%20wrt%20short%20lived%20publishers/consumers&In-Reply-To=%3CAANLkTim_QNZpjAr_33Jsn4vwZGyVeAsG4PcOjNuuF7z4%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="011940.html">
+   <LINK REL="Next"  HREF="012048.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Managing channels,	esp wrt short lived publishers/consumers</H1>
+    <B>Marek Majkowski</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Managing%20channels%2C%0A%09esp%20wrt%20short%20lived%20publishers/consumers&In-Reply-To=%3CAANLkTim_QNZpjAr_33Jsn4vwZGyVeAsG4PcOjNuuF7z4%40mail.gmail.com%3E"
+       TITLE="[rabbitmq-discuss] Managing channels,	esp wrt short lived publishers/consumers">majek04 at gmail.com
+       </A><BR>
+    <I>Fri Mar 25 14:14:12 GMT 2011</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="011940.html">[rabbitmq-discuss] Managing channels,	esp wrt short lived publishers/consumers
+</A></li>
+        <LI>Next message: <A HREF="012048.html">[rabbitmq-discuss] Managing channels,	esp wrt short lived publishers/consumers
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#12035">[ date ]</a>
+              <a href="thread.html#12035">[ thread ]</a>
+              <a href="subject.html#12035">[ subject ]</a>
+              <a href="author.html#12035">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>James,
+
+On Fri, Mar 18, 2011 at 18:52, James Aimonetti
+&lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">james.aimonetti at gmail.com</A>&gt; wrote:
+&gt;<i> I'm trying to figure out the best way to manage channel creation in my app.
+</I>&gt;<i> Currently, any process that needs to publish or consume gets a channel and I
+</I>&gt;<i> realize it is probably horribly inefficient, but as a prototype I wasn't too
+</I>&gt;<i> concerned. Now that we're moving forward, I want to get this cleaned up
+</I>&gt;<i> before I get too much further along.
+</I>&gt;<i>
+</I>&gt;<i> I have a setup something like:
+</I>&gt;<i>
+</I>&gt;<i> [App, App, App] &lt;---&gt; [AMQP] &lt;--&gt; Engine &lt;--&gt; Client
+</I>&gt;<i>
+</I>&gt;<i> So a client makes a request to the Engine, which creates two processes, one
+</I>&gt;<i> to publish events from the client, and one to consume commands from the Apps
+</I>&gt;<i> and relay them to the client.
+</I>&gt;<i>
+</I>&gt;<i> [App, App, App] &lt;--&gt; [AMQP] &lt;-- ReqEvts &lt;-- Client
+</I>&gt;<i> [App, App, App] &lt;--&gt; [AMQP] --&gt; ReqCtl --&gt; Client
+</I>&gt;<i>
+</I>&gt;<i> Ideally we'll be handling several hundreds of requests per second from
+</I>&gt;<i> clients. So the ReqEvts process pumps 10 or so messages in rapid succession
+</I>&gt;<i> at the beginning of a request, heartbeats every 20 or so seconds, then pumps
+</I>&gt;<i> another 10 or so messages at the end of the request. Requests may last 1
+</I>&gt;<i> second (so setup and tear down bursts happen almost on top of each other) or
+</I>&gt;<i> may last minutes or hours. Meanwhile, the ReqCtl receives commands from a
+</I>&gt;<i> targeted exchange from the Apps to relay to the Client.
+</I>&gt;<i>
+</I>&gt;<i> Each App has a queue that it binds to a targeted exchange and one or more
+</I>&gt;<i> topic exchanges. In general it receives most messages off the topic
+</I>&gt;<i> exchanges and publishes to the targeted exchange.
+</I>&gt;<i>
+</I>&gt;<i> So, hopefully that gives a broad overview. The Apps and the Engine pieces
+</I>&gt;<i> are all on different servers.
+</I>&gt;<i>
+</I>&gt;<i> So right now each server has an instance of rabbitmq running, and is
+</I>&gt;<i> clustered to all the other servers (Apps and Engine, currently four total
+</I>&gt;<i> servers but expandable). What I'm not sure about is how to manage each
+</I>&gt;<i> server's connection and channels. Each server has a gen_server managing the
+</I>&gt;<i> connection to rabbit, as well as the channels. So when a pid requests to
+</I>&gt;<i> publish or consume or declare a queue, the gen_server checks if the pid is
+</I>&gt;<i> known and uses that channel, or creates a new channel and stores the
+</I>&gt;<i> association. With all of these potentially short-lived consumers and
+</I>&gt;<i> publishers, I see a LOT of channel creation/destruction going on and wonder
+</I>&gt;<i> if there's a better way? Should I not have hidden channels behind a
+</I>&gt;<i> gen_server?
+</I>
+Having a pool of channels is quite a common practice.
+
+&gt;<i> My initial thought is to have a dedicated channel for all publishers on the
+</I>&gt;<i> server to send over, a dedicated channel for any queue declarations, and a
+</I>&gt;<i> channel for each process that is consuming from a queue. Am I serializing
+</I>&gt;<i> too much with this setup?
+</I>
+That should be fine. Some people use a single channel for all the stuff.
+
+Channel is a weird abstraction, it's mainly responsible for:
+ - scoping errors (ie: channel is closed on error)
+ - message ordering (messages sent through a channel will be delivered in order)
+ - also, some resources may be associated with channel,
+   and its state may change when the channel is closed (autodelete queues,
+   unacknowledged messages)
+ - parallelization of synchronous actions (like queue.declare)
+
+Basically, if you don't need this features, you can just use a single channel.
+In other case you must use multiple channels, but managing the lifetime
+of a channel is your decision.
+
+For example you may want to destroy channels often to
+isolate errors (ie: if one channel fails for some reason, you
+want it to affect only a single 'request' in your app)
+
+In your case, it looks like you only need the 'parallelization' feature,
+so using a pool of channels should do.
+
+Cheers,
+  Marek
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="011940.html">[rabbitmq-discuss] Managing channels,	esp wrt short lived publishers/consumers
+</A></li>
+	<LI>Next message: <A HREF="012048.html">[rabbitmq-discuss] Managing channels,	esp wrt short lived publishers/consumers
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#12035">[ date ]</a>
+              <a href="thread.html#12035">[ thread ]</a>
+              <a href="subject.html#12035">[ subject ]</a>
+              <a href="author.html#12035">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

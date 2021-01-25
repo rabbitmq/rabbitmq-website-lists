@@ -1,0 +1,229 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Why does the queue drop other messages after the first is consumed?
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Why%20does%20the%20queue%20drop%20other%20messages%20after%0A%20the%20first%20is%20consumed%3F&In-Reply-To=%3CetPan.52af5a04.41b71efb.fb3d%40gmr-home.local%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="032624.html">
+   <LINK REL="Next"  HREF="032632.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Why does the queue drop other messages after the first is consumed?</H1>
+    <B>Gavin M. Roy</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Why%20does%20the%20queue%20drop%20other%20messages%20after%0A%20the%20first%20is%20consumed%3F&In-Reply-To=%3CetPan.52af5a04.41b71efb.fb3d%40gmr-home.local%3E"
+       TITLE="[rabbitmq-discuss] Why does the queue drop other messages after the first is consumed?">gavinmroy at gmail.com
+       </A><BR>
+    <I>Mon Dec 16 19:52:36 GMT 2013</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="032624.html">[rabbitmq-discuss] Why does the queue drop other messages after the first is consumed?
+</A></li>
+        <LI>Next message: <A HREF="032632.html">[rabbitmq-discuss] Why does the queue drop other messages after the first is consumed?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#32625">[ date ]</a>
+              <a href="thread.html#32625">[ thread ]</a>
+              <a href="subject.html#32625">[ subject ]</a>
+              <a href="author.html#32625">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Looking through the source of rabbitmq-c I see mutex code around ssl initialization (amqp_openssl.c), but I don&#8217;t see how that could cause your issue.
+
+I&#8217;m wondering why you&#8217;d want to mutex either around the RPC request or if you&#8217;re calling amqp_consume_message (<A HREF="https://github.com/alanxz/rabbitmq-c/blob/master/librabbitmq/amqp_consumer.c#L136">https://github.com/alanxz/rabbitmq-c/blob/master/librabbitmq/amqp_consumer.c#L136</A>). &#160;What does putting a lock around your &#8220;basic_consume()&#8221; invocation achieve?
+
+Consuming is an asynchronous operation. You register your app as a consumer with RabbitMQ, then as RabbitMQ sees fit, messages are delivered to your application. Without context, I&#8217;m interpreting what you&#8217;re doing as if you want to use Basic.Get instead.
+
+
+From:&#160;Gavin M. Roy Gavin M. Roy
+Reply:&#160;Gavin M. Roy <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">gavinmroy at gmail.com</A>
+Date:&#160;December 16, 2013 at 2:33:11 PM
+To:&#160;Raj Kumar Sanpui <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">raj.kumar.sanpui at gmail.com</A>, Discussions about RabbitMQ <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+Subject:&#160; Re: [rabbitmq-discuss] Why does the queue drop other messages after the first is consumed?  
+What library are you using?
+
+basic.consume() is not quite as simple as your code would imply. While it is issuing a RPC request to start consuming, most libraries have some semantics around its use such as registering a callback or setting up behaviors for what happens when messages are received from RabbitMQ. I think there&#8217;s more to what&#8217;s going on than you realize.
+
+
+From:&#160;Raj Kumar Sanpui Raj Kumar Sanpui
+Reply:&#160;Discussions about RabbitMQ <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+Date:&#160;December 16, 2013 at 2:31:26 PM
+To:&#160;Discussions about RabbitMQ <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+Subject:&#160; Re: [rabbitmq-discuss] Why does the queue drop other messages after the first is consumed?
+Agreed, but something as simple as:
+
+{{{
+pthread_mutex_lock(&amp;mutex);
+basic.consume( );
+pthread_mutex_unlock(&amp;mutex);
+}}}
+
+Should not have any issues (unless the library you are using has), and there are no issues in above code, if you can see.
+
+
+
+
+On Tue, Dec 17, 2013 at 12:40 AM, Alvaro Videla &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">videlalvaro at gmail.com</A>&gt; wrote:
+Hi,
+
+Well it might be the code is corrupting the channel state, RabbitMQ
+will just act based on the order you send AMQP commands to it. If your
+code sends those commands in the wrong order, then errors might
+happen, for example ack'ing the wrong message or things like that.
+
+RabbitMQ is a server, which means, it is not concerned on which
+threading library your application is using, or even if it is using
+threads at all. Your application will send &quot;requests&quot; to RabbitMQ and
+RabbitMQ will service them. In this case the requests are AMQP
+commands.
+
+Regards,
+
+Alvaro
+
+On Mon, Dec 16, 2013 at 6:59 PM, Raj Kumar Sanpui
+&lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">raj.kumar.sanpui at gmail.com</A>&gt; wrote:
+&gt;<i> @Alvaro: The same code works perfect, if there are no pthread_mutex_lock.
+</I>&gt;<i>
+</I>&gt;<i> Can Allan know anything about it.
+</I>&gt;<i> @Alan Antonuk: Alan, do you have any issue in your library with regard to
+</I>&gt;<i> thread locks (pthread_mutex_lock) ?
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> On Tue, Dec 17, 2013 at 12:26 AM, Alvaro Videla &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">videlalvaro at gmail.com</A>&gt;
+</I>&gt;<i> wrote:
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Well, perhaps either your code or the AMQP library has that problem.
+</I>&gt;&gt;<i> RabbitMQ doesn't know anything about application specific code.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> On Mon, Dec 16, 2013 at 6:48 PM, Raj Kumar Sanpui
+</I>&gt;&gt;<i> &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">raj.kumar.sanpui at gmail.com</A>&gt; wrote:
+</I>&gt;&gt;<i> &gt; Seems like rabbitmq has an allergy towards thread locks.
+</I>&gt;&gt;<i> &gt; Invoke a consumer thread (basic.consume) calling pthread_mutex_lock( )
+</I>&gt;&gt;<i> &gt; and
+</I>&gt;&gt;<i> &gt; all but one message gets dropped. Same works absolutely fine, if no
+</I>&gt;&gt;<i> &gt; thread
+</I>&gt;&gt;<i> &gt; locks are used.
+</I>&gt;&gt;<i> &gt;
+</I>&gt;&gt;<i> &gt;
+</I>&gt;&gt;<i> &gt; On Mon, Dec 16, 2013 at 11:22 PM, Michael Klishin
+</I>&gt;&gt;<i> &gt; &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">mklishin at gopivotal.com</A>&gt;
+</I>&gt;&gt;<i> &gt; wrote:
+</I>&gt;&gt;<i> &gt;&gt;
+</I>&gt;&gt;<i> &gt;&gt; On 16 Dec 2013, at 21:47, Raj Kumar Sanpui &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">raj.kumar.sanpui at gmail.com</A>&gt;
+</I>&gt;&gt;<i> &gt;&gt; wrote:
+</I>&gt;&gt;<i> &gt;&gt;
+</I>&gt;&gt;<i> &gt;&gt; &gt; In between, do we have any man page for basic.consume?
+</I>&gt;&gt;<i> &gt;&gt; &gt;
+</I>&gt;&gt;<i> &gt;&gt; &gt; What does &quot;no ack&quot;, &quot;exclusive&quot;, &quot;local&quot; stands for?
+</I>&gt;&gt;<i> &gt;&gt;
+</I>&gt;&gt;<i> &gt;&gt; Ignore local. Exclusive means that there can only ever be one consumer
+</I>&gt;&gt;<i> &gt;&gt; on
+</I>&gt;&gt;<i> &gt;&gt; the queue.
+</I>&gt;&gt;<i> &gt;&gt;
+</I>&gt;&gt;<i> &gt;&gt; no ack means &#8220;no manual ack&#8221;, that is, you don&#8217;t intend to use manual
+</I>&gt;&gt;<i> &gt;&gt; acknowledgements of
+</I>&gt;&gt;<i> &gt;&gt; deliveries. See tutorial 2: <A HREF="http://www.rabbitmq.com/getstarted.html">http://www.rabbitmq.com/getstarted.html</A>
+</I>&gt;&gt;<i> &gt;&gt; and <A HREF="http://www.rabbitmq.com/amqp-0-9-1-reference.html#domain.no-ack">http://www.rabbitmq.com/amqp-0-9-1-reference.html#domain.no-ack</A>
+</I>&gt;&gt;<i> &gt;&gt;
+</I>&gt;&gt;<i> &gt;&gt; MK
+</I>&gt;&gt;<i> &gt;&gt;
+</I>&gt;&gt;<i> &gt;&gt; Software Engineer, Pivotal/RabbitMQ
+</I>&gt;&gt;<i> &gt;&gt;
+</I>&gt;&gt;<i> &gt;&gt;
+</I>&gt;&gt;<i> &gt;&gt; _______________________________________________
+</I>&gt;&gt;<i> &gt;&gt; rabbitmq-discuss mailing list
+</I>&gt;&gt;<i> &gt;&gt; <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;&gt;<i> &gt;&gt; <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>&gt;&gt;<i> &gt;
+</I>&gt;&gt;<i> &gt;
+</I>&gt;&gt;<i> &gt;
+</I>&gt;&gt;<i> &gt; _______________________________________________
+</I>&gt;&gt;<i> &gt; rabbitmq-discuss mailing list
+</I>&gt;&gt;<i> &gt; <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;&gt;<i> &gt; <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>&gt;&gt;<i> &gt;
+</I>&gt;&gt;<i> _______________________________________________
+</I>&gt;&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>&gt;<i>
+</I>_______________________________________________
+rabbitmq-discuss mailing list
+<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+
+_______________________________________________
+rabbitmq-discuss mailing list
+<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20131216/6c41d304/attachment.html">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20131216/6c41d304/attachment.html</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="032624.html">[rabbitmq-discuss] Why does the queue drop other messages after the first is consumed?
+</A></li>
+	<LI>Next message: <A HREF="032632.html">[rabbitmq-discuss] Why does the queue drop other messages after the first is consumed?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#32625">[ date ]</a>
+              <a href="thread.html#32625">[ thread ]</a>
+              <a href="subject.html#32625">[ subject ]</a>
+              <a href="author.html#32625">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,165 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] [BUG] Erlang RabbitMQ client requires	installed server code
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20%5BBUG%5D%20Erlang%20RabbitMQ%20client%20requires%0A%09installed%20server%20code&In-Reply-To=6c2563b20809071713m535c5844g60e66c32075d9dbb%40mail.gmail.com">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001380.html">
+   <LINK REL="Next"  HREF="001382.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] [BUG] Erlang RabbitMQ client requires	installed server code</H1>
+    <B>Edwin Fine</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20%5BBUG%5D%20Erlang%20RabbitMQ%20client%20requires%0A%09installed%20server%20code&In-Reply-To=6c2563b20809071713m535c5844g60e66c32075d9dbb%40mail.gmail.com"
+       TITLE="[rabbitmq-discuss] [BUG] Erlang RabbitMQ client requires	installed server code">rabbitmq-discuss_efine at usa.net
+       </A><BR>
+    <I>Mon Sep  8 01:40:35 BST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001380.html">[rabbitmq-discuss] [BUG] Erlang RabbitMQ client requires	installed server code
+</A></li>
+        <LI>Next message: <A HREF="001382.html">[rabbitmq-discuss] [BUG] Erlang RabbitMQ client requires	installed server code
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1381">[ date ]</a>
+              <a href="thread.html#1381">[ thread ]</a>
+              <a href="subject.html#1381">[ subject ]</a>
+              <a href="author.html#1381">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Ok, I can see an issue here. There's a bit of a Catch-22 where the
+IntialState is obtained from the driver, but we don't know which driver to
+get it from because the drive name has to be in the state :).
+
+So I have another suggestion. By the principle of convention over
+configuration, I present some code, unfortunately a bit long winded but
+necessary.
+
+%% Starts a direct connection to the Rabbit AMQP server, assuming that
+%% the server is running in the same process space.
+start(User,Password,ProcLink) when is_boolean(ProcLink) -&gt;
+    InitialState = #connection_state{username = User,
+                                     password = Password,
+                                     vhostpath = &lt;&lt;&quot;/&quot;&gt;&gt;},
+*    {ok, Pid} = start_internal(InitialState, &quot;direct&quot;, ProcLink),
+*    {Pid, direct};
+
+%% Starts a networked conection to a remote AMQP server.
+start(User,Password,Host,VHost,ProcLink) -&gt;
+    InitialState = #connection_state{username = User,
+                                     password = Password,
+                                     serverhost = Host,
+                                     vhostpath = VHost},
+*    {ok, Pid} = start_internal(InitialState, &quot;network&quot;, ProcLink),
+*    {Pid, network}.
+
+start_internal(InitialState, DriverType, ProcLink) when is_list(DriverType)
+-&gt;
+    DriverSpec = build_driver_spec(DriverType),
+    case ProcLink of
+        true -&gt;
+            gen_server:start_link(?MODULE, [InitialState, DriverSpec], []);
+        false -&gt;
+            gen_server:start(?MODULE, [InitialState, DriverSpec], [])
+    end.
+
+init([InitialState, {M, F}]) -&gt;
+    State = apply(M, F, [InitialState]),
+    {ok, State#driver_module = M}.
+    % or if we can't modify the driver state record format,
+    % we could piggyback it, e.g. #mystate{drv_state = State, drv_module =
+Module}
+
+l2a(L) -&gt;
+    case catch list_to_existing_atom(L) of
+        A when is_atom(A) -&gt;
+            A;
+        _ -&gt;
+            list_to_atom(L)
+    end.
+
+build_driver_spec(DriverType) -&gt;
+    DriverModule = l2a(&quot;amqp_&quot; ++ DriverType ++ &quot;_driver&quot;),
+    DriverFn = handshake,
+    {DriverModule, DriverFn}.
+    % or maybe just return a fun(X) -&gt; DriverModule:handshake/1, but is that
+legal?
+
+
+The rest follows as before.
+
+Thoughts?
+
+
+On Sun, Sep 7, 2008 at 8:13 PM, Edwin Fine
+&lt;<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss_efine at usa.net</A>&gt;wrote:
+
+&gt;<i> Hm, I made a mistake in my excitement :)
+</I>&gt;<i>
+</I>&gt;<i>     {ok, Module} = proplists:get_value(Flavor, State#state.flavor_module),
+</I>&gt;<i>
+</I>&gt;<i> should be
+</I>&gt;<i>
+</I>&gt;<i>     Module = proplists:get_value(Flavor, State#state.flavor_modules),
+</I>&gt;<i>
+</I>&gt;<i> where flavor_modules would contain something like [{direct,
+</I>&gt;<i> amqp_direct_driver}, {network, amqp_network_driver}, {whatever,
+</I>&gt;<i> amqp_whatever_driver}].
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> On Sun, Sep 7, 2008 at 8:06 PM, Edwin Fine &lt;<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss_efine at usa.net</A>
+</I>&gt;<i> &gt; wrote:
+</I>&gt;<i>
+</I>&gt;&gt;<i> Let me make a constructive suggestion. By using the configuration, we
+</I>&gt;&gt;<i> could avoid the compile-time dependency on either of those modules, and at
+</I>&gt;&gt;<i> the same time we could make amqp_connection more flexible.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> %% Starts a new channel. Flavor is direct or network. flavor_module is set
+</I>&gt;&gt;<i> up to be
+</I>&gt;&gt;<i> %% one of amqp_direct_driver or amqp_network_driver (or, some other driver
+</I>&gt;&gt;<i> - e.g. future amqp_wmq_driver)
+</I>&gt;&gt;<i> handle_call({Flavor, ChannelNumber, OutOfBand}, From, State) -&gt;
+</I>&gt;&gt;<i>     {ok, Module} = proplists:get_value(Flavor, State#state.flavor_module),
+</I>&gt;&gt;<i>     handle_start({ChannelNumber, OutOfBand},
+</I>&gt;&gt;<i>                  fun Module:open_channel/3,
+</I>&gt;&gt;<i>                  fun Module:close_channel/1,
+</I>&gt;&gt;<i>                  fun Module:do/2,
+</I>&gt;&gt;<i>                  fun Module:do/3,
+</I>&gt;&gt;<i>                  State);
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> What do you think?
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Regards,
+</I>&gt;&gt;<i> Edwin
+</I>&gt;&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: <A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20080907/a9042158/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20080907/a9042158/attachment.htm</A> 
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001380.html">[rabbitmq-discuss] [BUG] Erlang RabbitMQ client requires	installed server code
+</A></li>
+	<LI>Next message: <A HREF="001382.html">[rabbitmq-discuss] [BUG] Erlang RabbitMQ client requires	installed server code
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1381">[ date ]</a>
+              <a href="thread.html#1381">[ thread ]</a>
+              <a href="subject.html#1381">[ subject ]</a>
+              <a href="author.html#1381">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

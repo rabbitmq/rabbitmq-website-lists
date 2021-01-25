@@ -1,0 +1,290 @@
+#include <stdlib.h>
+#include <stdio.h>
+#include <string.h>
+
+#include <stdint.h>
+#include <amqp.h>
+#include <amqp_framing.h>
+
+#include <assert.h>
+
+#include "utils.h"
+
+char * amqp_error(amqp_rpc_reply_t x)
+{
+	char * ret;
+	ret = malloc(256);
+	
+	switch (x.reply_type) {
+		case AMQP_RESPONSE_NORMAL:
+			return ret;
+
+		case AMQP_RESPONSE_NONE:	
+			sprintf(ret, "Missing RPC reply type.");
+			break;
+
+		case AMQP_RESPONSE_LIBRARY_EXCEPTION:
+			sprintf(ret, "Library error: %s\n", amqp_error_string(x.library_error));
+			break;
+			
+		case AMQP_RESPONSE_SERVER_EXCEPTION:
+			switch (x.reply.id) {
+				case AMQP_CONNECTION_CLOSE_METHOD: {
+					amqp_connection_close_t *m = (amqp_connection_close_t *)x.reply.decoded;
+					sprintf(ret, "Server connection error: %d, message: %.*s",
+						m->reply_code,
+						(int) m->reply_text.len,
+						(char *)m->reply_text.bytes);
+					/* No more error handling necessary, returning. */
+					return ret;
+				}
+				case AMQP_CHANNEL_CLOSE_METHOD: {
+					amqp_channel_close_t *m = (amqp_channel_close_t *) x.reply.decoded;
+					sprintf(ret, "Server channel error: %d, message: %.*s",
+						m->reply_code,
+						(int)m->reply_text.len,
+						(char *)m->reply_text.bytes);
+					/* No more error handling necessary, returning. */
+					return ret;
+				}
+			}
+		/* Default for the above switch should be handled by the below default. */
+		default:
+			sprintf(ret, "Unknown server error, method id 0x%08X",	x.reply.id);
+			break;
+	}
+	
+	return ret;
+}
+
+
+
+int doThatThing(amqp_connection_state_t conn, amqp_bytes_t queue_name, int iteration) {
+	amqp_queue_declare_ok_t *rqd;
+	amqp_rpc_reply_t res;
+
+	amqp_frame_t frame;
+	int result;
+	size_t body_received;
+	size_t body_target;
+	int i;
+	/* LEAVING THIS UNINITIZALIZED ON PURPOSE */
+	long last_delivery_tag;
+	
+	int min_messages = 0;
+	int max_messages = 3;
+	int messages_in_queue;
+
+	amqp_basic_consume_ok_t *r;
+	amqp_basic_deliver_t *delivery;
+	amqp_basic_properties_t * p;
+	amqp_boolean_t frames;
+	amqp_boolean_t buffer;
+	
+	printf("Round %d, initial QOS, queue name: %s\n", iteration, (char *)queue_name.bytes);
+	
+	/* Set the QOS for this channel to only pull off one message at a time */
+	amqp_basic_qos(
+		conn,
+		1,						/* channel id */
+		0,						/* prefetch window size */
+		1,						/* prefetch message count */
+		0						/* global flag */
+	);
+
+	printf("Round %d, consume\n", iteration);
+	
+	amqp_basic_consume(
+		conn,
+		1,
+		queue_name,
+		AMQP_EMPTY_BYTES,					/* Consume tag */
+		0, 									/* No local */
+		0,									/* no_ack, aka AUTOACK */
+		0,									/* exclusive */
+		AMQP_EMPTY_TABLE
+	);
+	
+	/* verify there are no errors before grabbing the messages */
+ 	res = amqp_get_rpc_reply(conn);
+	if (res.reply_type != AMQP_RESPONSE_NORMAL) {
+		printf("Dying %d: %s\n", __LINE__, amqp_error(res));
+		return 1;
+	}
+	
+	r = (amqp_basic_consume_ok_t *) res.reply.decoded;
+
+	for (i = 0; i < max_messages; i++) {
+	
+		amqp_maybe_release_buffers(conn);
+			
+		/* if we have met the minimum number of messages, check to see if there are messages left */
+		if (i >= min_messages) {
+			/* see if there are messages in the queue */ 		
+			rqd = amqp_queue_declare(
+				conn,
+				1,
+				queue_name,
+				0,			/* passive */
+				1,			/* durable */
+				0,			/* exclusive */
+				0,			/* auto delete */
+				AMQP_EMPTY_TABLE
+			);
+			
+			/* Verify that we got a response: */
+			if (!rqd) {
+				printf("Dying %d\n", __LINE__);
+				return 1;
+			}
+			
+			messages_in_queue = rqd->message_count;
+								
+			/* see if there are frames enqueued */
+			frames = amqp_frames_enqueued(conn);
+			
+			/* see if there is any unread data in the buffer */
+			buffer = amqp_data_in_buffer(conn);
+			
+			if (!messages_in_queue && !frames && !buffer) {
+				break;
+			}
+		}
+	
+		/* get next frame from the queue (blocks) */
+		result = amqp_simple_wait_frame(conn, &frame);
+			
+		/* check frame validity */
+		if (result < 0) {
+			printf("Dying %d\n", __LINE__);
+			return 1;
+		}
+		if (frame.frame_type != AMQP_FRAME_METHOD) {
+			continue;
+		}
+		if (frame.payload.method.id != AMQP_BASIC_DELIVER_METHOD) {
+			continue;
+		}
+
+		delivery = (amqp_basic_deliver_t *) frame.payload.method.decoded;
+
+		/* Copy the delivery tag to our higher scoper storage layer so we can ack everything up to the last delivery tag */
+		last_delivery_tag = delivery->delivery_tag;
+		printf("Last delivery tag: %d\n", (int)last_delivery_tag);
+
+		/* get header frame (blocks) */
+		result = amqp_simple_wait_frame(conn, &frame);
+		if (result < 0) {
+			printf("Dying %d\n", __LINE__);
+			return 1;
+		}
+
+		if (frame.frame_type != AMQP_FRAME_HEADER) {
+			printf("Dying %d\n", __LINE__);
+			return 1;
+		}
+		
+		p = (amqp_basic_properties_t *) frame.payload.properties.decoded;
+	
+		body_target = frame.payload.properties.body_size;
+		body_received = 0;
+		
+		while (body_received < body_target) {
+			result = amqp_simple_wait_frame(conn, &frame);
+			if (result < 0) {
+				break;
+			}
+
+			if (frame.frame_type != AMQP_FRAME_BODY) {
+				printf("Dying %d\n", __LINE__);
+				return 1;
+			}
+
+			body_received += frame.payload.body_fragment.len;
+
+		} /* end while	*/
+	
+	}
+	
+	printf("Round %d, ACK'ing incorrectly without checking delivery flag\n", iteration);
+	
+	/* If we have chosen to auto_ack, meaning that we do not need to acknowledge at a later date, acknowledge now */
+	amqp_basic_ack(
+		conn,
+		1,
+		last_delivery_tag,
+		1						/* Multiple flag - Set to 1 will acknowledge up to and including the above delivery tag */
+	);
+	
+	printf("Round %d, reset QOS\n", iteration);
+	
+	/* Set the QOS back to what the user requested at the beginning */
+	amqp_basic_qos(
+		conn,
+		1,
+		0,			/* prefetch window size */
+		3,			/* prefetch message count */
+		0			/* global flag */
+	);
+	
+	printf("Round %d complete.\n", iteration);
+	
+	return 0;
+}
+
+
+int main(int argc, char const * const *argv) {
+	char const *hostname;
+	int port;
+	int durable = 0;
+
+	int sockfd;
+	amqp_connection_state_t conn;
+
+	amqp_bytes_t queue_name;
+	char * buf;
+	buf = malloc(256);
+	sprintf(buf, "weird-queue-%d", time());
+
+	printf("Queue name: %s\n", buf);
+	
+	queue_name = amqp_cstring_bytes(buf);
+
+	if (argc < 3) {
+		fprintf(stderr, "Usage: amqp_weird host port\n");
+		return 1;
+	}
+
+	hostname = argv[1];
+	port = atoi(argv[2]);
+
+	conn = amqp_new_connection();
+
+	die_on_error(sockfd = amqp_open_socket(hostname, port), "Opening socket");
+	amqp_set_sockfd(conn, sockfd);
+	die_on_amqp_error(amqp_login(conn, "/", 0, 131072, 0, AMQP_SASL_METHOD_PLAIN, "guest", "guest"), "Logging in");
+	amqp_channel_open(conn, 1);
+	die_on_amqp_error(amqp_get_rpc_reply(conn), "Opening channel");
+
+	/* Setup the queue initially */
+	amqp_queue_declare(
+		conn,
+		1,
+		queue_name,
+		0,			/* passive */
+		1,			/* durable */
+		0,			/* exclusive */
+		0,			/* auto delete */
+		AMQP_EMPTY_TABLE
+	);	
+	
+	doThatThing(conn, queue_name, 1);
+	doThatThing(conn, queue_name, 2);
+	
+	die_on_amqp_error(amqp_channel_close(conn, 1, AMQP_REPLY_SUCCESS), "Closing channel");
+	die_on_amqp_error(amqp_connection_close(conn, AMQP_REPLY_SUCCESS), "Closing connection");
+	die_on_error(amqp_destroy_connection(conn), "Ending connection");
+
+	return 0;
+}
+

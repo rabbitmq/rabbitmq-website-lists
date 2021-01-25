@@ -1,0 +1,170 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Confirmation listeners and closing a channel
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Confirmation%20listeners%20and%20closing%20a%20channel&In-Reply-To=%3CCAOn7oW95tXpmtKGvbHQaNjcb%3DdztRSsb95q%3Du7GtPMkEQxjKMw%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="017587.html">
+   <LINK REL="Next"  HREF="017602.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Confirmation listeners and closing a channel</H1>
+    <B>Simone Busoli</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Confirmation%20listeners%20and%20closing%20a%20channel&In-Reply-To=%3CCAOn7oW95tXpmtKGvbHQaNjcb%3DdztRSsb95q%3Du7GtPMkEQxjKMw%40mail.gmail.com%3E"
+       TITLE="[rabbitmq-discuss] Confirmation listeners and closing a channel">simone.busoli at gmail.com
+       </A><BR>
+    <I>Mon Jan 23 20:50:21 GMT 2012</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="017587.html">[rabbitmq-discuss] Confirmation listeners and closing a channel
+</A></li>
+        <LI>Next message: <A HREF="017602.html">[rabbitmq-discuss] erroneous basicGet closing the channel?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#17589">[ date ]</a>
+              <a href="thread.html#17589">[ thread ]</a>
+              <a href="subject.html#17589">[ subject ]</a>
+              <a href="author.html#17589">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>I'm not confident with the Java API but although ideally it would make
+sense to be able to configure whether the channel waits for confirms before
+closing, it is sensible for it to wait, as it appears it is doing here.
+Also mandatory doesn't have anything to do with this, check the protocol
+specification for that; you can see that even without the mandatory flag
+you'll experience the same behavior.
+What seems to be happening here is that when you call close your listeners
+are removed but the channel, since in confirm mode, will still wait for all
+confirms to arrive. It probably has its own listeners inside and until all
+messages are either acked or nacked it will wait.
+Finally, I noticed that version 2.7.1 of the broker (at least), publication
+rate being equal will send confirms in batches when messages are persistent
+and one by one when messages are transient, if that's on any help to you.
+
+Simone
+
+On Mon, Jan 23, 2012 at 21:39, Adam Rabung &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">adamrabung at gmail.com</A>&gt; wrote:
+
+&gt;<i> Hello,
+</I>&gt;<i> I am trying to understand the effect ConfirmationListeners have on channel
+</I>&gt;<i> closing.  It looks like if messages are published with &quot;mandatory=true&quot;,
+</I>&gt;<i> the corresponding Channel.close will block until all notifications have
+</I>&gt;<i> been received (unsure of any timeout, I've seen it block for over a
+</I>&gt;<i> minute).  I understand &quot;mandatory&quot; to mean &quot;return the message to all
+</I>&gt;<i> Return/Confirm listeners&quot;.  Is this blocking behavior also part of
+</I>&gt;<i> mandatory behavior, or should close() happen immediately?
+</I>&gt;<i>
+</I>&gt;<i> Something else interesting happens when you close a channel with pending
+</I>&gt;<i> callbacks: listeners are immediately removed.  The consequence is you block
+</I>&gt;<i> until all confirmations/returns have happened, but your listeners don't
+</I>&gt;<i> receive them.
+</I>&gt;<i>
+</I>&gt;<i> Here's some example code:
+</I>&gt;<i> <A HREF="https://gist.github.com/1665378">https://gist.github.com/1665378</A>
+</I>&gt;<i>
+</I>&gt;<i> If you call this with
+</I>&gt;<i> RabbitTest.publish(0, exchange, routingKey, msg, brokerAddress);
+</I>&gt;<i> prints &quot;0 callbacks, waited 0ms before close, close took 5959&quot;
+</I>&gt;<i>
+</I>&gt;<i> RabbitTest.publish(5000, exchange, routingKey, msg, brokerAddress);
+</I>&gt;<i> prints &quot;427 callbacks, waited 5000ms before close, close took 833&quot;
+</I>&gt;<i>
+</I>&gt;<i> Note how both take roughly 5800ms.  On the first call, we don't pause
+</I>&gt;<i> before calling close, and receive 0 callbacks. However, the second one,
+</I>&gt;<i> which waits 5000ms before trying to call close, gets most of the callbacks.
+</I>&gt;<i>  A longer pause before close results in all callbacks being handled.
+</I>&gt;<i>
+</I>&gt;<i> To reproduce this, I use a roughly 200 character string as my message.
+</I>&gt;<i>  It's also important that the message be published as &quot;persistent&quot; - I
+</I>&gt;<i> think transient messages are too fast to reveal this :)
+</I>&gt;<i>
+</I>&gt;<i> Should callbacks block close?  If so, should listeners continue to receive
+</I>&gt;<i> callbacks as close happens?
+</I>&gt;<i>
+</I>&gt;<i> Thank you,
+</I>&gt;<i> Adam
+</I>&gt;<i>
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20120123/76be9b7e/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20120123/76be9b7e/attachment.htm</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="017587.html">[rabbitmq-discuss] Confirmation listeners and closing a channel
+</A></li>
+	<LI>Next message: <A HREF="017602.html">[rabbitmq-discuss] erroneous basicGet closing the channel?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#17589">[ date ]</a>
+              <a href="thread.html#17589">[ thread ]</a>
+              <a href="subject.html#17589">[ subject ]</a>
+              <a href="author.html#17589">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

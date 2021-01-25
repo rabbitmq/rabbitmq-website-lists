@@ -1,0 +1,185 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Concerning cluster failure scenario
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Concerning%20cluster%20failure%20scenario&In-Reply-To=%3CAANLkTi%3DLWYiLe7dvGS0e5SvP3xviOH%2BmiTpwg5vN-p6%2B%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="008519.html">
+   <LINK REL="Next"  HREF="008469.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Concerning cluster failure scenario</H1>
+    <B>Aaron Westendorf</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Concerning%20cluster%20failure%20scenario&In-Reply-To=%3CAANLkTi%3DLWYiLe7dvGS0e5SvP3xviOH%2BmiTpwg5vN-p6%2B%40mail.gmail.com%3E"
+       TITLE="[rabbitmq-discuss] Concerning cluster failure scenario">aaron at agoragames.com
+       </A><BR>
+    <I>Mon Aug 23 14:10:48 BST 2010</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="008519.html">[rabbitmq-discuss] Concerning cluster failure scenario
+</A></li>
+        <LI>Next message: <A HREF="008469.html">[rabbitmq-discuss] Cluster behavior with distributing messages internally over Wide area networks
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#8534">[ date ]</a>
+              <a href="thread.html#8534">[ thread ]</a>
+              <a href="subject.html#8534">[ subject ]</a>
+              <a href="author.html#8534">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>On Sat, Aug 21, 2010 at 9:54 AM, David Wragg &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">david at rabbitmq.com</A>&gt; wrote:
+
+&gt;<i> You say that an application node went down, and queues disappeared. &#160;Is
+</I>&gt;<i> it possible that those queues has been declared on that node?
+</I>
+The queues that disappeared were on other nodes and were not durable.
+It is possible that our application stack is responsible for the
+queues disappearing.  We have numerous instances of probably 100
+different applications running on our cluster, and when something
+dies, forensic gathering clashes with urgent repairs.
+
+Interim work and a camping trip clouds some of the details.
+
+&gt;&gt;<i> The logs when the other node went down have many entries similar to
+</I>&gt;&gt;<i> the following:
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> =ERROR REPORT==== 16-Aug-2010::18:06:54 ===
+</I>&gt;&gt;<i> connection &lt;0.20615.10&gt; (running), channel 2 - error:
+</I>&gt;&gt;<i> {amqp_error,internal_error,
+</I>&gt;&gt;<i>             &quot;commit failed:
+</I>&gt;<i>
+</I>&gt;<i> My guess is that these are due to the crash itself.
+</I>
+Yeah, I expect so.  We see that anytime there's a disconnect within the cluster.
+
+&gt;&gt;<i> =ERROR REPORT==== 16-Aug-2010::18:06:56 ===
+</I>&gt;&gt;<i> connection &lt;0.22741.65&gt; (running), channel 1 - error:
+</I>&gt;&gt;<i> {amqp_error,not_found,&quot;no queue 'ogre.28645' in vhost
+</I>&gt;&gt;<i> '/hydra'&quot;,'queue.bind'}
+</I>&gt;<i>
+</I>&gt;<i> This is what I would expect if the queues in question resided on the
+</I>&gt;<i> crashed node.
+</I>
+It's a race condition that is very common for us.  The destination
+queue was on the crashed node, so a commit failed.  The publisher
+disconnects and then tries to reconnect, setting up queues and
+bindings.
+
+&gt;<i> AMQP applications often bind queues immediately after declaring them.
+</I>&gt;<i> But from your description of this error, it sounds like the binding
+</I>&gt;<i> happens quite separately from the declaration. &#160;Is that right?
+</I>
+No they're in rapid succession.  I know that our libevent integration
+with py-amqplib isn't perfect with respect to synchronous vs.
+asynchronous transactions, but binding errors only occur when we
+quickly disconnect the one consumer of a non-durable queue, then
+reconnect and redeclare the queue and the bindings.
+
+Looking at our default behavior, I think the problem is that
+nowait=False, when it should be true.
+
+&gt;&gt;<i> So both logs and rabbitmqctl were in
+</I>&gt;&gt;<i> agreement that the queues which should have existed for our
+</I>&gt;&gt;<i> translators did not exist. &#160;I didn't see any errors about the
+</I>&gt;&gt;<i> queue.basic_consume calls though.
+</I>&gt;<i>
+</I>&gt;<i> That is indeed surprising. &#160;Do you have the output of 'rabbitmqctl
+</I>&gt;<i> list_bindings' from this point?
+</I>
+I don't, but it was consistent with other rabbitmqctl output.
+
+&gt;&gt;<i> Our translators have some test endpoints, and one of those is a ping
+</I>&gt;&gt;<i> which writes directly to the response exchange to effectively test
+</I>&gt;&gt;<i> that the translator and Rabbit are working together. &#160;The response
+</I>&gt;&gt;<i> exchange is living on the same node which the translator is connected
+</I>&gt;&gt;<i> to and consuming from.
+</I>&gt;<i>
+</I>&gt;<i> Note that exchanges do not live on a particular node, unlike queues.
+</I>
+I know, but in this case, there was a distinct branch of behavior
+depending on which node was being published to.  It was almost as if
+all rabbitmqctl output, and the configurations of other nodes, was
+driven entirely from mnesia, but that internally there was still a
+reference to the queue, the binding and the consumer.
+
+&gt;&gt;<i> When we called this test endpoint, it succeeded! &#160;Though rabbit did
+</I>&gt;&gt;<i> not report a queue or binding, every single on of our translators was
+</I>&gt;&gt;<i> receiving responses though they never should have. &#160;When one of our
+</I>&gt;&gt;<i> services wrote back to the response exchange on other node in the
+</I>&gt;&gt;<i> cluster, the message was dropped as we would expect.
+</I>&gt;<i>
+</I>&gt;<i> Again, the output of 'rabbitmqctl list_bindings' would be useful, if you
+</I>&gt;<i> have it.
+</I>&gt;<i>
+</I>&gt;<i> One more general question: This is a fairly elaborate clustering set-up.
+</I>&gt;<i> While we intended that clustering works properly, and I hope we can get
+</I>&gt;<i> to the bottom of your problem, the non-uniform nature of the current
+</I>&gt;<i> RabbitMQ clustering can make it quite complicated to administer. &#160;So I
+</I>&gt;<i> wonder what requirements led you to this design?
+</I>
+How do you mean non-uniform?
+
+We think we've modeled our environment on best practices.  This report
+is complicated because it covers our HTTP interfaces, but otherwise we
+have asynchronous applications connected to one of several nodes.  We
+use clustering to share our workload and give us fallback hosts.  If
+one suite of apps fails to process data fast enough, the worst they'll
+do is back up one of the cluster nodes and not take down our entire
+infrastructure.  We can divide the workflow evenly and monitor the
+hosts to ensure that cpu, ram and disk are within bounds.  We're
+over-allocated on capacity at the moment, but expect an order of
+magnitude growth over the next 6-9 months.
+
+Thanks for your time!
+
+cheers,
+Aaron
+
+
+-- 
+Aaron Westendorf
+Senior Software Engineer
+Agora Games
+359 Broadway
+Troy, NY 12180
+Phone: 518.268.1000
+<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">aaron at agoragames.com</A>
+www.agoragames.com
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="008519.html">[rabbitmq-discuss] Concerning cluster failure scenario
+</A></li>
+	<LI>Next message: <A HREF="008469.html">[rabbitmq-discuss] Cluster behavior with distributing messages internally over Wide area networks
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#8534">[ date ]</a>
+              <a href="thread.html#8534">[ thread ]</a>
+              <a href="subject.html#8534">[ subject ]</a>
+              <a href="author.html#8534">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

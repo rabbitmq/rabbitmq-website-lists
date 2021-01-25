@@ -1,0 +1,170 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Blocked Connections
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Blocked%20Connections&In-Reply-To=%3C7C8E5605-A544-4A7A-9645-A2029DA6C0AC%40rabbitmq.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="024394.html">
+   <LINK REL="Next"  HREF="024400.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Blocked Connections</H1>
+    <B>Tim Watson</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Blocked%20Connections&In-Reply-To=%3C7C8E5605-A544-4A7A-9645-A2029DA6C0AC%40rabbitmq.com%3E"
+       TITLE="[rabbitmq-discuss] Blocked Connections">tim at rabbitmq.com
+       </A><BR>
+    <I>Fri Dec  7 21:32:35 GMT 2012</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="024394.html">[rabbitmq-discuss] Blocked Connections
+</A></li>
+        <LI>Next message: <A HREF="024400.html">[rabbitmq-discuss] Blocked Connections
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#24395">[ date ]</a>
+              <a href="thread.html#24395">[ thread ]</a>
+              <a href="subject.html#24395">[ subject ]</a>
+              <a href="author.html#24395">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>
+On 7 Dec 2012, at 19:56, Rawat wrote:
+
+&gt;<i> We use RabbitMQ in our production environment. There are 6 publishers
+</I>&gt;<i> and 2 consumers. Suddenly we have seen problems where RabbitMQ  blocks
+</I>&gt;<i> the connections from producers as well as consumers. We have 8 GB of
+</I>&gt;<i> RAM on the RabbitMQ host. And our queues are non-persistent. We are
+</I>&gt;<i> using Exchange/Fanout. Our RabbitMQ Server version is 2.8.6
+</I>&gt;<i> 
+</I>
+Just because your queues are non-persistent doesn't mean your messages aren't written to disk. Messages can be persistent but even if they're not, the broker may still page to disk if memory becomes scarce. Having 8Gb of RAM on a host does not imply that all 8Gb are available to the broker, and even if it did the default memory_high_watermark is 0.4 % of the available RAM iirc.
+
+&gt;<i> I am wondering :
+</I>&gt;<i> 
+</I>&gt;<i> -- Is it a known issue with version 2.8.6 ?
+</I>&gt;<i> -- Do you recommend upgrading to latest 3.0 version ?
+</I>&gt;<i> 
+</I>
+This is not a known 'issue' as such - it sounds like an example of flow control and you can read about it here: <A HREF="http://www.rabbitmq.com/memory.html">http://www.rabbitmq.com/memory.html</A> - I would recommend upgrading to 3.0.1 (which is out early next week) anyway if you can, as there have been numerous bug fixes and performance improvements. You should be aware that 3.0.0 is a major release away from the 2.8.x series though, and check for breaking changes that may affect you. The blog post at <A HREF="http://www.rabbitmq.com/blog/2012/11/19/breaking-things-with-rabbitmq-3-0/">http://www.rabbitmq.com/blog/2012/11/19/breaking-things-with-rabbitmq-3-0/</A> provides some insight into this.
+
+&gt;<i> 
+</I>&gt;<i> What is most severe in our case is that when RabbitMQ blocks producer
+</I>&gt;<i> connections, On producer side the thread that was publishing data to
+</I>&gt;<i> rabbitmq, gets blocked. And that thread is a critical thread that does
+</I>&gt;<i> other jobs too in Producer. Is there a way so that when connection is
+</I>&gt;<i> blocked, producer thread gets exception instead of getting infinitely
+</I>&gt;<i> blocked ?
+</I>&gt;<i> 
+</I>
+No there isn't a way to get an exception thrown afaik. Even if the broker has a lot of memory available to it, at some point you may still exhaust the server's resources and memory based flow control will *need* to kick in in order to prevent the broker from crashing. You can also run out of file descriptors which can lead to throttling, though this is a bit less specific in its application - unfortunately I'm not an expert in how that presents itself at runtime, but you can check to see if that is happening using `lsof' or some such.
+
+The same principle about memory based flow control applies to per-connection flow control, viz producers/connections which are generating traffic faster than the queues can process them are blocked: The broker stops reading from the inbound connections (sort of, roughly) which exerts TCP back-pressure on the producers. Flow control is actually 'credit' based in the broker, but that detail aside the results ought to look pretty much the same from a producer's perspective.
+
+&gt;<i> Any idea/suggestion is most welcome.
+</I>
+The solution is fairly simple if you ask me: don't do critical work in threads that call out to the network! I would advise the same thing if you were communicating with a relational database, web service or any other external resource accessed over a network link which might take arbitrary time to respond. 
+
+If you want to avoid this situation, which can happen *any time* BTW in a networked application, even if the external resource is not deliberately applying back pressure, because various bits of network infrastructure or behaviour in the OS networking sub-system can block producers too - I would suggest some simple refactoring such as 
+
+1. spawn a new thread for producing messages
+2. set up a lightweight channel for communicating with this 'producer thread' - I would suggest one of the Queue data structures in java.util.concurrent or a class from the System.Collections.Concurrent namespace if you're in .NET land.
+3. keep the 'critical thread' separate and unblocked, and have it communicate with the producer thread by putting data into the shared (concurrent) data structure
+4. put the interaction between the two threads into a class/object so the code the two threads use (and share) to communicate is neatly isolated in one place
+
+Then you won't have an issue if the producers get blocked. If you need to become aware that you're blocked then you can use timeouts (either when writing to the shared memory area or by setting up a house-keeping thread to periodically check the last time the producer became available) and most of the data structures I mentioned earlier support 'try-timeout' semantics after some fashion or another. Similar capabilities exist for python/ruby, although I not well versed in the client libraries for those languages so YMMV.
+
+HTH 
+
+Tim  
+
+&gt;<i> _______________________________________________
+</I>&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="024394.html">[rabbitmq-discuss] Blocked Connections
+</A></li>
+	<LI>Next message: <A HREF="024400.html">[rabbitmq-discuss] Blocked Connections
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#24395">[ date ]</a>
+              <a href="thread.html#24395">[ thread ]</a>
+              <a href="subject.html#24395">[ subject ]</a>
+              <a href="author.html#24395">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

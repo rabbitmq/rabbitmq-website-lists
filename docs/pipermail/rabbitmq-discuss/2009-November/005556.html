@@ -1,0 +1,161 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Slow throughput on consume side using java	client API
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20Slow%20throughput%20on%20consume%20side%20using%20java%0A%09client%20API&In-Reply-To=401b577e0911270818o769f5db1q391261c79a21469b%40mail.gmail.com">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="005553.html">
+   <LINK REL="Next"  HREF="005532.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Slow throughput on consume side using java	client API</H1>
+    <B>scott w</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20Slow%20throughput%20on%20consume%20side%20using%20java%0A%09client%20API&In-Reply-To=401b577e0911270818o769f5db1q391261c79a21469b%40mail.gmail.com"
+       TITLE="[rabbitmq-discuss] Slow throughput on consume side using java	client API">scottblanc at gmail.com
+       </A><BR>
+    <I>Fri Nov 27 21:31:35 GMT 2009</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="005553.html">[rabbitmq-discuss] Slow throughput on consume side using java	client API
+</A></li>
+        <LI>Next message: <A HREF="005532.html">[rabbitmq-discuss] RabbitMQ/Stomp on Windows
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#5556">[ date ]</a>
+              <a href="thread.html#5556">[ thread ]</a>
+              <a href="subject.html#5556">[ subject ]</a>
+              <a href="author.html#5556">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Just to follow up on my earlier email, I have discovered the culprit. I had
+been running the rabbitmq server on EC2 and my performance tests on my
+laptop. When I switch to also running the rabbitmq server on my laptop the
+read throughput looks great. I'm not sure why the read throughput (and not
+the write throughput) slows down so much when running on EC2 but at least
+it's good the problem is not coming from rabbitmq.
+
+thanks,
+Scott
+
+On Fri, Nov 27, 2009 at 8:18 AM, scott w &lt;<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">scottblanc at gmail.com</A>&gt; wrote:
+
+&gt;<i> Hi Matthew --
+</I>&gt;<i>
+</I>&gt;<i> Thanks for the feedback. Comments below.
+</I>&gt;<i>
+</I>&gt;<i> cheers,
+</I>&gt;<i> Scott
+</I>&gt;<i>
+</I>&gt;<i> On Thu, Nov 26, 2009 at 2:10 AM, Matthew Sackman &lt;<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">matthew at lshift.net</A>&gt;wrote:
+</I>&gt;<i>
+</I>&gt;&gt;<i> Hi Scott,
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> I must admit I'm a little confused by your description as it would
+</I>&gt;&gt;<i> appear somewhat complex to me. However, am I correct in the following?
+</I>&gt;&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> Not quite. Let me clarify.
+</I>&gt;<i>
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> 1. You have 1 queue, which is being published to by 50 threads.
+</I>&gt;&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> Yes although for the purposes of this discussion the publishing side is not
+</I>&gt;<i> important. You can just assume the queue is filled up with thousands of
+</I>&gt;<i> messages.
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;&gt;<i> 2. You have 25 consumers on that queue.
+</I>&gt;&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> 2a. 50 threads calling the equivalent of queue.pop()
+</I>&gt;<i>
+</I>&gt;<i> 2b. Within the queue, I have 25 QueueConsumers and 25 channel (each
+</I>&gt;<i> QueueConsumer takes in 1 channel in its constructor and there is a 1-1
+</I>&gt;<i> mapping between QueueConsumer and channel)
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;&gt;<i> 3. To receive, you randomly select a consumer, and get that consumer to
+</I>&gt;&gt;<i> consume a message.
+</I>&gt;&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> Right so one of 50 threads will call queue.pop(), and internally picks a
+</I>&gt;<i> random channel, synchronizes on that channel, and then calls consume on the
+</I>&gt;<i> QueueConsumer that maps 1-1 with that channel.
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;&gt;<i> If that's correct, I'm not surprised by your findings. Consumers on a
+</I>&gt;&gt;<i> queue are round-robin'd by the broker. Thus each of your 25 consumers
+</I>&gt;&gt;<i> will receive one 25th of the messages. Thus if you randomly select a
+</I>&gt;&gt;<i> consumer then it may well have nothing waiting on it as messages have
+</I>&gt;&gt;<i> been sent to the other consumers.
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> This would definitely be true if there was only a single thread. In the
+</I>&gt;<i> case where there are 50 threads and 25 queue consumers/channels, then on
+</I>&gt;<i> average there will be 2 threads working on any individual queue
+</I>&gt;<i> consumer/channel. When the queue starts to drain out, i.e. is almost empty,
+</I>&gt;<i> the impl as I have it can be sub optimal since some threads may be asking to
+</I>&gt;<i> work on queue consumers that are empty when there are other queue consumers
+</I>&gt;<i> that have work to do (something I need to fix) but when the queue isn't
+</I>&gt;<i> close to draining out, I don't think there should be the problem you
+</I>&gt;<i> describe. I do see the read throughput go down as it starts to drain out but
+</I>&gt;<i> the 50 reads / sec I was describing is before it starts to drain.
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;&gt;<i> Thus you will have to wait for up to
+</I>&gt;&gt;<i> 25 publishes before that consumer gets a message.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Why are you using so many threads and consumers?
+</I>&gt;&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> I started with one thread and one consumer and was seeing unacceptable read
+</I>&gt;<i> throughput (well under 10 reads/sec) so I decided to make the # channels of
+</I>&gt;<i> and threads parameterizable. After trying various permutations, I found 50
+</I>&gt;<i> threads and 25 channels to work better than other choices although it wasn't
+</I>&gt;<i> as scientific as it could be.
+</I>&gt;<i>
+</I>&gt;<i> The documentation says you can not have multiple threads going against a
+</I>&gt;<i> single channel so my assumption was that if I need to bump up performance
+</I>&gt;<i> with multiple threads I would need multiple channels and hence multiple
+</I>&gt;<i> queue consumers (since it doesn't appear you can have a single queue
+</I>&gt;<i> consumer going against multiple channels)t. Please correct me if I am wrong.
+</I>&gt;<i> Or even better if you have some consumer side java code you can share that
+</I>&gt;<i> you know gives high read throughput, if you wouldn't mind sharing that would
+</I>&gt;<i> be very much appreciated.
+</I>&gt;<i>
+</I>&gt;<i> thanks,
+</I>&gt;<i> Scott
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: <A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20091127/116fe9f7/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20091127/116fe9f7/attachment.htm</A> 
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="005553.html">[rabbitmq-discuss] Slow throughput on consume side using java	client API
+</A></li>
+	<LI>Next message: <A HREF="005532.html">[rabbitmq-discuss] RabbitMQ/Stomp on Windows
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#5556">[ date ]</a>
+              <a href="thread.html#5556">[ thread ]</a>
+              <a href="subject.html#5556">[ subject ]</a>
+              <a href="author.html#5556">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

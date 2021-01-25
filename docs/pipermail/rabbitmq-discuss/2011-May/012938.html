@@ -1,0 +1,195 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Perl Net::RabbitMQ and failure conditions
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Perl%20Net%3A%3ARabbitMQ%20and%20failure%20conditions&In-Reply-To=%3CBANLkTim%3D%3Dhb%3DhDLCqEN%3D0J5vfbHQN14BOw%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="012937.html">
+   <LINK REL="Next"  HREF="013046.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Perl Net::RabbitMQ and failure conditions</H1>
+    <B>Ronald J Kimball</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Perl%20Net%3A%3ARabbitMQ%20and%20failure%20conditions&In-Reply-To=%3CBANLkTim%3D%3Dhb%3DhDLCqEN%3D0J5vfbHQN14BOw%40mail.gmail.com%3E"
+       TITLE="[rabbitmq-discuss] Perl Net::RabbitMQ and failure conditions">rkimball at pangeamedia.com
+       </A><BR>
+    <I>Thu May 19 21:44:59 BST 2011</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="012937.html">[rabbitmq-discuss] RabbitMQ - Message parsing
+</A></li>
+        <LI>Next message: <A HREF="013046.html">[rabbitmq-discuss] Perl Net::RabbitMQ and failure conditions
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#12938">[ date ]</a>
+              <a href="thread.html#12938">[ thread ]</a>
+              <a href="subject.html#12938">[ subject ]</a>
+              <a href="author.html#12938">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>I'm trying to understand how RabbitMQ behaves under failure conditions,
+specifically when using the Net::RabbitMQ Perl module.
+
+We have RabbitMQ set up with three nodes, one on the backend, which holds
+the actual queues, and two on the frontend, which receive publish requests.
+
+RabbitMQ 2.2.0
+Net::RabbitMQ 0.1.8
+
+
+Below is the chart of behaviors that I have observed.
+
+&quot;+&quot; means the behavior is as I expected: either the message is successfully
+queued, or an error is thrown.
+&quot;-&quot; means the behavior is not as I expected, but can be managed:
+specifically, the process receives a SIGPIPE, which I can trap and recover
+from.
+&quot;!&quot; means the behavior is not as I expected, and cannot be managed: the
+message is not queued but no error is thrown and/or the process hangs.
+
+&quot;App down&quot; means I ran `rabbitmqctl stop_app`.  &quot;Daemon down&quot; means I ran
+`rabbitmqctl stop`.
+
+  As publishing process starts up:
+
+    Remote daemon up, app up
+      + Everything okay
+
+    Remote daemon up, app down
+      ! Net::RabbitMQ hangs when declaring queue
+
+    Remote daemon down
+      + Net::RabbitMQ throws error when declaring queue
+        &quot;Declaring queue: server channel error 404, message: NOT_FOUND - no
+queue 'test' in vhost '/'&quot;
+
+    Local daemon up, app down
+      + Net::RabbitMQ throws error when connecting
+        &quot;Opening socket: Connection refused&quot;
+
+    Local daemon down
+      + Net::RabbitMQ throws error when connecting
+        &quot;Opening socket: Connection refused&quot;
+
+
+  After publishing process starts up:
+
+    Local app goes down
+      - Process receives SIGPIPE
+
+    Local daemon goes down
+      - Process receives SIGPIPE
+
+    Remote app goes down
+      ! Net::RabbitMQ falsely indicates success when publishing, then hangs
+(in DESTROY?)
+
+    Remote daemon goes down
+      ! Net::RabbitMQ falsely indicates success when publishing
+
+
+    Local app goes down, comes back up
+      - Process receives SIGPIPE
+
+    Local daemon goes down, comes back up
+      - Process receives SIGPIPE
+
+    Remote app goes down, comes back up
+      + Everything okay
+
+    Remote daemon goes down, comes back up
+      + Everything okay
+
+
+Have other people had these problems with Net::RabbitMQ?  Can we resolve
+these issues by changing something in our RabbitMQ configuration?
+
+
+thanks,
+Ronald
+
+
+P.S. Here's my script.
+
+#!/usr/local/bin/perl
+
+use strict;
+use warnings;
+
+use Net::RabbitMQ;
+
+$| = 1;
+
+$SIG{'PIPE'} = sub { die &quot;SIGPIPE\n&quot; };
+
+my $mq = Net::RabbitMQ-&gt;new();
+
+alarm(10);
+
+print &quot;Connecting\n&quot;;
+$mq-&gt;connect('localhost', { user =&gt; 'engagement', password =&gt; '********' })
+  or die &quot;Can't connect to RabbitMQ\n&quot;;
+
+print &quot;Opening channel\n&quot;;
+$mq-&gt;channel_open(1);
+
+print &quot;Declaring exchange\n&quot;;
+$mq-&gt;exchange_declare(1, 'ee_exchange', { durable =&gt; 1 });
+
+print &quot;Declaring queue\n&quot;;
+$mq-&gt;queue_declare(1, 'test', { durable =&gt; 1 });
+
+print &quot;Binding queue\n&quot;;
+$mq-&gt;queue_bind(1, 'test', 'ee_exchange', 'ee_test');
+
+alarm(0);
+
+print &quot;&gt; &quot;;
+&lt;&gt;;
+
+alarm(10);
+
+print &quot;Publishing message\n&quot;;
+my $rc =
+  $mq-&gt;publish(1, 'ee_test', 'hello world!',
+               { exchange =&gt; 'ee_exchange', mandatory =&gt; 1, immediate =&gt; 0
+},
+               { delivery_mode =&gt; 2 });
+print &quot;Result: $rc\n&quot;;
+
+__END__
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20110519/22c6bf1e/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20110519/22c6bf1e/attachment.htm</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="012937.html">[rabbitmq-discuss] RabbitMQ - Message parsing
+</A></li>
+	<LI>Next message: <A HREF="013046.html">[rabbitmq-discuss] Perl Net::RabbitMQ and failure conditions
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#12938">[ date ]</a>
+              <a href="thread.html#12938">[ thread ]</a>
+              <a href="subject.html#12938">[ subject ]</a>
+              <a href="author.html#12938">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

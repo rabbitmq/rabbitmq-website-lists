@@ -1,0 +1,127 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Using Subscriptions in different ways (was Re: Multiple consumers)
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20Using%20Subscriptions%20in%20different%20ways%20%28was%20Re%3A%0A%20Multiple%20consumers%29&In-Reply-To=496c8fcc0907272356i1056c5aer7590f13ebe2d761f%40mail.gmail.com">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="004246.html">
+   <LINK REL="Next"  HREF="004248.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Using Subscriptions in different ways (was Re: Multiple consumers)</H1>
+    <B>Tony Garnock-Jones</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20Using%20Subscriptions%20in%20different%20ways%20%28was%20Re%3A%0A%20Multiple%20consumers%29&In-Reply-To=496c8fcc0907272356i1056c5aer7590f13ebe2d761f%40mail.gmail.com"
+       TITLE="[rabbitmq-discuss] Using Subscriptions in different ways (was Re: Multiple consumers)">tonyg at lshift.net
+       </A><BR>
+    <I>Tue Jul 28 12:19:32 BST 2009</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="004246.html">[rabbitmq-discuss] Multiple consumers
+</A></li>
+        <LI>Next message: <A HREF="004248.html">[rabbitmq-discuss] Using Subscriptions in different ways (was	Re: Multiple consumers)
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#4247">[ date ]</a>
+              <a href="thread.html#4247">[ thread ]</a>
+              <a href="subject.html#4247">[ subject ]</a>
+              <a href="author.html#4247">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi Adriana,
+
+Adriana Rodean wrote:
+&gt;<i> When i publish message 1 subscriber receives the message. After i
+</I>&gt;<i> close this subscriber the other one receives the message.
+</I>&gt;<i> I want both subscribers to receive the message when they are open.
+</I>&gt;<i> What am i doing wrong?
+</I>&gt;<i> Please help!
+</I>
+Here is a schematic of what the code you posted sets up:
+
+    exchange &quot;{27}{47}{System}&quot;
+      |
+      |
+      V
+    queue &quot;{27}{47}{System}&quot;
+      |
+      +-----+
+      |     |
+      V     V
+      s1    s2
+
+In AMQP, queues perform *round-robin* distribution of messages to 
+consumers (a.k.a subscribers), meaning that only *one* subscriber to a 
+queue will get each message. (See also Matthew's explanation of 
+acknowledgements.) AMQP's *exchanges*, on the other hand, perform 
+message *broadcasting*, copying messages onto all (matching) bound queues.
+
+So to get your example of a single publication arriving at two different 
+subscribers/consumers simultaneously, you would want something like the 
+following:
+
+    exchange &quot;{27}{47}{System}&quot;
+      |
+      +----------------------+
+      |                      |
+      V                      V
+    queue 1                queue 2
+      |                      |
+      |                      |
+      V                      V
+      s1                     s2
+
+Each subscriber should declare an auto-delete, private, uniquely-named 
+queue for themselves. Here's how to do that with the .NET client:
+
+   Subscription sub = new Subscription(channel,
+                                       &quot;{27}{47}{System}&quot;,
+                                       ExchangeType.Topic,
+                                       &quot;System&quot;);
+   foreach (BasicDeliverEventArgs e in sub) {
+     Console.WriteLine(Encoding.UTF8.GetString(e.Body));
+   }
+
+Notice how a queue name is not mentioned: the Subscription calls 
+channel.QueueDeclare() for you and uses the resulting private, 
+uniquely-named, autodelete queue to bind and consume from.
+
+Matthew wrote about acknowledgements: it's important to call sub.Ack(e) 
+after your program successfully processes each message, otherwise the 
+server will attempt to redeliver the messages later on, because it isn't 
+being told that it's safe to remove them from its queues.
+
+(As an aside, the Subscription generally takes care of declaring 
+exchange and queue resources for you -- you don't generally need to call 
+ExchangeDeclare, QueueDeclare, QueueBind if you're using Subscription.)
+
+Regards,
+   Tony
+
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="004246.html">[rabbitmq-discuss] Multiple consumers
+</A></li>
+	<LI>Next message: <A HREF="004248.html">[rabbitmq-discuss] Using Subscriptions in different ways (was	Re: Multiple consumers)
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#4247">[ date ]</a>
+              <a href="thread.html#4247">[ thread ]</a>
+              <a href="subject.html#4247">[ subject ]</a>
+              <a href="author.html#4247">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

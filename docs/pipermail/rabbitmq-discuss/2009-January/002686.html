@@ -1,0 +1,165 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] RabbitMQ experience
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20RabbitMQ%20experience&In-Reply-To=167204d20901220500o5b7bf24o5b63056360f92ee9%40mail.gmail.com">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002685.html">
+   <LINK REL="Next"  HREF="002687.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] RabbitMQ experience</H1>
+    <B>Matthias Radestock</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20RabbitMQ%20experience&In-Reply-To=167204d20901220500o5b7bf24o5b63056360f92ee9%40mail.gmail.com"
+       TITLE="[rabbitmq-discuss] RabbitMQ experience">matthias at lshift.net
+       </A><BR>
+    <I>Sat Jan 24 12:15:30 GMT 2009</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002685.html">[rabbitmq-discuss] Is there a use case for a queue with auto_delete=True and durable=True?
+</A></li>
+        <LI>Next message: <A HREF="002687.html">[rabbitmq-discuss] RabbitMQ experience
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2686">[ date ]</a>
+              <a href="thread.html#2686">[ thread ]</a>
+              <a href="subject.html#2686">[ subject ]</a>
+              <a href="author.html#2686">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>[I am cross-posting this to the list with the permission of the OP]
+
+Vlastimil,
+
+&gt;&gt;<i> I tried to benchmark both products [ActiveMQ and RabbitMQ] with
+</I>&gt;&gt;<i> this  initial test scenario:
+</I>&gt;&gt;<i> - each test produces 100'000 messages from one of these sets
+</I>&gt;&gt;<i>    - +/-5KB, 50KB, 100KB, 200KB
+</I>&gt;&gt;<i>  - randomly into 5 queues
+</I>&gt;&gt;<i>  - test is executed with persistent messages (queues) and
+</I>&gt;&gt;<i>    then non-persistent
+</I>&gt;&gt;<i>  (total number of test types 4*2*number of iterations)
+</I>&gt;&gt;<i> - consumer reads all the messages
+</I>&gt;&gt;<i> - measure:
+</I>&gt;&gt;<i>  - time to enqueue all messages
+</I>&gt;&gt;<i>  - time to consume all messages
+</I>&gt;&gt;<i> - run several iterations and get average numbers
+</I>
+&gt;&gt;<i> Contestant              +/- 5KB     fix 50KB  fix 100KB fix 200KB
+</I>&gt;&gt;<i> ActiveMQ/stomp (np)     1398/1250   140/138   68/69     34/34
+</I>&gt;&gt;<i> (persistent)            1247/967    127/125   66/66     34/34
+</I>&gt;&gt;<i> RabbitMQ/stomp (np)     4475/360    362/33    175/17    85/8
+</I>&gt;&gt;<i> (persistent)            3920/371    375/35    180/18    88/8
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> values are &quot;processed avg. messages per second&quot; on producer/consumer.
+</I>
+&gt;&gt;<i> Performance of RabbitMQ producer is quite impressive!, but the consumer
+</I>&gt;&gt;<i> falls behind.
+</I>
+This is not surprising. The tests push the system to its limits. When 
+that happens RabbitMQ (and the O/S) need to make choices as to what work 
+to do - drain messages of the tcp socket, push them through the 
+publication pipeline, store them, push them through the delivery 
+(consumer) pipelines, hand them over to the network card, etc, etc. Add 
+to that the fact that each of the pipelines has buffers (where messages 
+may end up getting stored temporarily), and that the stages require 
+different amounts of work.
+
+The upshot of this is that when one pushes the system hard, it is 
+impossible to predict how exactly it will behave (within the bounds of 
+behaving correctly, which it does). Results can vary considerably 
+between tests. Chances are RabbitMQ will end up buffering messages at 
+various stages of the pipelines, since buffering costs very little 
+compared to other tasks. So we can see producer rates exceeding consumer 
+rates. [as an aside, your test is *not* measuring the &quot;time to enqueue 
+all messages&quot;, it is measuring the time it takes the client to hand over 
+all messages to the client's network stack; they are a long way from 
+being enqueued at that point]. And this happens regardless of the number 
+of consumers because the requests from consumers, and the messages due 
+for delivery to them, are just more things that end up getting buffered.
+
+This doesn't matter when the high load is temporary - RabbitMQ can cope 
+with that just fine - but if it the load is sustained over long periods 
+of time then RabbitMQ can run out of memory. More on that below.
+
+The question is whether long periods of producers injecting messages at 
+a rate that exceeds the broker capacity is really something that occurs 
+in the use case you envisage. Most systems need to be able cope with 
+some specified average throughput, and peaks over short periods of time; 
+not sustained ingress rates that exceed the throughput capacity.
+
+One way to measure the average sustainable throughput is to control the 
+rate at which the producers inject messages. Start with a low rate and 
+increase it incrementally, giving the system some time to settle at each 
+step. Then measure the consumption rate. Stop at the point where the 
+consumption rate falls behind the production rate.
+
+&gt;&gt;<i> And this is main reason of my diasppointment -- memory management of
+</I>&gt;&gt;<i> messages is too greedy and RabbitMQ goes easily down. I know that
+</I>&gt;&gt;<i> you have experimental memory-based flow control, but it only
+</I>&gt;&gt;<i> _tells_ producers to slow down and furthermore it is not propagated
+</I>&gt;&gt;<i> to STOMP clients. I think that this must be solved mainly on the
+</I>&gt;&gt;<i> side of middleware, he has to slowdown clients like ActiveMQ does.
+</I>
+As you say, we *do* have an experimental flow control feature that 
+throttles producers. However, as Alexis has already mentioned, this 
+doesn't work for our STOMP adapater, and, more generally, the STOMP 
+adapter is experimental and certainly not the way to go if maximum 
+performance is the objective.
+
+As for the middleware *forcing* producers to slow down, there is only 
+one way to do that: TCP's flow control. Unfortunately that doesn't work 
+too well in AMQP because a single TCP connection can be shared by both 
+producers and consumers, and consuming messages generally involves the 
+client *sending* some data on the network connection (e.g. for 
+acknowledgements). Therefore putting back-pressure on these connections 
+will slow down both producers and consumers and hence may not alleviate 
+memory pressure.
+
+By contrast, AMQP's channel.flow command (which is what our experimental 
+flow control implements) allows the producer to ask the clients to stop 
+publishing messages, without affecting message consumption. That does 
+require cooperation from clients, but note that a) this is fairly easy 
+to implement and is done in all the clients we officially support, b) 
+the spec permits the server to cut off clients who do not abide by the 
+channel.flow instruction (though the RabbitMQ server does not do this).
+
+Finally, as Alexis mentioned, we are in the process of enabling RabbitMQ 
+to page messages to disk, thus eliminating the memory-bounded nature of 
+the current message queuing implementation. Note however that under high 
+load messages could still build up in memory in various buffers 
+throughout the system, as described above. So this new feature won't be 
+a substitute for flow control.
+
+
+Regards,
+
+Matthias.
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002685.html">[rabbitmq-discuss] Is there a use case for a queue with auto_delete=True and durable=True?
+</A></li>
+	<LI>Next message: <A HREF="002687.html">[rabbitmq-discuss] RabbitMQ experience
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2686">[ date ]</a>
+              <a href="thread.html#2686">[ thread ]</a>
+              <a href="subject.html#2686">[ subject ]</a>
+              <a href="author.html#2686">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

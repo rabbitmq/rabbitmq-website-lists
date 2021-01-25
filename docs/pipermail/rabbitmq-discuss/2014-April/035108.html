@@ -1,0 +1,174 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Possible memory leak in the management plugin
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Possible%20memory%20leak%20in%20the%20management%20plugin&In-Reply-To=%3C1397020502914-34663.post%40n5.nabble.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="035290.html">
+   <LINK REL="Next"  HREF="035117.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Possible memory leak in the management plugin</H1>
+    <B>Pavel</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Possible%20memory%20leak%20in%20the%20management%20plugin&In-Reply-To=%3C1397020502914-34663.post%40n5.nabble.com%3E"
+       TITLE="[rabbitmq-discuss] Possible memory leak in the management plugin">pmaisenovich at blizzard.com
+       </A><BR>
+    <I>Wed Apr  9 06:15:02 BST 2014</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="035290.html">[rabbitmq-discuss] Troubleshooting handleCancel()
+</A></li>
+        <LI>Next message: <A HREF="035117.html">[rabbitmq-discuss] Possible memory leak in the management plugin
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#35108">[ date ]</a>
+              <a href="thread.html#35108">[ thread ]</a>
+              <a href="subject.html#35108">[ subject ]</a>
+              <a href="author.html#35108">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hello,
+
+We are running RabbitMQ 3.1.5 on Erlang R15B.
+
+Last week we had a couple incidents, where RabbitMQ would go from stable
+~1Gb RAM to ~10Gb in ~10 mins and keep growing up to the high watermark. It
+was quickly identified that mgmt_db is a culprit, so we disabled management
+plugin and attempted to reproduce the issue in the lab. Although the lab
+test wasn't exactly representing the production setup, we managed to achieve
+similar behavior with rapid unbounded growth of mgmt_db using the following
+scenario:
+
+- declare 1000 exchanges with 1 queue (maxlength=5) bound to each one
+- run a single threaded script that will
+   - create 1 connection with 1000 channels
+   - publish 1000 messages (1 per channel) to each of exchanges sequentially
+
+Here is the output for the rabbit_mgmt_db process after running test above
+for about a minute:
+<A HREF="https://gist.github.com/maisenovich/10226474">https://gist.github.com/maisenovich/10226474</A>
+
+I'm very new to Erlang, so couple questions about this output: 
+Q1: There are three ets tables (as far as I understand) that have million+
+items and keep growing rapidly (5754973, 5759070 and 5763167). What are
+those?
+Q2: Total memory used by ets storage (~120Mb) is far less than total memory
+used by rabbit_mgmt_db process (~3.5Gb). Is there any way to inspect what
+consumes the most of the memory?
+
+It was noticed also, that in the configuration described above (1000
+exchanges x 1 queue each) stats events for publishing channels become very
+big. It also seems that increasing collect_statistics_interval from default
+5 seconds to 60 seconds helps - memory still goes up after first iteration,
+but then stays within ~2Gb (test was running for at least 1 hour with no
+crash).
+
+Here is the output of fprof analysis for ~5 seconds of the rabbit_mgmt_db
+process during the test at a slower publish rate:
+<A HREF="https://gist.github.com/maisenovich/10226881">https://gist.github.com/maisenovich/10226881</A>
+
+Q3: Is there any better way to profile Erlang/Rabbit? Attempts to use fprof
+under load that is causing the crash didn't work so far.
+
+We are suspecting that the issue is caused by massive channel_stats events
+which at the high enough rate causing Erlang GC to start falling behind. The
+function invocation below (from linked profile) is particularly raising
+questions:
+
+{[{{gb_trees,update,3},                        2892,  138.949,   43.548},      
+  {{gb_trees,update_1,3},                      19243,    0.000,   94.664}],     
+ { {gb_trees,update_1,3},                      22135,  138.949,  138.212},    
+%
+ [{garbage_collect,                              60,    0.737,    0.737},      
+  {{gb_trees,update_1,3},                      19243,    0.000,   94.664}]}.  
+
+Q4: Any better theories on what might be causing the unbounded memory
+growth? Any GC tuning you would recommend to attempt?
+
+Thank you!
+
+
+
+--
+View this message in context: <A HREF="http://rabbitmq.1065348.n5.nabble.com/Possible-memory-leak-in-the-management-plugin-tp27414p34663.html">http://rabbitmq.1065348.n5.nabble.com/Possible-memory-leak-in-the-management-plugin-tp27414p34663.html</A>
+Sent from the RabbitMQ mailing list archive at Nabble.com.
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="035290.html">[rabbitmq-discuss] Troubleshooting handleCancel()
+</A></li>
+	<LI>Next message: <A HREF="035117.html">[rabbitmq-discuss] Possible memory leak in the management plugin
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#35108">[ date ]</a>
+              <a href="thread.html#35108">[ thread ]</a>
+              <a href="subject.html#35108">[ subject ]</a>
+              <a href="author.html#35108">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,183 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Ensuring low latency for publishers
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Ensuring%20low%20latency%20for%20publishers&In-Reply-To=%3Ca94ae5aa-189f-4071-a61d-af847232753e%40vj8g2000pbc.googlegroups.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="018402.html">
+   <LINK REL="Next"  HREF="018431.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Ensuring low latency for publishers</H1>
+    <B>Eric</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Ensuring%20low%20latency%20for%20publishers&In-Reply-To=%3Ca94ae5aa-189f-4071-a61d-af847232753e%40vj8g2000pbc.googlegroups.com%3E"
+       TITLE="[rabbitmq-discuss] Ensuring low latency for publishers">ejarendt at gmail.com
+       </A><BR>
+    <I>Fri Feb 24 18:07:38 GMT 2012</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="018402.html">[rabbitmq-discuss] Ensuring low latency for publishers
+</A></li>
+        <LI>Next message: <A HREF="018431.html">[rabbitmq-discuss] Ensuring low latency for publishers
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#18413">[ date ]</a>
+              <a href="thread.html#18413">[ thread ]</a>
+              <a href="subject.html#18413">[ subject ]</a>
+              <a href="author.html#18413">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>&gt;<i> Sure, I'm trying to gauge how widespread such a demand is. It looks like
+</I>&gt;<i> we could plausibly do something in this direction.
+</I>
+Seems like it's not very widespread.  That's fine - I'm probably
+pushing towards a less common use case.  We can deal with somewhat
+unreliable messaging but we'd really like a broker.  0MQ is great for
+unreliable messaging but it's brokerless, and we'd rather not write
+our own broker.  RabbitMQ has a great broker, it's just sort of...
+narcissistic.  :)
+
+&gt;<i> If it's any consolation the flow control stuff that's coming in 2.8.0
+</I>&gt;<i> will make it much harder to make the memory alarm go off, so blocking
+</I>&gt;<i> for seconds should be much less likely.
+</I>
+In reality, the throttling case is extremely unlikely anyway, right?
+You basically have to create a case where publishers are outpacing
+consumers and/or the speed of disk writes on the broker.  So you'd
+have to publish something like 100mb/s with little or no consumption,
+and our application is roughly 5mb/minute.  So we'd probably never
+throttle.  It's just that having some kind of guarantee is nice from
+an operational standpoint.
+
+In conclusion, I finally did what I should have done in the first
+place.  I mocked up the threading scenario we're likely to see in
+production and benchmarked it against Java's LinkedBlockingQueue and
+ArrayBlockingQueue.  Compared to each producer thread having its own
+linked list (the completely uncontended scenario) the blocking queues
+introduced virtually no additional waiting - a microsecond or two at
+most.  That's the case even at rates 50x or more than we'd see in
+production.  So blocking queue it is, and that's a comfortingly simple
+solution.
+
+Thanks for all the help and apologies for under-researching what I was
+doing.
+
+ - Eric
+
+On Feb 24, 3:20&#160;am, Simon MacMullen &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">si... at rabbitmq.com</A>&gt; wrote:
+&gt;<i> On 23/02/12 20:27, Eric wrote:
+</I>&gt;<i>
+</I>&gt;<i> &gt; Well... I would find it useful. &#160;And the person in the thread I linked
+</I>&gt;<i> &gt; to would have found it useful as well.
+</I>&gt;<i>
+</I>&gt;<i> Sure, I'm trying to gauge how widespread such a demand is. It looks like
+</I>&gt;<i> we could plausibly do something in this direction.
+</I>&gt;<i>
+</I>&gt;<i> &gt; It's pretty tough to go into a production environment with the
+</I>&gt;<i> &gt; statement &quot;Publishing should be fast unless the broker is throttling.
+</I>&gt;<i> &gt; If the broker is throttling we won't be able to tell, we don't have a
+</I>&gt;<i> &gt; good way of knowing beforehand, and we don't know how long the threads
+</I>&gt;<i> &gt; will be blocked&quot;. &#160;It's useful in any case where an application would
+</I>&gt;<i> &gt; rather not publish the message rather than waiting to publish it
+</I>&gt;<i> &gt; indefinitely.
+</I>&gt;<i>
+</I>&gt;<i> Yeah, the problem is that we've historically optimised for Never
+</I>&gt;<i> Throwing Away Messages Ever Ever...
+</I>&gt;<i>
+</I>&gt;<i> &gt; The net result is that a struggling broker will cause a chain
+</I>&gt;<i> &gt; reaction; publishers will block indefinitely, which may bring the
+</I>&gt;<i> &gt; publishing application to a halt. &#160;In that case I'd like to abandon
+</I>&gt;<i> &gt; the publishing process, but it's quite impossible at that point - it's
+</I>&gt;<i> &gt; too late, the broker is already throttling, and there's no timeout.
+</I>&gt;<i> &gt; The thread could block for seconds, or more. &#160;I'm concerned about not
+</I>&gt;<i> &gt; throwing the message away, but I'm more concerned about being able to
+</I>&gt;<i> &gt; isolate services from RabbitMQ broker events.
+</I>&gt;<i>
+</I>&gt;<i> If it's any consolation the flow control stuff that's coming in 2.8.0
+</I>&gt;<i> will make it much harder to make the memory alarm go off, so blocking
+</I>&gt;<i> for seconds should be much less likely.
+</I>&gt;<i>
+</I>&gt;<i> &gt; One more question along this line. &#160;The flow control document says &quot;By
+</I>&gt;<i> &gt; default, when the RabbitMQ server uses above 40% of the installed RAM,
+</I>&gt;<i> &gt; it raises a memory alarm... Connection heartbeat monitoring gets
+</I>&gt;<i> &gt; disabled too.&quot; &#160;If I set up a connection heartbeat on the shared
+</I>&gt;<i> &gt; connection, will the heartbeat detect a broker alarm that exceeds the
+</I>&gt;<i> &gt; interval and disconnect? &#160;A disconnect would terminate the publisher
+</I>&gt;<i> &gt; channels and free things up.
+</I>&gt;<i>
+</I>&gt;<i> No - the whole point of disabling heartbeats is to make sure connections
+</I>&gt;<i> stay up when this happens...
+</I>&gt;<i>
+</I>&gt;<i> Cheers, Simon
+</I>&gt;<i>
+</I>&gt;<i> --
+</I>&gt;<i> Simon MacMullen
+</I>&gt;<i> RabbitMQ, VMware
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-disc... at lists.rabbitmq.comhttps</A>://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss
+</I></PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="018402.html">[rabbitmq-discuss] Ensuring low latency for publishers
+</A></li>
+	<LI>Next message: <A HREF="018431.html">[rabbitmq-discuss] Ensuring low latency for publishers
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#18413">[ date ]</a>
+              <a href="thread.html#18413">[ thread ]</a>
+              <a href="subject.html#18413">[ subject ]</a>
+              <a href="author.html#18413">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

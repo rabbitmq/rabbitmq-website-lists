@@ -1,0 +1,145 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Mirrored queue failover
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Mirrored%20queue%20failover&In-Reply-To=%3C4F8FA5A7.3060502%40ms.scsk.jp%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="019586.html">
+   <LINK REL="Next"  HREF="019403.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Mirrored queue failover</H1>
+    <B>Katsushi Fukui</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Mirrored%20queue%20failover&In-Reply-To=%3C4F8FA5A7.3060502%40ms.scsk.jp%3E"
+       TITLE="[rabbitmq-discuss] Mirrored queue failover">ka.fukui at ms.scsk.jp
+       </A><BR>
+    <I>Thu Apr 19 06:41:59 BST 2012</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="019586.html">[rabbitmq-discuss] Mirrored queue failover
+</A></li>
+        <LI>Next message: <A HREF="019403.html">[rabbitmq-discuss] Maximize throughput with RabbitMQ
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#19640">[ date ]</a>
+              <a href="thread.html#19640">[ thread ]</a>
+              <a href="subject.html#19640">[ subject ]</a>
+              <a href="author.html#19640">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi Matthew,
+
+I found an interesting behavior and logs when I repeatedly restarted a node of the cluster.
+I rebuilt a new cluster and checked a logs of the mirrored queue again. Now the master of the mirrored queue is rabbit1, the slaves are rabbit2 and rabbit3. When rabbit3 is stopped, the logs of the rabbit1 shows:
+=INFO REPORT==== 19-Apr-2012::11:18:58 ===
+Mirrored-queue (queue 'que1' in vhost '/'): Master &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at rabbit1.2.594.0</A>&gt; saw deaths of mirrors &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at rabbit3.3.229.0</A>&gt;
+
+=INFO REPORT==== 19-Apr-2012::11:18:59 ===
+rabbit on node <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at rabbit3</A> down
+
+
+This means that que1 detected death of the queue slave on rabbit3 and node is down. But if I repeat restarting the slaves over and over, sometime logs shows like this:
+=INFO REPORT==== 19-Apr-2012::11:56:26 ===
+Mirrored-queue (queue 'que1' in vhost '/'): Master &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at rabbit1.2.594.0</A>&gt; saw deaths of mirrors &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at rabbit3.3.229.0</A>&gt;
+
+=INFO REPORT==== 19-Apr-2012::11:56:26 ===
+rabbit on node <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at rabbit3</A> down
+
+=INFO REPORT==== 19-Apr-2012::11:56:35 ===
+rabbit on node <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at rabbit3</A> up
+
+=INFO REPORT==== 19-Apr-2012::11:56:38 ===
+rabbit on node <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at rabbit2</A> down
+
+=INFO REPORT==== 19-Apr-2012::11:59:32 ===
+rabbit on node <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at rabbit2</A> up
+
+
+Despite stopping rabbit2, que1 doesn't report death of mirror. Now rabbit2 is up, but que1 has only one slave on rabbit3.&#12288;Next, I stopped rabbit3 and the logs shows:
+=INFO REPORT==== 19-Apr-2012::12:00:04 ===
+Mirrored-queue (queue 'que1' in vhost '/'): Master &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at rabbit1.2.594.0</A>&gt; saw deaths of mirrors &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at rabbit2.3.229.0</A>&gt; &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at rabbit3.1.227.0</A>&gt;
+
+=INFO REPORT==== 19-Apr-2012::12:00:04 ===
+rabbit on node <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at rabbit3</A> down
+
+Que1 detected deaths of two slaves. Finally I restarted rabbit2 and rabbit3, so que1 got two slaves.
+It looks there is a case a mirrored queue can not detect the failure of the slaves.
+
+Kats
+
+
+&gt;<i> Thank you, Matthew,
+</I>&gt;<i>
+</I>&gt;<i> I created an exchange &quot;ex1&quot; that is bound to que1, and published a message using a publisher was connected to rabbit3 as you suggested.
+</I>&gt;<i> I could send it without returning error, but the logs of rabbit3 shows this error:
+</I>&gt;<i> =ERROR REPORT==== 17-Apr-2012::11:12:30 ===
+</I>&gt;<i> Discarding message {'$gen_cast',{deliver,{delivery,false,false,&lt;0.3061.0&gt;,{basic_message,{resource,&lt;&lt;1 byte&gt;&gt;,exchange,&lt;&lt;3 bytes&gt;&gt;},[&lt;&lt;5 bytes&gt;&gt;],{content,60,{'P_basic',&lt;&lt;10 bytes&gt;&gt;,undefined,undefined,2,0,undefined,undefined,undefined,undefined,undefined,undefined,undefined,undefined,undefined},&lt;&lt;15 bytes&gt;&gt;,rabbit_framing_amqp_0_9_1,[&lt;&lt;12 bytes&gt;&gt;]},&lt;&lt;16 bytes&gt;&gt;,true},undefined},flow}} from &lt;0.3061.0&gt; to &lt;0.229.0&gt; in an old incarnation (3) of this node (2)
+</I>&gt;<i>
+</I>&gt;<i> The result of list_queues is:
+</I>&gt;<i> # ./rabbitmqctl list_queues name messages slave_pids synchronised_slave_pids
+</I>&gt;<i> Listing queues ...
+</I>&gt;<i> que1 1 [&lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at rabbit2.1.229.0</A>&gt;] [&lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at rabbit2.1.229.0</A>&gt;]
+</I>&gt;<i> ...done.
+</I>&gt;<i>
+</I>&gt;<i> I wonder if this problem is only occurred in my environment.
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> (2012/04/16 22:16), Matthew Sackman wrote:
+</I>&gt;&gt;<i> Hi,
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> I'm afraid I really don't know what to suggest. It looks like somehow
+</I>&gt;&gt;<i> Erlang is not properly noticing rabbit3 coming back up, and getting
+</I>&gt;&gt;<i> itself very confused. I don't know why this would be.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> You say you're already using 2.8.1 and R15B, so I can't really just
+</I>&gt;&gt;<i> suggest upgrading. Perhaps one further thing to test is when rabbit3
+</I>&gt;&gt;<i> comes back up, connect a publisher to it (specifically rabbit3 rather
+</I>&gt;&gt;<i> than any other node) and try to publish to an exchange routing to the
+</I>&gt;&gt;<i> problematic queue. I'd be curious to know whether those messages
+</I>&gt;&gt;<i> actually end up in the queue or not.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> For some reason, whilst rabbit3 seems to know about 1 and 2, 1 and 2 are
+</I>&gt;&gt;<i> a long way from convinced they know about 3. Something is very unhappy
+</I>&gt;&gt;<i> in the cluster, and I've really no idea why.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Matthew
+</I>&gt;&gt;<i> _______________________________________________
+</I>&gt;&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>&gt;&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>&gt;<i>
+</I>
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="019586.html">[rabbitmq-discuss] Mirrored queue failover
+</A></li>
+	<LI>Next message: <A HREF="019403.html">[rabbitmq-discuss] Maximize throughput with RabbitMQ
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#19640">[ date ]</a>
+              <a href="thread.html#19640">[ thread ]</a>
+              <a href="subject.html#19640">[ subject ]</a>
+              <a href="author.html#19640">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

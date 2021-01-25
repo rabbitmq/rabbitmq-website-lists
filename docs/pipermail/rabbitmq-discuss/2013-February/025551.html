@@ -1,0 +1,197 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Consumer Clients as Tomcat Web Applications	and Work Queue Configuration
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Consumer%20Clients%20as%20Tomcat%20Web%20Applications%0A%09and%20Work%20Queue%20Configuration&In-Reply-To=%3C5C95A290-0FA4-4E18-BEAE-11727B8E5701%40rabbitmq.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="025471.html">
+   <LINK REL="Next"  HREF="025675.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Consumer Clients as Tomcat Web Applications	and Work Queue Configuration</H1>
+    <B>Steve Powell</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Consumer%20Clients%20as%20Tomcat%20Web%20Applications%0A%09and%20Work%20Queue%20Configuration&In-Reply-To=%3C5C95A290-0FA4-4E18-BEAE-11727B8E5701%40rabbitmq.com%3E"
+       TITLE="[rabbitmq-discuss] Consumer Clients as Tomcat Web Applications	and Work Queue Configuration">steve at rabbitmq.com
+       </A><BR>
+    <I>Mon Feb 18 16:25:11 GMT 2013</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="025471.html">[rabbitmq-discuss] Consumer Clients as Tomcat Web Applications and Work Queue Configuration
+</A></li>
+        <LI>Next message: <A HREF="025675.html">[rabbitmq-discuss] Consumer Clients as Tomcat Web Applications and Work Queue Configuration
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#25551">[ date ]</a>
+              <a href="thread.html#25551">[ thread ]</a>
+              <a href="subject.html#25551">[ subject ]</a>
+              <a href="author.html#25551">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Kevin,
+I'm glad you managed to 'solve' your problem.
+
+The acknowledgement (ACK) is to tell the RabbitMQ Server that the client is
+willing to take responsibility for the message: RabbitMQ will not deliver this
+message to anyone again.  If the channel closes/stops/dissappears and a
+message sent to it hasn't been acknowledged, or if a message is rejected (with
+requeue)  (NACKed with requeue), then RabbitMQ will attempt to deliver the
+message again.  That may or may not be to the same consumer, channel or
+client.  The prefetch count is a way of limiting the number of messages
+RabbitMQ Server will allow unACKed (and unNACKed) on a channel.
+
+Let's say you have one consumer on one channel on each client, and you have
+two clients, A and B. Let's also say that A and B have prefetch count set to 2. 
+We'll assume that A and B are served in that order by the RabbitMQ server.
+
+If 5 messages arrive on the queue (m1..5) then the messages will arrive on the
+QueueingConsumer client queues on A and B as follows:
+
+A:  [m1, m3]
+B:  [m2, m4]
+and message m5 will stay in the server.
+
+I presume both A and B will see a message and remove it from the
+QueueingConsumer queue:
+
+A:  [m3]  (processing m1)
+B:  [m4]  (processing m2)
+
+When the first message is processed successfully (either m1 on A, or m2 on B)
+and the client sends ACK back to the server, then message m5 can be sent to
+the client who ACKed first, let's say it is B:
+
+A:  [m3]  (processing m1)
+B:  [m4, m5]   (not processing a message)
+
+But note that B might have already started processing m4 by this time (it
+more probably would have, since the message m4 is already in the client),
+so it would soon (or already) look like this:
+
+A:  [m3]  (processing m1)
+B:  [m5]  (processing m4)
+
+As messages arrive on the queue in the server, they are sent to either A or B
+as they successfully (or otherwise) finish processing the previous messages.
+
+Let's say that B finishes first again (ACKnowledging m4), but that  no more
+messages arrive on the queue before then.  We then get into this situation:
+
+A:  [m3]  (processing m1)
+B:  []  (processing m5)
+
+B has an empty queue.
+
+If B again finishes first (a fast and efficient machine, or a lightweight
+message m5?) we could see this situation:
+
+A:  [m3]  (processing m1)
+B:  []  (idle, waiting on internal queue)
+
+A might take a very long time to process message m1, and m3 has to wait until
+A has finished (or aborts) before it will be processed, even though B is
+unoccupied and available.
+
+The effects of the prefetch count &gt;1 are therefore three-fold:
+
+1) The internal client queues never hold more than prefetch-count messages,
+   all excess messages 'back-up' in the server.
+
+2) Some messages can get 'caught' behind a message that takes a long time to
+   process: waiting indefinitely, even though there may be servers ready and
+   waiting to process them.
+
+3) Messages can be sent to a client while it is processing the previous
+   message, so the network transfer time can overlap processing time, reducing
+   the time spent idle in the client when there are messages to process.
+
+Notice that there is a (potential) price to pay for the benefit in item 3.  If
+you reduce the time spent waiting for network transfer time while idle, you
+run the risk of processing some messages very late indeed.
+
+As soon as you have multiple clients listening to the same queue you cannot
+guarantee the order of processing of messages, whatever you set the prefetch
+counts to.
+
+You should be able to see what happens (can happen) with more clients, or with
+a larger (or unlimited) prefetch count.
+
+Whether you wish to use a setting like this very much depends upon how large
+the network latency is, what the risk of message failures are, and what the
+rate of message arrival might be (it will doubtless vary in any case).
+
+A prefetch count of 2 and a variable number of clients works reasonably well:
+
+- when order of message processing is not critical;
+- when message processing is relatively reliable, and not too variable; and
+- when the network transfer time is not too large per message (e.g. messages are
+  reasonably small).
+
+Outside of these parameters I recommend you run some careful tests.
+
+In fact, let me recommend you run some careful performance and stress tests in
+any case.  It is notoriously difficult to predict where the bottlenecks will
+be in any particular configuration.  These bottlenecks will move depending
+upon load, and sometimes when the load changes (up or down).
+
+It may be, with low to medium message rates, that all this fuss makes no
+difference over a prefetch count of 1.  You should check this before investing
+in complex (and potentially buggy) code. You should also ensure that you
+really need many processing clients and that you fully understand the
+interactions between the processing that these clients undertake -- it
+is possible that there are mutual blocks or other serialisation effects
+that will have an impact upon the service rates (or even success) 
+of your clients.
+
+I hope I have begun to answer your question.  Good luck.
+Steve Powell
+[M: +44-7815-838-558; H:+44-1962-775-598]
+Links: SpringSource (a division of VMware), Virgo, RabbitMQ.
+-----------------------------------------------------------------------
+Good design:
+   is innovative, useful, aesthetic;
+   is understandable, unobtrusive, honest;
+   is long-lasting, thorough, environmentally friendly;
+   and is as little design as possible.
+Copyright Dieter Rams, amended March 2003; October 2009; and August 2012
+
+On 12 Feb 2013, at 19:28, Kevin Behr &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">behrk2 at gmail.com</A>&gt; wrote:
+
+&gt;<i> Regarding your statement above, I had not taken that into consideration.  I've coded my clients to  only acknowledge upon successful processing of the delivered message.  If one of our many web services or datastore connections goes down, then unacknowledged messages will start piling up quickly, and the messaging and queuing pipeline will essentially come to a halt. I would expect this to be the correct behavior, however, as I don't want to throw out messages until someone discovers that a service is down.
+</I>&gt;<i> 
+</I>&gt;<i> As I will be using QueuingConsumer, I'm now wondering how I should determine what to set my prefetch counts to.  Do you have any further advice on this?  I'm still a little confused there.
+</I>
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20130218/64f14cfc/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20130218/64f14cfc/attachment.htm</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="025471.html">[rabbitmq-discuss] Consumer Clients as Tomcat Web Applications and Work Queue Configuration
+</A></li>
+	<LI>Next message: <A HREF="025675.html">[rabbitmq-discuss] Consumer Clients as Tomcat Web Applications and Work Queue Configuration
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#25551">[ date ]</a>
+              <a href="thread.html#25551">[ thread ]</a>
+              <a href="subject.html#25551">[ subject ]</a>
+              <a href="author.html#25551">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

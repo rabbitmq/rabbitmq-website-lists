@@ -1,0 +1,312 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss]  Problem with BasicProperties (bug?)
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20%20Problem%20with%20BasicProperties%20%28bug%3F%29&In-Reply-To=">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="006975.html">
+   <LINK REL="Next"  HREF="006977.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss]  Problem with BasicProperties (bug?)</H1>
+    <B>radisb</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20%20Problem%20with%20BasicProperties%20%28bug%3F%29&In-Reply-To="
+       TITLE="[rabbitmq-discuss]  Problem with BasicProperties (bug?)">radisb at gmail.com
+       </A><BR>
+    <I>Sat Apr 24 17:47:45 BST 2010</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="006975.html">[rabbitmq-discuss] RE : Behavior of consumers listening to the same queue
+</A></li>
+        <LI>Next message: <A HREF="006977.html">[rabbitmq-discuss] Problem with BasicProperties (bug?)
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#6976">[ date ]</a>
+              <a href="thread.html#6976">[ thread ]</a>
+              <a href="subject.html#6976">[ subject ]</a>
+              <a href="author.html#6976">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>
+he code below does the following: Sends 1000 messages (each tagged with a key
+by BasicProperties.getHeaders.put(&quot;MESSAGE_KEY&quot;, value) and stored in a map)
+directly to queueA and then waits in a loop for incoming replies on the
+queue Replies.
+It then fires 2 Threads (SimpleForwarder class). The first thread waits for
+messages on QueueA and upon receipt it sends them to QueueB. The second
+Thread waits on QueueB and sends to Replies.
+
+When a message is received on Replies , its key (taken from the header in
+the delivery properties) is removed from a map. The test finishes
+succesfully if all keys sent where received and removed from the map.
+
+The problem is in the forwarding threads code. If before forwarding the
+message, the thread recreates the BasicProperties and sends a fresh
+BasicProperties , this causes the consumer on Replies to lose messages and
+get duplicates in their place. Sometimes the forwarder throws null pointer
+exception because it cant find the header that has the key(This cant happen
+because all messages are assigned one before sending). What is strange is
+that if the 2 forwarders are started in separate JVMs the problem
+disappears. I have marked the problematic area with /* -- PROBLEM -- */
+
+Note that the lost messages are random and the problem might not manifest if
+run for a few messages. Above 400-500 it always happens for me. 
+
+I use server 1.7.2 and javaclient 1.7.2.
+Any suggestions?
+
+Here is the code: 
+<A HREF="http://old.nabble.com/file/p28351417/Tester.java">http://old.nabble.com/file/p28351417/Tester.java</A> Tester.java 
+
+package test;
+
+
+import com.rabbitmq.client.AMQP.BasicProperties;
+import com.rabbitmq.client.Channel;
+import com.rabbitmq.client.ConnectionFactory;
+import com.rabbitmq.client.ConnectionParameters;
+import com.rabbitmq.client.MessageProperties;
+import com.rabbitmq.client.QueueingConsumer;
+import com.rabbitmq.client.QueueingConsumer.Delivery;
+import com.rabbitmq.client.ShutdownSignalException;
+import com.rabbitmq.client.impl.LongString;
+import java.io.IOException;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Set;
+
+
+public class Tester
+{
+	ConnectionParameters parameters;
+	Channel senderChannel;
+	Channel receiverChannel;
+	QueueingConsumer consumer;
+	String sourceQueue;
+	String targetRoutingKey;
+	
+	public Tester(ConnectionParameters parameters, String sourceQueue, String
+targetRoutingKey)
+	{
+		this.parameters = parameters;
+		this.sourceQueue = sourceQueue;
+		this.targetRoutingKey = targetRoutingKey;
+	}
+
+	public void test(int messageCount) throws IOException
+	{
+		senderChannel = new
+ConnectionFactory(parameters).newConnection(&quot;localhost&quot;).createChannel();
+		receiverChannel = new
+ConnectionFactory(parameters).newConnection(&quot;localhost&quot;).createChannel();
+		receiverChannel.queueDeclare(sourceQueue, false);
+		receiverChannel.queueBind(sourceQueue, &quot;amq.direct&quot;, sourceQueue);
+		consumer = new QueueingConsumer(receiverChannel);
+		String dummyData = &quot;dummyData&quot;;
+		Set&lt;String&gt;sentKeys = new HashSet&lt;String&gt;();
+		int c = 0;
+		while(c &lt; messageCount)
+		{
+			c++;
+			String key =  String.valueOf(c);
+			BasicProperties props = MessageProperties.PERSISTENT_TEXT_PLAIN;
+			props.setHeaders(new HashMap&lt;String, Object&gt;());
+			props.getHeaders().put(&quot;MESSAGE_KEY&quot;, key);
+			senderChannel.basicPublish(&quot;amq.direct&quot;, targetRoutingKey, props,
+dummyData.getBytes());
+			sentKeys.add(key);
+		}
+		System.out.println(&quot;Sent &quot; + c + &quot; messages. Firing up consumer to wait
+for replies:\n&quot;);
+		
+		receiverChannel.basicConsume(sourceQueue, false, consumer);
+
+		while(true)
+		{
+			try
+			{
+				Delivery delivery = consumer.nextDelivery(1000);
+				if(delivery != null)
+				{
+					receiverChannel.basicAck(delivery.getEnvelope().getDeliveryTag(),
+false);
+					String receivedKey = new
+String(((LongString)delivery.getProperties().getHeaders().get(&quot;MESSAGE_KEY&quot;)).getBytes());
+					System.out.print(&quot;Key: &quot; + receivedKey);
+					if(!sentKeys.remove(receivedKey))
+						System.out.println(&quot; ...Already received&quot;);
+					else
+					{
+						System.out.println(&quot; ...OK&quot;);
+						if(sentKeys.isEmpty())
+						{
+							System.out.println(&quot;All keys removed&quot;);
+							close();
+							return;
+						}
+					}
+				}
+				else
+				{
+					System.out.println(&quot;Timed out.&quot;);
+				}
+			}
+			catch(InterruptedException ex){System.err.println(&quot;Interrupted while
+waiting for message. Exiting&quot;);return;}
+			catch(ShutdownSignalException sse){ System.err.println(&quot;Caught shutdown
+signal. Exiting&quot;);return;}
+			catch(IOException ex){System.err.println(&quot;Unexpected IO error.
+Exiting&quot;);}
+		}
+	}
+
+	private void close() throws IOException
+	{
+		senderChannel.getConnection().close();
+		receiverChannel.getConnection().close();
+	}
+
+	public static class SimpleForwarder extends Thread
+	{
+		ConnectionParameters parameters;
+		Channel senderChannel;
+		Channel receiverChannel;
+		QueueingConsumer consumer;
+		String sourceQueue;
+		String targetRoutingKey;
+
+		public SimpleForwarder(ConnectionParameters parameters, String
+sourceQueue, String targetRoutingKey)
+		{
+			this.parameters = parameters;
+			this.sourceQueue = sourceQueue;
+			this.targetRoutingKey = targetRoutingKey;
+			this.setName(sourceQueue);
+		}
+
+		private void init() throws IOException
+		{
+			senderChannel = new
+ConnectionFactory(parameters).newConnection(&quot;localhost&quot;).createChannel();
+			receiverChannel = new
+ConnectionFactory(parameters).newConnection(&quot;localhost&quot;).createChannel();
+			receiverChannel.basicQos(1);
+			receiverChannel.queueDeclare(sourceQueue, false);
+			receiverChannel.queueBind(sourceQueue, &quot;amq.direct&quot;, sourceQueue);
+			consumer = new QueueingConsumer(receiverChannel);
+			receiverChannel.basicConsume(sourceQueue, false, consumer);
+		}
+		@Override
+		public void run()
+		{
+			try{init();}catch(IOException ex){System.err.println(&quot;Error initializing.
+Exiting.&quot;);close();return;}
+			while(!Thread.currentThread().isInterrupted())
+			{
+				try
+				{
+					Delivery delivery = consumer.nextDelivery(5000);
+
+					if(delivery != null)
+					{
+						String key = new
+String(((LongString)delivery.getProperties().getHeaders().get(&quot;MESSAGE_KEY&quot;)).getBytes());
+						String data = new String(delivery.getBody());
+
+	/* -- PROBLEM -- */
+	//---------  	THIS CAUSES the problem. (BUT ONLY WHEN SimpleForwarders are
+running IN THE SAME JVM).
+						BasicProperties props = MessageProperties.PERSISTENT_TEXT_PLAIN;
+
+	//---------		THIS NEVER CAUSES PROBLEM EVEN when SimpleForwarders IN THE
+SAME JVM
+	//					BasicProperties props = delivery.getProperties();
+	/* -- END OF PROBLEM -- */
+						
+						props.setHeaders(new HashMap&lt;String, Object&gt;());
+						props.getHeaders().put(&quot;MESSAGE_KEY&quot;, key);
+						senderChannel.basicPublish(&quot;amq.direct&quot;, targetRoutingKey, props ,
+data.getBytes());
+						receiverChannel.basicAck(delivery.getEnvelope().getDeliveryTag(),
+false);
+					}
+				}
+				catch(InterruptedException ex){System.err.println(&quot;[&quot; +
+Thread.currentThread().getName() + &quot;] Interrupted while waiting for message.
+Exiting&quot;);close();return;}
+				catch(ShutdownSignalException sse){ System.err.println(&quot;[&quot; +
+Thread.currentThread().getName() + &quot;] Caught shutdown signal.
+Exiting&quot;);close();return;}
+				catch(IOException ex){System.err.println(&quot;[&quot; +
+Thread.currentThread().getName() + &quot;] Unexpected IO error.
+Exiting&quot;);return;}
+			}
+		}
+		public void close()
+		{
+			try
+			{
+				senderChannel.getConnection().close();
+				receiverChannel.getConnection().close();
+			}
+			catch(IOException ex)
+			{
+				System.err.println(&quot;Close failed&quot;);
+			}
+		}
+	}
+
+	public static void main(String[] args) throws IOException
+	{
+		ConnectionParameters params = new ConnectionParameters();
+		params.setPassword(&quot;guest&quot;);
+		params.setUsername(&quot;guest&quot;);
+		params.setVirtualHost(&quot;/&quot;);
+
+		SimpleForwarder f1 = new SimpleForwarder(params, &quot;QueueA&quot;, &quot;QueueB&quot;);
+		SimpleForwarder f2 = new SimpleForwarder(params, &quot;QueueB&quot;, &quot;Replies&quot;);
+		f1.start();
+		f2.start();
+
+		Tester tester = new Tester(params, &quot;Replies&quot;, &quot;QueueA&quot;);
+		tester.test(1000);
+	}
+}
+
+
+-- 
+View this message in context: <A HREF="http://old.nabble.com/Problem-with-BasicProperties-%28bug-%29-tp28351417p28351417.html">http://old.nabble.com/Problem-with-BasicProperties-%28bug-%29-tp28351417p28351417.html</A>
+Sent from the RabbitMQ mailing list archive at Nabble.com.
+
+
+</PRE>
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="006975.html">[rabbitmq-discuss] RE : Behavior of consumers listening to the same queue
+</A></li>
+	<LI>Next message: <A HREF="006977.html">[rabbitmq-discuss] Problem with BasicProperties (bug?)
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#6976">[ date ]</a>
+              <a href="thread.html#6976">[ thread ]</a>
+              <a href="subject.html#6976">[ subject ]</a>
+              <a href="author.html#6976">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

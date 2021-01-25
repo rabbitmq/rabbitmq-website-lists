@@ -1,0 +1,168 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Huge queues - memory alarm going off
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Huge%20queues%20-%20memory%20alarm%20going%20off&In-Reply-To=%3CCAMsy_Ngm%3D8NV8M%3DuUM2bquWtKj1eG7rUw8SQU6AokmWNVweguQ%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="025835.html">
+   <LINK REL="Next"  HREF="025850.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Huge queues - memory alarm going off</H1>
+    <B>Tim Robertson</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Huge%20queues%20-%20memory%20alarm%20going%20off&In-Reply-To=%3CCAMsy_Ngm%3D8NV8M%3DuUM2bquWtKj1eG7rUw8SQU6AokmWNVweguQ%40mail.gmail.com%3E"
+       TITLE="[rabbitmq-discuss] Huge queues - memory alarm going off">timrobertson100 at gmail.com
+       </A><BR>
+    <I>Sun Mar 10 13:28:29 GMT 2013</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="025835.html">[rabbitmq-discuss] Huge queues - memory alarm going off
+</A></li>
+        <LI>Next message: <A HREF="025850.html">[rabbitmq-discuss] Unable to delete queues,	purge messages etc. through admin
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#25836">[ date ]</a>
+              <a href="thread.html#25836">[ thread ]</a>
+              <a href="subject.html#25836">[ subject ]</a>
+              <a href="author.html#25836">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Thanks Matthias,
+
+Knowing that the tokyo plugin is not often used is useful info.  I've spent
+the weekend reading as much as I can and some of the blogs on the rabbit
+site [e.g. 1,2 were particularly useful].  I don't claim to get all this,
+but I think I am beginning to get a general understanding and realising we
+do indeed need a buffer to decouple those consumers that we know are
+inherently slow or will be taken offline periodically (e.g. the map tile
+renderers which are maintaining Billions of tiles in HBase in large
+queue-draining batch operations).
+
+Really appreciate the helpful pointers from both you and Jerry - cheers
+guys,
+Tim
+
+[1]
+<A HREF="http://www.rabbitmq.com/blog/2012/04/25/rabbitmq-performance-measurements-part-2/">http://www.rabbitmq.com/blog/2012/04/25/rabbitmq-performance-measurements-part-2/</A>
+[2]
+<A HREF="http://www.rabbitmq.com/blog/2011/10/27/performance-of-queues-when-less-is-more/">http://www.rabbitmq.com/blog/2011/10/27/performance-of-queues-when-less-is-more/</A>
+
+On Sun, Mar 10, 2013 at 2:17 PM, Matthias Radestock
+&lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">matthias at rabbitmq.com</A>&gt;wrote:
+
+&gt;<i> Tim,
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> On 10/03/13 12:14, Tim Robertson wrote:
+</I>&gt;<i>
+</I>&gt;&gt;<i> it is really not good practice to
+</I>&gt;&gt;<i> deliberately use RMQ as a large buffering technology for queues, due to
+</I>&gt;&gt;<i> the memory management.  Namely, that if one queue is hugely backed up,
+</I>&gt;&gt;<i> we'll get into a oscillation of:
+</I>&gt;&gt;<i>    i) memory limit hit
+</I>&gt;&gt;<i>    ii) block everything while flush partially to disk
+</I>&gt;&gt;<i>    iii) repeat immediately (while the disabled consumer remains)
+</I>&gt;&gt;<i> While it will work, we'll likely cripple other parts of the system if
+</I>&gt;&gt;<i> they are going through the same broker.
+</I>&gt;&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> Rabbit will start paging to disk *before* the memory limit is hit, in
+</I>&gt;<i> order to prevent precisely the stop-start scenario you describe above.
+</I>&gt;<i>
+</I>&gt;<i> Obviously if the publishing happens at a faster rate than rabbit can write
+</I>&gt;<i> to disk then eventually the memory limit will still be hit and producers
+</I>&gt;<i> blocked while rabbit catches up.
+</I>&gt;<i>
+</I>&gt;<i> Furthermore, as Jerry says, messages do have a non-zero memory footprint
+</I>&gt;<i> even when paged to disk. As a consequence, when &quot;filling&quot; rabbit with
+</I>&gt;<i> messages, the paging becomes more and more aggressive over time to the
+</I>&gt;<i> point where all memory is taken up by the residual footprint of paged
+</I>&gt;<i> messages, and publishing even a small number of messages will trigger a
+</I>&gt;<i> memory alarm. And eventually *all* memory is consumed that way and
+</I>&gt;<i> publishers are blocked indefinitely until some messages are removed from
+</I>&gt;<i> the queues.
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>  I think this was probably a lack of understanding on our part, as we
+</I>&gt;&gt;<i> anticipated using it as a queue (to do large buffering) whereas I
+</I>&gt;&gt;<i> presume it is (?) really intended to be a messaging system and targeting
+</I>&gt;&gt;<i> zero queue sizes is the expected behavior (consumer throughput matched
+</I>&gt;&gt;<i> to producer).
+</I>&gt;&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> We used to say that &quot;an empty rabbit is a healthy rabbit&quot;, but that
+</I>&gt;<i> statement predates many improvements to persistence and flow-control that
+</I>&gt;<i> have happened since. So nowadays I'd rephrase that as &quot;a non-obese rabbit
+</I>&gt;<i> is a healthy rabbit&quot;.
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>  Are there alternative configurations that you are aware of that would
+</I>&gt;&gt;<i> allow it to back up large queues, without hitting memory limits?  (the
+</I>&gt;&gt;<i> tokyo cabinet plugin perhaps?)
+</I>&gt;&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> Exactly that. With the tokyo cabinet plugin, messages that have been paged
+</I>&gt;<i> to disk leave zero memory footprint, allowing rabbit to hold on to as much
+</I>&gt;<i> message data as will fit on disk.
+</I>&gt;<i>
+</I>&gt;<i> Note however that the plugin is rarely used and is not included in our
+</I>&gt;<i> distributions due to the dependency on non-Erlang, platform-specific code.
+</I>&gt;<i>
+</I>&gt;<i> Alternatively, increase the amount of memory on your rabbit machine.
+</I>&gt;<i>
+</I>&gt;<i> Regards,
+</I>&gt;<i>
+</I>&gt;<i> Matthias.
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20130310/80ffaeca/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20130310/80ffaeca/attachment.htm</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="025835.html">[rabbitmq-discuss] Huge queues - memory alarm going off
+</A></li>
+	<LI>Next message: <A HREF="025850.html">[rabbitmq-discuss] Unable to delete queues,	purge messages etc. through admin
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#25836">[ date ]</a>
+              <a href="thread.html#25836">[ thread ]</a>
+              <a href="subject.html#25836">[ subject ]</a>
+              <a href="author.html#25836">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

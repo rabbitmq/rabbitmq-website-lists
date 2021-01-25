@@ -1,0 +1,177 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] HA behavior during a network split
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20HA%20behavior%20during%20a%20network%20split&In-Reply-To=%3C4FFD4666.8070602%40vmware.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="021162.html">
+   <LINK REL="Next"  HREF="021166.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] HA behavior during a network split</H1>
+    <B>Tim Watson</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20HA%20behavior%20during%20a%20network%20split&In-Reply-To=%3C4FFD4666.8070602%40vmware.com%3E"
+       TITLE="[rabbitmq-discuss] HA behavior during a network split">watsont at vmware.com
+       </A><BR>
+    <I>Wed Jul 11 10:24:54 BST 2012</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="021162.html">[rabbitmq-discuss] HA behavior during a network split
+</A></li>
+        <LI>Next message: <A HREF="021166.html">[rabbitmq-discuss] HA behavior during a network split
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#21164">[ date ]</a>
+              <a href="thread.html#21164">[ thread ]</a>
+              <a href="subject.html#21164">[ subject ]</a>
+              <a href="author.html#21164">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi Elias,
+
+As I'm fairly new around here, I'll try and share what I've learned so 
+far and allow the more experienced folks to chip in and fill in the 
+details (or correct me if I go astray).
+
+On 07/11/2012 12:11 AM, Elias Levy wrote:
+&gt;<i> I am curious as to what the behavior of HA queues during a network 
+</I>&gt;<i> split is.
+</I>&gt;<i>
+</I>&gt;<i> The documentation states that when a mater fails a slave will be 
+</I>&gt;<i> promoted to master, but its silent under what conditions a slave will 
+</I>&gt;<i> consider a master to have failed.  Is there some timeout after which 
+</I>&gt;<i> slaves will consider a master to have failed?  If so, what is the time 
+</I>&gt;<i> value?
+</I>&gt;<i>
+</I>
+This situation is not handled using a timeout. HA queues are based on a 
+technology called Guaranteed Multicast (aka GM), which was developed 
+independently by and for RabbitMQ. This provides an atomic broadcast 
+capability which is similar to the work described by Levy et al 
+(biblion.epfl.ch/EPFL/theses/2008/3999/EPFL_TH3999.pdf) though as I 
+mentioned earlier (and as per the documentation), was developed 
+independently.
+
+You can take a look at the GM source code here: 
+<A HREF="http://hg.rabbitmq.com/rabbitmq-server/file/default/src/gm.erl">http://hg.rabbitmq.com/rabbitmq-server/file/default/src/gm.erl</A>
+
+A GM group forms a ring, in which members are connected to their 
+immediate neighbours (in both directions) only. If this connection 
+breaks then the death of the member is propagated around the ring and 
+everything 'reshuffles' to compensate for this. The deaths are noticed 
+because the Erlang processes involved are monitored (see the links under 
+[monitors] at the bottom for technical details) and the guarantees and 
+relative timings involved can be understood in that context.
+
+In actual fact, mirror (i.e., HA) queues are implemented 'on top of' GM 
+and also rely on Rabbit's clustering infrastructure, so additional 
+(Erlang) process and node monitoring is in place at the level above GM 
+which will also *notice* if a node goes down.
+
+&gt;<i> Assuming that such timeout exists, if there is a network split you may 
+</I>&gt;<i> end up with two clusters, each one which now has a master.  Each may 
+</I>&gt;<i> also have publisher and consumers that continue to work happily 
+</I>&gt;<i> against the split cluster.
+</I>&gt;<i>
+</I>
+Now we're talking about two different things. Rabbit clustering is 
+independent of mirror (HA) queues, though the two things are 
+interdependent. If a netsplit occurs then the surviving nodes which are 
+still connected to the extant master *should* continue happily on. What 
+will happen to the nodes in the other 'half' of the split, I'm not so 
+sure and will put my hand up and ask someone better versed in this to 
+fill in the blanks.
+
+&gt;<i> What happens when the network split is repaired?  Will the clusters 
+</I>&gt;<i> join?  If so, what will happen to the HA queue?  Will one of the 
+</I>&gt;<i> existing master be demoted to slave?  If so, what happens to its queue 
+</I>&gt;<i> of messages that originated within its split cluster?  Are they lost?
+</I>&gt;<i>
+</I>
+AFAIK it is possible for MNesia to heal itself after a netsplit, and 
+therefore getting nodes to rejoin a cluster might work without 
+intervention, possibly depending on what has happened independently on 
+the two 'halves' of the split in the intervening time period. What I 
+would not expect to happen (though I could be wrong here!) is for two 
+distinct GM rings to join up and become one, promoting a new master or 
+demoting an existing one, the latter behaviour being undefined (i.e., 
+not implemented) AFAICT.
+
+When a node rejoins a cluster, mnesia needs to reconcile the differences 
+and I would expect to see mnesia fail when trying to rejoin the cluster 
+if the (Erlang) process ID for the master was different between the two 
+nodes.
+
+&gt;<i> I suppose a lot of this depends on the underlaying Mnesia DB. 
+</I>&gt;<i>  I realize RMQ is CA system out the CAP theorem, but its not at all 
+</I>&gt;<i> clear what occurs in the face of a network partition.
+</I>&gt;<i>
+</I>
+Yes indeed - mnesia does not play nicely in this kind of scenario. There 
+are some efforts underway to make it *easier* to deal with netsplits 
+(for example 
+<A HREF="https://github.com/uwiger/otp/commit/3f70f3def4e33828da4237b07cbee9f73121c661">https://github.com/uwiger/otp/commit/3f70f3def4e33828da4237b07cbee9f73121c661</A> 
+and <A HREF="https://github.com/uwiger/unsplit">https://github.com/uwiger/unsplit</A>) but these are not mainstream or 
+ready to production use just yet.
+
+And even if some mechanism were available, we would have the dual 
+problems of deciding on which mnesia record is the correct (system of 
+record) *and* being able to join 2 GM rings back together, which sounds 
+infeasibly hard to me.
+
+[monitors]
+<A HREF="http://www.erlang.org/doc/reference_manual/processes.html#id82613">http://www.erlang.org/doc/reference_manual/processes.html#id82613</A>
+<A HREF="http://www.erlang.org/doc/man/erlang.html#monitor-2">http://www.erlang.org/doc/man/erlang.html#monitor-2</A>
+<A HREF="http://www.erlang.org/doc/man/net_kernel.html">http://www.erlang.org/doc/man/net_kernel.html</A>
+
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20120711/c4b5a8a8/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20120711/c4b5a8a8/attachment.htm</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="021162.html">[rabbitmq-discuss] HA behavior during a network split
+</A></li>
+	<LI>Next message: <A HREF="021166.html">[rabbitmq-discuss] HA behavior during a network split
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#21164">[ date ]</a>
+              <a href="thread.html#21164">[ thread ]</a>
+              <a href="subject.html#21164">[ subject ]</a>
+              <a href="author.html#21164">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

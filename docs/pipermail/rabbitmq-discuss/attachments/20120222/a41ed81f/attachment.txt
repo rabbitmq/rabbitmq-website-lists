@@ -1,0 +1,60 @@
+--- rabbitmqadmin.rabbit-dist-2.7.1     2012-01-07 10:04:05.000000000 -0800
++++ rabbitmqadmin       2012-02-21 21:03:43.795461365 -0800
+@@ -23,6 +23,7 @@
+ import json
+ import os
+ import socket
++import re
+
+ LISTABLE = ['connections', 'channels', 'exchanges', 'queues', 'bindings',
+             'users', 'vhosts', 'permissions', 'nodes']
+@@ -45,9 +46,11 @@
+ DECLARABLE = {
+     'exchange':   {'mandatory': ['name', 'type'],
+                    'optional':  {'auto_delete': 'false', 'durable': 'true',
+-                                 'internal': 'false'}},
++                                 'internal': 'false',
++                                 'alternate': None}},
+     'queue':      {'mandatory': ['name'],
+-                   'optional':  {'auto_delete': 'false', 'durable': 'true'}},
++                   'optional':  {'auto_delete': 'false', 'durable': 'true',
++                                 'mirror': None}},
+     'binding':    {'mandatory': ['source', 'destination_type', 'destination',
+                                  'routing_key'],
+                    'optional':  {}},
+@@ -375,22 +378,32 @@
+         upload = {}
+         for k in optional.keys():
+             upload[k] = optional[k]
++        arguments = {}
+         for arg in args:
+             assert_usage("=" in arg,
+                          'Argument "{0}" not in format name=value'.format(arg))
+             (name, value) = arg.split("=", 1)
+             assert_usage(name in mandatory or name in optional.keys(),
+                          'Argument "{0}" not recognised'.format(name))
+-            upload[name] = value
++            if name == 'alternate':
++                arguments['alternate-exchange'] = value
++            elif name == 'mirror':
++                if value == 'all':
++                    arguments['x-ha-policy'] = 'all'
++                else:
++                    arguments['x-ha-policy'] = 'nodes'
++                    arguments['x-ha-policy-params'] = re.split('[\s,]+', value)
++            else:
++                upload[name] = value
+         for m in mandatory:
+             assert_usage(m in upload.keys(),
+                          'mandatory argument "{0}" required'.format(m))
+-        upload['arguments'] = {}
++        upload['arguments'] = arguments
+         upload['vhost'] = self.options.vhost or '/'
+         uri_args = {}
+         for k in upload:
+             v = upload[k]
+-            if v:
++            if v and not isinstance(v, (list, dict)):
+                 uri_args[k] = urllib.quote_plus(v)
+                 if k == 'destination_type':
+                     uri_args['destination_char'] = v[0]

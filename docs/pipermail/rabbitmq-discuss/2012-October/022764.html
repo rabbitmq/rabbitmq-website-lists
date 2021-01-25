@@ -1,0 +1,123 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] BUG: Failing nodes with HA-queue stops message flow
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20BUG%3A%20Failing%20nodes%20with%20HA-queue%20stops%0A%20message%20flow&In-Reply-To=%3C20121001140733.GB35664%40kaka.it.su.se%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="022761.html">
+   <LINK REL="Next"  HREF="022767.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] BUG: Failing nodes with HA-queue stops message flow</H1>
+    <B>Simon Lundstr&#246;m</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20BUG%3A%20Failing%20nodes%20with%20HA-queue%20stops%0A%20message%20flow&In-Reply-To=%3C20121001140733.GB35664%40kaka.it.su.se%3E"
+       TITLE="[rabbitmq-discuss] BUG: Failing nodes with HA-queue stops message flow">simlu at su.se
+       </A><BR>
+    <I>Mon Oct  1 15:07:34 BST 2012</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="022761.html">[rabbitmq-discuss] BUG: Failing nodes with HA-queue stops message flow
+</A></li>
+        <LI>Next message: <A HREF="022767.html">[rabbitmq-discuss] BUG: Failing nodes with HA-queue stops message flow
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#22764">[ date ]</a>
+              <a href="thread.html#22764">[ thread ]</a>
+              <a href="subject.html#22764">[ subject ]</a>
+              <a href="author.html#22764">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>On Mon, 2012-10-01 at 13:59:23 +0100, Matthias Radestock wrote:
+&gt;<i> On 01/10/12 13:48, Simon Lundstr&#246;m wrote:
+</I>&gt;<i> &gt;It's when/after ram01 restarts that the consumer disappears from
+</I>&gt;<i> &gt;&quot;Consumers&quot; in the queue and message passing stops.
+</I>&gt;<i> 
+</I>&gt;<i> Are you handling the consumer cancellation notification? From
+</I>&gt;<i> <A HREF="http://www.rabbitmq.com/ha.html">http://www.rabbitmq.com/ha.html</A>
+</I>&gt;<i> &lt;quote&gt;
+</I>&gt;<i> Clients that were consuming from the mirrored-queue [and were
+</I>&gt;<i> connected to a node other than the one that died] will receive a
+</I>&gt;<i> notification that their subscription to the mirrored-queue has been
+</I>&gt;<i> abruptly cancelled. At this point they should re-consume from the
+</I>&gt;<i> queue, which will pick up the new master.
+</I>&gt;<i> &lt;/quote&gt;
+</I>
+I have no idea how *I* should be handling consumer cancel notification
+(can't find this in the documentation), but I'm pretty sure Ruby AMQP
+handles it, see
+&lt;<A HREF="https://github.com/ruby-amqp/amq-client/commit/49951878a8ff4bdbcead3c13eb7737ade6e70669">https://github.com/ruby-amqp/amq-client/commit/49951878a8ff4bdbcead3c13eb7737ade6e70669</A>&gt;
+and &lt;<A HREF="https://groups.google.com/forum/#!topic/ruby-amqp/KKxv4DFVJVk">https://groups.google.com/forum/#!topic/ruby-amqp/KKxv4DFVJVk</A>&gt;.
+
+How can I see the client properties (to check if my consumer reports
+support for CCN) in the management GUI?
+
+Under Connections =&gt; Consumer IP, Client properties I only get:
+information <A HREF="http://github.com/ruby-amqp/amqp">http://github.com/ruby-amqp/amqp</A>
+platform  ruby 1.8.7 (2012-02-08 patchlevel 358) [universal-darwin11.0]
+version 0.9.7
+product AMQP gem
+
+This,
+&lt;<A HREF="https://groups.google.com/forum/?fromgroups=#!topic/ruby-amqp/TA4n5Eq4IgU">https://groups.google.com/forum/?fromgroups=#!topic/ruby-amqp/TA4n5Eq4IgU</A>&gt; is
+the only thing related to CCN I can find on Ruby AMQP.
+I'll ask on their mailinglist.
+
+&gt;<i> &gt;Admittedly I'm new to AMQP and RabbitMQ, but I don't get why the
+</I>&gt;<i> &gt;consumer which is connected to disk01 would start failing when ram01 is
+</I>&gt;<i> &gt;being restarted.
+</I>&gt;<i> 
+</I>&gt;<i> The docs explain that:
+</I>&gt;<i> &lt;quote&gt;
+</I>&gt;<i> The reason for sending this notification is that informing clients
+</I>&gt;<i> of the loss of the master is essential: otherwise the client may
+</I>&gt;<i> continue to issue acknowledgements for messages they were sent by
+</I>&gt;<i> the old, failed master [these acks will be discarded], and not
+</I>&gt;<i> expect that they might be about to see the same messages again, this
+</I>&gt;<i> time sent by the new master.
+</I>&gt;<i> &lt;/quote&gt;
+</I>
+Aaah, and the reason for this not happening when disk01 is master and
+then restarted is because the consumer is connected to disk01 and must
+reconnect (because it just lost the connection)?
+
+Oh, why mailed here in the first place was becuase Emile thought it was
+strange that ram01 threw this message:
+=ERROR REPORT==== 1-Oct-2012::13:55:35 ===
+Discarding message {'$gen_call',{&lt;0.173.0&gt;,#Ref&lt;0.0.0.967&gt;},{notify_down,&lt;6733.320.0&gt;}} from &lt;0.173.0&gt; to &lt;0.200.0&gt; in an old incarnation (1) of this node (2)
+
+But maybe that's when the consumer doesn't handle basic.cancel?
+
+Thanks!
+- Simon
+</PRE>
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="022761.html">[rabbitmq-discuss] BUG: Failing nodes with HA-queue stops message flow
+</A></li>
+	<LI>Next message: <A HREF="022767.html">[rabbitmq-discuss] BUG: Failing nodes with HA-queue stops message flow
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#22764">[ date ]</a>
+              <a href="thread.html#22764">[ thread ]</a>
+              <a href="subject.html#22764">[ subject ]</a>
+              <a href="author.html#22764">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

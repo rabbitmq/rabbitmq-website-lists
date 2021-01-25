@@ -1,0 +1,169 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] No message is delivered to consumer workers	when a message is requeued
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20No%20message%20is%20delivered%20to%20consumer%20workers%0A%09when%20a%20message%20is%20requeued&In-Reply-To=%3C34831942-8564-46A4-ADAA-FE42DC2452BA%40rabbitmq.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="019395.html">
+   <LINK REL="Next"  HREF="019401.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] No message is delivered to consumer workers	when a message is requeued</H1>
+    <B>Steve Powell</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20No%20message%20is%20delivered%20to%20consumer%20workers%0A%09when%20a%20message%20is%20requeued&In-Reply-To=%3C34831942-8564-46A4-ADAA-FE42DC2452BA%40rabbitmq.com%3E"
+       TITLE="[rabbitmq-discuss] No message is delivered to consumer workers	when a message is requeued">steve at rabbitmq.com
+       </A><BR>
+    <I>Thu Apr  5 16:05:01 BST 2012</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="019395.html">[rabbitmq-discuss] No message is delivered to consumer workers when	a message is requeued
+</A></li>
+        <LI>Next message: <A HREF="019401.html">[rabbitmq-discuss] Custom error message for basic reject
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#19404">[ date ]</a>
+              <a href="thread.html#19404">[ thread ]</a>
+              <a href="subject.html#19404">[ subject ]</a>
+              <a href="author.html#19404">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi Dinh,
+
+I was confused by your wording:
+&gt;<i> I launched 4 workers to
+</I>&gt;<i> listen on a single queue
+</I>and:
+&gt;<i> The
+</I>&gt;<i> output of strace shows that worker still polled RabbitMQ for new
+</I>&gt;<i> message
+</I>
+and:
+&gt;<i> I use the same consumer_tag for all workers.
+</I>
+
+'Polling' implies you are using 'basic_get' which has explicit control
+of acknowledgements. 'Consumers' implies you are using 'basic_consume'
+(which is more sensible) and acknowledgements are set on registration.
+I'd be interested in knowing what your Consumers do.
+
+I assume that each worker registers a consumer. What
+channels/connections/processes do they share? If you use the same
+consumer_tag for each consumer, this will only cause problems if they
+use the same channel.
+
+I also assume that the consumers are set to explicitly acknowledge the
+messages they receive.
+
+If a message is not acknowledged (nor rejected), then pre-fetch count=1
+will mean that after everyone of your consumers gets one message that
+they haven't acknowledged they won't get any more.
+
+So, what you are reporting sounds like the rejection (a negative
+acknowledgement) isn't being recognised.
+
+OR...
+
+Your consumers are being confused -- it is possible your messages are
+being rejected and requeued (requeue=True) and immediately being
+delivered back to the consumer (or one of the consumers). How do the
+consumers react to a redelivered message?
+
+Steve Powell  (an easter bunny)
+----------some more definitions from the SPD----------
+chinchilla (n.) Cooling device for the lower jaw.
+socialcast (n.) Someone to whom everyone is speaking but nobody likes.
+literacy (n.) A textually transmitted disease usually contracted in childhood.
+
+On 5 Apr 2012, at 06:28, Pham Cong Dinh wrote:
+
+&gt;<i> Hi all,
+</I>&gt;<i> 
+</I>&gt;<i> I got a strange issue with RabbitMQ when I launched 4 workers to
+</I>&gt;<i> listen on a single queue to process incoming message.
+</I>&gt;<i> 
+</I>&gt;<i> However, there is a bug with worker that caused an invalid message can
+</I>&gt;<i> not be processed successfully. In that case, that message will be
+</I>&gt;<i> redelivered back to the original queue using
+</I>&gt;<i> 
+</I>&gt;<i> channel.basic_reject(delivery_tag, requeue=True) # Python code (Kombu
+</I>&gt;<i> framework)
+</I>&gt;<i> # Just reject the message. Not closing the channel or releasing
+</I>&gt;<i> connection after that
+</I>&gt;<i> 
+</I>&gt;<i> As you may guess, none of 4 workers could process the message because
+</I>&gt;<i> the bug. After that no worker received incoming message any more. The
+</I>&gt;<i> output of strace shows that worker still polled RabbitMQ for new
+</I>&gt;<i> message but they received no message. I also listed all the message
+</I>&gt;<i> available in the queue using rabbitmqctl and found that there were 4
+</I>&gt;<i> unacknowledged messages and a lot of incoming messages in the queue
+</I>&gt;<i> too.
+</I>&gt;<i> 
+</I>&gt;<i> Have anyone here experienced the same issue?
+</I>&gt;<i> 
+</I>&gt;<i> My configuration:
+</I>&gt;<i> 
+</I>&gt;<i> consumer_options = {
+</I>&gt;<i>    'exchange_name': 'feed',
+</I>&gt;<i>    'exchange_type': 'direct',
+</I>&gt;<i>    'queue_name': 'feed',
+</I>&gt;<i>    'routing_key': 'importer',
+</I>&gt;<i>    'durable': True,
+</I>&gt;<i>    'delivery_mode': 2,
+</I>&gt;<i>    'no_ack': False,
+</I>&gt;<i>    'auto_ack': False,
+</I>&gt;<i>    'prefetch_count': 1
+</I>&gt;<i> }
+</I>&gt;<i> 
+</I>&gt;<i> I use the same consumer_tag for all workers. Did it cause any problem?
+</I>&gt;<i> 
+</I>&gt;<i> Thanks
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> Dinh
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="019395.html">[rabbitmq-discuss] No message is delivered to consumer workers when	a message is requeued
+</A></li>
+	<LI>Next message: <A HREF="019401.html">[rabbitmq-discuss] Custom error message for basic reject
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#19404">[ date ]</a>
+              <a href="thread.html#19404">[ thread ]</a>
+              <a href="subject.html#19404">[ subject ]</a>
+              <a href="author.html#19404">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

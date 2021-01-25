@@ -1,0 +1,142 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Feature Req / Bug list
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Feature%20Req%20/%20Bug%20list&In-Reply-To=%3CA3355729-B4CA-4E86-AA2A-7240B09CC8C6%40rabbitmq.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="031343.html">
+   <LINK REL="Next"  HREF="030656.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Feature Req / Bug list</H1>
+    <B>Tim Watson</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Feature%20Req%20/%20Bug%20list&In-Reply-To=%3CA3355729-B4CA-4E86-AA2A-7240B09CC8C6%40rabbitmq.com%3E"
+       TITLE="[rabbitmq-discuss] Feature Req / Bug list">watson.timothy at gmail.com
+       </A><BR>
+    <I>Fri Oct 25 11:03:33 BST 2013</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="031343.html">[rabbitmq-discuss] Feature Req / Bug list
+</A></li>
+        <LI>Next message: <A HREF="030656.html">[rabbitmq-discuss] Is rabbitmq-jms for vFabric RabbitMQ	opensource?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#31350">[ date ]</a>
+              <a href="thread.html#31350">[ thread ]</a>
+              <a href="subject.html#31350">[ subject ]</a>
+              <a href="author.html#31350">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>On 24 Oct 2013, at 19:34, Guido Stepken &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">gstepken at googlemail.com</A>&gt; wrote:
+&gt;<i> &quot;single node with ~35k active open filehandles&quot;
+</I>&gt;<i> 
+</I>&gt;<i> I assume, all those file handles point to same content?
+</I>&gt;<i> 
+</I>No, they will not.
+
+&gt;<i> Where does this come from?
+</I>&gt;<i> 
+</I>The file descriptor count? Add up connections, port programs, linked in drivers, message store segments, index journals, database drivers, etc. 35k fd count is not unreasonable if there's a lot going on. Did you check the recommended limits on a bunch of other server applications recently? Fd use can grow fast and reasonable counts depend on workload.
+
+Tim
+
+
+&gt;<i> Am 03.10.2013 23:04 schrieb &quot;Graeme N&quot; &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">graeme at sudo.ca</A>&gt;:
+</I>&gt;<i> Hey everyone,
+</I>&gt;<i> 
+</I>&gt;<i> I've recently been doing a deployment of a 5 node rabbit cluster, and found some rough edges I thought I should share. I realize many of these are feature reqs, but I'm hoping that I just haven't discovered the proper configuration to deal with some of these issues, or have misunderstood Rabbit's behaviour. If not, hopefully they can become feature req items that'll make a dev schedule at some point.
+</I>&gt;<i> 
+</I>&gt;<i> All items below were discovered while deploying 3.1.5 over the past few days. Hosts in question have 24 sandy bridge HT cores, 64GB of RAM, XFS filesystem, running on CentOS 6. Cluster is 5 nodes, with a default HA policy on all queues of exact/3/automatic-sync.
+</I>&gt;<i> 
+</I>&gt;<i> HA / Clustering:
+</I>&gt;<i> 
+</I>&gt;<i> - expected queues to be distributed evenly among cluster machines, instead got all queues on first 3 machines in the cluster, nothing on the last 2.
+</I>&gt;<i> - expected message reads from a mirror machine for a queue to do the read i/o locally, so as to spread out workload, but it appears to always go to the host where the queue was created.
+</I>&gt;<i> - this led to a single node with ~35k active open filehandles, and 4 nodes with ~90. not an optimum distribution of read workload.
+</I>&gt;<i> - expected that if system a queue was created on is permanently removed (shut down and &quot;rabbitmqctl forget_cluster_node hostname&quot;'d), automatic sync would ensure there's the right number of copies replicated, but instead it just left every single queue under replicated.
+</I>&gt;<i> - when a new policy is applied that defines specific replication nodes, or a number of copies using 'exact, and auto-sync is set, sometimes it just syncs the first replica and leaves any others unsynced and calls it job done. This is bad.
+</I>&gt;<i> - had to add a new global HA policy and delete the existing one before rabbit fixed my queue replication.
+</I>&gt;<i> - Attempted to create small per-queue policies to redistribute messages and then delete the per-queue policies, but this often leads to a inconsistent cluster state where queues continued to show as being part of a policy that was already deleted, attempt to resync, and get stuck, unable to complete or switch back to the global default policy.
+</I>&gt;<i> - sometimes the cluster refuses to accept any more policy commands. Have to fully shut down and restart the cluster to clear this condition.
+</I>&gt;<i> - sometimes policies applied to empty and inactive queues don't get correctly applied, and the queue hangs on &quot;resyncing / 100%&quot;. this makes no sense, given the queue is empty, and requires a full cluster restart to clear.
+</I>&gt;<i> - would like to see a tool to redistribute queues amongst available cluster machines according to HA policy. Ideally something that happens automatically on queue creation, cluster membership and policy changes, but would take something manual I could run out of cron.
+</I>&gt;<i> - I've managed to get the cluster into an inconsistent state a /lot/ using the HA features, so it feels like they need more automated stress testing and bulletproofing.
+</I>&gt;<i> 
+</I>&gt;<i> Persistent message storage:
+</I>&gt;<i> 
+</I>&gt;<i> - it appears as if messages are put into very small batch files on the filesystem (1-20 MB)
+</I>&gt;<i> - this causes the filesystem to thrash if your IO isn't good at random IO (SATA disks) and you have lots of persistent messages (&gt;200k messages 500kB-1MB in size) that don't fit in RAM.
+</I>&gt;<i> - this caused CentOS 6 kernel to kill erlang after stalling the XFS filesystem for &gt; 120s.
+</I>&gt;<i> - if a node crashes, Rabbit seems to rescan the entire on-disk datastore before continuing, instead of using some sort of checkpointing or journaling system to quickly recover from a crash.
+</I>&gt;<i> - all of above should be solvable by using an existing append-only datastore like eLevelDB or Bitcask.
+</I>&gt;<i> - we solved for now by using SSDs, but this bumps up the cost of each RMQ node, and doesn't solve the node crash recovery problem, just speeds up the process somewhat.
+</I>&gt;<i> 
+</I>&gt;<i> Web API:
+</I>&gt;<i> - API seems to block when cluster is busy, even for informational GETs, so you can't determine what's going on with the cluster.
+</I>&gt;<i> - Some API operations seem to block until they complete (like putting a new policy), while others return immediately even though they're definitely not completed yet (like deleting a policy). It's not documented which have which behaviour, or why they don't just all block until op is completed.
+</I>&gt;<i> 
+</I>&gt;<i> Hopefully you guys can educate me on what I'm doing wrong in some of these scenarios, or how to mitigate some of these issues. Any issue that requires taking down and restarting the cluster to fix is especially troubling.
+</I>&gt;<i> 
+</I>&gt;<i> Thanks,
+</I>&gt;<i> Graeme
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>&gt;<i> 
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20131025/75468d81/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20131025/75468d81/attachment.htm</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="031343.html">[rabbitmq-discuss] Feature Req / Bug list
+</A></li>
+	<LI>Next message: <A HREF="030656.html">[rabbitmq-discuss] Is rabbitmq-jms for vFabric RabbitMQ	opensource?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#31350">[ date ]</a>
+              <a href="thread.html#31350">[ thread ]</a>
+              <a href="subject.html#31350">[ subject ]</a>
+              <a href="author.html#31350">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

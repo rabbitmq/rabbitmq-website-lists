@@ -1,0 +1,188 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] A different Processing error in logs
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20A%20different%20Processing%20error%20in%20logs&In-Reply-To=%3C4EE00E3B.5090300%40strategicdata.com.au%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="016780.html">
+   <LINK REL="Next"  HREF="016844.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] A different Processing error in logs</H1>
+    <B>Toby Corkindale</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20A%20different%20Processing%20error%20in%20logs&In-Reply-To=%3C4EE00E3B.5090300%40strategicdata.com.au%3E"
+       TITLE="[rabbitmq-discuss] A different Processing error in logs">toby.corkindale at strategicdata.com.au
+       </A><BR>
+    <I>Thu Dec  8 01:09:15 GMT 2011</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="016780.html">[rabbitmq-discuss] A different Processing error in logs
+</A></li>
+        <LI>Next message: <A HREF="016844.html">[rabbitmq-discuss] A different Processing error in logs
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#16789">[ date ]</a>
+              <a href="thread.html#16789">[ thread ]</a>
+              <a href="subject.html#16789">[ subject ]</a>
+              <a href="author.html#16789">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>On 07/12/11 23:27, Steve Powell wrote:
+&gt;<i> Dear Toby,
+</I>&gt;<i>
+</I>&gt;<i> Thank you for that description. I will attempt to reproduce this locally.  At
+</I>&gt;<i> first glance it appears that the reception of messages after UNSUBSCRIBE is
+</I>&gt;<i> counter-intuitive, and the interference with the second queue sounds suspicious.
+</I>&gt;<i>
+</I>&gt;<i> Could we see some of your code, please, or could you break this down into a
+</I>&gt;<i> series of STOMP frames, so we can see what the parameters are?  A trace of the
+</I>&gt;<i> STOMP frames would be best of all.
+</I>
+I've created a stand-alone script that demonstrates the issue occurring; 
+it's in Perl, I hope that's OK?
+(Edit: Two scripts containing two variants)
+
+&gt;<i> Some questions:
+</I>&gt;<i>
+</I>&gt;<i> Are the subscriber and sender the same process?
+</I>
+In this demo, I'm subscribing to the queues, then sending a few messages 
+to them, then waiting for frames to arrive -- all in the same script. 
+However the original issue occurred with a script starting up and 
+listening to queues that then received a few messages from another process.
+
+&gt;<i> Can you say exactly what type of queue you create/subscribe to?
+</I>
+The demo is using STOMP queues, &quot;/queue/test1&quot; and &quot;/queue/test2&quot; - so 
+fairly ordinary ones.
+
+&gt;<i> In 2) is it necessary to SEND more than 2 messages?
+</I>
+Nah, seems like I can break it with two messages to a single queue even!
+1) send to queue
+2) send to queue
+3) receive from queue, send ack, unsubscribe from queue
+4) receive from queue (despite unsub), send ack -- crash
+
+&gt;<i> In 3) how do you manage the connection when you stop reading it to unsubscribe?
+</I>
+In the real world code, it's a shared connection with several 
+subscriptions - i'm only subscribing from a single one, so the 
+connection stays open.
+
+&gt;<i> Do you need to unsubscribe before ack to get the problem in 6?
+</I>
+Hmm, just checked, and I'm calling the ack *before* the unsubscribe.
+
+&gt;<i> In 6) is the SEND from the same process again?
+</I>
+Doesn't seem to matter.
+
+
+&gt;<i> If possible, a failing code sample would be helpful.
+</I>
+
+Two code samples are attached.
+&quot;minimal_demo.pl&quot; seems to contain the bare minimum to cause the 
+processing error to occur.
+
+The other script is a bit more involved and closer resembles the 
+original problem description - it also allows you to play around with 
+options and message ordering a bit more.
+
+
+PS. Despite all the messages I seem to send through to the list about 
+one issue or another, I must say that I'm impressed with RabbitMQ, and 
+that's it's working nicely with a couple of applications here.
+
+We've learnt to use STOMP /topic/ queues with unique routing keys, 
+rather than temp-queues, at least for the time being.
+Also we create queues using the management JSON API and then use 
+/amq/queue/ queues for certain queues that need more options than STOMP 
+allows you to set.
+
+Thanks again,
+Toby
+
+
+&gt;<i> One of the trials I would perform is to try sending on queue 2 after every
+</I>&gt;<i> interaction with queue 1.  Of course, that may make it necessary to field
+</I>&gt;<i> messages from the second subscription at the same time.
+</I>&gt;<i>
+</I>&gt;<i> I'll keep you informed about my progress.
+</I>&gt;<i>
+</I>&gt;<i> Steve Powell  (a working bunny)
+</I>&gt;<i> ----------some more definitions from the SPD----------
+</I>&gt;<i> avoirdupois (phr.) 'Would you like peas with that?'
+</I>&gt;<i> distribute (v.) To denigrate an award ceremony.
+</I>&gt;<i> definite (phr.) 'It's hard of hearing, I think.'
+</I>&gt;<i> modest (n.) The most mod.
+</I>&gt;<i>
+</I>&gt;<i> On 7 Dec 2011, at 01:32, Toby Corkindale wrote:
+</I>&gt;&gt;<i> This feels like a RabbitMQ or STOMP bug to me, but here's some more info on
+</I>&gt;&gt;<i> what causes it to occur so you can decide.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> 1) Create two queues, with ack=client, subscribe to both, using STOMP.
+</I>&gt;&gt;<i> 2) Dump a bunch of messages into first queue.
+</I>&gt;&gt;<i> 3) Upon receiving one message, unsubscribe from the first queue only, and
+</I>&gt;&gt;<i>     then ack the message.
+</I>&gt;&gt;<i> 4) Note that you still get delivered some more messages from that first
+</I>&gt;&gt;<i>     queue.
+</I>&gt;&gt;<i> 5) Attempt to send a client ACK back for one of these messages, which seems
+</I>&gt;&gt;<i>     to work fine.
+</I>&gt;&gt;<i> 6) Now attempt to send another message through on the second
+</I>&gt;&gt;<i>     (still-subscribed) queue -- rabbitmq generates the Processing Error.
+</I>&gt;&gt;<i>
+</I>
+
+-- 
+.signature
+-------------- next part --------------
+A non-text attachment was scrubbed...
+Name: minimal_demo.pl
+Type: application/x-perl
+Size: 1214 bytes
+Desc: not available
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20111208/c1a2de16/attachment.bin">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20111208/c1a2de16/attachment.bin</A>&gt;
+-------------- next part --------------
+A non-text attachment was scrubbed...
+Name: more_involved_demo.pl
+Type: application/x-perl
+Size: 1953 bytes
+Desc: not available
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20111208/c1a2de16/attachment-0001.bin">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20111208/c1a2de16/attachment-0001.bin</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="016780.html">[rabbitmq-discuss] A different Processing error in logs
+</A></li>
+	<LI>Next message: <A HREF="016844.html">[rabbitmq-discuss] A different Processing error in logs
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#16789">[ date ]</a>
+              <a href="thread.html#16789">[ thread ]</a>
+              <a href="subject.html#16789">[ subject ]</a>
+              <a href="author.html#16789">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

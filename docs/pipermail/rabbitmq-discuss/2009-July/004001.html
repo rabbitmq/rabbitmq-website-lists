@@ -1,0 +1,186 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Dropping out messages from a queue
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20Dropping%20out%20messages%20from%20a%20queue&In-Reply-To=e2ab72f80907030905w2556e7f1ua9b792bb49b5f7e2%40mail.gmail.com">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003995.html">
+   <LINK REL="Next"  HREF="004006.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Dropping out messages from a queue</H1>
+    <B>Alexis Richardson</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20Dropping%20out%20messages%20from%20a%20queue&In-Reply-To=e2ab72f80907030905w2556e7f1ua9b792bb49b5f7e2%40mail.gmail.com"
+       TITLE="[rabbitmq-discuss] Dropping out messages from a queue">alexis.richardson at gmail.com
+       </A><BR>
+    <I>Sat Jul  4 10:53:21 BST 2009</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003995.html">[rabbitmq-discuss] Dropping out messages from a queue
+</A></li>
+        <LI>Next message: <A HREF="004006.html">[rabbitmq-discuss] Dropping out messages from a queue
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#4001">[ date ]</a>
+              <a href="thread.html#4001">[ thread ]</a>
+              <a href="subject.html#4001">[ subject ]</a>
+              <a href="author.html#4001">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Gagan,
+
+Hi - thank-you for sending the diagram and information which was very
+useful.  There are several ways to implement the 'twitter style'
+pattern that you have described.  See below for one way to do it that
+illustrates the AMQP model.  It may not be the most efficient solution
+in terms of performance as I shall point out.
+
+Two quick questions:
+
+1. Are you using fanout exchanges for this (if you want one exchange
+per user, then the answer should be 'yes').
+
+2. Where is the RabbitMQ server running?  Is it on Server 1 or 2, or
+is it on a 3rd server?  It may not be that important but it would be
+good to know.
+
+OK - to your cases -
+
+Case1: User B sending his message to UserB Exchange which will route
+message to User A queue but User A is not connected to any of servers.
+At this point of  all messages sent to Queue A should be dropped.
+
+&gt;&gt;&gt;<i> One way to do this is to identify the lifecycle of Queue A with the presence of User A on servers 1 and 2.  In other words, when User A is not connected to server 1, and also not connected to server 2, then Queue A does not exist.  Note - This is not the only way to achieve what you want but it may be the least fiddly :-)
+</I>
+Case2: User A connected to server 1 but UserA consumer is not yet
+subscribed to UserA queue. If UserB sends any message to its exchange
+which is routed to Queue of UserA. At this moment of time I want all
+messages to be stored in queue.
+
+&gt;&gt;&gt;<i> One way to do this (continuing from the above) is to create Queue A immediately after UserA connects to server 1.  This is an action that server 1 can initiate on behalf of UserA.  After Queue A has been created, then it should be bound to all exchanges from which it will receive messages, such as UserB's exchange.  This will then have the stated effect you seek &quot;If UserB sends any message to its exchange [it] is routed to Queue of UserA.&quot;.  Also, because UserA's consumer has not yet started consuming messages from Queue A, the messages will all remain stored in the queue.
+</I>
+&gt;&gt;&gt;<i> In addition, if instead of proceeding to Case 3, we revert to Case 1, for example User A disconnects from Server 1, then Queue A can simply be deleted (along with its contents).  (See also Case 5 below)
+</I>
+&gt;&gt;&gt;<i> However - while simple, the above is possibly not the most performant solution if (a) you are running RabbitMQ in clustered mode and (b) your Users generally follow a lot of other Users and (c) they connect and disconnect frequently.  This is because the effect of (c) is to frequuently update the routing table, possibly with a lot of binding/routing data (b), and then replicating it across the cluster (a).
+</I>
+&gt;&gt;&gt;<i> Let us know if you want more info about other ways to do this.
+</I>
+
+Case3: User A is connected to both servers and UserA consumer is
+subscribed to UserA queue. If UserB sends any message to its exchange
+which is routed to Queue of UserA. At this moment of time I want all
+messages stored in queue to be delievered plus any other incoming
+message should also be routed.
+
+&gt;&gt;&gt;<i> In any case, to achieve this, just start consuming messages from Queue A.
+</I>
+&gt;&gt;&gt;<i> I assume by 'delivered', you mean 'delivered to UserA's consumer'.  Where is that running?
+</I>
+
+
+
+Case4: User A is connected to both servers and UserA consumer is
+subscribed to UserA queue. Now User disconnects from Server 2. If
+UserB sends any message to its exchange which is routed to Queue of
+UserA. Again I want to store all messages.
+
+&gt;&gt;&gt;<i> To achieve this, just stop consuming messages from Queue A.  They will be stored in Queue A.
+</I>
+
+
+Case5: If user A is disconnected from both servers. Initial state is
+achieved again.
+
+&gt;&gt;&gt;<i> When User A disconnects from Server 1, then Server 1 can tell RabbitMQ to delete Queue A (along with its contents)
+</I>
+Cheers,
+
+alexis
+
+
+
+
+
+
+On Fri, Jul 3, 2009 at 5:05 PM, GAGAN ARORA&lt;<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">gaganarora.itm at gmail.com</A>&gt; wrote:
+&gt;<i> Hi Alexis
+</I>&gt;<i> Attaching a doc having architecture diagram and cases desired. Hope this
+</I>&gt;<i> would make things more clear to you.
+</I>&gt;<i> Thanks
+</I>&gt;<i> Gagan Arora
+</I>&gt;<i>
+</I>&gt;<i> On Fri, Jul 3, 2009 at 8:23 PM, Alexis Richardson
+</I>&gt;<i> &lt;<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">alexis.richardson at gmail.com</A>&gt; wrote:
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Gagan,
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> I'm a bit confused about what you are trying to do. &#160;I think what you
+</I>&gt;&gt;<i> describe is possible but I am not sure what role is being played by
+</I>&gt;&gt;<i> your two servers. &#160;Is RabbitMQ running on both of them, one of them,
+</I>&gt;&gt;<i> or neither? &#160;You may find it easier to just use one RabbitMQ server.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Can you send a drawing of what your desired configuration is?
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> alexis
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> On Fri, Jul 3, 2009 at 3:08 PM, GAGAN ARORA&lt;<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">gaganarora.itm at gmail.com</A>&gt;
+</I>&gt;&gt;<i> wrote:
+</I>&gt;&gt;<i> &gt; Hi
+</I>&gt;&gt;<i> &gt; I am developing a system in which a user will connect to two servers. On
+</I>&gt;&gt;<i> &gt; connecting to first server he will become online and will send his
+</I>&gt;&gt;<i> &gt; presence
+</I>&gt;&gt;<i> &gt; update but he will receive presence updates only once he is connected to
+</I>&gt;&gt;<i> &gt; other server as his consumer subscribes to his queue after connecting to
+</I>&gt;&gt;<i> &gt; second server.
+</I>&gt;&gt;<i> &gt; I am using one exchange and one queue per user. So if one user comes
+</I>&gt;&gt;<i> &gt; online
+</I>&gt;&gt;<i> &gt; then he will send his presence update to his exchange and users bound to
+</I>&gt;&gt;<i> &gt; that will receive updates.
+</I>&gt;&gt;<i> &gt; I need to configure a queue which would hold messages for user who has
+</I>&gt;&gt;<i> &gt; just
+</I>&gt;&gt;<i> &gt; came online until he is connected to other server. After connecting to
+</I>&gt;&gt;<i> &gt; second server all messages will be consumed. All messages sent to queue
+</I>&gt;&gt;<i> &gt; will
+</I>&gt;&gt;<i> &gt; be dropped once user goes offline.
+</I>&gt;&gt;<i> &gt; Is it possible?
+</I>&gt;&gt;<i> &gt; Thanks
+</I>&gt;&gt;<i> &gt; Gagan Arora
+</I>&gt;&gt;<i> &gt; _______________________________________________
+</I>&gt;&gt;<i> &gt; rabbitmq-discuss mailing list
+</I>&gt;&gt;<i> &gt; <A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;&gt;<i> &gt; <A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>&gt;&gt;<i> &gt;
+</I>&gt;&gt;<i> &gt;
+</I>&gt;<i>
+</I>&gt;<i>
+</I>
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003995.html">[rabbitmq-discuss] Dropping out messages from a queue
+</A></li>
+	<LI>Next message: <A HREF="004006.html">[rabbitmq-discuss] Dropping out messages from a queue
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#4001">[ date ]</a>
+              <a href="thread.html#4001">[ thread ]</a>
+              <a href="subject.html#4001">[ subject ]</a>
+              <a href="author.html#4001">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,168 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] RabbitMQ Clustering with Federation
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20RabbitMQ%20Clustering%20with%20Federation&In-Reply-To=%3C51FA7FEC.3040100%40rabbitmq.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="029049.html">
+   <LINK REL="Next"  HREF="029041.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] RabbitMQ Clustering with Federation</H1>
+    <B>Simon MacMullen</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20RabbitMQ%20Clustering%20with%20Federation&In-Reply-To=%3C51FA7FEC.3040100%40rabbitmq.com%3E"
+       TITLE="[rabbitmq-discuss] RabbitMQ Clustering with Federation">simon at rabbitmq.com
+       </A><BR>
+    <I>Thu Aug  1 16:34:04 BST 2013</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="029049.html">[rabbitmq-discuss] Java client - 91% time spent in reading the	socket?
+</A></li>
+        <LI>Next message: <A HREF="029041.html">[rabbitmq-discuss] RabbitMQ Clustering with Federation
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#29040">[ date ]</a>
+              <a href="thread.html#29040">[ thread ]</a>
+              <a href="subject.html#29040">[ subject ]</a>
+              <a href="author.html#29040">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>On 31/07/2013 5:35PM, Robert Parker wrote:
+&gt;<i> I'm having some trouble getting the right architecture configured to
+</I>&gt;<i> support rabbitmq federation in a clustered high availability
+</I>&gt;<i> environment.  Our basic setup is four clusters of two nodes each which
+</I>&gt;<i> are separated by a WAN.
+</I>&gt;<i>
+</I>&gt;<i> &quot;home&quot; is the &quot;home&quot; cluster and &quot;remote1&quot;, &quot;remote2&quot; and &quot;remote3&quot; are
+</I>&gt;<i> remote clusters.  There are a lot of queues being created and published
+</I>&gt;<i> to via the API identically on all clusters but I only want to federate
+</I>&gt;<i> ONE of the queues, which is called &quot;EventListener&quot; back to the &quot;home&quot;
+</I>&gt;<i> cluster from all the &quot;remote&quot; clusters.  I want messages published to
+</I>&gt;<i> this queue on each remote cluster to be federated to the home cluster to
+</I>&gt;<i> be consumed by a separate event listener service that only lives at the
+</I>&gt;<i> &quot;home&quot; site.
+</I>
+Just to be clear: you are aware that (currently) it's only *exchanges* 
+which can be federated, not queues?
+
+&gt;<i> Each cluster is configured with:
+</I>
+&lt;snip&gt;
+
+&gt;<i> We have configured three hardware load balancer VIPs that load balance
+</I>&gt;<i> connections on port 5672 between both nodes in each cluster, and have
+</I>&gt;<i> configured federation upstreams to use these and also configured our
+</I>&gt;<i> application to use these VIPs for queue/exchange creation and for
+</I>&gt;<i> publishing messages.  Here's our federation config script thats run on
+</I>&gt;<i> node1 of the home cluster only:
+</I>
+&lt;snip&gt;
+
+&gt;<i> However I am noticing that the &quot;rabbitmqctl eval
+</I>&gt;<i> 'rabbit_federation_status:status().&quot; command only shows federation
+</I>&gt;<i> config on node2 of the home cluster despite having been configured on node1:
+</I>
+Federation works by establishing link(s) from the downstream to the 
+upstream(s). You can define the upstreams on any node in the downstream 
+cluster (the configuration is cluster-wide) and the cluster will 
+arbitrarily start the link processes on any node (and will migrate them 
+around the cluster if nodes go down).
+
+*However*, rabbit_federation_status:status() will only report links that 
+are running on the local node. This is probably not well documented. 
+Hmm. Let's fix that.
+
+(The HTTP API exported by rabbitmq_federation_management will report 
+links on all nodes.)
+
+&lt;snip&gt;
+
+&gt;<i> And I'm noticing that messages published to the queues via the load
+</I>&gt;<i> balancer VIPs to the remote clusters are not showing up in the
+</I>&gt;<i> &quot;EventListener&quot; queue of the home cluster.
+</I>
+Note that you have federated an exchange called &quot;EventListener&quot;, not a 
+queue. So if you bind a queue to the exchange &quot;EventListener&quot; on home, 
+and publish to the exchange &quot;EventListener&quot; on remote1/2/3 then you 
+should see messages turning up in the queue on home. Is that what you're 
+doing?
+
+&gt;<i> Is this not the right way to set this up?
+</I>
+It sounds like you're basically right, apart from the exchange vs queue 
+thing.
+
+&gt;<i> Is it possible to configure
+</I>&gt;<i> this without using an external load balancer and still achieve high
+</I>&gt;<i> availability?
+</I>
+Since 3.1.0, yes. You can specify multiple URIs in a single upstream, 
+and federation will connect to a randomly chosen one (and keep retrying 
+different ones if that one goes down). Use something like:
+
+rabbitmqctl set_parameter federation-upstream remote1-upstream 
+'{&quot;uri&quot;:[&quot;<A HREF="amqp://remote1-node1&quot;,&quot;amqp://remote1-node2&quot;],&quot;expires&quot;:3600000}'">amqp://remote1-node1&quot;,&quot;amqp://remote1-node2&quot;],&quot;expires&quot;:3600000}'</A>
+
+&gt;<i> If I federate to a single node of a cluster directly,
+</I>&gt;<i> what happens if that node goes down?
+</I>
+If you only specify one URI, it will keep retrying until that node comes 
+back up.
+
+&gt;<i> Do I have to configure redundant
+</I>&gt;<i> federation between every node of home cluster to every node of each
+</I>&gt;<i> remote cluster?
+</I>
+No - since the config is shared across the cluster. So you can set up 
+the upstreams on one node of the home cluster, pointing to all nodes of 
+the remote clusters.
+
+&gt;<i> If I don't use a load balancer VIP to publish to from my
+</I>&gt;<i> application, if the single node of the cluster I've configured goes
+</I>&gt;<i> down, it wont help me that the other node is still available.
+</I>
+Not sure what you mean here. Hopefully I've explained enough now.
+
+Cheers, Simon
+
+-- 
+Simon MacMullen
+RabbitMQ, Pivotal
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="029049.html">[rabbitmq-discuss] Java client - 91% time spent in reading the	socket?
+</A></li>
+	<LI>Next message: <A HREF="029041.html">[rabbitmq-discuss] RabbitMQ Clustering with Federation
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#29040">[ date ]</a>
+              <a href="thread.html#29040">[ thread ]</a>
+              <a href="subject.html#29040">[ subject ]</a>
+              <a href="author.html#29040">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

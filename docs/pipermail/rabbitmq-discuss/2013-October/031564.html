@@ -1,0 +1,153 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] How do you handle recovering from a faulty connection using RabbitMQ java client library?
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20How%20do%20you%20handle%20recovering%20from%20a%20faulty%0A%20connection%20using%20RabbitMQ%20java%20client%20library%3F&In-Reply-To=%3CCAE9K32cdZsROo7rAaw3iHRMQ0KTinXcfJJUVBN5KR2s5KQa99A%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="031571.html">
+   <LINK REL="Next"  HREF="031565.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] How do you handle recovering from a faulty connection using RabbitMQ java client library?</H1>
+    <B>Peter Moberg</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20How%20do%20you%20handle%20recovering%20from%20a%20faulty%0A%20connection%20using%20RabbitMQ%20java%20client%20library%3F&In-Reply-To=%3CCAE9K32cdZsROo7rAaw3iHRMQ0KTinXcfJJUVBN5KR2s5KQa99A%40mail.gmail.com%3E"
+       TITLE="[rabbitmq-discuss] How do you handle recovering from a faulty connection using RabbitMQ java client library?">moberg.peter at gmail.com
+       </A><BR>
+    <I>Thu Oct 31 17:28:33 GMT 2013</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="031571.html">[rabbitmq-discuss] Weird error on 3.2.0 causing failures
+</A></li>
+        <LI>Next message: <A HREF="031565.html">[rabbitmq-discuss] How do you handle recovering from a faulty	connection using RabbitMQ java client library?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#31564">[ date ]</a>
+              <a href="thread.html#31564">[ thread ]</a>
+              <a href="subject.html#31564">[ subject ]</a>
+              <a href="author.html#31564">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi,
+
+I'm interested in knowing how other people handle recovering from a faulty
+connection using the official RabbitMQ java client library. We are using it
+to connect our application servers to our RabbitMQ cluster and we have
+implemented a few different ways to recover from a connection failure, but
+non of them feel quite right.
+
+Imagine this pseudo application:
+
+public class OurClassThatStartsConsumers {
+    Connection conn;
+
+    public void start() {
+        ConnectionFactory factory = new ConnectionFactory();
+        factory.setUsername(&quot;someusername&quot;);
+        factory.setPassword(&quot;somepassword&quot;);
+        factory.setHost(&quot;somehost&quot;);
+        conn = factory.newConnection();
+
+        new Thread(new Consumer(conn.createChannel())).start();
+    }
+  }
+class Consumer1 implements Runnable {
+    public Consumer1(Channel channel) {
+         this.channel = channel;
+    }
+
+    @Override
+    public void run() {
+        while (true) {
+             ... consume incoming messages on the channel...
+            // How do we handle that the connection dies?
+        }
+    }}
+
+In the real world we have several hundreds of consumers. So what happens if
+the connection dies? In the above example Consumer1 can not recover, when
+the connection closes, the Channel also closes, a state from which we can
+not recover. So lets look at some ways to solve this:
+
+Solution A)
+
+Let every consumer have their own connection and register the events that
+triggers when the connection dies and then handle reconnecting.
+
+Pros: It works
+
+Cons:
+
+   - Since we have a lot of consumers, we probably do not want that many
+   connections.
+   - We might possible have a lot of duplicated code for reconnecting to
+   rabbit and handle reconnecting
+
+Solution B)
+
+Have each consumer use the same connection and subscribe to its connection
+failure events.
+
+Pros: Less connections than in Solution A
+
+Cons: Since the connection is closed we need to reopen/replace it. The java
+client library doesn't seem to provide a way to reopen the connection, so
+we would have to replace it with a new connection and then somehow notify
+all the consumers about this new connection and they would have to recreate
+the channels and the consumers. Once again, a lot of logic that i don't
+want to see in the consumer ends up there.
+
+Solution C)
+
+Wrap Connection and Channel classes is classes that handle the
+re-connection logic, the consumer only needs to know about the
+WrappedChannel class. On a connection failure the WrappedConnection with
+deal with re-establishing the connection and once connected the
+WrappedConnection will automatically create new Channels and register
+consumers.
+
+Pros: It work - this is actually the solution we are using today.
+
+Cons: It feels like a hack, I think this is something that should be
+handled more elegantly by the underlying library.
+
+Maybe there is a much better way? The API documentation does not talk that
+much about recovering from a faulty connection. Any input is appreciated :)
+
+
+Thanks,
+
+Peter
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20131031/f74af022/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20131031/f74af022/attachment.htm</A>&gt;
+</PRE>
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="031571.html">[rabbitmq-discuss] Weird error on 3.2.0 causing failures
+</A></li>
+	<LI>Next message: <A HREF="031565.html">[rabbitmq-discuss] How do you handle recovering from a faulty	connection using RabbitMQ java client library?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#31564">[ date ]</a>
+              <a href="thread.html#31564">[ thread ]</a>
+              <a href="subject.html#31564">[ subject ]</a>
+              <a href="author.html#31564">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

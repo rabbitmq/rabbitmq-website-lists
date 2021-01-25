@@ -1,0 +1,153 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Feature Req / Bug list
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Feature%20Req%20/%20Bug%20list&In-Reply-To=%3CCAJ4uuZbc13rs9SCmU64K9ant630Z%2B1j1x-Ss2MRBh7fQnnEXdA%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="031429.html">
+   <LINK REL="Next"  HREF="031439.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Feature Req / Bug list</H1>
+    <B>Graeme N</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Feature%20Req%20/%20Bug%20list&In-Reply-To=%3CCAJ4uuZbc13rs9SCmU64K9ant630Z%2B1j1x-Ss2MRBh7fQnnEXdA%40mail.gmail.com%3E"
+       TITLE="[rabbitmq-discuss] Feature Req / Bug list">graeme at sudo.ca
+       </A><BR>
+    <I>Tue Oct 29 00:06:09 GMT 2013</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="031429.html">[rabbitmq-discuss] Feature Req / Bug list
+</A></li>
+        <LI>Next message: <A HREF="031439.html">[rabbitmq-discuss] Feature Req / Bug list
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#31436">[ date ]</a>
+              <a href="thread.html#31436">[ thread ]</a>
+              <a href="subject.html#31436">[ subject ]</a>
+              <a href="author.html#31436">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>More fun with RabbitMQ clustering!
+
+These next couple I wouldn't believe if I couldn't consistently reproduce
+them. Attached is a new script package which includes some updates to
+previous scripts, as well as the go based queue populator.
+
+First, is an issue where if you apply a global policy, then populate a
+bunch of queues, after the queues are done populating rabbitmq removes
+about 3/4s of them. It is baffling, I've attached screenshots, since I
+can't really believe it myself. To reproduce:
+
+- ./create_cluster.sh &amp;&amp; ./setup_queues.sh &amp;&amp;
+RABBITMQ_NODENAME=&quot;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit1 at localhost</A>&quot; rabbitmqctl set_policy --priority 0
+global_pol &quot;.*&quot; '{&quot;ha-mode&quot;: &quot;exactly&quot;, &quot;ha-params&quot;: 3, &quot;ha-sync-mode&quot;:
+&quot;automatic&quot;}' &amp;&amp; sleep 5 &amp;&amp; ./populate_queues.sh
+- watch cluster admin queues page (<A HREF="http://localhost:4441/#/queues">http://localhost:4441/#/queues</A>), see all
+the queues fill up with 10000 messages, and then see 2/3rds of them
+disappear once most of the queues are full.
+- This happens both in my test VM, and on a bare metal server with 64GB of
+RAM and 24 cores.
+
+Next is an issue where removing and re-adding nodes breaks rabbitmq
+clustering. We keep running into this in prod where we'll attempt to adjust
+our cluster topology, things will break, and we'll have to take the whole
+cluster down and bring it back up again to fix it.
+
+- ./create_cluster.sh &amp;&amp; ./setup_queues.sh &amp;&amp; ./populate_queues.sh &amp;&amp;
+RABBITMQ_NODENAME=&quot;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit1 at localhost</A>&quot; rabbitmqctl set_policy --priority 0
+global_pol &quot;.*&quot; '{&quot;ha-mode&quot;: &quot;exactly&quot;, &quot;ha-params&quot;: 3, &quot;ha-sync-mode&quot;:
+&quot;automatic&quot;}'
+- watch cluster admin pages, wait until all messages are populated and
+queues are synced, noting that since we applied the policy after populating
+the queues, for some reason this doesn't cause the queues to be removed
+like in the previous case.
+- ./toggle_nodes.sh
+- watch nodes be removed and re-added, should only take ~5 of these full
+cycles before the script loop hangs, and doesn't return from the cluster op
+it's attempting to perform. If you ctl-C the script and run it again, it
+should just hang and refuse to perform any more cluster join/leave
+operations on any node.
+- it's also likely you'll see queues where one of the mirrors isn't
+correctly synced, or possibly is partially synced but stuck and not
+finishing syncing, likely related to previous policy bugs I reported.
+- queues in these states often don't accept new messages for delivery,
+stalling message processing.
+
+We've found that once the cluster's in this state, it behaves really oddly
+and needs to be fully shut down (or &quot;killall beam.smp&quot;) and then brought
+back up before it behaves normally. We had an incident after adding a
+single node last friday where ~4 queues stopped accepting new messages and
+held up our entire workload until the entire cluster was shut down and
+brought back up.
+
+These errors are all really strange, and so I'm hoping you guys can
+reproduce them, and best case scenario, find something that accounts for
+these problems which we can then patch in our production environment.
+
+Thank!
+Graeme
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20131028/1e360077/attachment-0001.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20131028/1e360077/attachment-0001.htm</A>&gt;
+-------------- next part --------------
+A non-text attachment was scrubbed...
+Name: 1-rmq-before-populating.png
+Type: image/png
+Size: 295282 bytes
+Desc: not available
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20131028/1e360077/attachment-0004.png">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20131028/1e360077/attachment-0004.png</A>&gt;
+-------------- next part --------------
+A non-text attachment was scrubbed...
+Name: 2-rmq-some-missing.png
+Type: image/png
+Size: 302599 bytes
+Desc: not available
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20131028/1e360077/attachment-0005.png">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20131028/1e360077/attachment-0005.png</A>&gt;
+-------------- next part --------------
+A non-text attachment was scrubbed...
+Name: 3-rmq-more-missing.png
+Type: image/png
+Size: 233218 bytes
+Desc: not available
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20131028/1e360077/attachment-0006.png">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20131028/1e360077/attachment-0006.png</A>&gt;
+-------------- next part --------------
+A non-text attachment was scrubbed...
+Name: 4-rmq-most-missing.png
+Type: image/png
+Size: 150011 bytes
+Desc: not available
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20131028/1e360077/attachment-0007.png">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20131028/1e360077/attachment-0007.png</A>&gt;
+-------------- next part --------------
+A non-text attachment was scrubbed...
+Name: break-rabbitmq-v2.tar.xz
+Type: application/x-xz
+Size: 951556 bytes
+Desc: not available
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20131028/1e360077/attachment-0001.bin">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20131028/1e360077/attachment-0001.bin</A>&gt;
+</PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="031429.html">[rabbitmq-discuss] Feature Req / Bug list
+</A></li>
+	<LI>Next message: <A HREF="031439.html">[rabbitmq-discuss] Feature Req / Bug list
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#31436">[ date ]</a>
+              <a href="thread.html#31436">[ thread ]</a>
+              <a href="subject.html#31436">[ subject ]</a>
+              <a href="author.html#31436">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

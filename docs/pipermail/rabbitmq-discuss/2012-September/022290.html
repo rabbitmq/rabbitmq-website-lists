@@ -1,0 +1,222 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Occasional slow message on a local machine
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Occasional%20slow%20message%20on%20a%20local%20machine&In-Reply-To=%3C5047C1CD.10607%40seegrid.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="022329.html">
+   <LINK REL="Next"  HREF="022296.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Occasional slow message on a local machine</H1>
+    <B>Brennan Sellner</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Occasional%20slow%20message%20on%20a%20local%20machine&In-Reply-To=%3C5047C1CD.10607%40seegrid.com%3E"
+       TITLE="[rabbitmq-discuss] Occasional slow message on a local machine">bsellner at seegrid.com
+       </A><BR>
+    <I>Wed Sep  5 22:19:09 BST 2012</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="022329.html">[rabbitmq-discuss] Odd delay in federation exchanges being	recognized
+</A></li>
+        <LI>Next message: <A HREF="022296.html">[rabbitmq-discuss] Occasional slow message on a local machine
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#22290">[ date ]</a>
+              <a href="thread.html#22290">[ thread ]</a>
+              <a href="subject.html#22290">[ subject ]</a>
+              <a href="author.html#22290">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>My apologies for the long delay, but we have quite a bit more 
+information available, after doing some extensive field testing.
+
+We now return you to your thread already in progress...
+
+On 07/24/2012 05:38 AM, Francesco Mazzoli wrote:
+&gt;<i> Hi Brennan,
+</I>&gt;<i> At Mon, 23 Jul 2012 15:57:24 -0400,
+</I>&gt;<i> Brennan Sellner wrote:
+</I>&gt;&gt;<i> The rabbitmq server (v2.8.2) is running on the same machine, so there aren't
+</I>&gt;&gt;<i> any external networks involved.  We're still running Fedora 11 (kernel 2.6.29,
+</I>&gt;&gt;<i> Erlang R12B-5.8) for the moment, if that's relevant.
+</I>&gt;<i>
+</I>&gt;<i> Please upgrade both RabbitMQ and Erlang if you can (especially rabbit), or
+</I>&gt;<i> things will be hard to diagnose for us.
+</I>
+We've upgraded Rabbit to 2.8.6.  Erlang has not yet been upgraded, but 
+will be in our next release cycle.  R12B-5.8 was the newest official 
+build we could find that worked with Fedora 11; I've since been able to 
+hand-build the latest Erlang release, but it's still working its way 
+through our testing department.
+
+We now have two different types of systems fielded, one where we're 
+having issues with slow Rabbit operations, and one where we're not (or, 
+at least any slow operations aren't slow enough to trigger our 
+watchdogs).  The software configuration is identical between the two 
+configurations.
+
+#1: Problematic:
+   - CPU: Core 2 Duo E7300 @ 2.66 GHz
+   - RAM: 2 GB
+   - Disk: SATA 3.0 Gb/s, 5400 RPM
+
+#2: Working fine:
+   - CPU: i5 M520 @ 2.4 GHz (2 cores + hyperthreading)
+   - RAM: 4 GB
+   - Disk: SATA 6.0 Gb/s, SSD
+
+With #1, we're seeing the following librabbitmq-c functions occasionally 
+take up to 7.28 seconds to return (3-4 seconds is much more common):
+   - amqp_queue_declare
+   - amqp_queue_bind
+   - amqp_basic_consume
+
+We don't have any persistent messages.  Queues are being declared with 
+server-assigned names, passive is false, durable is false, exclusive is 
+true, and auto-delete is true.  The consume calls use an empty consumer 
+tag, set no-local to false, no-ack to false, and exclusive to false.
+
+We've primarily observed this happening just after launching a new 
+thread, which establishes a fresh connection to Rabbit successfully and 
+quickly, but has issues when establishing its first subscription.  This 
+may be sampling bias, though, as our watchdogs are by chance mostly 
+concentrated around new threads being launched.  The full sequence of 
+librabbitmq-c calls in this case is:
+
+   - amqp_new_connection
+   - amqp_open_socket
+   - amqp_set_sockfd
+   - amqp_login
+   - amqp_channel_open
+   - amqp_basic_qos
+   - amqp_channel_open  # For the new subscription
+   - amqp_basic_qos
+   - amqp_exchange_declare
+   - amqp_queue_declare # Sometimes slow
+   - amqp_queue_bind    # Sometimes slow
+   - amqp_basic_consume # Sometimes slow
+
+My suspicion is that Rabbit is hitting disk for some reason; we've seen 
+I/O-related delays with other processes (e.g. sqlite) with configuration 
+#1 that we don't see with #2.  The SSD may be enough faster that we 
+don't notice the issue on configuration #2.
+
+However, I don't see any reason that Rabbit would be hitting the disk. 
+Once the problematic librabbitmq-c function times out, our code dumps 
+`rabbitmqctl status` to disk.  To take a concrete example, 
+amqp_queue_bind took 3.72 seconds to return.  When the dump ran two 
+seconds later, it reported the below:
+
+Status of node '<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">AISINR4 at AISINR4</A>' ...
+[{pid,1698},
+  {running_applications,[{rabbitmq_shovel,&quot;Data Shovel for 
+RabbitMQ&quot;,&quot;2.8.6&quot;},
+                         {erlando,&quot;Syntax extensions for Erlang&quot;,&quot;2.8.6&quot;},
+                         {amqp_client,&quot;RabbitMQ AMQP Client&quot;,&quot;2.8.6&quot;},
+                         {rabbit,&quot;RabbitMQ&quot;,&quot;2.8.6&quot;},
+                         {os_mon,&quot;CPO  CXC 138 46&quot;,&quot;2.1.8&quot;},
+                         {sasl,&quot;SASL  CXC 138 11&quot;,&quot;2.1.5.4&quot;},
+                         {mnesia,&quot;MNESIA  CXC 138 12&quot;,&quot;4.4.7&quot;},
+                         {stdlib,&quot;ERTS  CXC 138 10&quot;,&quot;1.15.5&quot;},
+                         {kernel,&quot;ERTS  CXC 138 10&quot;,&quot;2.12.5&quot;}]},
+  {os,{unix,linux}},
+  {erlang_version,&quot;Erlang (BEAM) emulator version 5.6.5 [source] [smp:2] 
+[async-threads:30] [hipe] [kernel-poll:true]\n&quot;},
+  {memory,[{total,22599840},
+           {processes,9909296},
+           {processes_used,9706816},
+           {system,12690544},
+           {atom,782145},
+           {atom_used,751012},
+           {binary,650640},
+           {code,6257852},
+           {ets,4197052}]},
+  {vm_memory_high_watermark,0.4},
+  {vm_memory_limit,825982976},
+  {disk_free_limit,1000000000},
+  {disk_free,140100812800},
+  {file_descriptors,[{total_limit,924},
+                     {total_used,17},
+                     {sockets_limit,829},
+                     {sockets_used,13}]},
+  {processes,[{limit,1048576},{used,304}]},
+  {run_queue,0},
+  {uptime,2106}]
+...done.
+
+It doesn't look like we're anywhere near the memory high watermark, nor 
+are we stressing the system in terms of sockets or file handles.  We 
+dumped the output of top at the same time, which indicates that we're 
+not touching swap:
+
+top - 05:18:56 up 35 min,  0 users,  load average: 3.85, 2.26, 1.79
+Tasks:  97 total,   2 running,  95 sleeping,   0 stopped,   0 zombie
+Cpu(s): 16.1%us, 10.2%sy,  0.0%ni, 69.2%id,  3.6%wa,  0.6%hi,  0.3%si, 
+0.0%st
+Mem:   2016560k total,  1658564k used,   357996k free,   157468k buffers
+Swap:  1023992k total,        0k used,  1023992k free,   787772k cached
+
+   PID USER      PR  NI  VIRT  RES  SHR S %CPU %MEM    TIME+  COMMAND 
+
+  1698 rabbitmq  20   0 79096  26m 2136 S  7.9  1.4   2:16.89 beam.smp 
+
+
+There was nothing interesting in either of Rabbit's logs.
+
+&gt;<i> You might also be hitting flow control, but that is related to running out of
+</I>&gt;<i> RAM.  You can check that as well via the management plugin, the connections will
+</I>&gt;<i> be marked as &quot;blocked&quot;.
+</I>
+`rabbitmqctl list_connections pid name last_blocked_by last_blocked_age` 
+lists the last-blocked-age as infinity for all connections.  The 
+management plugin is unfortunately not supported with the version of 
+Erlang that we're using at the moment.
+
+Anyone have any ideas about what might cause these random slow 
+responses, or other data we can collect to help debug?  I'm rather 
+baffled at the moment.
+
+Thanks,
+
+-Brennan
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="022329.html">[rabbitmq-discuss] Odd delay in federation exchanges being	recognized
+</A></li>
+	<LI>Next message: <A HREF="022296.html">[rabbitmq-discuss] Occasional slow message on a local machine
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#22290">[ date ]</a>
+              <a href="thread.html#22290">[ thread ]</a>
+              <a href="subject.html#22290">[ subject ]</a>
+              <a href="author.html#22290">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

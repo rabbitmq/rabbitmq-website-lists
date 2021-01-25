@@ -1,0 +1,147 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] getting started, broker runs;	can't get status
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20getting%20started%2C%20broker%20runs%3B%0A%09can%27t%20get%20status&In-Reply-To=921b71e30902021254l4c6f5db4ga7c905c9aa9f2370%40mail.gmail.com">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002837.html">
+   <LINK REL="Next"  HREF="002860.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] getting started, broker runs;	can't get status</H1>
+    <B>Dmitriy Samovskiy</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20getting%20started%2C%20broker%20runs%3B%0A%09can%27t%20get%20status&In-Reply-To=921b71e30902021254l4c6f5db4ga7c905c9aa9f2370%40mail.gmail.com"
+       TITLE="[rabbitmq-discuss] getting started, broker runs;	can't get status">dmitriy.samovskiy at cohesiveft.com
+       </A><BR>
+    <I>Tue Feb  3 15:45:15 GMT 2009</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002837.html">[rabbitmq-discuss] getting started, broker runs;	can't get status
+</A></li>
+        <LI>Next message: <A HREF="002860.html">[rabbitmq-discuss] getting started, broker runs;	can't get status
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2858">[ date ]</a>
+              <a href="thread.html#2858">[ thread ]</a>
+              <a href="subject.html#2858">[ subject ]</a>
+              <a href="author.html#2858">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Dave, Matthias, Christopher -
+
+Dave Farkas wrote:
+&gt;<i> I don't have snoopy installed, anything in /etc/ld.so.preload or can
+</I>&gt;<i> find a place where LD_PRELOAD is being set. SELinux is also disabled:
+</I>&gt;<i> 
+</I>&gt;<i> I've also tried to re-enable Nagle by changing the lines in the
+</I>&gt;<i> rabbitmq-server script with the same results.
+</I>&gt;<i> 
+</I>Even though this is unlikely to help, I was wondering if you could find time to do the 
+following exercise. It may help determine if an issue has anything to do with rabbit in 
+the first place (to make sure we are on the right track).
+
+Please run this:
+
+# erl -sname foo -cookie coo
+Erlang (BEAM) emulator version 5.6.5 [source] [async-threads:0] [kernel-poll:false]
+
+Eshell V5.6.5  (abort with ^G)
+(<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">foo at myvm</A>)1&gt; net_adm:names().
+{ok,[{&quot;foo&quot;,1292}]}
+(<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">foo at myvm</A>)2&gt;
+
+Exit from there with Ctrl+C Ctrl+C.
+
+
+I suspect that your response from net_adm:names() will be {error,timeout} and it will 
+appear not immediately but after some time (within 30 seconds). Could you please confirm.
+
+After you exit from erl, please do grep -r /usr/lib/erlang/erts-5.6.5/bin /var/log/*
+(please replace 5.6.5 with emulator version that is displayed when you start erl). 
+Anything of interest in the output? I am particularly looking for something related to 
+auth, or access being denied. Interesting lines are likely to come from auth.log or its 
+equivalent on your system, and there should be many similar lines (unless your syslog 
+suppresses dup lines - mine didn't). If nothing shows up, maybe try similar greps - 
+erlang, erts.
+
+And finally, if you have or can get strace on the target system, could you please run this:
+
+% strace -e trace=write -o erl_strace.log erl -sname -cookie coo
+
+
+and do the same net_adm:names() in erlang shell. When it times out, exit erlang shell and 
+take a look at erl_strace.log. I expect that at the end of that file you will see many 
+lines like this:
+
+--- SIGCHLD (Child exited) @ 0 (0) ---
+--- SIGPIPE (Broken pipe) @ 0 (0) ---
+--- SIGPIPE (Broken pipe) @ 0 (0) ---
+--- SIGPIPE (Broken pipe) @ 0 (0) ---
+--- SIGCHLD (Child exited) @ 0 (0) ---
+--- SIGPIPE (Broken pipe) @ 0 (0) ---
+--- SIGCHLD (Child exited) @ 0 (0) ---
+--- SIGPIPE (Broken pipe) @ 0 (0) ---
+--- SIGCHLD (Child exited) @ 0 (0) ---
+--- SIGPIPE (Broken pipe) @ 0 (0) ---
+
+Feel free to do strace with -e trace=all or -e verbose=all.
+
+
+That SIGPIPE corresponds to erlang's attempt to write PORT2_REQ command to empd in the 
+second connection. tcpdump shows no attempts to make a second connection either - not even 
+a single SYN. It tells me that either something suppresses the connection but still has 
+low-level C function return success, or something in erlang does not check return code (a 
+very wild guess on my part).
+
+All in all, I can reliably recreate this problem with snoopy on Debian Etch (if you try 
+this at home, I recommend against having dpkg install snoopy in /etc/ld.so.preload - it 
+will ask at install, but answer NO and instead manually set LD_PRELOAD=/lib/snoopy.so when 
+you need to).
+
+At least in scenario with snoopy, the problem has nothing to do with rabbitmq.
+
+If there are strace or low-level OS experts on the list who would like to compare strace 
+output of a good run vs run under snoopy in order to get more info, I can provide strace 
+outputs.
+
+I have also looked inside lib/erl_interface/src/epmd in erlang source for clues but did 
+not find any.
+
+What Linux distro are you using? uname -a? Any particular details how you installed the 
+OS? If it's safe to share, maybe output of &quot;rpm -qa&quot; or &quot;dpkg -l&quot;?
+
+
+And like Matthias said before, access to box or image of the box will be most helpful.
+
+
+- Dmitriy
+
+
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002837.html">[rabbitmq-discuss] getting started, broker runs;	can't get status
+</A></li>
+	<LI>Next message: <A HREF="002860.html">[rabbitmq-discuss] getting started, broker runs;	can't get status
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2858">[ date ]</a>
+              <a href="thread.html#2858">[ thread ]</a>
+              <a href="subject.html#2858">[ subject ]</a>
+              <a href="author.html#2858">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

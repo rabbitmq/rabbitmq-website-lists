@@ -1,0 +1,165 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Messages lost with RabbitMQ Federation
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Messages%20lost%20with%20RabbitMQ%20Federation&In-Reply-To=%3CCAAs9BZNe%3DonHQujquzWROYR_ckSf5Gm1%2Bv2odHaW6xD9YQEq0Q%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="021066.html">
+   <LINK REL="Next"  HREF="021060.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Messages lost with RabbitMQ Federation</H1>
+    <B>Roman Gaufman</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Messages%20lost%20with%20RabbitMQ%20Federation&In-Reply-To=%3CCAAs9BZNe%3DonHQujquzWROYR_ckSf5Gm1%2Bv2odHaW6xD9YQEq0Q%40mail.gmail.com%3E"
+       TITLE="[rabbitmq-discuss] Messages lost with RabbitMQ Federation">hackeron at gmail.com
+       </A><BR>
+    <I>Thu Jul  5 12:08:23 BST 2012</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="021066.html">[rabbitmq-discuss] Auto delete messages in Queue after queue size reaches a certain number
+</A></li>
+        <LI>Next message: <A HREF="021060.html">[rabbitmq-discuss] Messages lost with RabbitMQ Federation
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#21058">[ date ]</a>
+              <a href="thread.html#21058">[ thread ]</a>
+              <a href="subject.html#21058">[ subject ]</a>
+              <a href="author.html#21058">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>I have 2 RabbitMQ Nodes. One node is on a US server and one is on a UK
+server. They are both connected to the same VPN.
+
+I'm consuming the messages from the local nodes in both in the US and UK
+with:
+
+AMQP.start('<A HREF="amqp://guest:guest@localhost:25672'">amqp://guest:guest@localhost:25672'</A>) do |connection, open_ok|
+  channel  = AMQP::Channel.new(connection)
+  exchange = AMQP::Exchange.new(channel, &quot;x-federation&quot;, &quot;xanview&quot;,
+:<i>durable =&gt; true,
+</I>    :arguments =&gt; {&quot;upstream-set&quot; =&gt; &quot;my-upstreams&quot;, &quot;type&quot; =&gt; &quot;topic&quot;,
+&quot;durable&quot; =&gt; &quot;true&quot;})
+  channel.queue(&quot;testqueue_uk&quot;, :durable =&gt; true) do |queue| # testqueue_us
+in the US
+    queue.bind(exchange, :routing_key =&gt; '#')
+    queue.subscribe do |metadata, payload|
+      i+=1
+      puts &quot;#{i}: Recieved message: #{payload.inspect}.&quot;
+    end
+  end
+end
+
+I'm producing messages locally to the local nodes in both the US and UK
+with:
+
+EventMachine.run do
+  AMQP.connect('<A HREF="amqp://guest:guest@localhost:25672'">amqp://guest:guest@localhost:25672'</A>) do |connection,
+open_ok|
+    channel = AMQP::Channel.new(connection)
+    exchange = AMQP::Exchange.new(channel, &quot;x-federation&quot;, &quot;xanview&quot;,
+:<i>durable =&gt; true, :arguments =&gt; {&quot;upstream-set&quot; =&gt; &quot;my-upstreams&quot;, &quot;type&quot;
+</I>=&gt; &quot;topic&quot;, &quot;durable&quot; =&gt; &quot;true&quot;})
+    EventMachine.add_periodic_timer(0.1) do
+      $i+=1
+      puts &quot;#{$i}: publishing msg&quot;
+      $exchange.publish(&quot;#{$i} this is a test message from the US&quot;,
+:<i>routing_key =&gt; &quot;some.topic&quot;, :persistent =&gt; true )
+</I>    end
+  end
+end
+
+This all seems to work reliably until I try to kill the connection: I
+shutdown the VPN and see messages being queued in queues called:
+&quot;federation: xanview -&gt; node2&quot; (on the UK server) and &quot;federation: xanview
+-&gt; node1&quot; (on the US server) as expected.
+
+However when I restart the VPN, the UK server has received 43737 messages
+while the US only received 43708 messages. Where did 29 messages disappear?
+
+Both node configs look like this with the only exception of the US
+connecting to federation on 10.8.0.22 and the UK connecting to federation
+on 10.8.0.33:
+
+[
+  {rabbit, [
+    {tcp_listeners, [25672]}
+  ]},
+  {rabbitmq_mochiweb, [
+    {listeners,        [{mgmt, [{port, 55555}]}]},
+    {default_listener, [{port, 55550}]},
+    {contexts,         [{rabbit_mgmt, mgmt}]}
+  ]},
+
+{rabbitmq_federation,
+   [ {exchanges, [[{exchange,     &quot;xanview&quot;},
+                   {virtual_host, &quot;/&quot;},
+                   {type,         &quot;topic&quot;},
+                   {durable,      true},
+                   {auto_delete,  false},
+                   {internal,     false},
+                   {upstream_set, &quot;my-upstreams&quot;}]
+                 ]},
+     {upstream_sets, [{&quot;my-upstreams&quot;, [[{connection,
+&quot;upstream-server&quot;}]]}]},
+     {connections, [{&quot;upstream-server&quot;, [{host,            &quot;10.8.0.22&quot;},
+                                         {protocol,        &quot;amqp&quot;},
+                                         {port,            25672},
+                                         {virtual_host,    &quot;/&quot;},
+                                         {username,        &quot;guest&quot;},
+                                         {password,        &quot;guest&quot;},
+                                         {mechanism,       default},
+                                         {prefetch_count,  1000},
+                                         {reconnect_delay, 5},
+                                         {ha_policy,       &quot;all&quot;}
+                                        ]}
+                   ]},
+     {local_username, &quot;guest&quot;},
+     {local_nodename, &quot;node2&quot;}
+   ]
+  }
+
+].
+
+Any ideas why messages are lost? What could be causing it?
+
+Roman
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20120705/691b3103/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20120705/691b3103/attachment.htm</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="021066.html">[rabbitmq-discuss] Auto delete messages in Queue after queue size reaches a certain number
+</A></li>
+	<LI>Next message: <A HREF="021060.html">[rabbitmq-discuss] Messages lost with RabbitMQ Federation
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#21058">[ date ]</a>
+              <a href="thread.html#21058">[ thread ]</a>
+              <a href="subject.html#21058">[ subject ]</a>
+              <a href="author.html#21058">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

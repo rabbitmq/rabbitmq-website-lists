@@ -1,0 +1,125 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Weird Issue when cluster member restarts
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20Weird%20Issue%20when%20cluster%20member%20restarts&In-Reply-To=9f4a617f0911051828q6c67b2e3jd51fd0261eadd8e2%40mail.gmail.com">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="005346.html">
+   <LINK REL="Next"  HREF="005382.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Weird Issue when cluster member restarts</H1>
+    <B>Matthew Sackman</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20Weird%20Issue%20when%20cluster%20member%20restarts&In-Reply-To=9f4a617f0911051828q6c67b2e3jd51fd0261eadd8e2%40mail.gmail.com"
+       TITLE="[rabbitmq-discuss] Weird Issue when cluster member restarts">matthew at lshift.net
+       </A><BR>
+    <I>Fri Nov  6 11:26:53 GMT 2009</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="005346.html">[rabbitmq-discuss] Weird Issue when cluster member restarts
+</A></li>
+        <LI>Next message: <A HREF="005382.html">[rabbitmq-discuss] Weird Issue when cluster member restarts
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#5371">[ date ]</a>
+              <a href="thread.html#5371">[ thread ]</a>
+              <a href="subject.html#5371">[ subject ]</a>
+              <a href="author.html#5371">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi Arun,
+
+On Fri, Nov 06, 2009 at 07:58:09AM +0530, Arun Suresh wrote:
+&gt;<i> My setup is as follows :
+</I>&gt;<i> * 2 RabbitMQ (1.7.0 running on R13B02.1) servers in a cluster (say <A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at m1</A>,
+</I>&gt;<i> <A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at m2</A>).. both disk nodes.
+</I>&gt;<i> * 2 Clients (<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">client at m1</A> connected to <A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at m1</A>, <A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">client at m2</A> connected to
+</I>&gt;<i> <A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at m2</A>). I am using the Erlang client (which currently has an issue when
+</I>&gt;<i> connecting to a server which is part of a cluster... this I fixed by setting
+</I>&gt;<i> &quot;insist = true&quot; in the #'connection.open' record)
+</I>
+Can you elaborate on this issue a bit? Is this redirection coming back
+from the server?
+
+&gt;<i> * both clients have processes that have subscribed to the same durable Queue
+</I>&gt;<i> (Q) using the same key (K). Q is bound to a durable topic exchange (X). X
+</I>&gt;<i> and Q are created on <A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at m1.</A>
+</I>
+I don't understand what you mean by a queue with a key. I take it you
+have one topic exchange, one queue bound to the exchange with one
+binding key (is this the K you refer to above?), and two consumers on
+the queue. (From reading the rest of your email, yes this is clearly
+what you mean).
+
+&gt;<i> Now this is what i do..
+</I>&gt;<i> * I bring down <A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at m1</A>, and <A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">client at m1</A> (They are co hosted... so both are
+</I>&gt;<i> brought down together). I do a &quot;rabbitmqctl list_queues&quot; on <A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at m2...</A> I
+</I>&gt;<i> do not see Q there..
+</I>
+Ok, so the queue has been created on m1, not m2.
+
+&gt;<i> * I bring <A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at m1</A> up again... After which I see Q when i do a &quot;rabbitmqctl
+</I>&gt;<i> list_queues&quot;.
+</I>&gt;<i> * Before I bring up <A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">client at m2</A>, I publish a messge to X with a routing key
+</I>&gt;<i> K...
+</I>&gt;<i> Issue  : Since <A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">client at m2</A> is up and has a process subscribed to Q, I expect
+</I>&gt;<i> that process to receive the message... It doesnt..
+</I>
+Indeed it won't.
+
+Clustering makes all exchanges and queues available on all nodes of the
+cluster. *However*, a queue is still located on a single node, even
+though it is accessible via all nodes. The queue will be created on the
+node the client is connected to when it creates the queue. Thus your
+queue has been created on m1, thus it's accessible from both m1 and m2,
+but when m1 goes down, the queue will go down with it.
+
+&gt;<i>From that point on, m2 has no record of the queue, so msgs sent to X
+</I>with K to go to Q will not ever reach Q - as far as m2 is concerned, Q
+just does not exist.
+
+When m1 comes back up, Q will be recovered.
+
+&gt;<i> Further more... I notice that when i bring <A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">client at m2</A> back up, It restarts
+</I>&gt;<i> its subscribers... now all messages published to X with K are sent ONLY to
+</I>&gt;<i> <A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">client at m2.</A>
+</I>
+Well <A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">client at m1</A> died. This means its subscriptions to Q were lost - there
+is no concept of persisting subscriptions, so when <A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at m1</A> comes back
+up, the Q will have no consumers at all. If you restart <A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">client at m2</A> then
+yes, it'll recreate its subscription to Q, and thus receive all the msgs
+sent to that Q. If you also restart <A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">client at m1</A> then that too will
+recreate its subscription to Q and share the msgs with <A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">client at m2</A> as
+before.
+
+Hope this is of help.
+
+Matthew
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="005346.html">[rabbitmq-discuss] Weird Issue when cluster member restarts
+</A></li>
+	<LI>Next message: <A HREF="005382.html">[rabbitmq-discuss] Weird Issue when cluster member restarts
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#5371">[ date ]</a>
+              <a href="thread.html#5371">[ thread ]</a>
+              <a href="subject.html#5371">[ subject ]</a>
+              <a href="author.html#5371">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

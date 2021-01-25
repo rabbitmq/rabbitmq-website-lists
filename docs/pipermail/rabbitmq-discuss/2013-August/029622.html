@@ -1,0 +1,127 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Enabling publisher confirms damages performance by a factor of 10x
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Enabling%20publisher%20confirms%20damages%0A%20performance%20by%20a%20factor%20of%2010x&In-Reply-To=%3C1377597172420-29119.post%40n5.nabble.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="029546.html">
+   <LINK REL="Next"  HREF="029628.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Enabling publisher confirms damages performance by a factor of 10x</H1>
+    <B>ModronMaze</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Enabling%20publisher%20confirms%20damages%0A%20performance%20by%20a%20factor%20of%2010x&In-Reply-To=%3C1377597172420-29119.post%40n5.nabble.com%3E"
+       TITLE="[rabbitmq-discuss] Enabling publisher confirms damages performance by a factor of 10x">jtlg at vp.pl
+       </A><BR>
+    <I>Tue Aug 27 10:52:52 BST 2013</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="029546.html">[rabbitmq-discuss] Enabling publisher confirms damages performance by a factor of 10x
+</A></li>
+        <LI>Next message: <A HREF="029628.html">[rabbitmq-discuss] Enabling publisher confirms damages performance by a factor of 10x
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#29622">[ date ]</a>
+              <a href="thread.html#29622">[ thread ]</a>
+              <a href="subject.html#29622">[ subject ]</a>
+              <a href="author.html#29622">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>On 23.08.2013 11:17, Matthias Radestock wrote:
+&gt;<i> The performance you are seeing is what I'd expect when publishers wait for
+</I>&gt;<i> confirmation after every single message. But you say above that publishers
+</I>&gt;<i> mark messages as confirmed &quot;asynchronously&quot;, so presumably you are not
+</I>&gt;<i> doing that. 
+</I>You are right. I am maintaining a map of unconfirmed messages and removing
+them in confirmation callback. Currently there is no checking or waiting at
+all.
+
+&gt;<i> Here's a test using MulticastMain (which ships with the Java client),
+</I>&gt;<i> which I believe reproduces your test case exactly, except that the
+</I>&gt;<i> consumer is not doing any work and the messages are 1k in size (you didn't
+</I>&gt;<i> indicate how large the messages are, so I just guessed). 
+</I>1k is ok. I run these tests and got results similar to yours:
+
+./runjava.sh com.rabbitmq.examples.MulticastMain -f persistent -c 1000 -q
+512 -C 200000 -s 1024 -i 10
+time: 10,041s, sent: 2647 msg/s, confirmed: 2547 msg/s, nacked: 0 msg/s,
+received: 2121 msg/s, min/avg/max latency: 6692/1110959/1869794 microseconds
+time: 20,055s, sent: 2832 msg/s, confirmed: 2832 msg/s, nacked: 0 msg/s,
+received: 2321 msg/s, min/avg/max latency: 1852817/2620249/3774515
+microseconds
+time: 30,056s, sent: 2646 msg/s, confirmed: 2646 msg/s, nacked: 0 msg/s,
+received: 2149 msg/s, min/avg/max latency: 3577167/4903928/5873513
+microseconds
+
+./runjava.sh com.rabbitmq.examples.MulticastMain -f persistent -c 1 -q 512
+-C 200000 -s 1024 -i 10
+time: 10,034s, sent: 16 msg/s, confirmed: 16 msg/s, nacked: 0 msg/s,
+received: 16 msg/s, min/avg/max latency: 590/877/9948 microseconds
+time: 20,046s, sent: 16 msg/s, confirmed: 16 msg/s, nacked: 0 msg/s,
+received: 16 msg/s, min/avg/max latency: 519/701/1562 microseconds
+time: 30,086s, sent: 18 msg/s, confirmed: 18 msg/s, nacked: 0 msg/s,
+received: 18 msg/s, min/avg/max latency: 506/784/8283 microseconds
+
+I verified my implementation once again and there is one difference: I am
+using flag mandatory. So I run the test with this flag:
+
+./runjava.sh com.rabbitmq.examples.MulticastMain -f persistent mandatory -c
+2000 -q 512 -C 200000 -s 1024 -i 10
+time: 10,068s, sent: 212 msg/s, returned: 0 msg/s, confirmed: 83 msg/s,
+nacked: 0 msg/s, received: 84 msg/s, min/avg/max latency:
+11511/5031823/8173326 microseconds
+time: 20,089s, sent: 96 msg/s, returned: 0 msg/s, confirmed: 91 msg/s,
+nacked: 0 msg/s, received: 91 msg/s, min/avg/max latency:
+8249958/10334398/13137973 microseconds
+time: 30,284s, sent: 90 msg/s, returned: 0 msg/s, confirmed: 86 msg/s,
+nacked: 0 msg/s, received: 86 msg/s, min/avg/max latency:
+12775852/15313769/17857810 microseconds
+
+./runjava.sh com.rabbitmq.examples.MulticastMain -f persistent mandatory -q
+512 -C 200000 -s 1024 -i 10
+time: 10,000s, sent: 6979 msg/s, returned: 0 msg/s, received: 6766 msg/s,
+min/avg/max latency: 8588/347330/1112170 microseconds
+time: 20,000s, sent: 7955 msg/s, returned: 0 msg/s, received: 7965 msg/s,
+min/avg/max latency: 159450/238629/369709 microseconds
+
+
+It appears that the problem happens when I use both publisher confirms and
+mandatory flag. Dropping mandatory flag solves it (I tested it and sending
+is much faster in my application).
+Still, I am surprised to see such drop in performance. What is the reason?
+
+Regards,
+ModronMaze
+
+
+
+--
+View this message in context: <A HREF="http://rabbitmq.1065348.n5.nabble.com/Enabling-publisher-confirms-damages-performance-by-a-factor-of-10x-tp28914p29119.html">http://rabbitmq.1065348.n5.nabble.com/Enabling-publisher-confirms-damages-performance-by-a-factor-of-10x-tp28914p29119.html</A>
+Sent from the RabbitMQ mailing list archive at Nabble.com.
+</PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="029546.html">[rabbitmq-discuss] Enabling publisher confirms damages performance by a factor of 10x
+</A></li>
+	<LI>Next message: <A HREF="029628.html">[rabbitmq-discuss] Enabling publisher confirms damages performance by a factor of 10x
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#29622">[ date ]</a>
+              <a href="thread.html#29622">[ thread ]</a>
+              <a href="subject.html#29622">[ subject ]</a>
+              <a href="author.html#29622">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

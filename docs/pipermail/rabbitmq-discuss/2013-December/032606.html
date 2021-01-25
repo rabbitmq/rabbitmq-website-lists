@@ -1,0 +1,258 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Why does the queue drop other messages after the first is consumed?
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Why%20does%20the%20queue%20drop%20other%20messages%20after%0A%20the%20first%20is%20consumed%3F&In-Reply-To=%3CCADbNrRNxdHNYWj9N1kd%3DUqWfn5uJwv7hL0n6e0G%2Bj%2BWtoLiegg%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="032604.html">
+   <LINK REL="Next"  HREF="032607.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Why does the queue drop other messages after the first is consumed?</H1>
+    <B>Raj Kumar Sanpui</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Why%20does%20the%20queue%20drop%20other%20messages%20after%0A%20the%20first%20is%20consumed%3F&In-Reply-To=%3CCADbNrRNxdHNYWj9N1kd%3DUqWfn5uJwv7hL0n6e0G%2Bj%2BWtoLiegg%40mail.gmail.com%3E"
+       TITLE="[rabbitmq-discuss] Why does the queue drop other messages after the first is consumed?">raj.kumar.sanpui at gmail.com
+       </A><BR>
+    <I>Mon Dec 16 16:27:28 GMT 2013</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="032604.html">[rabbitmq-discuss] Why does the queue drop other messages after the first is consumed?
+</A></li>
+        <LI>Next message: <A HREF="032607.html">[rabbitmq-discuss] Why does the queue drop other messages after the first is consumed?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#32606">[ date ]</a>
+              <a href="thread.html#32606">[ thread ]</a>
+              <a href="subject.html#32606">[ subject ]</a>
+              <a href="author.html#32606">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>And the consume is called from another thread...
+
+void *con(void *arg) {
+                amqp_bytes_t queue;
+                printf(&quot;%s %s\n&quot;,__FUNCTION__,(char *) arg);
+
+                Debug(&quot;%s() - Get an mq connection\n&quot;, __FUNCTION__);
+                amqConnection *conn =  util.getAMQConnection ();
+                if (conn == NULL) {
+                        ErrLog(&quot;%s() - get connection failed\n&quot;,
+__FUNCTION__);
+                        pthread_exit(0) ;
+                }
+                Debug(&quot;%s() - declare exchange %s\n&quot;, __FUNCTION__,
+EXCHANGE);
+                int rc = conn-&gt;declareExchange(EXCHANGE, QUEUETYPE, 1);
+                if (rc != 0) {
+                        ErrLog(&quot;%s() - declare exchange %s %s failed\n&quot;,
+__FUNCTION__, EXCHANGE, QUEUETYPE);
+                        util.returnAMQConnection(conn);
+                        pthread_exit(0) ;
+                }
+
+                pthread_mutex_trylock(&amp;mutex_lock);
+                printf(&quot;Consumer Thread %s: Lock acquired and trying to
+consume\n&quot;,(char*) arg);
+                messageCounter = conn-&gt;Qlength(QUEUENAME);
+                //while (messageCounter == 0)
+                {
+                        printf(&quot;Consumer thread: %s waiting for signal as
+messageCounter = 0\n&quot;,(char *) arg);
+                        //pthread_cond_wait(&amp;cond_lock, &amp;mutex_lock);
+                }
+                printf(&quot;Consumer thread: %s Got signal !!! %d messages in
+queue \n&quot;, (char *) arg, messageCounter);
+                Debug(&quot;%s() - consume  %s\n&quot;, __FUNCTION__,ROUTINGKEY );
+
+                std::string message = conn-&gt;consume(QUEUENAME, EXCHANGE,
+ROUTINGKEY);
+                if (0 == message.length()) {
+                        ErrLog(&quot;%s() - consume queue %s failed\n&quot;,
+__FUNCTION__, QUEUENAME);
+                        printf(&quot;%s() - consume queue %s failed\n&quot;,
+__FUNCTION__, QUEUENAME);
+                        rc = conn-&gt;deleteQueue(QUEUENAME);
+                        if (rc != 0) {
+                                ErrLog(&quot;%s() - delete queue %s failed\n&quot;,
+__FUNCTION__, QUEUENAME);
+                        }
+                        util.returnAMQConnection(conn);
+                        pthread_exit(0) ;
+                }
+&lt;snip&gt;
+
+   At the end we call pthread_mutex_unlock( ) so that other threads can
+consume too !!
+
+
+
+
+On Mon, Dec 16, 2013 at 9:43 PM, kingsmasher1 &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">raj.kumar.sanpui at gmail.com</A>&gt;wrote:
+
+&gt;<i> Dear All,
+</I>&gt;<i>
+</I>&gt;<i> Thanks for the response, yeah the message count in the GUI as well as the
+</I>&gt;<i> rabbitmqctl shows as 0.
+</I>&gt;<i>
+</I>&gt;<i> This is my consume method: (i just commented all the unbind calls to make
+</I>&gt;<i> sure, after one consume the queue is not getting unbinded)
+</I>&gt;<i>
+</I>&gt;<i> std::string amqConnection::consume() {
+</I>&gt;<i>         Debug(&quot;%s - \n&quot;, __FUNCTION__);
+</I>&gt;<i>         amqp_basic_consume(conn, 1, m_queuename, amqp_empty_bytes, 0, 1, 0,
+</I>&gt;<i> amqp_empty_table);
+</I>&gt;<i>         amqp_rpc_reply_t res = amqp_get_rpc_reply(conn);
+</I>&gt;<i>         int rc = check_amqp_error(res, &quot;consume&quot;);
+</I>&gt;<i>         if (rc != 0) return NULL;
+</I>&gt;<i>
+</I>&gt;<i>         amqp_frame_t frame;
+</I>&gt;<i>         int result;
+</I>&gt;<i>
+</I>&gt;<i>         amqp_basic_deliver_t *d;
+</I>&gt;<i>         amqp_basic_properties_t *p;
+</I>&gt;<i>         size_t body_target;
+</I>&gt;<i>         size_t body_received;
+</I>&gt;<i>
+</I>&gt;<i>         amqp_maybe_release_buffers(conn);
+</I>&gt;<i>         Debug(&quot;%s - wait frame\n&quot;, __FUNCTION__);
+</I>&gt;<i>         result = amqp_simple_wait_frame(conn, &amp;frame);
+</I>&gt;<i>         Debug(&quot;%s Result %d\n&quot;,__FUNCTION__, result);
+</I>&gt;<i>         if (result &lt; 0)
+</I>&gt;<i>                 return &quot;&quot;;
+</I>&gt;<i>
+</I>&gt;<i>         Debug(&quot;%s Frame type %d, channel %d\n&quot;,__FUNCTION__,
+</I>&gt;<i> frame.frame_type,
+</I>&gt;<i> frame.channel);
+</I>&gt;<i>         if (frame.frame_type != AMQP_FRAME_METHOD)
+</I>&gt;<i>                 return &quot;&quot;;
+</I>&gt;<i>
+</I>&gt;<i>         Debug(&quot;%s Method %s\n&quot;, __FUNCTION__,
+</I>&gt;<i> amqp_method_name(frame.payload.method.id));
+</I>&gt;<i>         if (frame.payload.method.id != AMQP_BASIC_DELIVER_METHOD)
+</I>&gt;<i>                 return &quot;&quot;;
+</I>&gt;<i>
+</I>&gt;<i>         d = (amqp_basic_deliver_t *) frame.payload.method.decoded;
+</I>&gt;<i>         Debug(&quot;%s Delivery %u, exchange %.*s routingkey
+</I>&gt;<i> %.*s\n&quot;,__FUNCTION__,
+</I>&gt;<i>                         (unsigned) d-&gt;delivery_tag,
+</I>&gt;<i>                         (int) d-&gt;exchange.len, (char *) d-&gt;exchange.bytes,
+</I>&gt;<i>                         (int) d-&gt;routing_key.len, (char *)
+</I>&gt;<i> d-&gt;routing_key.bytes);
+</I>&gt;<i>
+</I>&gt;<i>         result = amqp_simple_wait_frame(conn, &amp;frame);
+</I>&gt;<i>         if (result &lt; 0)
+</I>&gt;<i>                 return &quot;&quot;;
+</I>&gt;<i>
+</I>&gt;<i>         if (frame.frame_type != AMQP_FRAME_HEADER) {
+</I>&gt;<i>                 ErrLog( &quot;%s Expected header!&quot;,__FUNCTION__);
+</I>&gt;<i>                 return &quot;&quot;;
+</I>&gt;<i>         }
+</I>&gt;<i>         p = (amqp_basic_properties_t *) frame.payload.properties.decoded;
+</I>&gt;<i>         if (p-&gt;_flags &amp; AMQP_BASIC_CONTENT_TYPE_FLAG) {
+</I>&gt;<i>                 Debug(&quot;%s Content-type: %.*s\n&quot;,__FUNCTION__,
+</I>&gt;<i>                                 (int) p-&gt;content_type.len, (char *)
+</I>&gt;<i> p-&gt;content_type.bytes);
+</I>&gt;<i>         }
+</I>&gt;<i>         Debug(&quot;%s ----\n&quot;, __FUNCTION__);
+</I>&gt;<i>
+</I>&gt;<i>         body_target = frame.payload.properties.body_size;
+</I>&gt;<i>         body_received = 0;
+</I>&gt;<i>         std::string response=&quot;&quot;;
+</I>&gt;<i>         while (body_received &lt; body_target) {
+</I>&gt;<i>                 result = amqp_simple_wait_frame(conn, &amp;frame);
+</I>&gt;<i>                 if (result &lt; 0)
+</I>&gt;<i>                         break;
+</I>&gt;<i>
+</I>&gt;<i>                 if (frame.frame_type != AMQP_FRAME_BODY) {
+</I>&gt;<i>                         ErrLog( &quot; %s Expected body!&quot;, __FUNCTION__);
+</I>&gt;<i>                         break;
+</I>&gt;<i>                 }
+</I>&gt;<i>
+</I>&gt;<i>                 body_received += frame.payload.body_fragment.len;
+</I>&gt;<i>                 //assert(body_received &lt;= body_target);
+</I>&gt;<i>
+</I>&gt;<i>                 //amqp_dump(frame.payload.body_fragment.bytes,
+</I>&gt;<i>                 //              frame.payload.body_fragment.len);
+</I>&gt;<i>                 response += std::string((char *)
+</I>&gt;<i> frame.payload.body_fragment.bytes,
+</I>&gt;<i> body_received );
+</I>&gt;<i>         }
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>         return response;
+</I>&gt;<i> }
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> --
+</I>&gt;<i> View this message in context:
+</I>&gt;<i> <A HREF="http://rabbitmq.1065348.n5.nabble.com/Why-does-the-queue-drop-other-messages-after-the-first-is-consumed-tp32118p32122.html">http://rabbitmq.1065348.n5.nabble.com/Why-does-the-queue-drop-other-messages-after-the-first-is-consumed-tp32118p32122.html</A>
+</I>&gt;<i> Sent from the RabbitMQ mailing list archive at Nabble.com.
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20131216/443242f3/attachment.html">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20131216/443242f3/attachment.html</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="032604.html">[rabbitmq-discuss] Why does the queue drop other messages after the first is consumed?
+</A></li>
+	<LI>Next message: <A HREF="032607.html">[rabbitmq-discuss] Why does the queue drop other messages after the first is consumed?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#32606">[ date ]</a>
+              <a href="thread.html#32606">[ thread ]</a>
+              <a href="subject.html#32606">[ subject ]</a>
+              <a href="author.html#32606">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

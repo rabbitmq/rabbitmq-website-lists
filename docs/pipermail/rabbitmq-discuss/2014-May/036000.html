@@ -1,0 +1,210 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] |Spam| rabbitmq service dies when a large number	of messages expire.
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20%7CSpam%7C%20rabbitmq%20service%20dies%20when%20a%20large%20number%0A%09of%20messages%20expire.&In-Reply-To=%3C855C3BF093A8E54D8DF03E05ADCD3147077337%40MARINFPRDEXC004.gmo.tld%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="036361.html">
+   <LINK REL="Next"  HREF="036002.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] |Spam| rabbitmq service dies when a large number	of messages expire.</H1>
+    <B>Sreyan Sarkar</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20%7CSpam%7C%20rabbitmq%20service%20dies%20when%20a%20large%20number%0A%09of%20messages%20expire.&In-Reply-To=%3C855C3BF093A8E54D8DF03E05ADCD3147077337%40MARINFPRDEXC004.gmo.tld%3E"
+       TITLE="[rabbitmq-discuss] |Spam| rabbitmq service dies when a large number	of messages expire.">Sreyan.Sarkar at gmo.com
+       </A><BR>
+    <I>Thu May 15 16:00:50 BST 2014</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="036361.html">[rabbitmq-discuss] rabbitmq_web_stomp plugin
+</A></li>
+        <LI>Next message: <A HREF="036002.html">[rabbitmq-discuss] |Spam| rabbitmq service dies when a large number of messages expire.
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#36000">[ date ]</a>
+              <a href="thread.html#36000">[ thread ]</a>
+              <a href="subject.html#36000">[ subject ]</a>
+              <a href="author.html#36000">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi,
+
+While stress testing rabbit mq to resolve a separate performance issue, we noticed that rabbit mq would crash when a queue with a large number of messages expired. When we held the total size of the all of the messages constant, but varied the number of messages we found that more messages meant a higher probability of the node dying.
+
+I've attached some standalone test code below that applies this load. I've found that the parameters need to be varied depending on the strength of the machine, but in all cases there is a point where messages can be built up and happily served, but the expiry of the entire queue will fail.
+
+I have tested this with Rabbit MQ 3.3.0 and RabbitMQ 3.2.4. Both of these clusters were running Erlang R16B03 on Windows Server 2008 R2.
+
+It's not clear to me why the nodes will die with this sort of load. Is this a known issue with RabbitMQ or the version of Erlang I am running on?
+
+-Sreyan
+
+class Program
+    {
+        static void Main(string[] args)
+        {
+            var host = &quot;127.0.0.1&quot;;
+            const int loadSize = 1024*1024;
+            var stressor = new Stressor(1, loadSize, host, &quot;foo&quot;, &quot;bar&quot;, TimeSpan.FromSeconds(10));
+            stressor.ApplyLoad();
+            stressor.CancellationTokenSource.Cancel();
+
+            Console.WriteLine( &quot;Applied a load of {0} KiB. Press [ENTER] to exit.&quot;, loadSize);
+            Console.ReadLine();
+
+        }
+    }
+
+    public sealed class Stressor
+    {
+        private const string QueueName = &quot;TEST&quot;;
+        private readonly int _messageSizeInKiB;
+        private readonly int _totalQueueLoadInKiB;
+        private readonly IConnection _connection;
+
+        private readonly CancellationTokenSource _cancellationTokenSource = new CancellationTokenSource();
+        public CancellationTokenSource CancellationTokenSource { get { return _cancellationTokenSource; } }
+
+        private readonly Thread _consumptionThread;
+
+        public Stressor(int messageSizeInKiB, int totalQueueLoadInKiB, string hostName, string userName, string password, TimeSpan connectionTimeout)
+        {
+            if (hostName == null) throw new ArgumentNullException(&quot;hostName&quot;);
+            if (userName == null) throw new ArgumentNullException(&quot;userName&quot;);
+            if (password == null) throw new ArgumentNullException(&quot;password&quot;);
+
+            _messageSizeInKiB = messageSizeInKiB;
+            _totalQueueLoadInKiB = totalQueueLoadInKiB;
+            _connection = new ConnectionFactory
+            {
+                HostName = hostName,
+                UserName = userName,
+                Password = password,
+                RequestedConnectionTimeout = (ushort)connectionTimeout.TotalMilliseconds
+            }.CreateConnection();
+
+            _junkMessageWrapper = new Lazy&lt;byte[]&gt;(() =&gt;
+            {
+                var random = new Random();
+                var message = new byte[_messageSizeInKiB * 1024];
+                random.NextBytes(message);
+                return message;
+            });
+
+            _consumptionThread = new Thread(Consume) {IsBackground = true};
+            _consumptionThread.Start();
+        }
+
+        private readonly Lazy&lt;Byte[]&gt; _junkMessageWrapper;
+
+
+
+        /// &lt;summary&gt;
+        /// A consumer that doesn't take! We want to build up messagees then have them expire -- That's the behavior in question.
+        /// &lt;/summary&gt;
+        private void Consume()
+        {
+            using (var channel = _connection.CreateModel())
+            {
+                channel.QueueDeclare(QueueName, false, false, false, new Dictionary&lt;string, object&gt; { { &quot;x-expires&quot;, (int)TimeSpan.FromSeconds(60).TotalMilliseconds } });
+                var consumer = new QueueingBasicConsumer(channel, new SharedQueue&lt;BasicDeliverEventArgs&gt;());
+                channel.BasicConsume(QueueName, false, consumer);
+
+                while (!_cancellationTokenSource.IsCancellationRequested)
+                {
+                    Thread.Sleep(TimeSpan.FromMilliseconds(100));
+                }
+            }
+        }
+
+        public void ApplyLoad()
+        {
+            using (var channel = _connection.CreateModel())
+            {
+                channel.ConfirmSelect();
+                var properties = channel.CreateBasicProperties();
+                properties.SetPersistent(true);
+
+                var count = _totalQueueLoadInKiB/_messageSizeInKiB + 1;
+
+                Console.WriteLine(&quot;Publishing {0} messages, each {1} bytes in size&quot;, count, _junkMessageWrapper.Value.Length);
+
+                for (int i = 0; i &lt; count; i++)
+                {
+                    channel.BasicPublish(string.Empty, QueueName, properties, _junkMessageWrapper.Value);
+                }
+
+                channel.WaitForConfirms();
+            }
+        }
+    }
+
+
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20140515/ad0e4169/attachment.html">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20140515/ad0e4169/attachment.html</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="036361.html">[rabbitmq-discuss] rabbitmq_web_stomp plugin
+</A></li>
+	<LI>Next message: <A HREF="036002.html">[rabbitmq-discuss] |Spam| rabbitmq service dies when a large number of messages expire.
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#36000">[ date ]</a>
+              <a href="thread.html#36000">[ thread ]</a>
+              <a href="subject.html#36000">[ subject ]</a>
+              <a href="author.html#36000">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

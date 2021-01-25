@@ -1,0 +1,172 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] RabbitMQ 2.7.0 is released
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20RabbitMQ%202.7.0%20is%20released&In-Reply-To=%3C4ECB8492.7020909%40rabbitmq.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="016443.html">
+   <LINK REL="Next"  HREF="016070.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] RabbitMQ 2.7.0 is released</H1>
+    <B>Emile Joubert</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20RabbitMQ%202.7.0%20is%20released&In-Reply-To=%3C4ECB8492.7020909%40rabbitmq.com%3E"
+       TITLE="[rabbitmq-discuss] RabbitMQ 2.7.0 is released">emile at rabbitmq.com
+       </A><BR>
+    <I>Tue Nov 22 11:16:34 GMT 2011</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="016443.html">[rabbitmq-discuss] RabbitMQ 2.7.0 is released
+</A></li>
+        <LI>Next message: <A HREF="016070.html">[rabbitmq-discuss] [announcement] Ruby amqp gem 0.8.3,	amq-client 0.8.6 and amq-protocol 0.8.4 are released
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#16452">[ date ]</a>
+              <a href="thread.html#16452">[ thread ]</a>
+              <a href="subject.html#16452">[ subject ]</a>
+              <a href="author.html#16452">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi Stefan,
+
+On 22/11/11 07:12, Stefan Kaes wrote:
+&gt;<i> As far as I understand it so far, the new behavior is designed to keep as
+</I>&gt;<i> much ordering in the queue as possible, whereas the old behavior was to
+</I>&gt;<i> simply move the rejected message to the end of the queue.
+</I>&gt;<i> 
+</I>&gt;<i> For us, this change is rather unfortunate.
+</I>&gt;<i> 
+</I>&gt;<i> The most common scenario for rejects in our messaging layer is that we want
+</I>&gt;<i> to process it at some later time, because some external service needed to
+</I>&gt;<i> process the queue is currently unavailable, or we know some other consumer
+</I>&gt;<i> is already processing a copy of a redundantly queued message.
+</I>&gt;<i> 
+</I>&gt;<i> See <A HREF="http://xing.github.com/beetle/">http://xing.github.com/beetle/</A>
+</I>&gt;<i> 
+</I>&gt;<i> With the new behavior, a consumer will immediately see the rejected message
+</I>&gt;<i> again, even though there might be hundreds of messages in the queue which
+</I>&gt;<i> could be processed right away.
+</I>&gt;<i> 
+</I>&gt;<i> I think the new behavior is also very surprising given the name of the
+</I>&gt;<i> parameter to reject is &quot;requeue&quot;.
+</I>&gt;<i> 
+</I>&gt;<i> Could you please explain what motivated the change?
+</I>&gt;<i> 
+</I>&gt;<i> Frankly, we'd prefer to get the old behavior back.
+</I>
+I'm sorry to hear that this change has a negative impact for you. The
+requeue ordering behaviour is left unspecified leaving room for
+implementations to differ in this regard. You should avoid relying on
+unspecified behaviour for maximum interoperability.
+
+The change was motivated by popular demand. Not being able to preserve
+message order was a gap in rabbit's feature set which many customers
+have asked us to correct.
+
+We felt it important that requeue behaviour be consistent across all
+methods of requeueing (closing channel, basic.recover, basic.reject and
+basic.nack). It would be very surprising if some of these requeued at
+the front of a queue while others requeued at the back.
+
+We are aware that some customers use requeueing to emulate queue
+browsing. This is discouraged. A database is more suitable for this use.
+We made no attempt to facilitate this use case. The documentation for
+nack says:
+
+&quot;&quot;&quot;
+The client MUST NOT use this method as a means of selecting messages to
+process.
+&quot;&quot;&quot;
+
+Your options at the moment are:
+
+Don't use requeueing. Match messages and consumers in such a way that
+consumers do not need to requeue messages. Use separate queues for
+different kinds of messages and design your system in such a way that
+consumers can be guaranteed to be able to process the messages they receive.
+
+Acknowledge and republish messages instead of requeueing. This will
+place a message at the back of the queue. The &quot;redelivered&quot; flag will
+not record the fact that a consumer has already seen the message, so you
+may want to set your own header in this case.
+
+There is work underway to implement dead letter exchanges. I can make no
+guarantees about when it will be released, but this feature will provide
+an alternative means to have a message republished to an exchange of
+your choice. If urgency is low then you could wait for this feature and
+see if suits your needs.
+
+Don't upgrade to 2.7.0 or beyond. Rabbit is improving all the time, so
+this is obviously not a real option if you need future enhancements and
+bugfixes.
+
+
+
+
+
+
+The FAQ was a victim of a recent website reorganisation effort. Here is
+a copy of the relevant question. Hopefully the FAQ will be resurrected soon.
+
+====
+Q:
+I have read that RabbitMQ preserves the order of messages in queues. Is
+this correct?
+
+A:
+For the most part, yes. Say a publisher publishes messages M1, M2, M3
+and M4 (in that order) on the same channel and with the same routing
+information. If these messages are routed to a queue then they will end
+up in the same order that they were published. Consuming on the queue
+will yield M1, M2, M3 and then M4.
+
+Message order is maintained if messages are returned to the queue using
+AMQP methods that feature a requeue parameter (basic.recover,
+basic.reject and basic.nack), or due to a channel closing while holding
+unacknowledged messages. E.g. a publisher sends messages M1, M2, M3 and
+M4 and these messages are routed to the same queue. A consumer fetches
+two messages, rejecting (with requeue) the first and acknowledging the
+second. The queue now contains M1, M3 and M4. The consumer again fetches
+two messages without acknowledgement when a network error causes the
+connection with the broker to be terminated. The queue contains M1, M3
+and M4 (in that order) after the broker discovers that the consumer has
+disconnected.
+
+Section 4.7 of the AMQP 0-9-1 specification explains the conditions
+under which ordering is guaranteed. RabbitMQ offers stronger guarantees
+than required by the specification, as explained above.
+====
+
+
+
+-Emile
+</PRE>
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="016443.html">[rabbitmq-discuss] RabbitMQ 2.7.0 is released
+</A></li>
+	<LI>Next message: <A HREF="016070.html">[rabbitmq-discuss] [announcement] Ruby amqp gem 0.8.3,	amq-client 0.8.6 and amq-protocol 0.8.4 are released
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#16452">[ date ]</a>
+              <a href="thread.html#16452">[ thread ]</a>
+              <a href="subject.html#16452">[ subject ]</a>
+              <a href="author.html#16452">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

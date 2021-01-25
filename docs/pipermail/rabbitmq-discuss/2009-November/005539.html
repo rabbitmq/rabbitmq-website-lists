@@ -1,0 +1,198 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] sample postgresql C function using librabbitmq
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20sample%20postgresql%20C%20function%20using%20librabbitmq&In-Reply-To=">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="005563.html">
+   <LINK REL="Next"  HREF="005540.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] sample postgresql C function using librabbitmq</H1>
+    <B>Michael Nacos</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20sample%20postgresql%20C%20function%20using%20librabbitmq&In-Reply-To="
+       TITLE="[rabbitmq-discuss] sample postgresql C function using librabbitmq">m.nacos at gmail.com
+       </A><BR>
+    <I>Thu Nov 26 14:19:13 GMT 2009</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="005563.html">[rabbitmq-discuss] RabbitMQ/Stomp on Windows
+</A></li>
+        <LI>Next message: <A HREF="005540.html">[rabbitmq-discuss] ANN: Delphi client library for RabbitMQ AMQP	message broker
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#5539">[ date ]</a>
+              <a href="thread.html#5539">[ thread ]</a>
+              <a href="subject.html#5539">[ subject ]</a>
+              <a href="author.html#5539">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>We do a lot of db work involving postgresql and some of our new processes
+use rabbitmq. We currently use an Erlang-based monitoring system for queues,
+consumers and some
+non-rabbit things. Since there is a C rabbitmq library these days (thanks
+Tony), I have tried to achieve the same thing through C functions
+interfacing directly with the AMQP broker,
+removing the need for an intermediate layer when pushing/pulling from the
+database. When I find a little more time, I am hoping to organize the most
+useful rabbitmq-related functions
+I have written into a postgresql module (probably github). Until then, here
+is some toy code in the public domain:
+
+regards, Michael
+
+/*
+** Filename: rabbit.c
+*/
+
+#include &quot;postgres.h&quot;
+#include &quot;fmgr.h&quot;
+#include &quot;funcapi.h&quot;
+#include &quot;executor/spi.h&quot;
+#include &quot;nodes/execnodes.h&quot;
+#include &quot;commands/trigger.h&quot;
+#include &quot;utils/builtins.h&quot;
+#include &lt;ctype.h&gt;
+#include &quot;amqp.h&quot;
+#include &quot;amqp_framing.h&quot;
+
+#ifdef PG_MODULE_MAGIC
+PG_MODULE_MAGIC;
+#endif
+
+/*
+    HOW TO run this toy code (you need postgresql sources and librabbitmq.so
+installed)
+
+--------------------------------------------------------------------------------------
+    [assuming postgresql is installed in /usr/local/pgsql8.4.1]
+
+    make rabbit.so; mv rabbit.so /usr/local/pgsql8.4.1/lib
+    cat rabbit.sql | /usr/local/pgsql8.4.1/bin/psql -U postgres db_of_choice
+    echo &quot;SELECT rabbit_count('localhost');&quot; |
+/usr/local/pgsql8.4.1/bin/psql -U postgres ...
+
+    # Makefile sample
+--------------------------------------------------------------------
+
+    SERVER_INCLUDES += -I $(shell /usr/local/pgsql8.4.1/bin/pg_config
+--includedir)
+    SERVER_INCLUDES += -I $(shell /usr/local/pgsql8.4.1/bin/pg_config
+--includedir-server)
+    CFLAGS += -O3 $(SERVER_INCLUDES)
+    .SUFFIXES:      .so
+    .c.so:
+        $(CC) $(CFLAGS) -fpic -c $&lt;
+        $(CC) $(CFLAGS) -shared -lrabbitmq -o $@ $(basename $&lt;).o
+
+    # rabbit.sql sample
+------------------------------------------------------------------
+
+        CREATE OR REPLACE FUNCTION rabbit_count(hostname VARCHAR)
+            RETURNS INT AS 'rabbit.so', 'rabbit_count' LANGUAGE 'C';
+
+    #
+------------------------------------------------------------------------------------
+*/
+
+/* toy postgresql C function rabbit_count()
+      accepts a single VARCHAR argument (hostname)
+      returns NULL if there is a connection error
+      or the number of consumers currently attached to a queue called
+'PREDEFINED'      */
+
+PG_FUNCTION_INFO_V1(rabbit_count);
+Datum rabbit_count(PG_FUNCTION_ARGS)
+{
+    int ret = -1;
+    int port;
+    char const *queue;
+    char const *user; char const *pass;
+      int sockfd;
+      amqp_connection_state_t conn;
+
+    if (PG_ARGISNULL(0)) { PG_RETURN_NULL(); }
+    VarChar *sql = PG_GETARG_VARCHAR_P(0); unsigned int size = VARSIZE(sql)
+- VARHDRSZ;
+    char *hostname = (char *) palloc(size+1);
+    strncpy(hostname,VARDATA(sql),size); hostname[size] = '\0'; //
+converting varchar into native string
+
+    port = 5672;
+    queue = &quot;PREDEFINED&quot;;
+    user = &quot;guest&quot;; pass = &quot;guest&quot;;
+
+      conn = amqp_new_connection();
+    if (conn &lt; 0) {
+        elog(ERROR, &quot;rabbit.so (rabbit_count) -- amqp_new_connection()
+error&quot;);
+        return PointerGetDatum(NULL);
+    }
+
+      sockfd = amqp_open_socket(hostname, port);
+      if (sockfd &lt; 0) {
+        elog(ERROR, &quot;rabbit.so (rabbit_count) -- amqp_open_socket() error&quot;);
+        return PointerGetDatum(NULL);
+    }
+    amqp_set_sockfd(conn, sockfd);
+
+    // probably needs something like die_on_amqp_error -- see below
+      amqp_login(conn, &quot;/&quot;, 0, 131072, 0, AMQP_SASL_METHOD_PLAIN, user,
+pass);
+    // probably needs something like die_on_amqp_error -- see below
+    amqp_channel_open(conn, 1);
+    // die_on_amqp_error(amqp_rpc_reply, &quot;Opening channel&quot;);
+
+    // after the queue argument, numbers correspond to bool vals for
+passive, durable, exclusive, auto_delete
+    amqp_queue_declare_ok_t *r = amqp_queue_declare(conn, 1,
+amqp_cstring_bytes(queue), 0, 1, 0, 0, AMQP_EMPTY_TABLE);
+    // die_on_amqp_error(amqp_rpc_reply, &quot;Declaring queue&quot;);
+
+    //   uint32_t message_count;
+    //   uint32_t consumer_count;
+    ret = r-&gt;consumer_count;
+
+    amqp_channel_close(conn, 1, AMQP_REPLY_SUCCESS);
+    amqp_connection_close(conn, AMQP_REPLY_SUCCESS);
+    amqp_destroy_connection(conn);
+    close(sockfd);
+
+    pfree(hostname);
+
+    if ( ret == -1 ) {
+        elog(ERROR, &quot;rabbit.so (rabbit_count) -- ret error&quot;);
+        return PointerGetDatum(NULL);
+    }
+
+    return (ret);
+}
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: <A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20091126/db44fec4/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20091126/db44fec4/attachment.htm</A> 
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="005563.html">[rabbitmq-discuss] RabbitMQ/Stomp on Windows
+</A></li>
+	<LI>Next message: <A HREF="005540.html">[rabbitmq-discuss] ANN: Delphi client library for RabbitMQ AMQP	message broker
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#5539">[ date ]</a>
+              <a href="thread.html#5539">[ thread ]</a>
+              <a href="subject.html#5539">[ subject ]</a>
+              <a href="author.html#5539">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,277 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss]  FW: Multiple consumers
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20%20FW%3A%20Multiple%20consumers&In-Reply-To=AE8FD6F8A5C7A74EB55A0639892B0A6C13A93C%40SPR3V4.office.local">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000102.html">
+   <LINK REL="Next"  HREF="000104.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss]  FW: Multiple consumers</H1>
+    <B>Ben Hood</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20%20FW%3A%20Multiple%20consumers&In-Reply-To=AE8FD6F8A5C7A74EB55A0639892B0A6C13A93C%40SPR3V4.office.local"
+       TITLE="[rabbitmq-discuss]  FW: Multiple consumers">0x6e6562 at gmail.com
+       </A><BR>
+    <I>Mon Aug  6 19:19:16 BST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000102.html">[rabbitmq-discuss] AMQP-over-HTTP libs and Javascript client	available
+</A></li>
+        <LI>Next message: <A HREF="000104.html">[rabbitmq-discuss] Intro
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#103">[ date ]</a>
+              <a href="thread.html#103">[ thread ]</a>
+              <a href="subject.html#103">[ subject ]</a>
+              <a href="author.html#103">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>&gt;&gt;&gt;&gt;<i>I am not convinced parameterised modules are the way to go.
+</I>&gt;&gt;&gt;&gt;<i>You can tell that something isn't quite right by the large
+</I>&gt;&gt;<i>number of
+</I>&gt;&gt;&gt;&gt;<i>places amqp_client has different branches for the network
+</I>&gt;&gt;<i>and direct
+</I>&gt;&gt;&gt;&gt;<i>case.
+</I>&gt;&gt;<i>
+</I>Do you feel that parameterised modules are not appropriate
+generally, or in this specific case?
+
+Would you stance change if the number of different branches
+were reduced, e.g. by refactoring the underlying message
+passing to make it more consistent between both cases?
+
+The rational behind the parameterization is to reduce as much
+AMQP specific message passing down to a lowest common
+denominator as possible, so whether than can be achieved by
+another means, that would be fine by me.
+
+Just thinking on my feet here, maybe you extract the API
+calls to a separate module and then implement separate
+gen_server instances for the network case and the direct
+case. These separate servers would then implement their own
+init/1 and handle_call(open_channel,_) methods. The amqp_send
+and amqp_receive functions could be extracted out to amqp_util.
+
+&gt;&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;&gt;<i>Related to this, your current startup/shutdown sequence is
+</I>&gt;&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;&gt;<i>    AMQPClient = amqp_client:new(amqp_direct_driver),
+</I>&gt;&gt;&gt;&gt;<i>    {ok, Connection} = AMQPClient:start(User, Password),
+</I>&gt;&gt;&gt;&gt;<i>    Channel = AMQPClient:open_channel(Connection,
+</I>&gt;&gt;<i>ChannelNumber, &quot;&quot;),
+</I>&gt;&gt;&gt;&gt;<i>    Ticket = AMQPClient:access_request(Channel, Realm),
+</I>&gt;&gt;&gt;&gt;<i>    ...
+</I>&gt;&gt;&gt;&gt;<i>    AMQPClient:stop(Channel),
+</I>&gt;&gt;&gt;&gt;<i>    AMQPClient:stop(Connection).
+</I>&gt;&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;&gt;<i>when I think it should be
+</I>&gt;&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;&gt;<i>    {ok, Connection} = amqp_network_client:start(User, Password),
+</I>&gt;&gt;&gt;&gt;<i>    Channel = amqp_connection:open_channel(Connection,
+</I>&gt;&gt;&gt;&gt;<i>ChannelNumber, &quot;&quot;),
+</I>&gt;&gt;&gt;&gt;<i>    Ticket = amqp_channel:access_request(Channel, Realm)
+</I>&gt;&gt;&gt;&gt;<i>    ...
+</I>&gt;&gt;&gt;&gt;<i>    amqp_channel:close(Channel),
+</I>&gt;&gt;&gt;&gt;<i>    amqp_connection:close(Connection).
+</I>&gt;&gt;<i>
+</I>
+I think that would work without too much modification, if
+that's what you want. What I am trying to say is that this is
+quite doable, I would just like some confirmation of the direction.
+
+&gt;&gt;<i>
+</I>&gt;&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;&gt;<i>The module parameterisation and general client module structure is
+</I>&gt;&gt;&gt;&gt;<i>driven largely by the need to support both the direct and network
+</I>&gt;&gt;&gt;&gt;<i>client. I reckon we are trying to bite off too much in one go here,
+</I>&gt;&gt;&gt;&gt;<i>and suggest concentrating on the network client first.
+</I>&gt;&gt;<i>
+</I>
+Fair point. However, it is the direct case that I am
+primarily interested in for my own purposes, so with all due
+respect, from my personal perspective I would be slightly
+reticent to let go of this :-)
+
+Furthermore, I think this is implementable, I just think IMHO
+we may be hanging up on the how the client interface is going
+to look, which is a soluble problem.
+
+As a suggestion:
+
+{ok, Connection} = amqp_direct_client:start(User, Password),
+
+%% This is where you need to differentiate between the direct and
+networked case
+Channel = amqp_connection:open_channel(Connection, ChannelNumber, &quot;&quot;),
+Ticket = amqp_channel:access_request(Channel, Realm)
+    ...
+amqp_channel:close(Channel),
+amqp_connection:close(Connection).
+
+Where Connection is a {Pid, direct} tuple or a {Pid, network}
+tuple as opposed to just a Pid term.
+
+&gt;&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;&gt;<i>2)
+</I>&gt;&gt;&gt;&gt;<i>I wonder whether it would make sense to get rid of most of
+</I>&gt;&gt;<i>the channel
+</I>&gt;&gt;&gt;&gt;<i>functions and instead get the user to construct requests directly.
+</I>&gt;&gt;&gt;&gt;<i>E.g. instead of
+</I>&gt;&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;&gt;<i>    #'queue.declare_ok'{queue = Q1,
+</I>&gt;&gt;&gt;&gt;<i>                        message_count = MessageCount,
+</I>&gt;&gt;&gt;&gt;<i>                        consumer_count = ConsumerCount}
+</I>&gt;&gt;&gt;&gt;<i>                        = AMQPClient:queue_declare(Channel,
+</I>&gt;&gt;<i>Ticket, Q)
+</I>&gt;&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;&gt;<i>you'd write
+</I>&gt;&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;&gt;<i>    #'queue.declare_ok'{queue = Q1,
+</I>&gt;&gt;&gt;&gt;<i>                        message_count = MessageCount,
+</I>&gt;&gt;&gt;&gt;<i>                        consumer_count = ConsumerCount}
+</I>&gt;&gt;&gt;&gt;<i>                        = amqp_channel:rpc(
+</I>&gt;&gt;&gt;&gt;<i>                            #'queue.declare'{ticket = Ticket,
+</I>&gt;&gt;&gt;&gt;<i>                                             queue = binary(Q)}),
+</I>&gt;&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;&gt;<i>This is more symmetric and takes advantage of Erlang's light-weight
+</I>&gt;&gt;&gt;&gt;<i>record manipulation syntax. It does however require reasonable
+</I>&gt;&gt;&gt;&gt;<i>defaults for all the record fields, which isn't the case
+</I>&gt;&gt;<i>right now. As
+</I>&gt;&gt;&gt;&gt;<i>an alternative you could define a bunch of record constants
+</I>&gt;&gt;<i>that have
+</I>&gt;&gt;&gt;&gt;<i>their fields set to reasonable default values and then use record
+</I>&gt;&gt;&gt;&gt;<i>update to construct the record instances you need.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i>
+</I>I was thinking about this myself because passing in single
+parameters and expecting a structured tuple as a return type
+is inconsistent, so I was already tending towards the latter.
+
+Again, this is quite reasonable and doable, and I think that
+putting the defaults into the record definitions would make
+the code a lot cleaner, because clients would only pattern
+match on the fields that they know and care about, so it
+would also be a lot more *erlangy*, IMHO.
+
+&gt;&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;&gt;<i>3)
+</I>&gt;&gt;&gt;&gt;<i>Why does amqp_client use an ets table instead of a record to record
+</I>&gt;&gt;&gt;&gt;<i>the username, password etc?
+</I>
+This was one of the issues I raised against the patch in a
+previous post. One of the todo items is to move this over to
+a record, I just started with the ets table and left it that
+way for now, so this is low hanging fruit.
+
+&gt;&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;&gt;<i>4)
+</I>&gt;&gt;&gt;&gt;<i>The method reading in rabbit_channel should be refactored
+</I>&gt;&gt;<i>so that you
+</I>&gt;&gt;&gt;&gt;<i>can call it from amqp_receive, rather than duplicating code.
+</I>&gt;&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;&gt;<i>rabbit_reader should be refactored so that
+</I>&gt;&gt;<i>amqp_network_driver doesn't
+</I>&gt;&gt;&gt;&gt;<i>have to duplicate so much code.
+</I>&gt;&gt;<i>
+</I>Granted. However, this is IMHO a pure refactoring and
+maintenance exercise as opposed to doing something
+fundamental, such as the module parameterization discussed above.
+
+Throughout the development of this patch I've tried to find a
+balance of code reuse and actually getting a working end to
+end for both the network and direct clients. So the emphasis
+has been on getting something working in a way that you can
+refine what you have within the safety net of unit tests that
+make sure that the functionality doesn't break during refactoring.
+
+So unless this is imperative for the acceptance of this patch
+into the rabbit tree (which hasn't been discussed yet), I
+would take this on as a todo, because I think this would have
+to be discussed in context of some other refactoring that
+would also be necessary (e.g. moving the portion of  rabbit_*
+modules that the client uses into common non-rabbit-specific
+modules for redistribution).
+
+&gt;&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;&gt;<i>I am pleased by how little code there is and how little you had to
+</I>&gt;&gt;&gt;&gt;<i>change the server modules to support the direct case.
+</I>&gt;&gt;&gt;&gt;<i>That will help when carrying this code base forward when we tackle
+</I>&gt;&gt;&gt;&gt;<i>AMQP 0-10.
+</I>&gt;&gt;&gt;&gt;<i>
+</I>
+This is why I introduced the driver concept, so that I could
+use a common message passing sequence specific to the high
+level protocol rather than the transport. Maybe calling them
+drivers was wrong, perhaps transport is a better term.
+
+Anyway, at some stage I would like to touch base with you to
+discuss some issues that are inefficient to discuss over the
+list (e.g. patch management).
+
+Ben
+
+*****************************************************
+This email is issued by a VocaLink group company. It is confidential
+and intended for the exclusive use of the addressee only. You should
+not disclose its contents to any other person. If you are not the
+addressee (or responsible for delivery of the message to the
+addressee), please notify the originator immediately by return message
+and destroy the original message. The contents of this email will have
+no contractual effect unless it is otherwise agreed between a specific
+VocaLink group company and the recipient.
+
+The VocaLink group companies include, among others: VocaLink Limited
+(Company No 06119048, [VAT applied for]) which is registered in
+England and Wales at registered office Drake House, Homestead Road,
+Rickmansworth, WD3 1FX. United Kingdom, Voca Limited (Company no
+1023742, VAT No. 226 6112 87) which is registered in England and Wales
+at registered office Drake House, Three Rivers Court, Homestead Road,
+Rickmansworth, Hertfordshire. WD3 1FX. United Kingdom, LINK
+Interchange Network Limited (Company No 3565766, VAT No. 721 6162 62)
+which is registered in England and Wales at registered office Arundel
+House, 1 Liverpool Gardens, Worthing, West Sussex, BN11 1SL and
+VocaLink Holdings Limited (Company No 06119036, [VAT applied for])
+which is registered in England and Wales at registered office Drake
+House, Homestead Road, Rickmansworth, WD3 1FX. United Kingdom.
+
+The views and opinions expressed in this email may not reflect those
+of any member of the VocaLink group. This message and any attachments
+have been scanned for viruses prior to leaving the VocaLink group
+network; however, VocaLink does not guarantee the security of this
+message and will not be responsible for any damages arising as a
+result of any virus being passed on or arising from any alteration of
+this message by a third party. The VocaLink group may monitor emails
+sent to and from the VocaLink group network.
+
+This message has been checked for all email viruses by MessageLabs.
+*************************************************************
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000102.html">[rabbitmq-discuss] AMQP-over-HTTP libs and Javascript client	available
+</A></li>
+	<LI>Next message: <A HREF="000104.html">[rabbitmq-discuss] Intro
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#103">[ date ]</a>
+              <a href="thread.html#103">[ thread ]</a>
+              <a href="subject.html#103">[ subject ]</a>
+              <a href="author.html#103">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

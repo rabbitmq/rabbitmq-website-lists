@@ -1,0 +1,138 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] RabbitMQ load issues
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20RabbitMQ%20load%20issues&In-Reply-To=%3C4F195EFA.5050909%40rabbitmq.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="017447.html">
+   <LINK REL="Next"  HREF="017218.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] RabbitMQ load issues</H1>
+    <B>Simon MacMullen</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20RabbitMQ%20load%20issues&In-Reply-To=%3C4F195EFA.5050909%40rabbitmq.com%3E"
+       TITLE="[rabbitmq-discuss] RabbitMQ load issues">simon at rabbitmq.com
+       </A><BR>
+    <I>Fri Jan 20 12:32:58 GMT 2012</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="017447.html">[rabbitmq-discuss] RabbitMQ load issues
+</A></li>
+        <LI>Next message: <A HREF="017218.html">[rabbitmq-discuss] C# v2.7.1 Client Unhandled Exceptions
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#17523">[ date ]</a>
+              <a href="thread.html#17523">[ thread ]</a>
+              <a href="subject.html#17523">[ subject ]</a>
+              <a href="author.html#17523">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>On 17/01/12 20:57, Jeremy Pierre wrote:
+&gt;&gt;<i> * If you're declaring queues in bulk, make sure you do so synchonously (i.e.
+</I>&gt;&gt;<i> nowait=false).
+</I>&gt;<i>
+</I>&gt;<i> To be perfectly honest, I can't find this (with a relatively cursory
+</I>&gt;<i> investigation) in the APIs I'm using(Akka 1.2 AMQP module that
+</I>&gt;<i> leverages RabbitMQ's Java lib iirc).  Having said that, I'm creating
+</I>&gt;<i> queues one at a time(albeit quickly) - not sure if this addresses the
+</I>&gt;<i> bulk queue declaration you're referring to?  I'll dig further into the
+</I>&gt;<i> APIs on my side.
+</I>
+Synchronous queue.declare (i.e. with a response) is the default in most 
+APIs - in general you want to know when the queue is declared.
+
+&gt;&gt;<i> * If you're going to have that many queues and that few routing keys then
+</I>&gt;&gt;<i> presumably every message published will be delivered to huge numbers of
+</I>&gt;&gt;<i> queues. I assume you expect your publishing rate to be small. Publishing a
+</I>&gt;&gt;<i> couple of messages per second is a lot if they're delivered to 50k queues.
+</I>&gt;<i>
+</I>&gt;<i> The number of routing keys is actually fairly high given that the
+</I>&gt;<i> userId and actual message categories are completely variable.  With
+</I>&gt;<i> the example I gave(~100k queues), each queue is bound to a unique
+</I>&gt;<i> routing key(topic) and a message typically is delivered to a very
+</I>&gt;<i> small number of queues(20-30 would be a theoretical maximum and a very
+</I>&gt;<i> rare situation).  As additional applications are built on top of the
+</I>&gt;<i> base collection layer and RabbitMQ, the queue count will go much
+</I>&gt;<i> higher(obviously).
+</I>&gt;<i>
+</I>&gt;<i> For what it's worth, our testing load(30k &quot;users&quot;, 6 queues per user
+</I>&gt;<i> in my original posting though we never got that high before rabbit
+</I>&gt;<i> choked) generates an easy 150-200 messages per second going into
+</I>&gt;<i> RabbitMQ and this can spike higher.  Production will see 200k-300k
+</I>&gt;<i> users at least I expect.
+</I>
+Ah OK. 200 msg/s in is fine as long as they're not going to 50k queues 
+each :)
+
+&gt;&gt;<i> * Every queue process consumes a fixed small amount of memory. Spreading
+</I>&gt;&gt;<i> queues out over a cluster will help.
+</I>&gt;<i>
+</I>&gt;<i> We're experimenting with a 3-node cluster as of today though I've
+</I>&gt;<i> reduced the queue count by determining the update type at my
+</I>&gt;<i> application layer and using topics with wildcards, e.g.
+</I>&gt;<i> &quot;&lt;source&gt;.&lt;userId&gt;.*&quot;
+</I>&gt;<i>
+</I>&gt;&gt;<i> * Every queue and binding creates a row in an Mnesia table. Mnesia tables
+</I>&gt;&gt;<i> always reside in RAM, so for huge numbers of queues in a cluster expect to
+</I>&gt;&gt;<i> use lots of RAM. Therefore instead of clustering you will probably find it
+</I>&gt;&gt;<i> better to shard the queues out over independent brokers and connect them
+</I>&gt;&gt;<i> with federation. The case of huge numbers of queues and very few routing
+</I>&gt;&gt;<i> keys could almost be made for federation. For the massive fanout case you
+</I>&gt;&gt;<i> probably want to build a (maybe multi-layered) federation tree rather than
+</I>&gt;&gt;<i> the complete graph people use more often with federation.
+</I>&gt;<i>
+</I>&gt;<i> Thanks for suggesting this!  We may go this route but I'm wary of
+</I>&gt;<i> putting sharding logic in our application layer(perhaps unjustifiably
+</I>&gt;<i> so).  Truth be told I was kind of hoping for a &quot;silver bullet&quot; with
+</I>&gt;<i> RabbitMQ ;)  In the meantime, we'll bump the RAM for our cluster nodes
+</I>&gt;<i> and see what happens.
+</I>
+Hopefully you should not need (much) sharding logic in your app - just 
+enough to pick a broker to connect to (which you'd need for clustering 
+anyway). Set up the federation correctly and you could just publish to 
+one broker / an arbitrary broker and get the messages routed accordingly.
+
+Cheers, Simon
+
+
+-- 
+Simon MacMullen
+RabbitMQ, VMware
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="017447.html">[rabbitmq-discuss] RabbitMQ load issues
+</A></li>
+	<LI>Next message: <A HREF="017218.html">[rabbitmq-discuss] C# v2.7.1 Client Unhandled Exceptions
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#17523">[ date ]</a>
+              <a href="thread.html#17523">[ thread ]</a>
+              <a href="subject.html#17523">[ subject ]</a>
+              <a href="author.html#17523">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

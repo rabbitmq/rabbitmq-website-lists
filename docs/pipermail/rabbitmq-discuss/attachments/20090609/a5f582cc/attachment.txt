@@ -1,0 +1,62 @@
+--- src/client/messagepatterns/SimpleRpcServer.cs	Tue Feb 24 18:20:00 2009
++++ src/client/messagepatterns/SimpleRpcServer.cs	Tue Jun 09 17:48:53 2009
+@@ -203,10 +203,14 @@
+         public void MainLoop()
+         {
+             foreach (BasicDeliverEventArgs evt in m_subscription) {
+-                ProcessRequest(evt);
+-                m_subscription.Ack();
+-                if (m_transactional) {
+-                    m_subscription.Model.TxCommit();
++                lock(m_subscription){
++                    // if we don't have a valid consumer, we must be closing, so quit
++                    if(m_subscription.Consumer == null) break;
++                    ProcessRequest(evt);
++                    m_subscription.Ack();
++                    if (m_transactional) {
++                        m_subscription.Model.TxCommit();
++                    }
+                 }
+             }
+         }
+--- src/client/messagepatterns/Subscription.cs	Tue Feb 24 18:20:00 2009
++++ src/client/messagepatterns/Subscription.cs	Tue Jun 09 17:04:03 2009
+@@ -218,22 +218,24 @@
+         ///case).</summary>
+         public void Close()
+         {
+-            try {
+-                if (m_consumer != null) {
+-                    m_model.BasicCancel(m_consumerTag);
++            lock(this){
++                try {
++                    if (m_consumer != null) {
++                        m_model.BasicCancel(m_consumerTag);
++                    }
++                    if (m_shouldDelete) {
++                        m_shouldDelete = false;
++                        // We set m_shouldDelete false before attempting
++                        // the delete, because trying twice is worse than
++                        // trying once and failing.
++                        m_model.QueueDelete(m_queueName, false, false, false);
++                    }
++                } catch (OperationInterruptedException) {
++                    // We don't mind, here.
+                 }
+-                if (m_shouldDelete) {
+-                    m_shouldDelete = false;
+-                    // We set m_shouldDelete false before attempting
+-                    // the delete, because trying twice is worse than
+-                    // trying once and failing.
+-                    m_model.QueueDelete(m_queueName, false, false, false);
+-                }
+-            } catch (OperationInterruptedException) {
+-                // We don't mind, here.
++                m_consumer = null;
++                m_consumerTag = null;
+             }
+-            m_consumer = null;
+-            m_consumerTag = null;
+         }
+ 
+         ///<summary>Causes the queue to which we have subscribed to be

@@ -1,0 +1,167 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Old consumer tags delivered after re-subscribing to a queue
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20Old%20consumer%20tags%20delivered%20after%0A%20re-subscribing%20to%20a%20queue&In-Reply-To=5469CC33-06C4-4941-A325-A9F3E411B32D%40gmail.com">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="006781.html">
+   <LINK REL="Next"  HREF="006783.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Old consumer tags delivered after re-subscribing to a queue</H1>
+    <B>Matthew Sackman</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20Old%20consumer%20tags%20delivered%20after%0A%20re-subscribing%20to%20a%20queue&In-Reply-To=5469CC33-06C4-4941-A325-A9F3E411B32D%40gmail.com"
+       TITLE="[rabbitmq-discuss] Old consumer tags delivered after re-subscribing to a queue">matthew at lshift.net
+       </A><BR>
+    <I>Fri Apr  2 17:54:32 BST 2010</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="006781.html">[rabbitmq-discuss] Old consumer tags delivered after	re-subscribing to a queue
+</A></li>
+        <LI>Next message: <A HREF="006783.html">[rabbitmq-discuss] Old consumer tags delivered after re-subscribing to a queue
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#6782">[ date ]</a>
+              <a href="thread.html#6782">[ thread ]</a>
+              <a href="subject.html#6782">[ subject ]</a>
+              <a href="author.html#6782">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi Juan,
+
+On Fri, Apr 02, 2010 at 01:37:11PM -0300, Juan Wajnerman wrote:
+&gt;<i> On Apr 2, 2010, at 1:15 PM, Matthew Sackman wrote:
+</I>&gt;<i> 
+</I>&gt;<i> &gt; On Thu, Apr 01, 2010 at 12:05:25PM -0300, Juan Wajnerman wrote:
+</I>&gt;<i> &gt;&gt; After unsubscribing from a queue, following &quot;recover&quot; calls will still redeliver unack'd messages through the channel. Even worse, after resubscribing to the queue, the recovered messages are still sent with the old consumer tag.
+</I>&gt;<i> &gt; 
+</I>&gt;<i> &gt; The documentation of basic.recover is clear:
+</I>&gt;<i> &gt; &quot;This method asks the server to redeliver all unacknowledged messages
+</I>&gt;<i> &gt; on a specified channel.&quot;
+</I>&gt;<i> 
+</I>&gt;<i> But what should happen if the subscription was canceled before the messages
+</I>&gt;<i> were ack'd? The current implementation is still sending the messages with the same consumer tag.
+</I>
+Ahh! Right, now I understand the problem - sorry, I thought you were
+saying that with your second subscription, you were getting the same
+ctag, but you're actually saying that the ctag used during the recovery
+is the same as the (now cancelled) subscription.
+
+Yes, that indeed is a bug - the comment in the code is rather revealing!
+
+handle_method(#'basic.recover'{requeue = false},
+              _, State = #ch{ transaction_id = none,
+                              writer_pid = WriterPid,
+                              unacked_message_q = UAMQ }) -&gt;
+    ok = rabbit_misc:queue_fold(
+           fun ({_DeliveryTag, none, _Msg}, ok) -&gt;
+                   %% Was sent as a basic.get_ok. Don't redeliver
+                   %% it. FIXME: appropriate?
+                   ok;
+               ({DeliveryTag, ConsumerTag,
+                 {QName, QPid, MsgId, _Redelivered, Message}}, ok) -&gt;
+                   %% Was sent as a proper consumer delivery.  Resend
+                   %% it as before.
+                   %%
+                   %% FIXME: What should happen if the consumer's been
+                   %% cancelled since?
+                   %%
+                   %% FIXME: should we allocate a fresh DeliveryTag?
+                   internal_deliver(
+                     WriterPid, false, ConsumerTag, DeliveryTag,
+                     {QName, QPid, MsgId, true, Message})
+           end, ok, UAMQ),
+
+&gt;<i> That's right. The omission was completely intentional to reproduce the issue.
+</I>&gt;<i> I'm sorry, maybe I wasn't clear enough about this. The idea is to cancel the
+</I>&gt;<i> subscription before the message was ack'd and then resubscribe and perform a recover. 
+</I>
+Actually, I think you'll see this bug if you just do: subscribe,
+unsubscribe, recover. The second subscription should be unnecessary.
+
+The problem is that the result of recover is a number of deliveries.
+They must have a ctag of some sort, and all the clients will rely on
+that. (This is clearly not a ruby client bug - apologies for suggesting
+it was.) If the subscription has been cancelled, it's very likely all
+clients will get upset not matter what you do - both a new and an
+existing ctag will be unrecognised by clients as they will have
+forgotten about the ctag on the unsubscribe.
+
+Which suggests that the possible outcomes are:
+a) Don't permit a basic.recover if the subscription has been cancelled.
+   This gets very tricky - if you have multiple subscriptions on the
+   same channel, cancel some of them, and then hit recover, what on
+   earth do you do then?
+b) On cancel, forget about unacked messages from the subscription being
+   cancelled - treat it the same as a channel closure and requeue the
+   messages.
+
+The problem with both of these is that they're explicitly against the
+wording of the spec.
+
+&gt;<i> &gt; Similarly, the documention for basic.cancel (unsubscribe):
+</I>&gt;<i> &gt; &quot;This method cancels a consumer. This does not affect already delivered
+</I>&gt;<i> &gt; messages, but it does mean the server will not send any more messages for
+</I>&gt;<i> &gt; that consumer.&quot;
+</I>&gt;<i> 
+</I>&gt;<i> I understand this, but I'm looking at the bits on the wire, and after sending a cancel, the
+</I>&gt;<i> following recover will send the unack'd messages using the same old consumer tag.
+</I>
+Yes. There's probably an argument for saying that in the absence of a
+valid consumer tag, the messages should be sent to the client as a
+sequence of basic.get-oks, or at least a basic.deliver with a very
+special ctag to indicate to the clients that they shouldn't be suprised
+by these deliveries which are apparently appearing outside of the scope
+of any subscription it knows about. This really seems to be a bug in the
+spec rather than our implementation or the client.
+
+At the very least, the basic.recover_ok should contain a new ctag (which
+for symmetry suggests the client should be able to specify one in
+basic.recover to mirror basic.consume and basic.consume_ok) which the
+client can then use to identify these deliveries and route them
+accordingly.
+
+&gt;<i> I was digging into the source code after sending my email and I found that (correct me if I'm wrong, it's my first time
+</I>&gt;<i> I look into this code) in rabbit_channel.erl:578 the recover is taking the unack'd messages
+</I>&gt;<i> and redelivering these using the same ConsumerTag as it was sent before. I think this is
+</I>&gt;<i> indeed what the FIXME warns: &quot;What should happen if the consumer's been cancelled since?&quot;.
+</I>
+Absolutely, and well found, you are exactly right.
+
+I would recommend that you don't use recover without also setting
+requeue=true, thus ensuring the messages are inserted back into the
+queue and can hence be redelivered to any valid consumer again (at
+which point the ctag will be set correctly). Hopefully you'll at
+least get unsurprising behaviour! I will raise some bugs to cover the
+issues uncovered - many thanks for the report.
+
+Matthew
+
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="006781.html">[rabbitmq-discuss] Old consumer tags delivered after	re-subscribing to a queue
+</A></li>
+	<LI>Next message: <A HREF="006783.html">[rabbitmq-discuss] Old consumer tags delivered after re-subscribing to a queue
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#6782">[ date ]</a>
+              <a href="thread.html#6782">[ thread ]</a>
+              <a href="subject.html#6782">[ subject ]</a>
+              <a href="author.html#6782">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,214 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] RabbitMQ Subscriber Timeout When Waiting for	Delivery
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20RabbitMQ%20Subscriber%20Timeout%20When%20Waiting%20for%0A%09Delivery&In-Reply-To=%3Ce6247647-7ec7-454e-af6d-5b7c1d2048ee%40googlegroups.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="020895.html">
+   <LINK REL="Next"  HREF="020899.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] RabbitMQ Subscriber Timeout When Waiting for	Delivery</H1>
+    <B>Deelo</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20RabbitMQ%20Subscriber%20Timeout%20When%20Waiting%20for%0A%09Delivery&In-Reply-To=%3Ce6247647-7ec7-454e-af6d-5b7c1d2048ee%40googlegroups.com%3E"
+       TITLE="[rabbitmq-discuss] RabbitMQ Subscriber Timeout When Waiting for	Delivery">dwayne.dsouza at gmail.com
+       </A><BR>
+    <I>Fri Jun 29 09:22:37 BST 2012</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="020895.html">[rabbitmq-discuss]  Causes of server disconnects?
+</A></li>
+        <LI>Next message: <A HREF="020899.html">[rabbitmq-discuss] queue deletion
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#20908">[ date ]</a>
+              <a href="thread.html#20908">[ thread ]</a>
+              <a href="subject.html#20908">[ subject ]</a>
+              <a href="author.html#20908">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>My subscriber appears to timeout and not process any messages if the 
+publisher takes a long time to initiate. (e.g. I start the publisher 30 
+minutes after the subscriber).
+Is there a way to change this?
+
+Appreciate any help as this is causing all kinds of problems!
+
+
+public class RabbitMqSubscriber&lt;T extends Serializable&gt; implements 
+Subscriber&lt;T&gt; {
+private static final Logger log = 
+LoggerFactory.getLogger(RabbitMqSubscriber.class);
+private QueueingConsumer consumer;
+private MessageListener&lt;T&gt; listener;
+private String exchange;
+private String topic;
+public RabbitMqSubscriber(String host,String exchange,String topic) throws 
+IOException {
+this.exchange=exchange;
+this.topic=topic;
+ConnectionFactory factory = new ConnectionFactory();
+factory.setHost(host);
+Connection connection = factory.newConnection();
+Channel channel = connection.createChannel();
+channel.exchangeDeclare(exchange, &quot;topic&quot;);
+String queueName = channel.queueDeclare().getQueue();
+channel.queueBind(queueName, exchange, topic);
+consumer = new QueueingConsumer(channel);
+channel.basicConsume(queueName, true, consumer);
+}
+
+public void run() {
+log.info(&quot;Starting subscribing to messages on exchange: &quot;+exchange + &quot; with 
+topic: &quot;+topic);
+while (true) {
+QueueingConsumer.Delivery delivery;
+try {
+delivery = consumer.nextDelivery();
+Object o=SerializationUtils.deserialize(delivery.getBody());
+log.info(&quot;Subscriber received object: &quot;+o);
+listener.receive((T)o);
+} catch (ShutdownSignalException | ConsumerCancelledException | 
+InterruptedException e) {
+throw new RuntimeException(e);
+}
+}
+}
+
+@Override
+public void setListener(MessageListener&lt;T&gt; listener) {
+this.listener=listener;
+}
+}
+
+public class RabbitMqPublisher&lt;T extends Serializable&gt; implements 
+Publisher&lt;T&gt;{
+private String topic;
+private Channel channel;
+private String exchange;
+private static final Logger log = 
+LoggerFactory.getLogger(RabbitMqPublisher.class);
+public RabbitMqPublisher(String host,String exchange,String topic) throws 
+IOException {
+super();
+this.topic = topic;
+this.exchange=exchange;
+    ConnectionFactory factory = new ConnectionFactory();
+    factory.setHost(host);
+    Connection connection = factory.newConnection();
+    channel = connection.createChannel();
+        channel.exchangeDeclare(exchange, &quot;topic&quot;);
+log.info(&quot;Publishing to messages on exchange: &quot;+exchange + &quot; with topic: 
+&quot;+topic);
+}
+@Override
+public void publish(T t) {
+    try {
+     log.info(&quot;Publishing object: &quot;+t);
+        channel.basicPublish(exchange, topic, null, 
+SerializationUtils.serialize(t));
+} catch (IOException e) {
+throw new RuntimeException(e);
+}
+
+}
+}
+
+public class TimeoutTest {
+private static final Logger log = 
+LoggerFactory.getLogger(TimeoutTest.class);
+public static void main(String[] args) throws Exception{
+final RabbitMqPublisher&lt;String&gt; publisher=new 
+RabbitMqPublisher&lt;String&gt;(&quot;31.222.170.242&quot;,&quot;EXCHANGE&quot;,&quot;TEST&quot;);
+final RabbitMqSubscriber&lt;String&gt; subscriber=new 
+RabbitMqSubscriber&lt;String&gt;(&quot;31.222.170.242&quot;,&quot;EXCHANGE&quot;, &quot;TEST&quot;);
+subscriber.setListener(new MessageListener&lt;String&gt;() {
+ @Override
+public void receive(String s) {
+System.out.println(&quot;Received: &quot;+s); //NEVER GETS CALLED!!!
+ }
+});
+Executors.newSingleThreadExecutor().execute(new Runnable() {
+public void run() {
+subscriber.run();
+}
+});
+ //start subscriber then wait 30 minutes before publishing first message 
+Thread.sleep(1000*1800);
+ publisher.publish(&quot;MESSAGE PUBLISHED&quot;);
+}
+}
+
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20120629/f564f260/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20120629/f564f260/attachment.htm</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="020895.html">[rabbitmq-discuss]  Causes of server disconnects?
+</A></li>
+	<LI>Next message: <A HREF="020899.html">[rabbitmq-discuss] queue deletion
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#20908">[ date ]</a>
+              <a href="thread.html#20908">[ thread ]</a>
+              <a href="subject.html#20908">[ subject ]</a>
+              <a href="author.html#20908">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

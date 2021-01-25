@@ -1,0 +1,205 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Broken Pipe in RabbitMQ	ConnectionFactory.newConnection()
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Broken%20Pipe%20in%20RabbitMQ%0A%09ConnectionFactory.newConnection%28%29&In-Reply-To=%3C7849de98-57e6-41dc-ac4a-8181d5279d60%40googlegroups.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="029933.html">
+   <LINK REL="Next"  HREF="029946.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Broken Pipe in RabbitMQ	ConnectionFactory.newConnection()</H1>
+    <B>John M.</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Broken%20Pipe%20in%20RabbitMQ%0A%09ConnectionFactory.newConnection%28%29&In-Reply-To=%3C7849de98-57e6-41dc-ac4a-8181d5279d60%40googlegroups.com%3E"
+       TITLE="[rabbitmq-discuss] Broken Pipe in RabbitMQ	ConnectionFactory.newConnection()">approche.pratique at gmail.com
+       </A><BR>
+    <I>Sat Sep  7 07:15:14 BST 2013</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="029933.html">[rabbitmq-discuss] amqp-client backward compatibility
+</A></li>
+        <LI>Next message: <A HREF="029946.html">[rabbitmq-discuss] Broken Pipe in RabbitMQ	ConnectionFactory.newConnection()
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#29944">[ date ]</a>
+              <a href="thread.html#29944">[ thread ]</a>
+              <a href="subject.html#29944">[ subject ]</a>
+              <a href="author.html#29944">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Rarely, when under more load than usual my RabbitMQ application starts 
+returning SocketException: Broken pipe (and basically doesn't process any 
+further messages).
+
+The system is using the RPC pattern, with workers listening on a few 
+predefined queues for jobs, clients submitting tasks on these jobs while 
+opening a temporary auto-delete queues that they specify as replyTo queue 
+where they listen for the replies on (and use a correlation ID as well to 
+match the messages).
+
+The code that actually leads to the Broken pipe is quite simple, it is in 
+the client part and basically does:
+    factory = new ConnectionFactory();
+    factory.setUri(uri);
+    connection = factory.newConnection(); // this is when we get the 
+exception
+
+The exception is as follows:
+    2013-09-06 21:37:03,947 +0000 [http-bio-8080-exec-350] ERROR 
+RabbitRpcClient:79  - IOException 
+    java.net.SocketException: Broken pipe
+    at java.net.SocketOutputStream.socketWrite0(Native Method)
+    at java.net.SocketOutputStream.socketWrite(SocketOutputStream.java:109)
+    at java.net.SocketOutputStream.write(SocketOutputStream.java:153)
+    at 
+java.io.BufferedOutputStream.flushBuffer(BufferedOutputStream.java:82)
+    at java.io.BufferedOutputStream.flush(BufferedOutputStream.java:140)
+    at java.io.DataOutputStream.flush(DataOutputStream.java:123)
+    at 
+com.rabbitmq.client.impl.SocketFrameHandler.flush(SocketFrameHandler.java:142)
+    at com.rabbitmq.client.impl.AMQConnection.flush(AMQConnection.java:488)
+    at com.rabbitmq.client.impl.AMQCommand.transmit(AMQCommand.java:125)
+    at 
+com.rabbitmq.client.impl.AMQChannel.quiescingTransmit(AMQChannel.java:316)
+    at com.rabbitmq.client.impl.AMQChannel.transmit(AMQChannel.java:292)
+    at com.rabbitmq.client.impl.AMQChannel.transmit(AMQChannel.java:285)
+    at com.rabbitmq.client.impl.AMQConnection.start(AMQConnection.java:383)
+    at 
+com.rabbitmq.client.ConnectionFactory.newConnection(ConnectionFactory.java:516)
+    at 
+com.rabbitmq.client.ConnectionFactory.newConnection(ConnectionFactory.java:533) 
+    
+        ...
+
+I think this generally coincides with the workers taking longer than usual 
+about their business, and thus more temporary client queues concurrently 
+open (about 20-30 perhaps?), however as far as I know I'm not running into 
+any of the usual watermarks (memory, disk - I could be running into some 
+limit I don't know about).
+
+I've reviewed the Rabbit logs and the only kind of errors I find there are:
+
+    =ERROR REPORT==== 6-Sep-2013::21:36:59 ===
+    closing AMQP connection &lt;0.3105.1297&gt; (10.118.69.132:42582 -&gt; 
+10.12.111.134:5672):
+    {handshake_timeout,frame_header}
+
+I checked both logs and the first &quot;broken pipe&quot; on the client appeared at 
+21:37:03, while the first ERROR of any kind in RabbitMQ logs on that date 
+appeared at 21:36:59, with regular errors of the same kind appearing 
+regularly thereafter until the systems were restarted. Thus I believe the 
+ones published are corresponding log entries. 
+
+I'm using the Rabbit Java client 3.1.4 (latest on Maven central) with 
+Rabbit server 3.1.4 running on Amazon Linux un AWS EC2.
+
+Here is the rabbitmqctl status under normal situation (unfortunately not 
+during the failure, I will try to get one when it appears next):
+
+[rabbitmq]$ sudo rabbitmqctl status
+Status of node '<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at ip-some-ip</A>' ...
+[{pid,2654},
+ {running_applications,
+     [{rabbitmq_management,&quot;RabbitMQ Management Console&quot;,&quot;3.1.4&quot;},
+      {rabbitmq_management_agent,&quot;RabbitMQ Management Agent&quot;,&quot;3.1.4&quot;},
+      {rabbit,&quot;RabbitMQ&quot;,&quot;3.1.4&quot;},
+      {os_mon,&quot;CPO  CXC 138 46&quot;,&quot;2.2.7&quot;},
+      {rabbitmq_web_dispatch,&quot;RabbitMQ Web Dispatcher&quot;,&quot;3.1.4&quot;},
+      {webmachine,&quot;webmachine&quot;,&quot;1.10.3-rmq3.1.4-gite9359c7&quot;},
+      {mochiweb,&quot;MochiMedia Web Server&quot;,&quot;2.7.0-rmq3.1.4-git680dba8&quot;},
+      {xmerl,&quot;XML parser&quot;,&quot;1.2.10&quot;},
+      {inets,&quot;INETS  CXC 138 49&quot;,&quot;5.7.1&quot;},
+      {mnesia,&quot;MNESIA  CXC 138 12&quot;,&quot;4.5&quot;},
+      {amqp_client,&quot;RabbitMQ AMQP Client&quot;,&quot;3.1.4&quot;},
+      {sasl,&quot;SASL  CXC 138 11&quot;,&quot;2.1.10&quot;},
+      {stdlib,&quot;ERTS  CXC 138 10&quot;,&quot;1.17.5&quot;},
+      {kernel,&quot;ERTS  CXC 138 10&quot;,&quot;2.14.5&quot;}]},
+ {os,{unix,linux}},
+ {erlang_version,
+     &quot;Erlang R14B04 (erts-5.8.5) [source] [64-bit] [smp:2:2] [rq:2] 
+[async-threads:30] [kernel-poll:true]\n&quot;},
+ {memory,
+     [{total,331967824},
+      {connection_procs,5389784},
+      {queue_procs,2669016},
+      {plugins,654768},
+      {other_proc,10063336},
+      {mnesia,90352},
+      {mgmt_db,2706344},
+      {msg_index,7148168},
+      {other_ets,3495648},
+      {binary,1952040},
+      {code,17696200},
+      {atom,1567425},
+      {other_system,278534743}]},
+ {vm_memory_high_watermark,0.4},
+ {vm_memory_limit,3126832332},
+ {disk_free_limit,1000000000},
+ {disk_free,1487147008},
+ {file_descriptors,
+     [{total_limit,349900},
+      {total_used,71},
+      {sockets_limit,314908},
+      {sockets_used,66}]},
+ {processes,[{limit,1048576},{used,930}]},
+ {run_queue,0},
+ {uptime,5680}]
+...done.
+
+Any ideas what could be wrong or at least what I can do to debug this / get 
+more clarity on what is happening?
+
+Best regards,
+John
+
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20130906/5fda7d81/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20130906/5fda7d81/attachment.htm</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="029933.html">[rabbitmq-discuss] amqp-client backward compatibility
+</A></li>
+	<LI>Next message: <A HREF="029946.html">[rabbitmq-discuss] Broken Pipe in RabbitMQ	ConnectionFactory.newConnection()
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#29944">[ date ]</a>
+              <a href="thread.html#29944">[ thread ]</a>
+              <a href="subject.html#29944">[ subject ]</a>
+              <a href="author.html#29944">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

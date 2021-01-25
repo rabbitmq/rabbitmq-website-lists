@@ -1,0 +1,189 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Low disk space causes RabbitMQ to loose messages instead of blocking the connection
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Low%20disk%20space%20causes%20RabbitMQ%20to%20loose%20messages%0A%20instead%20of%20blocking%20the%20connection&In-Reply-To=%3C1370236092874-27157.post%40n5.nabble.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="027639.html">
+   <LINK REL="Next"  HREF="027642.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Low disk space causes RabbitMQ to loose messages instead of blocking the connection</H1>
+    <B>Joe</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Low%20disk%20space%20causes%20RabbitMQ%20to%20loose%20messages%0A%20instead%20of%20blocking%20the%20connection&In-Reply-To=%3C1370236092874-27157.post%40n5.nabble.com%3E"
+       TITLE="[rabbitmq-discuss] Low disk space causes RabbitMQ to loose messages instead of blocking the connection">yonmost at gmail.com
+       </A><BR>
+    <I>Mon Jun  3 06:08:12 BST 2013</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="027639.html">[rabbitmq-discuss] Unable to start rabbitmq-server on a fresh	installed server
+</A></li>
+        <LI>Next message: <A HREF="027642.html">[rabbitmq-discuss] Low disk space causes RabbitMQ to lose messages instead of blocking the connection
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#27640">[ date ]</a>
+              <a href="thread.html#27640">[ thread ]</a>
+              <a href="subject.html#27640">[ subject ]</a>
+              <a href="author.html#27640">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>I have a java application that publishes messages to a RabbitMQ server. 
+When the available disk space drops below rabbit's low watermark I get
+unexpected behavior.  
+
+The expected behavior is that  the connection will become blocking
+&lt;<A HREF="http://www.rabbitmq.com/memory.html">http://www.rabbitmq.com/memory.html</A>&gt;  , making my application hang on the
+call to /Channel.basicPublish/.
+
+The actual behavior is that the connection appears to be blocking in the
+management console, but calls to /Channel.basicPublish/ return with no
+errors and the messages that were supposed to be published are lost.  
+This behavior undermines the most important feature of RabbitMQ, which is
+robustness.
+
+Below is a minimal version of my application for testing. All it does is
+publish a message every second with an incrementing index (1, 2, 3, ...).
+The messages are received just fine by the RabbitMQ server, until I set the
+low watermark to a very high value, by putting the following line in the
+/rabbitmq.config/ file:
+
+    [    
+      {rabbit, [{disk_free_limit, 60000000000}]}
+    ].
+
+After restarting the server, I get a low disk space notification in the
+management console, the connection is marked as 'blocking', and no more
+messages are received by the server. However, the application keeps running
+and sending messages as if nothing is wrong. When I reduce the watermark
+back to a normal value messages are received by the server again, but all
+the messages that were sent while the connection was blocking are lost.
+
+ - *Am I doing something wrong?*
+ - *Is this a bug in RabbitMQ?*
+ - *If so, is there a workaround?*
+
+OS: Windows 8 64bit  
+RabbitMQ server version: 3.1.1  
+RabbitMQ Java client version: 3.1.0  
+
+Test application code:
+
+    import com.rabbitmq.client.Channel;
+    import com.rabbitmq.client.Connection;
+    import com.rabbitmq.client.ConnectionFactory;
+    import com.rabbitmq.client.MessageProperties;
+    import org.slf4j.Logger;
+    import org.slf4j.LoggerFactory;
+    import java.io.IOException;
+    
+    public class Main {
+    
+        private final static Logger logger =
+LoggerFactory.getLogger(Main.class);
+        private final static String QUEUE_NAME = &quot;testQueue&quot;;
+    
+        private static Channel channel = null;
+    
+        private static void connectToRabbitMQ() throws IOException {
+            ConnectionFactory factory = new ConnectionFactory();
+            Connection connection = factory.newConnection();
+            channel = connection.createChannel();
+            channel.queueDeclare(
+                    QUEUE_NAME,
+                    true,       // Durable - survive a server restart
+                    false,      // Not exclusive to this connection
+                    false,      // Do not autodelete when no longer in use
+                    null        // Arguments
+            );
+        }
+    
+        private static void disposeChannel()
+        {
+            if (channel == null) {
+                return;
+            }
+            try {
+                channel.close();
+            } catch (Exception e) {
+            } finally {
+                channel = null;
+            }
+        }
+    
+        public static void main(String[] args) throws Exception {
+    
+            boolean interrupted = false;
+            int messageNumber = 1;
+    
+            while (!interrupted) {
+                byte[] message = Integer.toString(messageNumber).getBytes();
+                try {
+                    if (channel == null) {
+                        connectToRabbitMQ();
+                    }
+                    channel.basicPublish(
+                            &quot;&quot;,
+                            QUEUE_NAME,
+                            MessageProperties.MINIMAL_PERSISTENT_BASIC,
+                            message
+                    );
+                    logger.info(&quot;Published message number {}&quot;,
+messageNumber);
+                    messageNumber++;
+                } catch (Exception e) {
+                    logger.info(&quot;Unable to connect to RabbitMQ...&quot;);
+                    disposeChannel();
+                }
+                try {
+                    Thread.sleep(1000);
+                } catch (InterruptedException e) {
+                    logger.info(&quot;Interrupted&quot;);
+                    interrupted = true;
+                }
+            }
+        }
+    }
+
+
+
+--
+View this message in context: <A HREF="http://rabbitmq.1065348.n5.nabble.com/Low-disk-space-causes-RabbitMQ-to-loose-messages-instead-of-blocking-the-connection-tp27157.html">http://rabbitmq.1065348.n5.nabble.com/Low-disk-space-causes-RabbitMQ-to-loose-messages-instead-of-blocking-the-connection-tp27157.html</A>
+Sent from the RabbitMQ mailing list archive at Nabble.com.
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="027639.html">[rabbitmq-discuss] Unable to start rabbitmq-server on a fresh	installed server
+</A></li>
+	<LI>Next message: <A HREF="027642.html">[rabbitmq-discuss] Low disk space causes RabbitMQ to lose messages instead of blocking the connection
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#27640">[ date ]</a>
+              <a href="thread.html#27640">[ thread ]</a>
+              <a href="subject.html#27640">[ subject ]</a>
+              <a href="author.html#27640">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

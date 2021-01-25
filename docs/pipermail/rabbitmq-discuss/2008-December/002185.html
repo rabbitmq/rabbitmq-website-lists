@@ -1,0 +1,134 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Fwd:  Rabbitmq falling over &amp; losing messages
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20Fwd%3A%20%20Rabbitmq%20falling%20over%20%26%20losing%20messages&In-Reply-To=8B1CAAA2-F11E-4707-985D-376327B3D39C%40gmail.com">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002182.html">
+   <LINK REL="Next"  HREF="002186.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Fwd:  Rabbitmq falling over &amp; losing messages</H1>
+    <B>0x6e6562 at gmail.com</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20Fwd%3A%20%20Rabbitmq%20falling%20over%20%26%20losing%20messages&In-Reply-To=8B1CAAA2-F11E-4707-985D-376327B3D39C%40gmail.com"
+       TITLE="[rabbitmq-discuss] Fwd:  Rabbitmq falling over &amp; losing messages">0x6e6562 at gmail.com
+       </A><BR>
+    <I>Mon Dec  1 19:25:44 GMT 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002182.html">[rabbitmq-discuss] help to begin with amqp
+</A></li>
+        <LI>Next message: <A HREF="002186.html">[rabbitmq-discuss] py-amqplib being reworked
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2185">[ date ]</a>
+              <a href="thread.html#2185">[ thread ]</a>
+              <a href="subject.html#2185">[ subject ]</a>
+              <a href="author.html#2185">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>---------- Forwarded message ----------
+From: Toby White &lt;<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">toby.o.h.white at googlemail.com</A>&gt;
+Date: Mon, 1 Dec 2008 18:11:38 +0000
+Subject: Re: [rabbitmq-discuss] Rabbitmq falling over &amp; losing messages
+To: Ben Hood &lt;<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">0x6e6562 at gmail.com</A>&gt;
+
+Thanks for the explanation; that makes sense.
+
+Am I right in thinking that the rate of message arrival is unimportant
+- ie that if I fed the messages in more slowly (still without
+consumers) I'd still see the same behaviour, of Erlang aggressively
+trying to grab too much memory, failing, and crashing?
+
+I should clarify, I don't intend that there not be any consumers - but
+the intended workflow was that large numbers of messages are
+periodically dumped to a queue, while workers constantly consume at a
+much lower instantaneous rate (though obviously the long-term ingress
+and egress rates will be equal). I'd hoped to be able to dump more
+messages, but for the moment I can get round this by sending fewer,
+larger, messages.
+
+I think you're probably right that it makes most sense to solve this
+issue as part of the more general issue of paging queues to disk -
+this is certainly not blocking me now.
+
+Toby
+
+On 1 Dec 2008, at 17:00, Ben Hood wrote:
+
+&gt;<i> Toby,
+</I>&gt;<i>
+</I>&gt;<i> On Mon, Dec 1, 2008 at 11:33 AM, Toby White
+</I>&gt;<i> &lt;<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">toby.o.h.white at googlemail.com</A>&gt; wrote:
+</I>&gt;&gt;&gt;<i> Do you not see anything in the log about an alarm handler for
+</I>&gt;&gt;&gt;<i> memory, e.g.
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i> =INFO REPORT==== 9-Nov-2008::15:13:31 ===
+</I>&gt;&gt;&gt;<i>  alarm_handler: {set,{system_memory_high_watermark,[]}}
+</I>&gt;<i>
+</I>&gt;<i> I've tried to simulate your test locally and get the same results,
+</I>&gt;<i> albeit with different figures. The issue is that even with persistent
+</I>&gt;<i> messaging, you are still bound by memory because Rabbit basically
+</I>&gt;<i> copies the in-memory copy of the message to the journal. You can see
+</I>&gt;<i> this by the fact that Erlang tries to allocate ~700MB of memory in one
+</I>&gt;<i> hit:
+</I>&gt;<i>
+</I>&gt;&gt;<i> Crash dump was written to: erl_crash.dump
+</I>&gt;&gt;<i> eheap_alloc: Cannot allocate 729810240 bytes of memory (of type
+</I>&gt;&gt;<i> &quot;heap&quot;).
+</I>&gt;&gt;<i> Aborted
+</I>&gt;<i>
+</I>&gt;<i> Because the increment is so big, the memory supervisor does not get a
+</I>&gt;<i> chance to set the high watermark and let producer flow control
+</I>&gt;<i> throttle the rate of production because the interpreter has already
+</I>&gt;<i> died.
+</I>&gt;<i>
+</I>&gt;<i> This is caused by the fact that you have nothing consuming messages
+</I>&gt;<i> and hence the persister log is growing continuously. Because of the
+</I>&gt;<i> way that the snapshot mechanism currently works, an increasing amount
+</I>&gt;<i> of memory is required to create snapshots of a growing journal.
+</I>&gt;<i>
+</I>&gt;<i> A solution to this may be to refactor the persister so that it can
+</I>&gt;<i> handle large surges in persistent message volumes without having to
+</I>&gt;<i> rely on something draining it.
+</I>&gt;<i>
+</I>&gt;<i> However, we are looking into the whole disk based queue paging area in
+</I>&gt;<i> general and it may be more appropriate to incorporate a solution for
+</I>&gt;<i> the symptom you are seeing into that work.
+</I>&gt;<i>
+</I>&gt;<i> Another reason to not just *optimize* the persister is also holistic -
+</I>&gt;<i> even if you can write stuff down to disk in a smooth fashion, you are
+</I>&gt;<i> still going to run into the issue that all messages are still kept in
+</I>&gt;<i> memory.
+</I>&gt;<i>
+</I>&gt;<i> HTH,
+</I>&gt;<i>
+</I>&gt;<i> Ben
+</I>
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002182.html">[rabbitmq-discuss] help to begin with amqp
+</A></li>
+	<LI>Next message: <A HREF="002186.html">[rabbitmq-discuss] py-amqplib being reworked
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2185">[ date ]</a>
+              <a href="thread.html#2185">[ thread ]</a>
+              <a href="subject.html#2185">[ subject ]</a>
+              <a href="author.html#2185">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

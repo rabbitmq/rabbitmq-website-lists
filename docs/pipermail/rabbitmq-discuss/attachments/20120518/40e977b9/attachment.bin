@@ -1,0 +1,62 @@
+#!/usr/bin/perl
+
+use strict;
+use warnings;
+use IO::Socket::INET;
+
+my $host = 'localhost';
+my $user = 'guest';
+my $pass = 'guest';
+
+my $sock = IO::Socket::INET->new(
+    Proto     => 'tcp',
+    PeerAddr  => $host,
+    PeerPort  => 61613,
+);
+
+die "Can't connect to RabbitMQ: $!" unless $sock;
+
+my $connect = "CONNECT\n"        .
+              "login:$user\n"    .
+              "passcode:$pass\n" .
+              "\n"               .
+              "\x00"             ;
+
+# syswrite bypasses buffered IO
+my $written_bytes = syswrite( $sock, $connect );
+die unless ($written_bytes == length $connect);
+
+sleep 1;
+
+my $queue = '/queue/stomp_bug';
+my $body = 'X' x 1000;
+my $len = length $body;
+
+my $msg = "SEND\n"                .
+          "destination:$queue\n"  .
+          "content-length:$len\n" .
+          "\n"                    .
+          $body                   .
+          "\x00"                  ;
+
+# 100 messages of 1 KB
+my $msg_burst = $msg x 100;
+
+for (1..5) {
+
+    print "send 100 messages to $queue...\n";
+
+    my $written_bytes = syswrite( $sock, $msg_burst );
+    die unless ($written_bytes == length $msg_burst);
+
+    # This solves the problem, but it is unacceptable
+    # $sock->write( "\n" x 5000 );
+
+    sleep 10;
+}
+
+close $sock;
+
+# Using the management console, inspect the Ready messages of queue /stomp_bug
+# The expected progression is:  100 ... 200 ... 300 ... 400 ... 500
+# But instead, we usually get:  100 ... 200 ... 299 ... 399 ... 499        

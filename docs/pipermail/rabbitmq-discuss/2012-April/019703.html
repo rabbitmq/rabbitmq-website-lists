@@ -1,0 +1,186 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Sender-selected distribution appears to not work
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Sender-selected%20distribution%20appears%20to%20not%0A%20work&In-Reply-To=%3CCBB8BBFC.1F5A%25Michael.Laing%40nytimes.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="019700.html">
+   <LINK REL="Next"  HREF="019704.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Sender-selected distribution appears to not work</H1>
+    <B>Laing, Michael P.</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Sender-selected%20distribution%20appears%20to%20not%0A%20work&In-Reply-To=%3CCBB8BBFC.1F5A%25Michael.Laing%40nytimes.com%3E"
+       TITLE="[rabbitmq-discuss] Sender-selected distribution appears to not work">Michael.Laing at nytimes.com
+       </A><BR>
+    <I>Sun Apr 22 00:45:47 BST 2012</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="019700.html">[rabbitmq-discuss] Sender-selected distribution appears to not work
+</A></li>
+        <LI>Next message: <A HREF="019704.html">[rabbitmq-discuss] Sender-selected distribution appears to not work
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#19703">[ date ]</a>
+              <a href="thread.html#19703">[ thread ]</a>
+              <a href="subject.html#19703">[ subject ]</a>
+              <a href="author.html#19703">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>The client library for nodejs, 'amqp', does not have support for the amqp
+array data type in headers; I reported it.
+
+So, just to wrap this up, I switched to ruby, and sender-selected
+distribution worked as expected.
+
+I will be implementing my app in ruby or python I guess - at least the
+publisher portion.
+
+Here's a ruby equivalent to the coffeescript I posted earlier; the message
+is delivered to both queues:
+
+#!/usr/bin/env ruby
+# encoding: utf-8
+
+require &quot;rubygems&quot;
+require 'amqp'
+require 'json'
+require 'time'
+
+EventMachine.run do
+  AMQP.connect() do |connection|
+    AMQP::Channel.new(connection) do |channel, open_ok|
+      channel.on_error{|ch, err| puts &quot;channel error: #{err.reply_text}&quot;}
+      exchange = channel.topic &quot;test&quot;, :durable =&gt; true, :autoDelete =&gt;
+false
+      t1_q = channel.queue &quot;t1&quot;, :durable =&gt; true, :autoDelete =&gt; false
+      
+
+      t1_q.bind(exchange, :key =&gt; &quot;foo&quot;).subscribe do |properties, message|
+        puts(
+          &quot;\n#{Time.now.utc.iso8601(6)} got t1 (success)&quot;+
+          &quot;\n  message: #{message}&quot;+
+          &quot;\n  properties: #{properties.attributes.inspect}&quot;
+        )
+      End
+      
+
+      t0_q = channel.queue &quot;t0&quot;, :durable =&gt; true
+
+      t0_q.bind(exchange, :key =&gt; &quot;*&quot;).subscribe do |properties, message|
+        puts(
+          &quot;\n#{Time.now.utc.iso8601(6)} got t0 (expected)&quot;+
+          &quot;\n  message: #{message}&quot;+
+          &quot;\n  properties: #{properties.attributes.inspect}&quot;
+        )
+      End
+
+      
+      message = {:test =&gt; &quot;message&quot;}
+      cc_header = [&quot;foo&quot;,&quot;bar&quot;] # note array
+
+      
+      exchange.publish(
+        message.to_json(),
+        :routing_key =&gt; &quot;whatever&quot;,
+        :headers =&gt; {:CC =&gt; cc_header},
+        :content_type =&gt; &quot;application/json&quot;
+      )
+    end
+  end
+end
+
+
+
+
+On 4/21/12 9:25 AM, &quot;Laing, Michael P.&quot; &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">Michael.Laing at nytimes.com</A>&gt; wrote:
+
+&gt;<i>If I quote the &quot;CC&quot; in the management console, I no longer get the 406
+</I>&gt;<i>failure.
+</I>&gt;<i>
+</I>&gt;<i>But my 'guessed at' format for array args in the console didn't work: I'll
+</I>&gt;<i>experiment a bit.
+</I>&gt;<i>
+</I>&gt;<i>And I'll dive into the client library for my test program.
+</I>&gt;<i>
+</I>&gt;<i>I can always switch from nodejs to ruby if necessary. The nodejs library
+</I>&gt;<i>is quite sketchy, unfortunately.
+</I>&gt;<i>
+</I>&gt;<i>Thanks!
+</I>&gt;<i>
+</I>&gt;<i>ml
+</I>&gt;<i>
+</I>&gt;<i>On 4/21/12 9:15 AM, &quot;Matthias Radestock&quot; &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">matthias at rabbitmq.com</A>&gt; wrote:
+</I>&gt;<i>
+</I>&gt;&gt;<i>On 21/04/12 14:05, Laing, Michael P. wrote:
+</I>&gt;&gt;&gt;<i> Unfortunately, testing via the management console returns this:
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i> 406 PRECONDITION_FAILED - invalid message:
+</I>&gt;&gt;&gt;<i> {unacceptable_type_in_header,longstr,&quot;CC&quot;}
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i> (although it's not really clear how to enter an array in the field)
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i> Testing via my program returns something similar:
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i> Unhandled channel error: PRECONDITION_FAILED - invalid message:
+</I>&gt;&gt;&gt;<i> {unacceptable_type_in_header,table,&quot;CC&quot;}
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i> It seems to reject &quot;CC&quot; as a header.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i>The header value needs to be an AMQP 'array'. Unfortunately I have no
+</I>&gt;&gt;<i>idea how to enter that in the management UI or how to produce such a
+</I>&gt;&gt;<i>header in the client library you are using.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i>Matthias.
+</I>&gt;<i>
+</I>
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="019700.html">[rabbitmq-discuss] Sender-selected distribution appears to not work
+</A></li>
+	<LI>Next message: <A HREF="019704.html">[rabbitmq-discuss] Sender-selected distribution appears to not work
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#19703">[ date ]</a>
+              <a href="thread.html#19703">[ thread ]</a>
+              <a href="subject.html#19703">[ subject ]</a>
+              <a href="author.html#19703">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

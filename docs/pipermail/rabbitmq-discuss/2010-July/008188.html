@@ -1,0 +1,128 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] QueueingConsumer basicPublish safety
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20QueueingConsumer%20basicPublish%20safety&In-Reply-To=%3CAANLkTi%3DRbR962yjQsyxJ%3DiK17jefKCbpbT9kNguUqnQq%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="008207.html">
+   <LINK REL="Next"  HREF="008209.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] QueueingConsumer basicPublish safety</H1>
+    <B>tsuraan</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20QueueingConsumer%20basicPublish%20safety&In-Reply-To=%3CAANLkTi%3DRbR962yjQsyxJ%3DiK17jefKCbpbT9kNguUqnQq%40mail.gmail.com%3E"
+       TITLE="[rabbitmq-discuss] QueueingConsumer basicPublish safety">tsuraan at gmail.com
+       </A><BR>
+    <I>Tue Jul 27 21:53:04 BST 2010</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="008207.html">[rabbitmq-discuss] installation issue
+</A></li>
+        <LI>Next message: <A HREF="008209.html">[rabbitmq-discuss] QueueingConsumer basicPublish safety
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#8188">[ date ]</a>
+              <a href="thread.html#8188">[ thread ]</a>
+              <a href="subject.html#8188">[ subject ]</a>
+              <a href="author.html#8188">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>In my program, messages coming from rabbit are handled on different
+threads, and once the message is handled it is ack'd.  New messages
+are also sometimes generated, so I need to send them as well.  I know
+that channels aren't thread-safe, so I wrote a wrapper class around
+QueueingConsumer that maintains two internal BlockingQueues, one for
+delivery tags to ack and one for messages to send.  I have public
+methods ack and publish that take dtags or message representations and
+enqueue them, and I overrode the nextDelivery(long) method to look
+like this:
+
+  public QueueingConsumer.Delivery nextDelivery(long timeout)
+    throws ShutdownSignalException, InterruptedException
+  {
+    QueueingConsumer.Delivery delivery = super.nextDelivery(timeout);
+    this.processAcks();
+    this.processPublishes();
+    return delivery;
+  }
+
+processAcks() iterates through the acks BlockingQueue and calls
+
+this.getChannel().basicAck(l.longValue(), false);
+
+while processPublishes() iterates through the publishes BlockingQueue and calls
+
+this.getChannel().basicPublish(m.exchange, m.key, ...)
+
+The problem I'm having is that, although all these functions are
+always being called in the thread that the consumer is running in, I'm
+hanging.  My stack trace looks like this:
+
+Stack trace:
+java.lang.Object.wait(Native Method)
+java.lang.Object.wait(Object.java:485)
+com.rabbitmq.client.impl.AMQChannel.quiescingTransmit(AMQChannel.java:300)
+com.rabbitmq.client.impl.AMQChannel.transmit(AMQChannel.java:285)
+com.rabbitmq.client.impl.ChannelN.basicPublish(ChannelN.java:403)
+com.foo.rabbit.AckingQueueingConsumer.processPublishes(AckingQueueingConsumer.java:136)
+com.foo.rabbit.AckingQueueingConsumer.nextDelivery(AckingQueueingConsumer.java:40)
+[handler stuff]
+java.lang.Thread.run(Thread.java:619)
+
+It seems to have been stuck there for quite a while.  Am I doing
+something obviously wrong, or is this something complicated?  I'm
+reasonably sure that the channel is only being used in the thread
+where the consumer is subscribed, so I'm hoping that I missed some
+caveat about doing publishes right after a nextDelivery or something.
+Any tips would be very appreciated.
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="008207.html">[rabbitmq-discuss] installation issue
+</A></li>
+	<LI>Next message: <A HREF="008209.html">[rabbitmq-discuss] QueueingConsumer basicPublish safety
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#8188">[ date ]</a>
+              <a href="thread.html#8188">[ thread ]</a>
+              <a href="subject.html#8188">[ subject ]</a>
+              <a href="author.html#8188">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

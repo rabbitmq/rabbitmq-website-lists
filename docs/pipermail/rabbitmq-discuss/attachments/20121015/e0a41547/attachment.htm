@@ -1,0 +1,27 @@
+<tt>
+Hey&nbsp;everyone&nbsp;-&lt;div&gt;&lt;br&gt;&lt;/div&gt;&lt;div&gt;We&amp;#39;ve&nbsp;been&nbsp;running&nbsp;some&nbsp;tests&nbsp;on&nbsp;a&nbsp;RabbitMQ&nbsp;stack&nbsp;that&nbsp;we&nbsp;have&nbsp;running&nbsp;in&nbsp;EC2&nbsp;and&nbsp;encountered&nbsp;some&nbsp;unexpected&nbsp;behaviors&nbsp;in&nbsp;the&nbsp;response&nbsp;times&nbsp;for&nbsp;publisher&nbsp;confirms&nbsp;and&nbsp;wanted&nbsp;to&nbsp;see&nbsp;if&nbsp;folks&nbsp;here&nbsp;had&nbsp;an&nbsp;idea&nbsp;of&nbsp;what&nbsp;the&nbsp;root&nbsp;cause&nbsp;might&nbsp;be.&lt;/div&gt;<br>
+<br>
+<br>
+&lt;div&gt;&lt;br&gt;&lt;/div&gt;&lt;div&gt;First,&nbsp;some&nbsp;details&nbsp;on&nbsp;the&nbsp;stack:&lt;/div&gt;&lt;div&gt;*&nbsp;EC2&nbsp;m1.xlarge&nbsp;(15GB&nbsp;memory,&nbsp;8&nbsp;EC2&nbsp;compute&nbsp;units,&nbsp;64-bit,&nbsp;1&nbsp;Gigabit&nbsp;Ethernet)&lt;/div&gt;&lt;div&gt;*&nbsp;Ubuntu 10.04&lt;/div&gt;&lt;div&gt;*&nbsp;Erlang&nbsp;R13B03&lt;/div&gt;&lt;div&gt;&lt;div&gt;*&nbsp;RabbitMQ&nbsp;2.8.5&lt;/div&gt;<br>
+<br>
+&lt;div&gt;*&nbsp;Mounted&nbsp;to&nbsp;4&nbsp;RAID0&nbsp;ephemeral&nbsp;drives&nbsp;(I&nbsp;believe&nbsp;400GB&nbsp;each)&lt;/div&gt;<br>
+&lt;/div&gt;&lt;div&gt;&lt;br&gt;&lt;/div&gt;&lt;div&gt;...and&nbsp;some&nbsp;details&nbsp;on&nbsp;the&nbsp;setup:&lt;/div&gt;&lt;div&gt;*&nbsp;16&nbsp;durable,&nbsp;fanout&nbsp;exchanges&lt;/div&gt;&lt;div&gt;*&nbsp;16&nbsp;durable&nbsp;queues&lt;/div&gt;&lt;div&gt;*&nbsp;Each&nbsp;exchange&nbsp;mapped&nbsp;to&nbsp;a&nbsp;single&nbsp;queue&lt;/div&gt;&lt;div&gt;*&nbsp;Each&nbsp;message&nbsp;published&nbsp;as&nbsp;persistent&lt;/div&gt;<br>
+<br>
+<br>
+&lt;div&gt;&lt;br&gt;&lt;/div&gt;&lt;div&gt;We&nbsp;have&nbsp;about&nbsp;5,000&nbsp;connections&nbsp;(over&nbsp;many&nbsp;servers)&nbsp;publishing&nbsp;a&nbsp;message&nbsp;once&nbsp;every&nbsp;15s.&nbsp; Each&nbsp;connection&nbsp;has&nbsp;publisher&nbsp;confirms&nbsp;enabled.&nbsp; Each&nbsp;message&nbsp;is&nbsp;approximately&nbsp;10-15KB&nbsp;in&nbsp;size&nbsp;(give&nbsp;or&nbsp;take).&nbsp; While&nbsp;running&nbsp;this&nbsp;test&nbsp;we&nbsp;tracked&nbsp;the&nbsp;following&nbsp;data:&lt;/div&gt;<br>
+<br>
+&lt;div&gt;<br>
+&lt;br&gt;&lt;/div&gt;&lt;div&gt;*&nbsp;Maximum&nbsp;amount&nbsp;of&nbsp;time&nbsp;to&nbsp;receive&nbsp;a&nbsp;confirm: &lt;a&nbsp;href=&quot;http://i.imgur.com/SrXJP.png&quot;&nbsp;target=&quot;_blank&quot;&gt;http://i.imgur.com/SrXJP.png&lt;/a&gt;&lt;/div&gt;&lt;div&gt;*&nbsp;Average&nbsp;amount&nbsp;of&nbsp;time&nbsp;to&nbsp;receive&nbsp;a&nbsp;confirm: &lt;a&nbsp;href=&quot;http://i.imgur.com/ryWmr.png&quot;&nbsp;target=&quot;_blank&quot;&gt;http://i.imgur.com/ryWmr.png&lt;/a&gt;&lt;/div&gt;<br>
+<br>
+<br>
+&lt;div&gt;&lt;br&gt;&lt;/div&gt;&lt;div&gt;Looking&nbsp;at&nbsp;this&nbsp;graph&nbsp;seems&nbsp;to&nbsp;indicate&nbsp;that&nbsp;there&amp;#39;s&nbsp;something&nbsp;going&nbsp;on&nbsp;in&nbsp;RabbitMQ&nbsp;about&nbsp;every&nbsp;10&nbsp;minutes&nbsp;that&nbsp;causes&nbsp;a&nbsp;significant&nbsp;increase&nbsp;in&nbsp;the&nbsp;amount&nbsp;of&nbsp;time&nbsp;it&nbsp;takes&nbsp;to&nbsp;receive&nbsp;a&nbsp;publisher&nbsp;confirm.&lt;/div&gt;<br>
+<br>
+&lt;div&gt;&lt;br&gt;&lt;/div&gt;&lt;div&gt;To&nbsp;get&nbsp;some&nbsp;further&nbsp;data&nbsp;about&nbsp;what&nbsp;was&nbsp;happening&nbsp;during&nbsp;each&nbsp;of&nbsp;these&nbsp;spikes,&nbsp;we&nbsp;logged&nbsp;the&nbsp;following&nbsp;data&nbsp;through&nbsp;vmstat&nbsp;and&nbsp;iostat&nbsp;on&nbsp;the&nbsp;machine: &lt;a&nbsp;href=&quot;https://gist.github.com/3874134&quot;&gt;https://gist.github.com/3874134&lt;/a&gt;.&nbsp; You&amp;#39;ll&nbsp;notice&nbsp;that&nbsp;during&nbsp;this&nbsp;spike&nbsp;we&nbsp;experience&nbsp;a&nbsp;significant&nbsp;decrease&nbsp;in&nbsp;the&nbsp;amount&nbsp;of&nbsp;data&nbsp;being&nbsp;written&nbsp;to&nbsp;disk&nbsp;and&nbsp;a&nbsp;significant&nbsp;increase&nbsp;in&nbsp;the&nbsp;await&nbsp;time&nbsp;on&nbsp;each&nbsp;disk.&lt;/div&gt;<br>
+<br>
+&lt;div&gt;&lt;br&gt;&lt;/div&gt;&lt;div&gt;And&nbsp;just&nbsp;a&nbsp;little&nbsp;background:&nbsp;we&nbsp;were&nbsp;planning&nbsp;on&nbsp;using&nbsp;durable&nbsp;queues&nbsp;and&nbsp;publisher&nbsp;confirms&nbsp;to&nbsp;verify&nbsp;that&nbsp;the&nbsp;message&nbsp;was&nbsp;actually&nbsp;received&nbsp;by&nbsp;RabbitMQ.&nbsp; I&nbsp;believe&nbsp;I&amp;#39;ve&nbsp;also&nbsp;read&nbsp;that&nbsp;publisher&nbsp;confirms&nbsp;are&nbsp;typically&nbsp;preferred&nbsp;to&nbsp;transactions.&lt;/div&gt;<br>
+<br>
+&lt;div&gt;&lt;br&gt;&lt;/div&gt;&lt;div&gt;Is&nbsp;this&nbsp;expected&nbsp;behavior&nbsp;for&nbsp;the&nbsp;type&nbsp;of&nbsp;test&nbsp;we&amp;#39;re&nbsp;running?&nbsp; If&nbsp;so,&nbsp;is&nbsp;there&nbsp;anything&nbsp;we&nbsp;can&nbsp;do&nbsp;to&nbsp;make&nbsp;things&nbsp;a&nbsp;bit&nbsp;more&nbsp;consistent?&lt;/div&gt;&lt;div&gt;&lt;br&gt;&lt;/div&gt;&lt;div&gt;Thanks&nbsp;for&nbsp;any&nbsp;thoughts!&lt;/div&gt;&lt;div&gt;<br>
+&lt;br&gt;<br>
+&lt;/div&gt;&lt;div&gt;-Aaron&lt;/div&gt;<br>
+
+</tt>

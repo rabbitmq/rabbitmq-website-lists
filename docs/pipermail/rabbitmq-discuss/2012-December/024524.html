@@ -1,0 +1,218 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] The rabbitmq-server stop command hangs
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20The%20rabbitmq-server%20stop%20command%20hangs&In-Reply-To=%3C262F47E4-F3D8-49EE-A170-B622605A76DD%40rabbitmq.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="024541.html">
+   <LINK REL="Next"  HREF="024525.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] The rabbitmq-server stop command hangs</H1>
+    <B>Tim Watson</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20The%20rabbitmq-server%20stop%20command%20hangs&In-Reply-To=%3C262F47E4-F3D8-49EE-A170-B622605A76DD%40rabbitmq.com%3E"
+       TITLE="[rabbitmq-discuss] The rabbitmq-server stop command hangs">tim at rabbitmq.com
+       </A><BR>
+    <I>Sat Dec 15 15:31:30 GMT 2012</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="024541.html">[rabbitmq-discuss] How to synchronize the RabbitMQ exchanges?
+</A></li>
+        <LI>Next message: <A HREF="024525.html">[rabbitmq-discuss] Crash when purging or deleting a queue with	10k messages
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#24524">[ date ]</a>
+              <a href="thread.html#24524">[ thread ]</a>
+              <a href="subject.html#24524">[ subject ]</a>
+              <a href="author.html#24524">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi Liz,
+
+This should hopefully be fixed in 3.0.1 - are you able to test that and see if it works for you?
+
+Cheers,
+Tim
+
+On 30 Nov 2012, at 16:46, Tim Watson wrote:
+
+&gt;<i> Actually the problem is in the AMQP client that shovel uses - in fact the scenario which triggers this behaviour is rather obscure. From your rabbit-sasl.log we can see that the shovelB and its _realtime friend are not fully operational at the time you're shutting down. This is evident because in the trace, we can see that the shovel are workers are still in the connection establishment phase:
+</I>&gt;<i> 
+</I>&gt;<i> stacktrace:  [{gen,do_call,4,[{file,&quot;gen.erl&quot;},{line,217}]},
+</I>&gt;<i>            {gen_server,call,3,[{file,&quot;gen_server.erl&quot;},{line,184}]},
+</I>&gt;<i>            {application,load1,2,[{file,&quot;application.erl&quot;},{line,95}]},
+</I>&gt;<i>            {application,start,2,[{file,&quot;application.erl&quot;},{line,129}]},
+</I>&gt;<i>            {amqp_connection,start,1,[]},
+</I>&gt;<i>            {rabbit_shovel_worker,make_conn_and_chan,1,[]},
+</I>&gt;<i>            {rabbit_shovel_worker,handle_cast,2,[]},
+</I>&gt;<i>            {gen_server2,handle_msg,2,[]}]
+</I>&gt;<i> 
+</I>&gt;<i> In the sasl logs we see repeated entries indicating that there is a problem identifying the host, which is preventing the workers from establishing the shovel connection properly:
+</I>&gt;<i> 
+</I>&gt;<i> =CRASH REPORT==== 28-Nov-2012::14:07:52 ===
+</I>&gt;<i>  crasher:
+</I>&gt;<i>    initial call: amqp_gen_connection:init/1
+</I>&gt;<i>    pid: &lt;0.579.0&gt;
+</I>&gt;<i>    registered_name: []
+</I>&gt;<i>    exception exit: {unexpected_msg,
+</I>&gt;<i>                        {'EXIT',&lt;0.573.0&gt;,
+</I>&gt;<i>                            {{badmatch,{error,unknown_host}},
+</I>&gt;<i>                             [{rabbit_shovel_worker,make_conn_and_chan,1,[]},
+</I>&gt;<i>                              {rabbit_shovel_worker,handle_cast,2,[]},
+</I>&gt;<i>                              {gen_server2,handle_msg,2,[]},
+</I>&gt;<i>                              {proc_lib,init_p_do_apply,3,
+</I>&gt;<i>                                  [{file,&quot;proc_lib.erl&quot;},{line,227}]}]}}}
+</I>&gt;<i>      in function  gen_server:terminate/6 (gen_server.erl, line 737)
+</I>&gt;<i>    ancestors: [&lt;0.577.0&gt;,amqp_sup,&lt;0.52.0&gt;]
+</I>&gt;<i>    messages: []
+</I>&gt;<i>    links: [&lt;0.577.0&gt;]
+</I>&gt;<i>    dictionary: []
+</I>&gt;<i>    trap_exit: true
+</I>&gt;<i>    status: running
+</I>&gt;<i>    heap_size: 2584
+</I>&gt;<i>    stack_size: 24
+</I>&gt;<i>    reductions: 974
+</I>&gt;<i>  neighbours:
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> Now what is actually happening is this: the application controller for the node (which is part of the Erlang/OTP runtime system) is busy shutting down all the rabbit plugins and the rabbit application itself. Whilst this is happening however, the rabbit_shovel_worker is attempting to connect to 'server.local' and failing. Each time it fails, the shovel supervisor restarts it and tries again to establish an AMQP connection. This connection startup routine, specifically the amqp_connection:start function, contains code that calls the application controller to check if the required client infrastructure (i.e., the amqp_client application) is already running, and that call into the OTP application management APIs actually deadlocks when it is run inside an application shutdown sequence.
+</I>&gt;<i> 
+</I>&gt;<i> So to see this happen, you have to have an AMQP connection attempt that fails and is restarted by its supervisor *just before* the application controller starts shutting down, *and* then attempts to start *just after* the application controller has entered the shutdown phase. The shovel configuration, reconnect_delay and non-availability of the source host (or other network oddities) all play a part here.
+</I>&gt;<i> 
+</I>&gt;<i> Cheers,
+</I>&gt;<i> Tim
+</I>&gt;<i> 
+</I>&gt;<i> On 30 Nov 2012, at 15:57, Elizabeth Liao wrote:
+</I>&gt;<i> 
+</I>&gt;&gt;<i> Thanks for all your help as well.  Just one question, was the problem just in the shovel plugin?
+</I>&gt;&gt;<i> ________________________________________
+</I>&gt;&gt;<i> From: <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss-bounces at lists.rabbitmq.com</A> [<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss-bounces at lists.rabbitmq.com</A>] on behalf of Tim Watson [<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">tim at rabbitmq.com</A>]
+</I>&gt;&gt;<i> Sent: Friday, November 30, 2012 10:35 AM
+</I>&gt;&gt;<i> To: Discussions about RabbitMQ
+</I>&gt;&gt;<i> Subject: Re: [rabbitmq-discuss] The rabbitmq-server stop command hangs
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;<i> Thank you Liz,
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;<i> We've now found the problem, filed a bug and fixed it. Hopefully the fix will be released in 3.0.1 in the very near future. :)
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;<i> Thanks again for reporting this, and providing us with all the information that has helped us track it down!
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;<i> Tim
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;<i> On 30 Nov 2012, at 15:18, Elizabeth Liao wrote:
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;&gt;&gt;<i> One more question please. Is the node that you're trying to shut down hanging *indefinitely* or for a very long time, or for a minute or so?
+</I>&gt;&gt;&gt;<i> 
+</I>&gt;&gt;&gt;<i> In all cases for which I've sent logs/trace outputs, the shutdown hangs indefinitely.   I've also seen instances where it hangs for a very long time (~5 minutes) but those were not reproducible.
+</I>&gt;&gt;&gt;<i> 
+</I>&gt;&gt;&gt;&gt;<i> When the rabbit is stuck shutting down, is the source host for shovelB and shovelB_realtime (server.local) accessible - i.e., you can ping it, telnet to the amqp port, etc? It seems these two shovels have never got properly started, and they're hung (still trying to establish connections/channels) when you're trying to shut down. We are filing a bug and looking at how to fix this, but it would be helpful for me to understand the topology so I can simulate this bug when producing a fix.
+</I>&gt;&gt;&gt;<i> 
+</I>&gt;&gt;&gt;<i> I checked the connections to and from server.local using ping and telneting to the amqp port and both look okay at the time the shutdown is hanging.
+</I>&gt;&gt;&gt;<i> 
+</I>&gt;&gt;&gt;<i> Other information that may be of use:
+</I>&gt;&gt;&gt;<i> * server.local does not have any special configuration (no rabbitmq.config file)
+</I>&gt;&gt;&gt;<i> * I can reproduce this more reliably with 2.8.7 than 3.0.0
+</I>&gt;&gt;&gt;<i> * We're initiating the shutdown shortly after bootup
+</I>&gt;&gt;&gt;<i> 
+</I>&gt;&gt;&gt;<i> Liz
+</I>&gt;&gt;&gt;<i> 
+</I>&gt;&gt;&gt;<i> 
+</I>&gt;&gt;&gt;<i> Email Confidentiality Notice
+</I>&gt;&gt;&gt;<i> 
+</I>&gt;&gt;&gt;<i> The information contained in this transmission is confidential, proprietary or privileged and may be subject to protection under the law. This message is intended for the sole use of the individual or entity to whom it's addressed. If you are not the intended recipient, you are notified that any use, distribution or copying of the message is strictly prohibited and may subject you to criminal or civil penalties. If you received this transmission in error, please contact the sender immediately by replying to this email and delete the material from any computer.
+</I>&gt;&gt;&gt;<i> _______________________________________________
+</I>&gt;&gt;&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;&gt;&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;&gt;&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;<i> _______________________________________________
+</I>&gt;&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>&gt;&gt;<i> Email Confidentiality Notice
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;<i> The information contained in this transmission is confidential, proprietary or privileged and may be subject to protection under the law. This message is intended for the sole use of the individual or entity to whom it's addressed. If you are not the intended recipient, you are notified that any use, distribution or copying of the message is strictly prohibited and may subject you to criminal or civil penalties. If you received this transmission in error, please contact the sender immediately by replying to this email and delete the material from any computer.
+</I>&gt;&gt;<i> _______________________________________________
+</I>&gt;&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>&gt;<i> 
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="024541.html">[rabbitmq-discuss] How to synchronize the RabbitMQ exchanges?
+</A></li>
+	<LI>Next message: <A HREF="024525.html">[rabbitmq-discuss] Crash when purging or deleting a queue with	10k messages
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#24524">[ date ]</a>
+              <a href="thread.html#24524">[ thread ]</a>
+              <a href="subject.html#24524">[ subject ]</a>
+              <a href="author.html#24524">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

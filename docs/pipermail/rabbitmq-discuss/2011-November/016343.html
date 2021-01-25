@@ -1,0 +1,179 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] performance with thousands of auto_delete	queues
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20performance%20with%20thousands%20of%20auto_delete%0A%09queues&In-Reply-To=%3C842DE705-1D79-463A-AF4B-E8862A555AAB%40rabbitmq.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="016334.html">
+   <LINK REL="Next"  HREF="016496.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] performance with thousands of auto_delete	queues</H1>
+    <B>Ask Solem</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20performance%20with%20thousands%20of%20auto_delete%0A%09queues&In-Reply-To=%3C842DE705-1D79-463A-AF4B-E8862A555AAB%40rabbitmq.com%3E"
+       TITLE="[rabbitmq-discuss] performance with thousands of auto_delete	queues">ask at rabbitmq.com
+       </A><BR>
+    <I>Thu Nov 17 16:20:18 GMT 2011</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="016334.html">[rabbitmq-discuss] performance with thousands of auto_delete queues
+</A></li>
+        <LI>Next message: <A HREF="016496.html">[rabbitmq-discuss] performance with thousands of auto_delete queues
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#16343">[ date ]</a>
+              <a href="thread.html#16343">[ thread ]</a>
+              <a href="subject.html#16343">[ subject ]</a>
+              <a href="author.html#16343">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>
+On 17 Nov 2011, at 14:42, Muharem Hrnjadovic wrote:
+&gt;&gt;<i> 
+</I>&gt;<i> We do need the results.
+</I>&gt;<i> 
+</I>&gt;&gt;<i> You can do so by upgrading to the latest version (where results are
+</I>&gt;&gt;<i> disabled by default), or setting @task(ignore_result=True) for
+</I>&gt;&gt;<i> individual tasks, or CELERY_IGNORE_RESULT=True globally.
+</I>&gt;<i> 
+</I>&gt;&gt;<i> An auto_delete queue is only deleted when it's empty,
+</I>&gt;&gt;<i> so you have to collect the results.
+</I>&gt;<i> How does one collect the results? We do
+</I>&gt;<i> 
+</I>&gt;<i>   result = TaskSet(tasks=subtasks).apply_async()
+</I>&gt;<i> 
+</I>&gt;<i>   # Wait for all subtasks to complete.
+</I>&gt;<i>   while not result.ready():
+</I>&gt;<i>       time.sleep(0.25)
+</I>&gt;<i> 
+</I>&gt;<i>   the_results = result.join()
+</I>&gt;<i> 
+</I>&gt;<i> Is there something we need to do beyond that?
+</I>&gt;<i> 
+</I>
+This would collect the result, but maybe there are cases where it's not collected,
+or you have so many tasks that using one queue per task is not feasible.
+
+If the process to publish the task, and to collect the result is always the same,
+you can use reply-to style replies (one queue per publisher, instead of
+one queue per task). There's no built-in support for this in Celery, but adding
+the capability to your task should be fairly easy.
+Of course if there are as many publishers as there are tasks, then this doesn't help much.
+
+The best thing you can do right now is to set an expiry
+time for the results, that would probably help at least in the short term.
+
+Also you could consider using a database, Redis or memcached to store the
+results in. The downside then is that you have to use polling to retrieve
+the results in the way you are doing (join).
+
+Note also that you should never wait for the results of a subtask within a task:
+
+   @task
+   def X():
+       r = TaskSet(Y.subtask((i, ))
+			for i in iterable).apply_async()
+       r.join() # &lt;-- VERY BAD
+
+This is bad because it can result in a deadlock;
+Imagine that there are only 5 worker process available,
+and that there are 5 X tasks currently running. In this scenario
+there are no more worker processes to finish the subtasks X
+is waiting for: it deadlocks and waits forever.
+See <A HREF="http://docs.celeryproject.org/en/latest/userguide/tasks.html#avoid-launching-synchronous-subtasks">http://docs.celeryproject.org/en/latest/userguide/tasks.html#avoid-launching-synchronous-subtasks</A>
+
+Instead you should use callbacks for single task invocations and chords
+for groups of tasks that needs to be synchronized (TaskSet callbacks).
+<A HREF="http://docs.celeryproject.org/en/latest/userguide/tasksets.html">http://docs.celeryproject.org/en/latest/userguide/tasksets.html</A>
+
+The Celery master branch in git contains support for chords when using
+the AMQP result backend too (will be part of 2.5.0).
+
+
+&gt;<i> 
+</I>
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="016334.html">[rabbitmq-discuss] performance with thousands of auto_delete queues
+</A></li>
+	<LI>Next message: <A HREF="016496.html">[rabbitmq-discuss] performance with thousands of auto_delete queues
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#16343">[ date ]</a>
+              <a href="thread.html#16343">[ thread ]</a>
+              <a href="subject.html#16343">[ subject ]</a>
+              <a href="author.html#16343">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

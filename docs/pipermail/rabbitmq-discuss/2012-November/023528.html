@@ -1,0 +1,208 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Pub/Sub -- block publisher until all acks received from subscribers?
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Pub/Sub%20--%20block%20publisher%20until%20all%20acks%0A%20received%20from%20subscribers%3F&In-Reply-To=%3CCAFedJMjdFEA%2B5UK_dO9_X-iJJXOKJ-qibuJF5wPS%2BVZO6HYuMw%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="023522.html">
+   <LINK REL="Next"  HREF="023575.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Pub/Sub -- block publisher until all acks received from subscribers?</H1>
+    <B>Nick Martin</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Pub/Sub%20--%20block%20publisher%20until%20all%20acks%0A%20received%20from%20subscribers%3F&In-Reply-To=%3CCAFedJMjdFEA%2B5UK_dO9_X-iJJXOKJ-qibuJF5wPS%2BVZO6HYuMw%40mail.gmail.com%3E"
+       TITLE="[rabbitmq-discuss] Pub/Sub -- block publisher until all acks received from subscribers?">nick at faceture.com
+       </A><BR>
+    <I>Thu Nov  1 15:50:02 GMT 2012</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="023522.html">[rabbitmq-discuss] Pub/Sub -- block publisher until all acks received from subscribers?
+</A></li>
+        <LI>Next message: <A HREF="023575.html">[rabbitmq-discuss] Pub/Sub -- block publisher until all acks received from subscribers?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#23528">[ date ]</a>
+              <a href="thread.html#23528">[ thread ]</a>
+              <a href="subject.html#23528">[ subject ]</a>
+              <a href="author.html#23528">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Thanks, Emile, for your explanation. That was helpful.
+
+An alternative approach would be to declare a return queue for the
+&gt;<i> consumers to report their progress to the publisher. The publisher can
+</I>&gt;<i> subscribe to this queue and use this to wait until the subscribers are
+</I>&gt;<i> ready before proceeding. The publisher would need to know how many
+</I>&gt;<i> subscribers to expect replies from.
+</I>&gt;<i>
+</I>
+This is one of the main reasons I wanted to use pub/sub. I don't want the
+publisher to have to know how many subscribers exist.
+
+
+&gt;<i> If your design allows it you should avoid coupling producers and consumers
+</I>&gt;<i> as tightly as you seem to need here. What is the reason for forcing
+</I>&gt;<i> producers and consumers in lockstep?
+</I>
+
+Here's a quick explanation of my design. I have a system with multiple
+machines, each with several worker threads. Each worker takes tasks from a
+shared work queue one at a time, does that task and returns for another
+task. That part of the system already works well. The new part I am trying
+to create is a control system. The control system will send pause and
+resume messages to a worker manager that runs on each worker machine. The
+worker manager is the subscriber. I would like the worker manager to wait
+until all of its workers are paused before acknowledging the pause message
+to the publisher. Sometimes pausing a worker can take up to a minute.
+
+Since each worker manager will wait to send its ack to the publisher until
+all of its workers are paused, the publisher will know that all of the
+workers throughout the system are paused and can safely continue. Later the
+publisher will send a resume message to all of the worker managers and work
+can resume.
+
+Does this seem like a reasonable design? In the future it would probably be
+nice to have a system that has more holistic view of its workers, but for
+now I am not concerned if the publisher sends messages to one machine or
+100.
+
+
+&gt;<i> Can the same aim be achieved in another way by taking a larger view of the
+</I>&gt;<i> system?
+</I>
+
+I'm not sure. Do you have any suggestions?
+
+Thanks,
+Nick
+
+
+On Thu, Nov 1, 2012 at 3:42 AM, Emile Joubert &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">emile at rabbitmq.com</A>&gt; wrote:
+
+&gt;<i>
+</I>&gt;<i> Hi Nick,
+</I>&gt;<i>
+</I>&gt;<i> This page has more detail and you may find some of your answers:
+</I>&gt;<i> <A HREF="http://www.rabbitmq.com/**confirms.html&lt;http://www.rabbitmq.com/confirms.html">http://www.rabbitmq.com/**confirms.html&lt;http://www.rabbitmq.com/confirms.html</A>&gt;
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> On 31/10/12 22:10, Nick Martin wrote:
+</I>&gt;<i>
+</I>&gt;&gt;<i> Wait until all messages published since the last call have been
+</I>&gt;&gt;<i> either ack'd or nack'd by the broker.
+</I>&gt;&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> A message being ack'd by the broker is different from being ack'd by a
+</I>&gt;<i> consumer. If the broker acknowledges a messages it means that the broker
+</I>&gt;<i> has taken responsibility for it by writing it to disk or successfully
+</I>&gt;<i> handed it off. Handing off could mean returning the messages to the
+</I>&gt;<i> publisher (unroutable mandatory msg) or successfully delivering to
+</I>&gt;<i> consumer. The publisher cannot choose how the broker discharges this
+</I>&gt;<i> responsibility. In your case you would like a broker acknowledgement only
+</I>&gt;<i> when the message is successfully delivered to a consumer, but the broker
+</I>&gt;<i> may decide to write the message to disk and acknowledge when the OS
+</I>&gt;<i> guarantees that the disk write succeeded.
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>  It seems to me that the publisher is
+</I>&gt;&gt;<i> supposed to block until all of the messages are ack'd via its call to
+</I>&gt;&gt;<i> waitForConfirmsOrDie(). Is this what this is really supposed to do?
+</I>&gt;&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> Yes, waitForConfirmsOrDie() will block until an ack is received from the
+</I>&gt;<i> broker.
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>  This example code seemed like it matched up perfectly with what I was
+</I>&gt;&gt;<i> trying to do. But, it doesn't seem to work the way I thought it did. In
+</I>&gt;&gt;<i> fact, if, in the consumer thread, I turn off auto-acking messages, then
+</I>&gt;&gt;<i> waitForConfirmsOrDie() still returns immediately.
+</I>&gt;&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> This is because the broker has taken responsibility for the message by
+</I>&gt;<i> writing it to disk.
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>  So what does waitForConfirmsOrDie() actually do? When would it block?
+</I>&gt;&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> It could block e.g. as a result of attempting to perform an fsync
+</I>&gt;<i> operation.
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>  If waitForConfirmsOrDie doesn't do what I want, is there a way to make a
+</I>&gt;&gt;<i> publisher wait until all subscribers ack a message before proceeding?
+</I>&gt;&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> An alternative approach would be to declare a return queue for the
+</I>&gt;<i> consumers to report their progress to the publisher. The publisher can
+</I>&gt;<i> subscribe to this queue and use this to wait until the subscribers are
+</I>&gt;<i> ready before proceeding. The publisher would need to know how many
+</I>&gt;<i> subscribers to expect replies from.
+</I>&gt;<i>
+</I>&gt;<i> If your design allows it you should avoid coupling producers and consumers
+</I>&gt;<i> as tightly as you seem to need here. What is the reason for forcing
+</I>&gt;<i> producers and consumers in lockstep? Can the same aim be achieved in
+</I>&gt;<i> another way by taking a larger view of the system?
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> -Emile
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20121101/49cf64b0/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20121101/49cf64b0/attachment.htm</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="023522.html">[rabbitmq-discuss] Pub/Sub -- block publisher until all acks received from subscribers?
+</A></li>
+	<LI>Next message: <A HREF="023575.html">[rabbitmq-discuss] Pub/Sub -- block publisher until all acks received from subscribers?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#23528">[ date ]</a>
+              <a href="thread.html#23528">[ thread ]</a>
+              <a href="subject.html#23528">[ subject ]</a>
+              <a href="author.html#23528">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

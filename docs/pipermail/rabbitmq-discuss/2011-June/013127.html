@@ -1,0 +1,180 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Database Corruption Possibilities
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Database%20Corruption%20Possibilities&In-Reply-To=%3CE90DA8CBFB449146A7A73EFDF4CAD61306807F590E%40plex05.fastcrop.local%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="013126.html">
+   <LINK REL="Next"  HREF="013259.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Database Corruption Possibilities</H1>
+    <B>Ozan Seymen</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Database%20Corruption%20Possibilities&In-Reply-To=%3CE90DA8CBFB449146A7A73EFDF4CAD61306807F590E%40plex05.fastcrop.local%3E"
+       TITLE="[rabbitmq-discuss] Database Corruption Possibilities">Ozan.Seymen at tdpg.com
+       </A><BR>
+    <I>Fri Jun  3 14:10:28 BST 2011</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="013126.html">[rabbitmq-discuss] Database Corruption Possibilities
+</A></li>
+        <LI>Next message: <A HREF="013259.html">[rabbitmq-discuss] Database Corruption Possibilities
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#13127">[ date ]</a>
+              <a href="thread.html#13127">[ thread ]</a>
+              <a href="subject.html#13127">[ subject ]</a>
+              <a href="author.html#13127">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Thanks Alex. That's also something I thought of - creating a transaction log somewhere else and replay that log if rabbit storage gets corrupted.
+
+However wouldn't I have the same the problem if I use a specific queue to push data to another datastore, i.e. if the consumer listening to that queue is not fast enough, messages will accumulate in the queue. If queue data is corrupted shortly after, I will lose messages before my &quot;transaction log writer&quot; see them.
+
+The only way that I can think of is to persist the message to my custom transaction log (MySQL, etc) _on the publisher side_ before message goes into rabbit. In order to guarantee that _all_ messages go in the transaction log, I would have to do this synchronously, i.e. if I can't persist the data in my transaction log, I won't bother pushing that message to rabbit. But this seems to be doing too much on the producer side and will obviously affect producer performance. Other way of achieving this would be to use two phase commits but I don't want to go there...
+
+I will definitely check @jbrisbin's work. That sounds really interesting.
+
+Cheers,
+oseymen
+
+From: Alex Lovell-Troy [mailto:<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">alex.lovelltroy at gmail.com</A>]
+Sent: 03 June 2011 12:35
+To: Ozan Seymen
+Cc: <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+Subject: Re: [rabbitmq-discuss] Database Corruption Possibilities
+
+There are a handful of approaches to this problem which all seem to follow a similar pattern.  Until there is a way to replace mnesia with a replicable back end, we've all written something on our own that wraps each amqp transaction with a transactional write to the datastore of our choice and.  I've seen this done with MySQL, MongoDB, and riak personally.
+
+@jbrisbin has done some interesting work with implementing a specific queue that sends messages to riak that looks intriguing.  I believe there is also a piece that pushes messages from riak into rabbitmq.
+
+At least, that was the state of the art the last time I looked
+
+Anyone else?
+
+-alex
+
+On Fri, Jun 3, 2011 at 12:21 PM, Ozan Seymen &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">Ozan.Seymen at tdpg.com</A>&lt;mailto:<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">Ozan.Seymen at tdpg.com</A>&gt;&gt; wrote:
+Hi all,
+
+Can someone please explain the scenarios where we might have Rabbit message storage (is it mnesia?) corrupted in a way that it is not recoverable?
+
+In the solution I am working on, I simply cannot afford to lose any messages. In order to secure this, I will:
+
+
+*         Rely on publisher confirms. This should ensure that broker will always confirm whether it assumed responsibility and persisted the message.
+
+*         Implement durable queues/exchanges.
+
+*         Ack enabled in consumers to prevent losing messages if consumer dies halfway. I will solve the ordering problem on the consumer side.
+
+Even though all of these above prevent message loss in normal conditions, none of them covers the case where data gets corrupted in the broker. There is a window (albeit small) that things might go wrong: broker assumes responsibility (message is in the disk) and before message is sent to the consumer, broker experiences problems which corrupts the storage. If I can't bring the broker up with all data previously persisted, I've lost messages - producer forgot about the message as broker accepts responsibility and consumers have no idea about the message as it hasn't been delivered to it.
+
+Am I a total paranoid that is beyond help? Even so, I would really appreciate any info you guys can share.
+
+Cheers,
+oseymen
+
+
+
+
+
+________________________________
+This e-mail and any attached files are intended for the named addressee only. It contains information which may be confidential and legally privileged and also protected by copyright. Unless you are the named addressee (or authorised to receive for the addressee) you may not copy or use it or disclose it to anyone else. If you received it in error please notify the sender immediately and then delete it from your system.
+
+Please be advised that the views and opinions expressed in this e-mail may not reflect the views and opinions of The Digital Property Group Limited or any of its subsidiary companies.
+
+We make every effort to keep our network free from viruses. However, you do need to check this e-mail and any attachments to it for viruses as we can take no responsibility for any computer virus which may be transferred by way of this e-mail. We reserve the right to monitor all e-mail communications.
+
+The Digital Property Group Limited is a Daily Mail and General Trust plc company.
+Registered Office: Northcliffe House, 2 Derry Street, London, W8 5TT.
+Registered in England &amp; Wales No: 02290527 VAT no. 243571174
+
+______________________________________________________________________
+This email has been scanned by the MessageLabs Email Security System.
+For more information please visit <A HREF="http://www.messagelabs.com/email">http://www.messagelabs.com/email</A>
+______________________________________________________________________
+
+_______________________________________________
+rabbitmq-discuss mailing list
+<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>&lt;mailto:<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>&gt;
+<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+
+
+______________________________________________________________________
+This email has been scanned by the MessageLabs Email Security System.
+For more information please visit <A HREF="http://www.messagelabs.com/email">http://www.messagelabs.com/email</A>
+______________________________________________________________________
+
+________________________________
+This e-mail and any attached files are intended for the named addressee only. It contains information which may be confidential and legally privileged and also protected by copyright. Unless you are the named addressee (or authorised to receive for the addressee) you may not copy or use it or disclose it to anyone else. If you received it in error please notify the sender immediately and then delete it from your system.
+
+Please be advised that the views and opinions expressed in this e-mail may not reflect the views and opinions of The Digital Property Group Limited or any of its subsidiary companies.
+
+We make every effort to keep our network free from viruses. However, you do need to check this e-mail and any attachments to it for viruses as we can take no responsibility for any computer virus which may be transferred by way of this e-mail. We reserve the right to monitor all e-mail communications.
+
+The Digital Property Group Limited is a Daily Mail and General Trust plc company.
+Registered Office: Northcliffe House, 2 Derry Street, London, W8 5TT.
+Registered in England &amp; Wales No: 02290527 VAT no. 243571174
+
+______________________________________________________________________
+This email has been scanned by the MessageLabs Email Security System.
+For more information please visit <A HREF="http://www.messagelabs.com/email">http://www.messagelabs.com/email</A> 
+______________________________________________________________________
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20110603/96633659/attachment-0001.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20110603/96633659/attachment-0001.htm</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="013126.html">[rabbitmq-discuss] Database Corruption Possibilities
+</A></li>
+	<LI>Next message: <A HREF="013259.html">[rabbitmq-discuss] Database Corruption Possibilities
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#13127">[ date ]</a>
+              <a href="thread.html#13127">[ thread ]</a>
+              <a href="subject.html#13127">[ subject ]</a>
+              <a href="author.html#13127">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

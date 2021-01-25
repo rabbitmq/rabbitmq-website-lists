@@ -1,0 +1,168 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] erlang client API: transactions
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20erlang%20client%20API%3A%20transactions&In-Reply-To=">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001573.html">
+   <LINK REL="Next"  HREF="001581.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] erlang client API: transactions</H1>
+    <B>Valentino Volonghi</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20erlang%20client%20API%3A%20transactions&In-Reply-To="
+       TITLE="[rabbitmq-discuss] erlang client API: transactions">dialtone at gmail.com
+       </A><BR>
+    <I>Tue Sep 23 03:24:59 BST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001573.html">[rabbitmq-discuss] [Minimum Air Induction] Introducing Shovel:	An AMQP Relay
+</A></li>
+        <LI>Next message: <A HREF="001581.html">[rabbitmq-discuss] erlang client API: transactions
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1580">[ date ]</a>
+              <a href="thread.html#1580">[ thread ]</a>
+              <a href="subject.html#1580">[ subject ]</a>
+              <a href="author.html#1580">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>-----BEGIN PGP SIGNED MESSAGE-----
+Hash: SHA1
+
+so I'm trying to add support for transactions to my simple forwarding  
+application, I started by
+implementing the 'commit every 500 messages' in the following way:
+
+handle_info(#'tx.select_ok'{}, State) -&gt;
+     {noreply, State};
+
+handle_info(#'tx.commit_ok'{}, State) -&gt;
+     {noreply, State};
+
+handle_info({#'basic.deliver'{routing_key = RoutingKey,
+                               delivery_tag = DeliveryTag},
+              #content{payload_fragments_rev = [Payload]}},
+             State = #shovel_state{local = LocalBroker,
+                                   remote = RemoteBroker,
+                                   exchange = Exchange,
+                                   sent = Sent,
+                                   ack = Acks}) -&gt;
+     deliver(State, RoutingKey, DeliveryTag, Payload, LocalBroker,  
+RemoteBroker, Exchange, Sent, Acks).
+
+deliver(State, RoutingKey, DeliveryTag, Payload, _LocalBroker,  
+RemoteBroker, Exchange, 0, []) -&gt;
+     amqp:tx_select(RemoteBroker),
+     amqp:send_message(RemoteBroker, RoutingKey, Payload, Exchange),
+     NewState = State#shovel_state{sent=1, ack=[DeliveryTag]},
+     {noreply, NewState};
+
+deliver(State, RoutingKey, DeliveryTag, Payload, LocalBroker,  
+RemoteBroker, Exchange, 499, Acks) -&gt;
+     amqp:send_message(RemoteBroker, RoutingKey, Payload, Exchange),
+     amqp:tx_commit(RemoteBroker),
+     lists:foreach(fun(X) -&gt; amqp:ack(LocalBroker, X) end,  
+[DeliveryTag|Acks]),
+     NewState = State#shovel_state{sent=0, ack=[]},
+     {noreply, NewState};
+
+deliver(State, RoutingKey, DeliveryTag, Payload, _LocalBroker,  
+RemoteBroker, Exchange, Sent, Acks) -&gt;
+     amqp:tx_select(RemoteBroker),
+     amqp:send_message(RemoteBroker, RoutingKey, Payload, Exchange),
+     NewState = State#shovel_state{sent=Sent+1, ack=[DeliveryTag|Acks]},
+     {noreply, NewState}.
+
+and I implemented ack and tx_commit/tx_select like this:
+
+ack({_Connection, Channel, _Ticket}, DeliveryTag) -&gt;
+     BasicAck = #'basic.ack'{delivery_tag = DeliveryTag, multiple =  
+false},
+     ok = amqp_channel:cast(Channel, BasicAck).
+
+tx_select({_Connection, Channel, _Ticket}) -&gt;
+     ok = amqp_channel:cast(Channel, #'tx.select'{}).
+
+tx_commit({_Connection, Channel, _Ticket}) -&gt;
+     ok = amqp_channel:cast(Channel, #'tx.commit'{}).
+
+Unfortunately when I try to run this code, during the forwarding I get  
+the following exception:
+
+=ERROR REPORT==== 22-Sep-2008::19:23:11 ===
+** Generic server &lt;0.150.0&gt; terminating
+** Last message in was {method,{'tx.select_ok'},none}
+** When Server state == {channel_state,1,&lt;0.146.0&gt;,&lt;0.148.0&gt;,&lt;0.151.0&gt;,
+                             #Fun&lt;amqp_network_driver.do.2&gt;,
+                             #Fun&lt;amqp_network_driver.do.3&gt;,
+                             #Fun&lt;amqp_network_driver.close_channel.1&gt;,
+                             {[],[]},
+                             {[],[]},
+                             {dict,0,16,16,8,80,48,
+                                 {[],[],[],[],[],[],[],[],[],[],[],[], 
+[],[],[],
+                                  []},
+                                 {{[],[],[],[],[],[],[],[],[],[],[],[], 
+[],[],
+                                   [],[]}}},
+                             false,undefined,
+                             {dict,0,16,16,8,80,48,
+                                 {[],[],[],[],[],[],[],[],[],[],[],[], 
+[],[],[],
+                                  []},
+                                 {{[],[],[],[],[],[],[],[],[],[],[],[], 
+[],[],
+                                   [],[]}}}}
+** Reason for termination ==
+** {{badmatch,{empty,{[],[]}}},
+     [{amqp_channel,rpc_bottom_half,2},
+      {gen_server,handle_msg,5},
+      {proc_lib,init_p,5}]}
+
+Which clearly means that I badly matched somewhere... my best guess is  
+the tx_select/tx_commit
+functions but then how should I fix them? (sorry for this newb  
+question).
+
+- --
+Valentino Volonghi aka Dialtone
+Now running MacOS X 10.5
+Home Page: <A HREF="http://www.twisted.it">http://www.twisted.it</A>
+<A HREF="http://www.adroll.com">http://www.adroll.com</A>
+
+-----BEGIN PGP SIGNATURE-----
+Version: GnuPG v1.4.9 (Darwin)
+
+iEYEARECAAYFAkjYU3sACgkQ9Llz28widGUvqACZAaF5i6y0RCeq6S515PPERjsy
+09kAoLHg1ohSFpGpDd2SGCe6I2s6Vqw6
+=lGsw
+-----END PGP SIGNATURE-----
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001573.html">[rabbitmq-discuss] [Minimum Air Induction] Introducing Shovel:	An AMQP Relay
+</A></li>
+	<LI>Next message: <A HREF="001581.html">[rabbitmq-discuss] erlang client API: transactions
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1580">[ date ]</a>
+              <a href="thread.html#1580">[ thread ]</a>
+              <a href="subject.html#1580">[ subject ]</a>
+              <a href="author.html#1580">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

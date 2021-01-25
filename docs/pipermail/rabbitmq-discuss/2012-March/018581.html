@@ -1,0 +1,530 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Using pika - PRECONDITION_FAILED - unknown	delivery tag 1
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Using%20pika%20-%20PRECONDITION_FAILED%20-%20unknown%0A%09delivery%20tag%201&In-Reply-To=%3CCAHTZd_gQ6%2BP37a8EFC%3DewzV-0QJ-gHrY%3DtcvhviVf3h41h3DmA%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="018689.html">
+   <LINK REL="Next"  HREF="018582.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Using pika - PRECONDITION_FAILED - unknown	delivery tag 1</H1>
+    <B>Ezequiel Golub</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Using%20pika%20-%20PRECONDITION_FAILED%20-%20unknown%0A%09delivery%20tag%201&In-Reply-To=%3CCAHTZd_gQ6%2BP37a8EFC%3DewzV-0QJ-gHrY%3DtcvhviVf3h41h3DmA%40mail.gmail.com%3E"
+       TITLE="[rabbitmq-discuss] Using pika - PRECONDITION_FAILED - unknown	delivery tag 1">ezequiel.golub at gmail.com
+       </A><BR>
+    <I>Mon Mar  5 17:25:07 GMT 2012</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="018689.html">[rabbitmq-discuss] 2.7.1 mirrored queues leak a lot of memory	on slave nodes
+</A></li>
+        <LI>Next message: <A HREF="018582.html">[rabbitmq-discuss] Using pika - PRECONDITION_FAILED - unknown delivery tag 1
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#18581">[ date ]</a>
+              <a href="thread.html#18581">[ thread ]</a>
+              <a href="subject.html#18581">[ subject ]</a>
+              <a href="author.html#18581">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hey guys, i was wondering if any of you could lend me a hand with
+getting my rabbitmq project off the ground.
+
+I need to have multiple queues, with strong but not absolute
+guarantees that message will be delivered only once and redelivered if
+not ack is sent.
+I took the code examples in
+<A HREF="http://www.rabbitmq.com/tutorials/tutorial-two-python.html">http://www.rabbitmq.com/tutorials/tutorial-two-python.html</A> and
+modified just a little, and i'm getting the following failure after a
+number of messages are received (emphasis added):
+
+[<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">root at localhost</A> rabbit_tests]# python test_consumer.py
+suscribing
+ [x] Received 'hello world 0'
+Sleeping for 5 seconds
+Sending delivery tag = 1
+ [x] Received 'hello world 1'
+Sleeping for 5 seconds
+Sending delivery tag = 2
+ [x] Received 'hello world 2'
+Sleeping for 5 seconds
+Sending delivery tag = 3
+ [x] Received 'hello world 3'
+Sleeping for 5 seconds
+Sending delivery tag = 4
+ [x] Received 'hello world 4'
+Sleeping for 5 seconds
+!!!!!!!!**** Sending delivery tag = 5 *****!!!!!!!!!
+Traceback (most recent call last):
+  File &quot;test_consumer.py&quot;, line 28, in &lt;module&gt;
+    main()
+  File &quot;test_consumer.py&quot;, line 25, in main
+    channel.start_consuming()
+  File &quot;/usr/lib/python2.6/site-packages/pika/adapters/blocking_connection.py&quot;,
+line 293, in start_consuming
+    self.transport.connection.process_data_events()
+  File &quot;/usr/lib/python2.6/site-packages/pika/adapters/blocking_connection.py&quot;,
+line 94, in process_data_events
+    self._handle_read()
+  File &quot;/usr/lib/python2.6/site-packages/pika/adapters/base_connection.py&quot;,
+line 162, in _handle_read
+    self._on_data_available(data)
+  File &quot;/usr/lib/python2.6/site-packages/pika/connection.py&quot;, line
+589, in _on_data_available
+    frame)                 # Args
+  File &quot;/usr/lib/python2.6/site-packages/pika/callback.py&quot;, line 124, in process
+    callback(*args, **keywords)
+  File &quot;/usr/lib/python2.6/site-packages/pika/adapters/blocking_connection.py&quot;,
+line 269, in _on_remote_close
+    frame.method.reply_text)
+pika.exceptions.AMQPChannelError: (406, 'PRECONDITION_FAILED - unknown
+delivery tag 1')
+
+
+here's the code i use to create this test.
+
+---- test_producer.py ----
+#!/usr/bin/env python
+import pika, sys, json, time
+
+date = '2012030505'
+
+connection = pika.BlockingConnection(pika.ConnectionParameters(host='localhost'))
+connection.set_backpressure_multiplier(100)
+channel = connection.channel()
+channel.exchange_declare(exchange=&quot;main&quot;, type=&quot;direct&quot;,
+durable=True,auto_delete=False,)
+channel.queue_declare(queue='queue_%s' % date, durable=True,
+exclusive=False, auto_delete=False)
+channel.queue_bind(queue='queue_%s' % date, exchange=&quot;main&quot;, routing_key=date)
+channel.tx_select()
+
+for i in range(0,10):
+    message = 'hello world %s' % i
+    channel.basic_publish(exchange='main',
+                          routing_key= date,
+                          properties=pika.BasicProperties(
+                              delivery_mode = 2, # make message persistent
+                          ),
+                          body=message)
+
+    print &quot; [x] Sent %s:'%s'&quot; % (date,message)
+    channel.tx_commit()
+    time.sleep(1)
+
+---- test_consumer.py ----
+import pika, time
+
+
+def consume(ch, method, properties, body):
+    print &quot; [x] Received %r&quot; % (body,)
+#    print method
+#    print properties
+#    print ch
+    # simulate we're doing something
+    print &quot;Sleeping for 5 seconds&quot;
+    time.sleep(5)
+    print &quot;Sending delivery tag = %s &quot; % method.delivery_tag
+    ch.basic_ack(delivery_tag = method.delivery_tag)
+
+def main():
+    connection =
+pika.BlockingConnection(pika.ConnectionParameters(host='localhost'))
+    channel = connection.channel()
+    channel.exchange_declare(exchange=&quot;main&quot;, type=&quot;direct&quot;,
+durable=True,auto_delete=False,)
+    print &quot;suscribing&quot;
+    channel.basic_qos(prefetch_count=0)
+    channel.basic_consume(consume,
+                      queue='queue_2012030505',
+                      no_ack=True,
+    )
+    channel.start_consuming()
+
+if __name__ == &quot;__main__&quot;:
+    main()
+
+--- Here's what rabbitmqctl reports ----
+
+[<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">root at localhost</A> brandsafe]# /usr/lib/rabbitmq/bin/rabbitmqctl status
+Status of node <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at localhost</A> ...
+[{pid,18510},
+ {running_applications,[{rabbit,&quot;RabbitMQ&quot;,&quot;2.7.1&quot;},
+                        {mnesia,&quot;MNESIA  CXC 138 12&quot;,&quot;4.4.7&quot;},
+                        {os_mon,&quot;CPO  CXC 138 46&quot;,&quot;2.1.8&quot;},
+                        {sasl,&quot;SASL  CXC 138 11&quot;,&quot;2.1.5.4&quot;},
+                        {stdlib,&quot;ERTS  CXC 138 10&quot;,&quot;1.15.5&quot;},
+                        {kernel,&quot;ERTS  CXC 138 10&quot;,&quot;2.12.5&quot;}]},
+ {os,{unix,linux}},
+ {erlang_version,&quot;Erlang (BEAM) emulator version 5.6.5 [source]
+[64-bit] [async-threads:30] [hipe] [kernel-poll:true]\n&quot;},
+ {memory,[{total,29090512},
+          {processes,14184944},
+          {processes_used,10892640},
+          {system,14905568},
+          {atom,1064009},
+          {atom_used,1046693},
+          {binary,90552},
+          {code,11672579},
+          {ets,877768}]},
+ {vm_memory_high_watermark,0.3999999999458532},
+ {vm_memory_limit,1477464883}]
+...done.
+
+[<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">root at localhost</A> brandsafe]# /usr/lib/rabbitmq/bin/rabbitmqctl environment
+Application environment of node <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at localhost</A> ...
+[{auth_backends,[rabbit_auth_backend_internal]},
+ {auth_mechanisms,['PLAIN','AMQPLAIN']},
+ {backing_queue_module,rabbit_variable_queue},
+ {cluster_nodes,[]},
+ {collect_statistics,none},
+ {collect_statistics_interval,5000},
+ {default_permissions,[&lt;&lt;&quot;.*&quot;&gt;&gt;,&lt;&lt;&quot;.*&quot;&gt;&gt;,&lt;&lt;&quot;.*&quot;&gt;&gt;]},
+ {default_user,&lt;&lt;&quot;guest&quot;&gt;&gt;},
+ {default_user_tags,[administrator]},
+ {default_vhost,&lt;&lt;&quot;/&quot;&gt;&gt;},
+ {delegate_count,16},
+ {error_logger,{file,&quot;/var/log/rabbitmq/<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at localhost.log</A>&quot;}},
+ {frame_max,131072},
+ {hipe_compile,false},
+ {included_applications,[]},
+ {msg_store_file_size_limit,16777216},
+ {msg_store_index_module,rabbit_msg_store_ets_index},
+ {queue_index_max_journal_entries,262144},
+ {sasl_error_logger,{file,&quot;/var/log/rabbitmq/<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at localhost-sasl.log</A>&quot;}},
+ {server_properties,[]},
+ {ssl_listeners,[]},
+ {ssl_options,[]},
+ {tcp_listen_options,[binary,
+                      {packet,raw},
+                      {reuseaddr,true},
+                      {backlog,128},
+                      {nodelay,true},
+                      {exit_on_close,false}]},
+ {tcp_listeners,[5672]},
+ {trace_vhosts,[&lt;&lt;&quot;/&quot;&gt;&gt;]},
+ {vm_memory_high_watermark,0.4}]
+...done.
+
+
+[<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">root at localhost</A> brandsafe]# /usr/lib/rabbitmq/bin/rabbitmqctl report
+Reporting server status on {{2012,3,5},{17,22,44}}
+
+Status of node <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at localhost</A> ...
+[{pid,18510},
+ {running_applications,[{rabbit,&quot;RabbitMQ&quot;,&quot;2.7.1&quot;},
+                        {mnesia,&quot;MNESIA  CXC 138 12&quot;,&quot;4.4.7&quot;},
+                        {os_mon,&quot;CPO  CXC 138 46&quot;,&quot;2.1.8&quot;},
+                        {sasl,&quot;SASL  CXC 138 11&quot;,&quot;2.1.5.4&quot;},
+                        {stdlib,&quot;ERTS  CXC 138 10&quot;,&quot;1.15.5&quot;},
+                        {kernel,&quot;ERTS  CXC 138 10&quot;,&quot;2.12.5&quot;}]},
+ {os,{unix,linux}},
+ {erlang_version,&quot;Erlang (BEAM) emulator version 5.6.5 [source]
+[64-bit] [async-threads:30] [hipe] [kernel-poll:true]\n&quot;},
+ {memory,[{total,28940936},
+          {processes,14026016},
+          {processes_used,10733712},
+          {system,14914920},
+          {atom,1064817},
+          {atom_used,1046833},
+          {binary,90552},
+          {code,11672579},
+          {ets,877768}]},
+ {vm_memory_high_watermark,0.3999999999458532},
+ {vm_memory_limit,1477464883}]
+
+Cluster status of node <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at localhost</A> ...
+[{nodes,[{disc,[<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at localhost</A>]}]},{running_nodes,[<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at localhost</A>]}]
+
+Application environment of node <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at localhost</A> ...
+[{auth_backends,[rabbit_auth_backend_internal]},
+ {auth_mechanisms,['PLAIN','AMQPLAIN']},
+ {backing_queue_module,rabbit_variable_queue},
+ {cluster_nodes,[]},
+ {collect_statistics,none},
+ {collect_statistics_interval,5000},
+ {default_permissions,[&lt;&lt;&quot;.*&quot;&gt;&gt;,&lt;&lt;&quot;.*&quot;&gt;&gt;,&lt;&lt;&quot;.*&quot;&gt;&gt;]},
+ {default_user,&lt;&lt;&quot;guest&quot;&gt;&gt;},
+ {default_user_tags,[administrator]},
+ {default_vhost,&lt;&lt;&quot;/&quot;&gt;&gt;},
+ {delegate_count,16},
+ {error_logger,{file,&quot;/var/log/rabbitmq/<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at localhost.log</A>&quot;}},
+ {frame_max,131072},
+ {hipe_compile,false},
+ {included_applications,[]},
+ {msg_store_file_size_limit,16777216},
+ {msg_store_index_module,rabbit_msg_store_ets_index},
+ {queue_index_max_journal_entries,262144},
+ {sasl_error_logger,{file,&quot;/var/log/rabbitmq/<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at localhost-sasl.log</A>&quot;}},
+ {server_properties,[]},
+ {ssl_listeners,[]},
+ {ssl_options,[]},
+ {tcp_listen_options,[binary,
+                      {packet,raw},
+                      {reuseaddr,true},
+                      {backlog,128},
+                      {nodelay,true},
+                      {exit_on_close,false}]},
+ {tcp_listeners,[5672]},
+ {trace_vhosts,[&lt;&lt;&quot;/&quot;&gt;&gt;]},
+ {vm_memory_high_watermark,0.4}]
+
+Connections:
+pid	address	port	peer_address	peer_port	ssl	peer_cert_subject	peer_cert_issuer	peer_cert_validity	auth_mechanism	ssl_protocol	ssl_key_exchange	ssl_cipher	ssl_hash	protocol	user	vhost	timeout	frame_max	client_properties	recv_oct	recv_cnt	send_oct	send_cnt	send_pend	state	channels
+&lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at localhost.1.6488.0</A>&gt;	127.0.0.1	5672	127.0.0.1	49132	false				PLAIN					{0,9,1}	guest	/	0	131072	[{&quot;product&quot;,&quot;Pika
+Python AMQP Client Library&quot;}]	237	8	426	7	0	running	1
+
+Channels:
+pid	connection	number	user	vhost	transactional	confirm	consumer_count	messages_unacknowledged	messages_unconfirmed	messages_uncommitted	acks_uncommitted	prefetch_count	client_flow_blocked
+&lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at localhost.1.6492.0</A>&gt;	&lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at localhost.1.6488.0</A>&gt;	1	guest	/	false	false	1	0	0	0	0	0	false
+
+Queues on /:
+pid	name	durable	auto_delete	arguments	owner_pid	slave_pids	synchronised_slave_pids	exclusive_consumer_pid	exclusive_consumer_tag	messages_ready	messages_unacknowledged	messages	consumers	memory	backing_queue_status
+&lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at localhost.1.383.0</A>&gt;	amq.gen-OmspSdOAO9n0MBZ4Zx6DlA==	true	false	[]						0	0	0	0	34528	[{q1,0},
+{q2,0}, {delta,{delta,undefined,0,undefined}}, {q3,0}, {q4,0},
+{len,0}, {pending_acks,0}, {target_ram_count,infinity},
+{ram_msg_count,0}, {ram_ack_count,0}, {next_seq_id,0},
+{persistent_count,0}, {avg_ingress_rate,0.0}, {avg_egress_rate,0.0},
+{avg_ack_ingress_rate,0.0}, {avg_ack_egress_rate,0.0}]
+&lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at localhost.1.384.0</A>&gt;	amq.gen-0loSvlps1uXisVryOaGgnw==	true	false	[]						0	0	0	0	34528	[{q1,0},
+{q2,0}, {delta,{delta,undefined,0,undefined}}, {q3,0}, {q4,0},
+{len,0}, {pending_acks,0}, {target_ram_count,infinity},
+{ram_msg_count,0}, {ram_ack_count,0}, {next_seq_id,0},
+{persistent_count,0}, {avg_ingress_rate,0.0}, {avg_egress_rate,0.0},
+{avg_ack_ingress_rate,0.0}, {avg_ack_egress_rate,0.0}]
+&lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at localhost.1.385.0</A>&gt;	amq.gen-RZxh+lukh03mUutFuCm/Aw==	true	false	[]						0	0	0	0	34528	[{q1,0},
+{q2,0}, {delta,{delta,undefined,0,undefined}}, {q3,0}, {q4,0},
+{len,0}, {pending_acks,0}, {target_ram_count,infinity},
+{ram_msg_count,0}, {ram_ack_count,0}, {next_seq_id,0},
+{persistent_count,0}, {avg_ingress_rate,0.0}, {avg_egress_rate,0.0},
+{avg_ack_ingress_rate,0.0}, {avg_ack_egress_rate,0.0}]
+&lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at localhost.1.387.0</A>&gt;	po_box	true	false	[]						0	0	0	0	34528	[{q1,0},
+{q2,0}, {delta,{delta,undefined,0,undefined}}, {q3,0}, {q4,0},
+{len,0}, {pending_acks,0}, {target_ram_count,infinity},
+{ram_msg_count,0}, {ram_ack_count,0}, {next_seq_id,0},
+{persistent_count,0}, {avg_ingress_rate,0.0}, {avg_egress_rate,0.0},
+{avg_ack_ingress_rate,0.0}, {avg_ack_egress_rate,0.0}]
+&lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at localhost.1.386.0</A>&gt;	amq.gen-/o9D5DstK79QnRkLYqtrbw==	true	false	[]						2	0	2	0	34528	[{q1,0},
+{q2,0}, {delta,{delta,undefined,0,undefined}}, {q3,2}, {q4,0},
+{len,2}, {pending_acks,0}, {target_ram_count,infinity},
+{ram_msg_count,0}, {ram_ack_count,0}, {next_seq_id,16384},
+{persistent_count,2}, {avg_ingress_rate,0.0}, {avg_egress_rate,0.0},
+{avg_ack_ingress_rate,0.0}, {avg_ack_egress_rate,0.0}]
+&lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at localhost.1.388.0</A>&gt;	amq.gen-jewfcXKPDUc6Sqg5jgs0tQ==	true	false	[]						0	0	0	0	34528	[{q1,0},
+{q2,0}, {delta,{delta,undefined,0,undefined}}, {q3,0}, {q4,0},
+{len,0}, {pending_acks,0}, {target_ram_count,infinity},
+{ram_msg_count,0}, {ram_ack_count,0}, {next_seq_id,0},
+{persistent_count,0}, {avg_ingress_rate,0.0}, {avg_egress_rate,0.0},
+{avg_ack_ingress_rate,0.0}, {avg_ack_egress_rate,0.0}]
+&lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at localhost.1.389.0</A>&gt;	task_queue	true	false	[]						0	0	0	0	34528	[{q1,0},
+{q2,0}, {delta,{delta,undefined,0,undefined}}, {q3,0}, {q4,0},
+{len,0}, {pending_acks,0}, {target_ram_count,infinity},
+{ram_msg_count,0}, {ram_ack_count,0}, {next_seq_id,0},
+{persistent_count,0}, {avg_ingress_rate,0.0}, {avg_egress_rate,0.0},
+{avg_ack_ingress_rate,0.0}, {avg_ack_egress_rate,0.0}]
+&lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at localhost.1.390.0</A>&gt;	amq.gen-76kfx4BIaFdeX+sLtvDGMQ==	true	false	[]						1	0	1	0	34528	[{q1,0},
+{q2,0}, {delta,{delta,undefined,0,undefined}}, {q3,1}, {q4,0},
+{len,1}, {pending_acks,0}, {target_ram_count,infinity},
+{ram_msg_count,0}, {ram_ack_count,0}, {next_seq_id,16384},
+{persistent_count,1}, {avg_ingress_rate,0.0}, {avg_egress_rate,0.0},
+{avg_ack_ingress_rate,0.0}, {avg_ack_egress_rate,0.0}]
+&lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at localhost.1.391.0</A>&gt;	amq.gen-lr+7aeYKj4gjFw5VFeKajQ==	true	false	[]						5	0	5	0	34528	[{q1,0},
+{q2,0}, {delta,{delta,undefined,0,undefined}}, {q3,5}, {q4,0},
+{len,5}, {pending_acks,0}, {target_ram_count,infinity},
+{ram_msg_count,0}, {ram_ack_count,0}, {next_seq_id,16384},
+{persistent_count,5}, {avg_ingress_rate,0.0}, {avg_egress_rate,0.0},
+{avg_ack_ingress_rate,0.0}, {avg_ack_egress_rate,0.0}]
+&lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at localhost.1.392.0</A>&gt;	queue_2012030209	true	false	[]						20	0	20	0	55200	[{q1,0},
+{q2,0}, {delta,{delta,undefined,0,undefined}}, {q3,20}, {q4,0},
+{len,20}, {pending_acks,0}, {target_ram_count,infinity},
+{ram_msg_count,0}, {ram_ack_count,0}, {next_seq_id,16384},
+{persistent_count,20}, {avg_ingress_rate,0.0}, {avg_egress_rate,0.0},
+{avg_ack_ingress_rate,0.0}, {avg_ack_egress_rate,0.0}]
+&lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at localhost.1.393.0</A>&gt;	amq.gen-Jvf89t5Zr2B6NoJbh22vjw==	true	false	[]						3	0	3	0	34528	[{q1,0},
+{q2,0}, {delta,{delta,undefined,0,undefined}}, {q3,3}, {q4,0},
+{len,3}, {pending_acks,0}, {target_ram_count,infinity},
+{ram_msg_count,0}, {ram_ack_count,0}, {next_seq_id,16384},
+{persistent_count,3}, {avg_ingress_rate,0.0}, {avg_egress_rate,0.0},
+{avg_ack_ingress_rate,0.0}, {avg_ack_egress_rate,0.0}]
+&lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at localhost.1.394.0</A>&gt;	amq.gen-JCxGTsOTUVU0eccre4BLqg==	true	false	[]						7	0	7	0	55200	[{q1,0},
+{q2,0}, {delta,{delta,undefined,0,undefined}}, {q3,7}, {q4,0},
+{len,7}, {pending_acks,0}, {target_ram_count,infinity},
+{ram_msg_count,0}, {ram_ack_count,0}, {next_seq_id,16384},
+{persistent_count,7}, {avg_ingress_rate,0.0}, {avg_egress_rate,0.0},
+{avg_ack_ingress_rate,0.0}, {avg_ack_egress_rate,0.0}]
+&lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at localhost.1.395.0</A>&gt;	amq.gen-DbMT7q0fyWDMdaNhqNh+FA==	true	false	[]						0	0	0	0	34528	[{q1,0},
+{q2,0}, {delta,{delta,undefined,0,undefined}}, {q3,0}, {q4,0},
+{len,0}, {pending_acks,0}, {target_ram_count,infinity},
+{ram_msg_count,0}, {ram_ack_count,0}, {next_seq_id,0},
+{persistent_count,0}, {avg_ingress_rate,0.0}, {avg_egress_rate,0.0},
+{avg_ack_ingress_rate,0.0}, {avg_ack_egress_rate,0.0}]
+&lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at localhost.1.396.0</A>&gt;	queue_2012030115	true	false	[]						0	0	0	0	34528	[{q1,0},
+{q2,0}, {delta,{delta,undefined,0,undefined}}, {q3,0}, {q4,0},
+{len,0}, {pending_acks,0}, {target_ram_count,infinity},
+{ram_msg_count,0}, {ram_ack_count,0}, {next_seq_id,0},
+{persistent_count,0}, {avg_ingress_rate,0.0}, {avg_egress_rate,0.0},
+{avg_ack_ingress_rate,0.0}, {avg_ack_egress_rate,0.0}]
+&lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at localhost.1.397.0</A>&gt;	amq.gen-d4bX+YjWwIBvwkEYUpfEKQ==	true	false	[]						2	0	2	0	34528	[{q1,0},
+{q2,0}, {delta,{delta,undefined,0,undefined}}, {q3,2}, {q4,0},
+{len,2}, {pending_acks,0}, {target_ram_count,infinity},
+{ram_msg_count,0}, {ram_ack_count,0}, {next_seq_id,16384},
+{persistent_count,2}, {avg_ingress_rate,0.0}, {avg_egress_rate,0.0},
+{avg_ack_ingress_rate,0.0}, {avg_ack_egress_rate,0.0}]
+&lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at localhost.1.398.0</A>&gt;	queue_2012030210	true	false	[]						0	0	0	0	34528	[{q1,0},
+{q2,0}, {delta,{delta,undefined,0,undefined}}, {q3,0}, {q4,0},
+{len,0}, {pending_acks,0}, {target_ram_count,infinity},
+{ram_msg_count,0}, {ram_ack_count,0}, {next_seq_id,0},
+{persistent_count,0}, {avg_ingress_rate,0.0}, {avg_egress_rate,0.0},
+{avg_ack_ingress_rate,0.0}, {avg_ack_egress_rate,0.0}]
+&lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at localhost.1.399.0</A>&gt;	amq.gen-95KpPW7AC/nOUSYzEfAnsQ==	true	false	[]						2	0	2	0	34528	[{q1,0},
+{q2,0}, {delta,{delta,undefined,0,undefined}}, {q3,2}, {q4,0},
+{len,2}, {pending_acks,0}, {target_ram_count,infinity},
+{ram_msg_count,0}, {ram_ack_count,0}, {next_seq_id,16384},
+{persistent_count,2}, {avg_ingress_rate,0.0}, {avg_egress_rate,0.0},
+{avg_ack_ingress_rate,0.0}, {avg_ack_egress_rate,0.0}]
+&lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at localhost.1.400.0</A>&gt;	amq.gen-4NVkRy5k5dzhygSohpnRSw==	true	false	[]						0	0	0	0	34528	[{q1,0},
+{q2,0}, {delta,{delta,undefined,0,undefined}}, {q3,0}, {q4,0},
+{len,0}, {pending_acks,0}, {target_ram_count,infinity},
+{ram_msg_count,0}, {ram_ack_count,0}, {next_seq_id,0},
+{persistent_count,0}, {avg_ingress_rate,0.0}, {avg_egress_rate,0.0},
+{avg_ack_ingress_rate,0.0}, {avg_ack_egress_rate,0.0}]
+&lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at localhost.1.401.0</A>&gt;	amq.gen-Tuie11PiAM4wHTwxNyK0Hw==	true	false	[]						8	0	8	0	55200	[{q1,0},
+{q2,0}, {delta,{delta,undefined,0,undefined}}, {q3,8}, {q4,0},
+{len,8}, {pending_acks,0}, {target_ram_count,infinity},
+{ram_msg_count,0}, {ram_ack_count,0}, {next_seq_id,16384},
+{persistent_count,8}, {avg_ingress_rate,0.0}, {avg_egress_rate,0.0},
+{avg_ack_ingress_rate,0.0}, {avg_ack_egress_rate,0.0}]
+&lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at localhost.1.403.0</A>&gt;	algo	true	false	[]						0	0	0	0	34528	[{q1,0},
+{q2,0}, {delta,{delta,undefined,0,undefined}}, {q3,0}, {q4,0},
+{len,0}, {pending_acks,0}, {target_ram_count,infinity},
+{ram_msg_count,0}, {ram_ack_count,0}, {next_seq_id,0},
+{persistent_count,0}, {avg_ingress_rate,0.0}, {avg_egress_rate,0.0},
+{avg_ack_ingress_rate,0.0}, {avg_ack_egress_rate,0.0}]
+&lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at localhost.1.402.0</A>&gt;	amq.gen-R/qSTZLK8Z8Ovm97MDwquw==	true	false	[]						0	0	0	0	34528	[{q1,0},
+{q2,0}, {delta,{delta,undefined,0,undefined}}, {q3,0}, {q4,0},
+{len,0}, {pending_acks,0}, {target_ram_count,infinity},
+{ram_msg_count,0}, {ram_ack_count,0}, {next_seq_id,0},
+{persistent_count,0}, {avg_ingress_rate,0.0}, {avg_egress_rate,0.0},
+{avg_ack_ingress_rate,0.0}, {avg_ack_egress_rate,0.0}]
+&lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at localhost.1.404.0</A>&gt;	queue_2012030505	true	false	[]						0	0	0	1	34600	[{q1,0},
+{q2,0}, {delta,{delta,undefined,0,undefined}}, {q3,0}, {q4,0},
+{len,0}, {pending_acks,0}, {target_ram_count,infinity},
+{ram_msg_count,0}, {ram_ack_count,0}, {next_seq_id,91},
+{persistent_count,0}, {avg_ingress_rate,0.0}, {avg_egress_rate,0.0},
+{avg_ack_ingress_rate,0.0}, {avg_ack_egress_rate,0.0}]
+&lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at localhost.1.405.0</A>&gt;	amq.gen-BPFYbLliOy3wWIwlMEYgGw==	true	false	[]						0	0	0	0	34528	[{q1,0},
+{q2,0}, {delta,{delta,undefined,0,undefined}}, {q3,0}, {q4,0},
+{len,0}, {pending_acks,0}, {target_ram_count,infinity},
+{ram_msg_count,0}, {ram_ack_count,0}, {next_seq_id,0},
+{persistent_count,0}, {avg_ingress_rate,0.0}, {avg_egress_rate,0.0},
+{avg_ack_ingress_rate,0.0}, {avg_ack_egress_rate,0.0}]
+
+Exchanges on /:
+name	type	durable	auto_delete	internal	arguments
+amq.rabbitmq.trace	topic	true	false	false	[]
+amq.rabbitmq.log	topic	true	false	false	[]
+amq.match	headers	true	false	false	[]
+main	direct	true	false	false	[]
+amq.headers	headers	true	false	false	[]
+sorting_room	direct	true	false	false	[]
+amq.topic	topic	true	false	false	[]
+amq.direct	direct	true	false	false	[]
+amq.fanout	fanout	true	false	false	[]
+	direct	true	false	false	[]
+
+Bindings on /:
+source_name	source_kind	destination_name	destination_kind	routing_key	arguments
+	exchange	algo	queue	algo	[]
+	exchange	amq.gen-/o9D5DstK79QnRkLYqtrbw==	queue	amq.gen-/o9D5DstK79QnRkLYqtrbw==	[]
+	exchange	amq.gen-0loSvlps1uXisVryOaGgnw==	queue	amq.gen-0loSvlps1uXisVryOaGgnw==	[]
+	exchange	amq.gen-4NVkRy5k5dzhygSohpnRSw==	queue	amq.gen-4NVkRy5k5dzhygSohpnRSw==	[]
+	exchange	amq.gen-76kfx4BIaFdeX+sLtvDGMQ==	queue	amq.gen-76kfx4BIaFdeX+sLtvDGMQ==	[]
+	exchange	amq.gen-95KpPW7AC/nOUSYzEfAnsQ==	queue	amq.gen-95KpPW7AC/nOUSYzEfAnsQ==	[]
+	exchange	amq.gen-BPFYbLliOy3wWIwlMEYgGw==	queue	amq.gen-BPFYbLliOy3wWIwlMEYgGw==	[]
+	exchange	amq.gen-DbMT7q0fyWDMdaNhqNh+FA==	queue	amq.gen-DbMT7q0fyWDMdaNhqNh+FA==	[]
+	exchange	amq.gen-JCxGTsOTUVU0eccre4BLqg==	queue	amq.gen-JCxGTsOTUVU0eccre4BLqg==	[]
+	exchange	amq.gen-Jvf89t5Zr2B6NoJbh22vjw==	queue	amq.gen-Jvf89t5Zr2B6NoJbh22vjw==	[]
+	exchange	amq.gen-OmspSdOAO9n0MBZ4Zx6DlA==	queue	amq.gen-OmspSdOAO9n0MBZ4Zx6DlA==	[]
+	exchange	amq.gen-R/qSTZLK8Z8Ovm97MDwquw==	queue	amq.gen-R/qSTZLK8Z8Ovm97MDwquw==	[]
+	exchange	amq.gen-RZxh+lukh03mUutFuCm/Aw==	queue	amq.gen-RZxh+lukh03mUutFuCm/Aw==	[]
+	exchange	amq.gen-Tuie11PiAM4wHTwxNyK0Hw==	queue	amq.gen-Tuie11PiAM4wHTwxNyK0Hw==	[]
+	exchange	amq.gen-d4bX+YjWwIBvwkEYUpfEKQ==	queue	amq.gen-d4bX+YjWwIBvwkEYUpfEKQ==	[]
+	exchange	amq.gen-jewfcXKPDUc6Sqg5jgs0tQ==	queue	amq.gen-jewfcXKPDUc6Sqg5jgs0tQ==	[]
+	exchange	amq.gen-lr+7aeYKj4gjFw5VFeKajQ==	queue	amq.gen-lr+7aeYKj4gjFw5VFeKajQ==	[]
+	exchange	po_box	queue	po_box	[]
+	exchange	queue_2012030115	queue	queue_2012030115	[]
+	exchange	queue_2012030209	queue	queue_2012030209	[]
+	exchange	queue_2012030210	queue	queue_2012030210	[]
+	exchange	queue_2012030505	queue	queue_2012030505	[]
+	exchange	task_queue	queue	task_queue	[]
+main	exchange	queue_2012030209	queue	2012030209	[]
+main	exchange	queue_2012030505	queue	2012030505	[]
+sorting_room	exchange	po_box	queue	mailme	[]
+
+Consumers on /:
+queue_name	channel_pid	consumer_tag	ack_required
+queue_2012030505	&lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at localhost.1.6492.0</A>&gt;	ctag0	false
+
+Permissions on /:
+user	configure	write	read
+guest	.*	.*	.*
+
+End of server status report
+...done.
+
+
+
+
+Thanks a million!
+
+--
+Ezequiel Golub
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="018689.html">[rabbitmq-discuss] 2.7.1 mirrored queues leak a lot of memory	on slave nodes
+</A></li>
+	<LI>Next message: <A HREF="018582.html">[rabbitmq-discuss] Using pika - PRECONDITION_FAILED - unknown delivery tag 1
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#18581">[ date ]</a>
+              <a href="thread.html#18581">[ thread ]</a>
+              <a href="subject.html#18581">[ subject ]</a>
+              <a href="author.html#18581">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,219 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Transactions in AMQP
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20Transactions%20in%20AMQP&In-Reply-To=DE8632162CB73D4CB22D1D15387409E417E643%40scsmsx414.amr.corp.intel.com">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000178.html">
+   <LINK REL="Next"  HREF="000179.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Transactions in AMQP</H1>
+    <B>Alexis Richardson</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20Transactions%20in%20AMQP&In-Reply-To=DE8632162CB73D4CB22D1D15387409E417E643%40scsmsx414.amr.corp.intel.com"
+       TITLE="[rabbitmq-discuss] Transactions in AMQP">alexis.richardson at cohesiveft.com
+       </A><BR>
+    <I>Wed Aug 29 08:57:29 BST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000178.html">[rabbitmq-discuss] Transactions in AMQP
+</A></li>
+        <LI>Next message: <A HREF="000179.html">[rabbitmq-discuss] Ruby client?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#181">[ date ]</a>
+              <a href="thread.html#181">[ thread ]</a>
+              <a href="subject.html#181">[ subject ]</a>
+              <a href="author.html#181">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Tanmay
+
+In the spec:
+
+AMQP supports three kinds of transactions:
+
+   1.      Automatic transactions, in which every published message
+and acknowledgement is processed as a stand-alone transaction.
+   2.      Server local transactions, in which the server will buffer
+published messages and acknowledgements and commit them on demand from
+the client.
+   3.      Distributed transactions, in which the server will
+synchronise its transactions with an external transaction coordinator.
+
+You ask:
+
+1)  &quot;How can this transaction be atomic and/or rolled-back since the
+message is already gone?&quot;
+
+The answer is that the message is not already gone, but held at the
+broker as part of a partially (or pre-) committed transaction.  This
+is because, for the publisher to have an explicit 'abort' we are
+talking about case 2, server local &quot;TX&quot; or case 3, &quot;DTX&quot;.
+
+In more detail --
+
+In 0-8, 0-9 and 0-10, there is a notion of 'command'.  Commands are
+basically control ('admin') expressions sent between the broker and
+its communicating peers, for example queue creation.  Each command is
+atomic (cf. txn type 1 above).
+
+When there is no explicit transaction (TX or DTX) then messages are
+processed atomically too - like commands.
+
+In 0-8, 0-9 and 0-10, there is a notion of transactional message
+*group*, or TX.  The full details of TX are in the spec.
+
+Your question was about just such a 'group' -- it contained just one
+message atom, followed by an abort/commit atom.  In pseudocode your
+example could be written as a group of three: &quot;open_txn ;  send
+message M ; commit_txn&quot;.  The consumer won't see M until the broker
+sees and commits (commit_txn).
+
+Sidebar: in 0-10, commands have an internal sequencing enabling
+correlation for in-order execution.  The precise relationship between
+command execution and session management is new in 0-10 since sessions
+are new in 0-10 (they manage ack behaviour and message order).
+
+Your puzzlement seemed to arise due to the interplay between ack and
+abort/commit.  Would the broker ack the message, knowing it to be in a
+transaction (TX), before waiting for a commit message?  The answer is
+subtle and to do with the architecture for 0-10.  Let's go back to the
+pseudocode above.
+
+* The producer, in the example, has a session relationship with the
+broker.  In this scope, the message M can have been acked before the
+broker sees 'commit_txn'.
+* But all this ack means is that the broker has seen M, and the
+producer does not need to resend M.  I.e. the ack is being used as a
+'control frame' to manage session state between producer and broker.
+We need this because the broker and producer may be connected by a
+network.  If they shared a physical address space (reliably) then we
+would not need this.
+* The sending of this ack does not imply that the broker has yet made
+M visible to consumers.  In fact, in this case M will not be visible
+to consumers because M is in a server local (TX) transaction.  M will
+sit in the brokers precommitted state until told to commit.  Once the
+command to commit arrives, then M will be committed and the consumer
+can see M.
+
+The above analysis would also cover the case where there was more than
+one message sent, say &quot;open_txn ;  send message M ; send message N ;
+send message O ; commit_txn&quot;.  In this case the consumer won't see any
+messages at all, until commit.  But acks will be used under the hood,
+to enable the broker and producer to manage questions like 'do I need
+to resend N, even though M and O have been acked?'.
+
+You need this architectural layering in order to scale in the presence
+of multiple implementation scenarios.
+
+Finally....
+
+In 0-10 the notion of a distributed transaction, DTX, is defined so
+that XA compliance is achieved.  You could use this for grouping
+commands when sharing broker state with another transactional entity,
+for instance an RDBMS.
+
+The guys who did the DTX work did a really good job and as Carl
+mentioned, you can find DTX details in the JIRA:
+<A HREF="https://jira.amqp.org/jira/browse/AMQP-4">https://jira.amqp.org/jira/browse/AMQP-4</A>
+
+You also asked:
+
+2) &quot;Is the protocol currently assuming a reliable transport layer
+(TCP, SCTP, etc) and no unreliable connection (say, UDP)? If yes, will
+the later releases work on including unreliable transport layer
+protocols?&quot;
+
+As Carl explained, the answer is:
+
+--- 0-8 and 0-9 assume TCP
+--- 0-10 sessions enable reliability in the presence of UDP (or
+'provide a framework for it')
+--- But the full details will provided in later releases
+
+HTH!
+
+alexis
+
+
+
+
+
+On 8/28/07, Goel, Tanmay &lt;<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">tanmay.goel at intel.com</A>&gt; wrote:
+&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> Hi,
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> 1. I have a basic question about transactions in AMQP. What exactly does a
+</I>&gt;<i> transaction include/mean? For example, does it include the administrative
+</I>&gt;<i> features like creation of queues, exchanges, etc that will be auto-deleted
+</I>&gt;<i> if the client aborts the transaction. I'm not entirely clear about this, so
+</I>&gt;<i> I'm just trying to understand and figure out possibilities. The spec says
+</I>&gt;<i> that messages and acknowledgments are covered in a transaction. What would
+</I>&gt;<i> happen if the publisher sends a message to the broker/queue, consumer
+</I>&gt;<i> receives (reads it from the queue) and processes it, sends an ack to the
+</I>&gt;<i> broker and then the publisher decides to abort the transaction? How can this
+</I>&gt;<i> transaction be atomic and/or rolled-back since the message is already gone?
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> Please help me understand this. I'm trying to understand the scope of a
+</I>&gt;<i> transaction.
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> 2. Is the protocol currently assuming a reliable transport layer (TCP, SCTP,
+</I>&gt;<i> etc) and no unreliable connection (say, UDP)? If yes, will the later
+</I>&gt;<i> releases work on including unreliable transport layer protocols?
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> Thanks,
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> Tanmay
+</I>&gt;<i>
+</I>&gt;<i>
+</I>
+
+-- 
+Alexis Richardson
++44 20 7617 7339 (UK)
++44 77 9865 2911 (cell)
++1 650 206 2517 (US)
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000178.html">[rabbitmq-discuss] Transactions in AMQP
+</A></li>
+	<LI>Next message: <A HREF="000179.html">[rabbitmq-discuss] Ruby client?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#181">[ date ]</a>
+              <a href="thread.html#181">[ thread ]</a>
+              <a href="subject.html#181">[ subject ]</a>
+              <a href="author.html#181">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

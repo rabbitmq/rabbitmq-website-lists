@@ -1,0 +1,132 @@
+package com.att.dlife.dlcore.mbus.client;
+
+import javax.xml.bind.JAXBException;
+
+import org.apache.log4j.Logger;
+import org.springframework.amqp.core.Message;
+import org.springframework.amqp.core.MessageProperties;
+import org.springframework.amqp.rabbit.core.RabbitTemplate;
+import org.springframework.amqp.rabbit.support.CorrelationData;
+
+
+
+/**
+ * The Class AmqpMessageSenderImpl is the AMQP implementation of AsyncMessageSender interface.
+ */
+public class AmqpMessageSenderImpl implements AsyncMessageSender {
+
+	/** The log. */
+	private Logger log = Logger.getLogger(AmqpMessageSenderImpl.class);
+
+	/** The Rabbit template. */
+	private RabbitTemplate amqpTemplate = null;
+
+	/**
+	 * Instantiates a new amqp message sender impl.
+	 */
+	public AmqpMessageSenderImpl() {
+		super();
+		if (Util.context.containsBean("amqpTemplate")) {
+			amqpTemplate = (RabbitTemplate) Util.context.getBean("amqpTemplate");
+		} else {
+			Util.loadAmqpContext();
+			amqpTemplate = (RabbitTemplate) Util.context.getBean("amqpTemplate");
+		}
+		if(log.isDebugEnabled()){
+			log.debug("AmqpMessageSenderImpl  : "+this);
+			log.debug("amqpTemplate : "+amqpTemplate);
+		}
+	}
+
+	/* (non-Javadoc)
+	 * @see com.att.dlife.dlcore.mbus.client.AsyncMessageSender#send(com.att.dlife.dlcore.mbus.client.DLCoreMessage)
+	 */
+	@Override
+	public String send(DLCoreMessage message) throws DLCoreMessageBusException {
+		String bindingKey = MessageMapper.getBindingKey(message);
+		String jndiName = MessageMapper.getJndiDestination(bindingKey);
+		
+		String ttl = MessageMapper.getTTL(bindingKey);
+		
+		String txId =  message.getSrcTxId();
+		if(txId == null) txId =Util.generateTxId(message.getSrcDomainId());
+		
+		Message amqpMsg;
+		try {
+			amqpMsg = getAmqpMessage(message,  ttl , txId);
+			amqpTemplate.send(jndiName, bindingKey, amqpMsg, new CorrelationData(message.getSrcTxId()));
+		//	amqpTemplate.send(jndiName, bindingKey, amqpMsg);
+			if(log.isDebugEnabled()){
+				log.debug("Message Sent to : "+jndiName);
+				log.debug("Message Binding Key : "+bindingKey);
+				log.debug("Message : " + new String(amqpMsg.getBody()));
+			
+				log.debug("appId : " + amqpMsg.getMessageProperties().getAppId());
+				log.debug("TTL : " + amqpMsg.getMessageProperties().getExpiration());
+				
+				log.debug("Header : " + amqpMsg.getMessageProperties().getHeaders().keySet());
+				log.debug("Values : " + amqpMsg.getMessageProperties().getHeaders().values());
+			}
+		} catch (JAXBException e) {
+			
+			String stack = Util.errorStr(e);
+			log.error(stack);
+			throw new DLCoreMessageBusException(stack);
+		}
+		return txId;
+		
+		
+	
+	}
+
+	
+	/**
+	 * Gets the amqp message.
+	 *
+	 * @param message the message
+	 * @param ttl the ttl
+	 * @param txId the tx id
+	 * @return the amqp message
+	 * @throws JAXBException the jAXB exception
+	 */
+	private Message getAmqpMessage(DLCoreMessage message , String ttl, String txId) throws JAXBException {
+		MessageProperties mProp = new MessageProperties();
+		//
+		mProp.setExpiration(ttl);
+		
+		
+		if(message.getType()!= null)
+		mProp.setHeader("type", message.getType());
+		if(message.getSrcAccountId()!= null)
+		mProp.setHeader("srcAccountId", message.getSrcAccountId());
+		if(message.getSrcAppId()!= null){
+			mProp.setHeader("srcAppId", message.getSrcAppId());
+			mProp.setAppId(message.getSrcAppId());
+		}
+		if(message.getSrcDeviceId()!= null)
+			mProp.setHeader("srcDeviceId", message.getSrcDeviceId());
+		
+		if(message.getSrcDomainId()!= null)
+			mProp.setHeader("srcDomainId", message.getSrcDomainId());
+		
+		if(message.getSrcGwyGuId()!= null)
+			mProp.setHeader("srcGwyGuId", message.getSrcGwyGuId());
+		
+		if(message.getSrcTS()!= null){
+			mProp.setHeader("srcTS", message.getSrcTS());
+		}else{
+		
+			mProp.setHeader("srcTS", Util.getCurrentDateTime());
+		}
+		
+		mProp.setCorrelationId(txId.getBytes());
+		
+		
+		
+		Message amqpMessage = new Message(Util.parseMessageBody(message), mProp);
+		
+		return amqpMessage;
+	}
+
+
+}

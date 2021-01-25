@@ -1,0 +1,154 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Federated Topic Exchanges
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Federated%20Topic%20Exchanges&In-Reply-To=%3C512E3200.5050703%40rabbitmq.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="025679.html">
+   <LINK REL="Next"  HREF="025699.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Federated Topic Exchanges</H1>
+    <B>Simon MacMullen</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Federated%20Topic%20Exchanges&In-Reply-To=%3C512E3200.5050703%40rabbitmq.com%3E"
+       TITLE="[rabbitmq-discuss] Federated Topic Exchanges">simon at rabbitmq.com
+       </A><BR>
+    <I>Wed Feb 27 16:19:12 GMT 2013</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="025679.html">[rabbitmq-discuss] Federated Topic Exchanges
+</A></li>
+        <LI>Next message: <A HREF="025699.html">[rabbitmq-discuss] Federated Topic Exchanges
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#25697">[ date ]</a>
+              <a href="thread.html#25697">[ thread ]</a>
+              <a href="subject.html#25697">[ subject ]</a>
+              <a href="author.html#25697">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>On 26/02/13 23:41, Richard Raseley wrote:
+&gt;<i> I am contemplating the use of topic exchanges along with the federation
+</I>&gt;<i> plugin to route messages between geographically separated brokers.
+</I>&gt;<i>
+</I>&gt;<i> 1) Will someone confirm my understanding of the configuration is valid?
+</I>&gt;<i>
+</I>&gt;<i> In this situation there would be topic exchange named &quot;B1.TE&quot; &quot;B2.TE&quot;
+</I>&gt;<i> that would be configured within brokers &quot;B1&quot; and &quot;B2&quot; respectively.
+</I>&gt;<i> B1.TE would have B2.TE configured as an upstream exchange and B2.TE
+</I>&gt;<i> would have B1.TE configured as an upstream exchange.
+</I>&gt;<i>
+</I>&gt;<i> Broker B1 would have queues &quot;B1.Q1&quot; and &quot;B1.Q2&quot; configured and bound to
+</I>&gt;<i> exchange B1.TE with routing keys &quot;B1.Q1&quot; and &quot;*.Q2&quot; respectively.
+</I>&gt;<i>
+</I>&gt;<i> Broker B2 would have queues &quot;B2.Q1&quot; and &quot;B2.Q2&quot; configured and bound to
+</I>&gt;<i> exchange B2.TE with routing keys &quot;B2.Q1&quot; and &quot;*.Q2&quot; respectively.
+</I>
+It is valid, certainly. Note that the exchanges and queues in B1 and B2 
+do not need to have distinct names (but maybe you were just doing that 
+to be clearer?)
+
+&gt;<i> 2) Assuming the answer to question #1 above is &quot;yes, it is valid&quot;, would
+</I>&gt;<i> someone confirm my understanding of how the following messages would be
+</I>&gt;<i> routed?
+</I>&gt;<i>
+</I>&gt;<i> A message sent to exchange B1.TE with routing key &quot;B2.Q1&quot; would be
+</I>&gt;<i> received, forwarded to exchange B2.TE, placed in queue B2.Q1,
+</I>
+Yes.
+
+&gt;<i> and then acknowledgement would be sent back to the client.
+</I>
+No.
+
+Assuming the client is publishing in confirm mode, the confirm will be 
+sent back as soon as B1 has taken responsibility for the message. 
+Confirms mean &quot;the broker you published to took responsibility for the 
+message&quot;. Otherwise as your federation grows larger and less-reliable 
+network links come into play, you could be waiting a long time for those 
+confirms!
+
+&gt;<i> A message sent to exchange B1.TE with routing key &quot;B1.Q2&quot; would be
+</I>&gt;<i> received, a copy placed in queue B1.Q2, a copy forwarded to exchange
+</I>&gt;<i> B2.TE, placed in queue B2.Q2, and then acknowledgement would be sent
+</I>&gt;<i> back to the client.
+</I>&gt;<i>
+</I>&gt;<i> A message sent to exchange B2.TE with routing key &quot;B2.Q2&quot; would be
+</I>&gt;<i> received, a copy placed in queue B2.Q2, a copy forwarded to exchange
+</I>&gt;<i> B1.TE, placed in queue B1.Q2, and then acknowledgement would be sent
+</I>&gt;<i> back to the client.
+</I>
+Again, yes to the routing, no to when confirmation happens.
+
+&gt;<i> 3) My understanding is that an exchange has knowledge of the routing
+</I>&gt;<i> topology of any upstream queues and therefore won't send a message
+</I>&gt;<i> upstream that wouldn't end up in a queue. Firstly, is that understanding
+</I>&gt;<i> correct?
+</I>
+I think you mean &quot;downstream&quot; in both cases, but yes.
+
+&gt;<i> Secondly (if yes to the previous question), what type of
+</I>&gt;<i> overhead are we talking about when using this configuration with a topic
+</I>&gt;<i> exchange?
+</I>
+Effectively the bindings propagate upstream, so each federated exchange 
+will end up with all the bindings for all of its downstreams.
+
+&gt;<i> My worry is that the processing power required to deliver each message
+</I>&gt;<i> will increase exponentially as I add additional brokers in a &quot;mesh&quot;
+</I>&gt;<i> style federated topology as it seems that the routing table on each
+</I>&gt;<i> upstream exchange has to be examined for each message delivery.
+</I>
+Well, it won't be exponential. But the routing table will get larger. 
+Topic routing is approximately O(log n) in the number of bindings.
+
+The federation mechanism doesn't try to trade routing complexity for 
+unnecessarily-routed messages by amalgamating topic keys since
+
+  (a) it would have to know about topics for that, it's supposed to be a
+      generic mechanism
+
+  (b) it can't know what the distribution of messages across your
+      routing key space is
+
+However, *you* know that distribution. So you could federate topic 
+exchanges and then use e2e bindings from them to local topic exchanges, 
+with relatively &quot;large&quot; routing keys that will cover a decent sized 
+range. Then apps bind queues to the local topics. That does require a 
+bit more up-front setup though - but it kind of has to since it requires 
+knowledge of how your routing keys are distributed.
+
+Cheers, Simon
+
+-- 
+Simon MacMullen
+RabbitMQ, VMware
+</PRE>
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="025679.html">[rabbitmq-discuss] Federated Topic Exchanges
+</A></li>
+	<LI>Next message: <A HREF="025699.html">[rabbitmq-discuss] Federated Topic Exchanges
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#25697">[ date ]</a>
+              <a href="thread.html#25697">[ thread ]</a>
+              <a href="subject.html#25697">[ subject ]</a>
+              <a href="author.html#25697">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

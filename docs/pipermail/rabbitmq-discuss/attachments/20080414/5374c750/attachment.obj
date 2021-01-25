@@ -1,0 +1,62 @@
+-module(amqp_async_consume).
+
+-include_lib("rabbitmq_server/include/rabbit_framing.hrl").
+-include_lib("rabbitmq_server/include/rabbit.hrl").
+-include_lib("rabbitmq_client/include/amqp_client.hrl").
+
+-export([basic_get_test/0]).
+
+basic_get_test() ->
+    
+    User = Password = "guest",
+    Host = "127.0.0.1",
+    Realm = <<"/data">>,
+
+    %% Start a connection to the server
+
+    Connection = amqp_connection:start(User, Password, Host),
+    io:format("Connection: ~p~n",[Connection]),
+    %% Once you have a connection to the server, you can start an AMQP channel gain access to a realm
+
+    Channel = amqp_connection:open_channel(Connection),
+    Access = #'access.request'{realm = Realm,
+                               exclusive = false,
+                               passive = true,
+                               active = true,
+                               write = true,
+                               read = true},
+    #'access.request_ok'{ticket = Ticket} = amqp_channel:call(Channel, Access),
+
+    %% Register a consumer to listen to a queue
+    Q = <<"test">>,	%if I don't assign something erlang is complaining about Unbound and won't compile
+    X = <<"x">>,
+    BindKey = <<"a.b.c.*">>,
+    
+    QueueDeclare = #'queue.declare'{ticket = Ticket, queue = Q,
+                                    passive = false, durable = false,
+                                    exclusive = false, auto_delete = false,
+                                    nowait = false, arguments = []},
+
+    #'queue.declare_ok'{queue = Q1,
+                        message_count = MessageCount,
+                        consumer_count = ConsumerCount}
+                       = amqp_channel:call(Channel,QueueDeclare),
+    
+    QueueBind = #'queue.bind'{ticket = Ticket, queue = Q1, exchange = X,
+                              routing_key = BindKey, nowait = false, arguments = []},
+    #'queue.bind_ok'{} = amqp_channel:call(Channel, QueueBind),
+    
+    BasicGet = #'basic.get'{ticket = Ticket, queue = Q1, no_ack = true},
+    {Method, Content} = amqp_channel:call(Channel, BasicGet),
+    
+     io:format("Method: ~p Content: ~p ~n",[Method, Content]),
+
+%% After you've finished with the channel and connection you should close them down
+
+    ChannelClose = #'channel.close'{reply_code = 200, reply_text = <<"Goodbye">>,
+                                    class_id = 0, method_id = 0},
+    #'channel.close_ok'{} = amqp_channel:call(Channel, ChannelClose),
+    ConnectionClose = #'connection.close'{reply_code = 200, reply_text = <<"Goodbye">>,
+                                          class_id = 0, method_id = 0},
+    #'connection.close_ok'{} = amqp_connection:close(Connection, ConnectionClose),
+    ok.

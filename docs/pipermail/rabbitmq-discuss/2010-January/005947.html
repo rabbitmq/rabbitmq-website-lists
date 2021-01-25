@@ -1,0 +1,317 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Will this work?
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20Will%20this%20work%3F&In-Reply-To=4B560E7E.703%40lshift.net">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="005940.html">
+   <LINK REL="Next"  HREF="005948.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Will this work?</H1>
+    <B>Dinabandhu Mitra</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20Will%20this%20work%3F&In-Reply-To=4B560E7E.703%40lshift.net"
+       TITLE="[rabbitmq-discuss] Will this work?">Dinabandhu.Mitra at tecnotree.com
+       </A><BR>
+    <I>Thu Jan 21 11:28:36 GMT 2010</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="005940.html">[rabbitmq-discuss] Will this work?
+</A></li>
+        <LI>Next message: <A HREF="005948.html">[rabbitmq-discuss] Will this work?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#5947">[ date ]</a>
+              <a href="thread.html#5947">[ thread ]</a>
+              <a href="subject.html#5947">[ subject ]</a>
+              <a href="author.html#5947">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi Tony,
+
+Thanks for your reply. 
+
+I tried disabling Nagle, but it does really not help for cases a &amp; b. Moreover, it messes up latency for higher rates.
+
+I tried googling about Nagle, and found a interesting article (<A HREF="http://www.stuartcheshire.org/papers/NagleDelayedAck/">http://www.stuartcheshire.org/papers/NagleDelayedAck/</A>) that mentions that there is a possibility of some kind of interaction between nagle and delayed ack that can introduce delays of around 200 ms. The latency figures in cases 1 &amp; 2 are very close to that figure.
+
+&gt;<i>From that article it seems an alternative way (other than disabling nagle) is to have a two way communication between the peers of a socket, i.e if the peer has something to send then the ack will not be delayed. In my test application the communication is always one way, either from application to broker (publisher) or from broker to application (consumer). To have a two way communication I need have two threads (consumer &amp; publisher) sharing the same socket.
+</I>
+I searched the mailing list for correct way to write a multithreaded application for RabbitMQ and found a post from you that suggests I should have a single shared socket but thread specific connection and channel.
+
+But I landed into problem trying doing it. The problem is if I create two connections on the same socket and attempt a login on the second connection, the application simply dies (no core). I simulated this in a trivial code. The code is below -
+
+#include &lt;stdlib.h&gt;
+#include &lt;stdio.h&gt;
+#include &lt;string.h&gt;
+
+#include &lt;stdint.h&gt;
+#include &lt;amqp.h&gt;
+#include &lt;amqp_framing.h&gt;
+#include &lt;sys/socket.h&gt;
+#include &lt;arpa/inet.h&gt;
+#include &lt;netinet/tcp.h&gt;
+
+
+int main()
+{
+    int socket = amqp_open_socket(&quot;127.0.0.1&quot;, 5672);
+
+    amqp_connection_state_t connection1 = amqp_new_connection();
+    amqp_set_sockfd(connection1, socket);
+    amqp_login(connection1, &quot;/&quot;, 0, 131072, 0, AMQP_SASL_METHOD_PLAIN, &quot;guest&quot;, &quot;guest&quot;);
+    amqp_channel_open(connection1, 1);
+
+    printf (&quot;Connection 1 .... ok\n&quot;);
+
+    amqp_connection_state_t connection2 = amqp_new_connection();
+    amqp_set_sockfd(connection2, socket);
+    printf (&quot;Login on Connection 2 ....\n&quot;); /* This print comes */
+    amqp_login(connection2, &quot;/&quot;, 0, 131072, 0, AMQP_SASL_METHOD_PLAIN, &quot;guest&quot;, &quot;guest&quot;); /* Application simply dies here ... no core ...nothing */
+    printf (&quot;Login on Connection 2 .... ok\n&quot;);  /* This print does not come */
+    amqp_channel_open(connection2, 1);
+
+    printf (&quot;Connection 2 .... ok\n&quot;);
+} 
+
+Can you please help on where I am going wrong?
+
+Regards,
+Dinabandhu
+
+&gt;<i> -----Original Message-----
+</I>&gt;<i> From: Tony Garnock-Jones [mailto:<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">tonyg at lshift.net</A>]
+</I>&gt;<i> Sent: Wednesday, January 20, 2010 1:27 AM
+</I>&gt;<i> To: Dinabandhu Mitra
+</I>&gt;<i> Cc: Alexis Richardson; rabbitmq info; rabbitmq-
+</I>&gt;<i> <A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">discuss at lists.rabbitmq.com</A>
+</I>&gt;<i> Subject: Re: [rabbitmq-discuss] Will this work?
+</I>&gt;<i> 
+</I>&gt;<i> Hi Dinabandhu,
+</I>&gt;<i> 
+</I>&gt;<i> I think you're running into TCP_NODELAY issues. Try setting your
+</I>&gt;<i> client's socket to nodelay mode, which disables Nagling:
+</I>&gt;<i> 
+</I>&gt;<i>   int one = 1;
+</I>&gt;<i>   setsockopt(sockfd, IPPROTO_TCP, TCP_NODELAY, &amp;one, sizeof(one));
+</I>&gt;<i> 
+</I>&gt;<i> This should fix the high observed latency in cases (a) and (b).
+</I>&gt;<i> 
+</I>&gt;<i> Regards,
+</I>&gt;<i>   Tony
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> Dinabandhu Mitra wrote:
+</I>&gt;<i> &gt; Hi Alexis,
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; Any further advice on our earlier discussions?
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; I am currently trying out using c API. I was trying to measure
+</I>&gt;<i> communication latency introduced by RabbitMQ. Following are some of the
+</I>&gt;<i> observations -
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; 1. When the test application starts, the latency for first few
+</I>&gt;<i> messages is very high. The number of messages with high latency depends
+</I>&gt;<i> on the throughput the application tries to generate. E.g -
+</I>&gt;<i> &gt; 	a) For 1/2 message per sec latency continues to be very high
+</I>&gt;<i> (over 200 millisecond) throughout.
+</I>&gt;<i> &gt; 	b) For 3/4 message per sec it seems to change between high (200)
+</I>&gt;<i> and low (0.200) on every alternate message.
+</I>&gt;<i> &gt; 	c) For 5 messages per sec it stabilizes to a low value (0.200 -
+</I>&gt;<i> 0.300) after first 5/6 messages.
+</I>&gt;<i> &gt; 	d) For 10 messages per sec it stabilizes to a low value (0.200 -
+</I>&gt;<i> 0.300) after first 5/6 messages.
+</I>&gt;<i> &gt; 	e) For 50 messages per sec it stabilizes to a low value (0.200 -
+</I>&gt;<i> 0.300) after first 15/16 messages.
+</I>&gt;<i> &gt; 	f) For 100 messages per sec it stabilizes to a low value (0.200 -
+</I>&gt;<i> 0.300) after first 50/60 messages.
+</I>&gt;<i> &gt; 	g) For 500 messages per sec it stabilizes to a low value (0.300 -
+</I>&gt;<i> 0.500) after first 370/380 messages.
+</I>&gt;<i> &gt; 	h) For 1000 messages per sec it comes down to a low value (0.500
+</I>&gt;<i> - 0.700) after first 500 messages. But I have seen intermittent bursts
+</I>&gt;<i> of a sequence of high latency (going over 20 millisecond) messages.
+</I>&gt;<i> &gt; 	i) Initial latencies increase with throughput. E.g at 1000
+</I>&gt;<i> msg/sec it is as high as 380/390 millisecond for some messages.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; 2. Both publisher and subscriber are in the same server as the
+</I>&gt;<i> broker. In fact the publisher and the subscriber are two threads in the
+</I>&gt;<i> same process.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; 3. The server is a idle SUN Netra Dual CPU(Quad Core) Xeon class
+</I>&gt;<i> machine with 16G RAM running RHEL 4.7 64 bit.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; 4. The platform is on the factory configuration; i.e. I have just
+</I>&gt;<i> installed the RPMs and started the RabbitMQ server without any other
+</I>&gt;<i> configuration.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; 5. I am using approx 1KB sized messages for this.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; Is there any configuration that I can do to have better (less
+</I>&gt;<i> variance) latency? Also, I am using 1 producer and 1 consumer (both
+</I>&gt;<i> trivial). Shall I get better results by using multiple
+</I>&gt;<i> producers/consumers?
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; Regards,
+</I>&gt;<i> &gt; Dinabandhu
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt;&gt; -----Original Message-----
+</I>&gt;<i> &gt;&gt; From: Alexis Richardson [mailto:<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">alexis.richardson at gmail.com</A>]
+</I>&gt;<i> &gt;&gt; Sent: Tuesday, January 05, 2010 10:33 PM
+</I>&gt;<i> &gt;&gt; To: Dinabandhu Mitra
+</I>&gt;<i> &gt;&gt; Cc: rabbitmq info
+</I>&gt;<i> &gt;&gt; Subject: Re: [rabbitmq-discuss] Will this work?
+</I>&gt;<i> &gt;&gt;
+</I>&gt;<i> &gt;&gt; Dinabandhu
+</I>&gt;<i> &gt;&gt;
+</I>&gt;<i> &gt;&gt; Answers / comments below also.  Let me know if you want to cc this
+</I>&gt;<i> to
+</I>&gt;<i> &gt;&gt; rabbitmq-discuss.  FYI - <A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">info at rabbitmq.com</A> is our private (internal
+</I>&gt;<i> &gt;&gt; team) list.
+</I>&gt;<i> &gt;&gt;
+</I>&gt;<i> &gt;&gt; alexis
+</I>&gt;<i> &gt;&gt;
+</I>&gt;<i> &gt;&gt;
+</I>&gt;<i> &gt;&gt;
+</I>&gt;<i> &gt;&gt; On Tue, Jan 5, 2010 at 3:16 PM, Dinabandhu Mitra
+</I>&gt;<i> &gt;&gt; &lt;<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">Dinabandhu.Mitra at tecnotree.com</A>&gt; wrote:
+</I>&gt;<i> &gt;&gt;&gt; The scale of the application depends on the implementation. The
+</I>&gt;<i> &gt;&gt; messaging load
+</I>&gt;<i> &gt;&gt;&gt; can vary from few hundred per second to over 30,000/40,000 per
+</I>&gt;<i> &gt;&gt; second. Of course
+</I>&gt;<i> &gt;&gt;&gt; we will add additional equipment depending on the load but the
+</I>&gt;<i> &gt;&gt; application should
+</I>&gt;<i> &gt;&gt;&gt; be able to use additional equipment effectively.
+</I>&gt;<i> &gt;&gt; OK.  That should be fine.  What's the peak ingress per node?
+</I>&gt;<i> &gt;&gt;
+</I>&gt;<i> &gt;&gt; I.e. what is the max rate that a single publisher might produce in
+</I>&gt;<i> &gt;&gt; messages per second?
+</I>&gt;<i> &gt;&gt;
+</I>&gt;<i> &gt;&gt; Also - are the messages 'small' (&lt; 500 bytes) or 'large' (&gt;64Kb)?
+</I>&gt;<i> Is
+</I>&gt;<i> &gt;&gt; this size consistent or volatile?
+</I>&gt;<i> &gt;&gt;
+</I>&gt;<i> &gt;&gt;
+</I>&gt;<i> &gt;&gt;
+</I>&gt;<i> &gt;&gt;
+</I>&gt;<i> &gt;&gt;&gt;&gt; OK.  You will be able to do this with direct exchanges too.  They
+</I>&gt;<i> &gt;&gt; are
+</I>&gt;<i> &gt;&gt;&gt;&gt; faster (in lookup time) than our current topic implementation.  It
+</I>&gt;<i> &gt;&gt;&gt;&gt; does not look like you need topic exchanges because you do not
+</I>&gt;<i> &gt;&gt; appear
+</I>&gt;<i> &gt;&gt;&gt;&gt; to be routing messages using wildcards, eg. you do not need
+</I>&gt;<i> bindings
+</I>&gt;<i> &gt;&gt;&gt;&gt; of the form &quot;PE.*&quot;.  Is that right?
+</I>&gt;<i> &gt;&gt;&gt; Yes. I was reading the AMQP specification concepts section few days
+</I>&gt;<i> &gt;&gt; back
+</I>&gt;<i> &gt;&gt;&gt; and realized that my understanding of direct exchanges was wrong.
+</I>&gt;<i> &gt;&gt; Direct
+</I>&gt;<i> &gt;&gt;&gt; exchange should be the right option for us.
+</I>&gt;<i> &gt;&gt; Good.
+</I>&gt;<i> &gt;&gt;
+</I>&gt;<i> &gt;&gt;
+</I>&gt;<i> &gt;&gt;
+</I>&gt;<i> &gt;&gt;
+</I>&gt;<i> &gt;&gt;&gt;&gt;&gt;   a) When a application engine (LE/PE) boots and declares it's
+</I>&gt;<i> &gt;&gt; queue
+</I>&gt;<i> &gt;&gt;&gt;&gt; and
+</I>&gt;<i> &gt;&gt;&gt;&gt;&gt; binding using a connection to the local broker, the queue and
+</I>&gt;<i> &gt;&gt;&gt;&gt; bindings
+</I>&gt;<i> &gt;&gt;&gt;&gt;&gt; becomes visible to all broker instances running in different
+</I>&gt;<i> &gt;&gt; servers.
+</I>&gt;<i> &gt;&gt;&gt;&gt; Is
+</I>&gt;<i> &gt;&gt;&gt;&gt;&gt; this correct?
+</I>&gt;<i> &gt;&gt;&gt;&gt; Correct, provided that the other brokers are in the same cluster
+</I>&gt;<i> (as
+</I>&gt;<i> &gt;&gt;&gt;&gt; in your diagram) and vhost (ie. namespace).
+</I>&gt;<i> &gt;&gt;&gt; It should be sufficient. As of now we are looking at a single
+</I>&gt;<i> cluster
+</I>&gt;<i> &gt;&gt; and
+</I>&gt;<i> &gt;&gt;&gt; single vhost.
+</I>&gt;<i> &gt;&gt; OK, cool.
+</I>&gt;<i> &gt;&gt;
+</I>&gt;<i> &gt;&gt;
+</I>&gt;<i> &gt;&gt;
+</I>&gt;<i> &gt;&gt;&gt;&gt;&gt;   f) Anyone trying send a message that is immediately non-
+</I>&gt;<i> routable
+</I>&gt;<i> &gt;&gt;&gt;&gt;&gt; (possibly mandatory+immediate flag with auto-ack) gets a error
+</I>&gt;<i> and
+</I>&gt;<i> &gt;&gt;&gt;&gt; broker
+</I>&gt;<i> &gt;&gt;&gt;&gt;&gt; drops the message. Is this correct?
+</I>&gt;<i> &gt;&gt;&gt;&gt; I can't remember exactly how this works.  Basically the answer is
+</I>&gt;<i> &gt;&gt; YES.
+</I>&gt;<i> &gt;&gt;&gt;&gt;  I cannot recall under what conditions the broker drops the
+</I>&gt;<i> message
+</I>&gt;<i> &gt;&gt;&gt;&gt; silently, and under what conditions it lets the publisher know
+</I>&gt;<i> that
+</I>&gt;<i> &gt;&gt; an
+</I>&gt;<i> &gt;&gt;&gt;&gt; error occurred.
+</I>&gt;<i> &gt;&gt;&gt; Well, this is not a very hard requirement. The LE instances are
+</I>&gt;<i> timer
+</I>&gt;<i> &gt;&gt; controlled,
+</I>&gt;<i> &gt;&gt;&gt; in the sense that if a LE does not receive a response from any of
+</I>&gt;<i> the
+</I>&gt;<i> &gt;&gt; PEs within
+</I>&gt;<i> &gt;&gt;&gt; certain time limit then the LE assumes that there is a problem is
+</I>&gt;<i> &gt;&gt; handling the
+</I>&gt;<i> &gt;&gt;&gt; request and sends a failure response to the client that originated
+</I>&gt;<i> &gt;&gt; the transaction.
+</I>&gt;<i> &gt;&gt;&gt; However, it is way better if the rejection can be done without
+</I>&gt;<i> &gt;&gt; waiting for the
+</I>&gt;<i> &gt;&gt;&gt; timer to expire in case none of the relevant PE engines are live.
+</I>&gt;<i> &gt;&gt; This is how the
+</I>&gt;<i> &gt;&gt;&gt; application behaves currently.
+</I>&gt;<i> &gt;&gt; OK.  We can return to this point later.
+</I>&gt;<i> &gt;&gt;
+</I>&gt;<i> &gt;&gt; alexis
+</I>&gt;<i> &gt;&gt;
+</I>&gt;<i> &gt;&gt;
+</I>&gt;<i> &gt;&gt;
+</I>&gt;<i> &gt;&gt;&gt;&gt; alexis
+</I>&gt;<i> &gt;&gt;&gt;&gt;
+</I>&gt;<i> &gt;&gt;&gt;&gt;
+</I>&gt;<i> &gt;&gt;&gt;&gt;
+</I>&gt;<i> &gt;&gt;&gt;&gt;&gt; Regards,
+</I>&gt;<i> &gt;&gt;&gt;&gt;&gt; Dinabandhu
+</I>&gt;<i> &gt;&gt;&gt;&gt;&gt; --
+</I>&gt;<i> &gt;&gt;&gt;&gt;&gt; View this message in context: <A HREF="http://old.nabble.com/Will-this-">http://old.nabble.com/Will-this-</A>
+</I>&gt;<i> &gt;&gt; work--
+</I>&gt;<i> &gt;&gt;&gt;&gt; tp26875409p26875409.html
+</I>&gt;<i> &gt;&gt;&gt;&gt;&gt; Sent from the RabbitMQ mailing list archive at Nabble.com.
+</I>&gt;<i> &gt;&gt;&gt;&gt;&gt;
+</I>&gt;<i> &gt;&gt;&gt;&gt;&gt;
+</I>&gt;<i> &gt;&gt;&gt;&gt;&gt; _______________________________________________
+</I>&gt;<i> &gt;&gt;&gt;&gt;&gt; rabbitmq-discuss mailing list
+</I>&gt;<i> &gt;&gt;&gt;&gt;&gt; <A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;<i> &gt;&gt;&gt;&gt;&gt; <A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-">http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-</A>
+</I>&gt;<i> &gt;&gt; discuss
+</I>&gt;<i> &gt;
+</I>
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="005940.html">[rabbitmq-discuss] Will this work?
+</A></li>
+	<LI>Next message: <A HREF="005948.html">[rabbitmq-discuss] Will this work?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#5947">[ date ]</a>
+              <a href="thread.html#5947">[ thread ]</a>
+              <a href="subject.html#5947">[ subject ]</a>
+              <a href="author.html#5947">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

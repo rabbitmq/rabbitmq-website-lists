@@ -1,0 +1,178 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Populate queues in an instance with queues	in multiple instances
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Populate%20queues%20in%20an%20instance%20with%20queues%0A%09in%20multiple%20instances&In-Reply-To=%3C69CA8861-687F-42EE-8318-082ECB7F3E7A%40rabbitmq.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="020874.html">
+   <LINK REL="Next"  HREF="020879.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Populate queues in an instance with queues	in multiple instances</H1>
+    <B>Tim Watson</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Populate%20queues%20in%20an%20instance%20with%20queues%0A%09in%20multiple%20instances&In-Reply-To=%3C69CA8861-687F-42EE-8318-082ECB7F3E7A%40rabbitmq.com%3E"
+       TITLE="[rabbitmq-discuss] Populate queues in an instance with queues	in multiple instances">tim at rabbitmq.com
+       </A><BR>
+    <I>Thu Jun 28 14:35:06 BST 2012</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="020874.html">[rabbitmq-discuss] Populate queues in an instance with queues in	multiple instances
+</A></li>
+        <LI>Next message: <A HREF="020879.html">[rabbitmq-discuss] error building public umbrella
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#20876">[ date ]</a>
+              <a href="thread.html#20876">[ thread ]</a>
+              <a href="subject.html#20876">[ subject ]</a>
+              <a href="author.html#20876">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>On 28 Jun 2012, at 12:29, Vaidik Kapoor wrote:
+
+&gt;<i> The Problem:
+</I>&gt;<i> 
+</I>&gt;<i> The above stated solution (according to us) will work fine but the issue is that we don't want to implement the whole synchronization protocol by ourselves for the simple reason that we might be wrong here. We were unable to find this particular way of synchronization in Redis. So we are open to other AMQP based queues like RabbitMQ, ZeroMQ, etc. Again we were not able to figure out if we can do this with these solutions.
+</I>&gt;<i> 
+</I>0MQ is cool, but it is not, to the best of my knowledge, AMQP based.
+
+&gt;<i> Do these Message Queues or any other data store provide features that can be the solution to our problem? If yes, then how?
+</I>Rabbit can do other things besides AMQP ACKs to help here.
+
+&gt;<i> If not, then is our solution good enough?
+</I>Well your solution sounds fine, but you're going to have to work around all the potential issues (central node is down, some other node is down, both nodes are up and communicating but the network goes down at some point, etc) by hand. I would posit however, that it takes a long time (i.e., years) to gradually squash out all the little bugs in a complicated piece of high availability, distributed software. 
+
+&gt;<i> Can anyone suggest a better solution?
+</I>&gt;<i> Can there be a better way to do this?
+</I>Possibly! :)
+
+&gt;<i> What would be the best way to make it fail safe?
+</I>Well if you don't care about performance at all, you can just use a database and standard replication technology, but it's not going to scale (or perform) very nicely. You could also consider a sharded distributed file system, although personally I wouldn't want to go that way as the guarantees probably don't fit what you're trying to do very well.
+
+&gt;<i> The data that we are collecting is very important to us and the order of data delivery to the central node is not an issue.
+</I>&gt;<i> ---
+</I>&gt;<i> 
+</I>&gt;<i> Response from Alexis:
+</I>&gt;<i> 
+</I>&gt;<i> You could do this with RabbitMQ by setting up the central node (or cluster of nodes) to be a consumer of messages from the other nodes, and using the message acknowledgement feature. This feature means that the central node(s) can ack delivery, so that other nodes only delete messages after the ack. See for example: <A HREF="http://www.rabbitmq.com/tutorials/tutorial-two-python.html">http://www.rabbitmq.com/tutorials/tutorial-two-python.html</A>
+</I>&gt;<i> 
+</I>&gt;<i> ---
+</I>
+I would add to that another potential bit of the puzzle. You might also want to look at 'Publisher Confirms' (<A HREF="http://www.rabbitmq.com/extensions.html#publishing">http://www.rabbitmq.com/extensions.html#publishing</A>) - a Rabbit extension to AMQP that solves most of the use cases of transactions, without sacrificing performance. In this model, the broker sends a confirm to the publisher once it has 'taken responsibility for' a message. If you are marking your messages as persistent, then the (central) broker *only* does this once the data has been fsync'ed to disk.
+
+BTW - guaranteeing 'once and only once' delivery in an asynchronous messaging system is a bit far out. I would suggest looking at <A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/2010-August/008272.html">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/2010-August/008272.html</A> for starters. Anyway, publisher confirms should get you some of the way to what you're looking for I expect.
+
+&gt;<i> 
+</I>&gt;<i> The response from Alexis actually solves most of our problems. But, there is one more thing to consider.
+</I>&gt;<i> 
+</I>&gt;<i> I had stated it as a constraint in the original post that:
+</I>&gt;<i> &quot;Also, the data on the central node must not get duplicated or stored again. That is data collected on one of the nodes should be stored on the central nodes only once.&quot;
+</I>&gt;<i> 
+</I>
+Well what exactly do you mean by this? If you mean that a 'message' (as identified by its correlation-id) should only be delivered once, then using publisher confirms or acks is the way to go. If you're talking about the actual 'content' of your messages not getting duplicated, then that's *entirely* up to your applications, no matter what synchronisation mechanism you choose. Rabbit will not store duplicate persistent messages, *but* the guarantees about how many times a message is received (or delivered, etc) are somewhat different and none of this says anything about what is 'inside' a message being duplicated or not. To a broker, the contents of a message are just a blob of data.
+
+&gt;<i> How do I ensure this? Consider the scenario in which the ACK does not get delivered due to network issues (in our scenario). What happens in that case? The queue still is not aware of the status of the completion of the work. Does the message in that case get locked? Or does another worker pick it up? If another worker picks it up, then will we have the same data worked twice? How do we deal this situation?
+</I>
+Well you're going to have to handle this yourself regardless of what technology you choose to transfer data across the wire. If you choose to publish from your remote nodes to a central broker, then you *should* resubmit a message if the connection drops before you get a 'confirm-ok' back from the broker. If you're after some kind of 2-phase commit where both parties keep on sending ACKs then I think you're going to end up spending a lot of time trying to deal with potential byzantine failures: even paxos and zab have failure models.
+
+Another thing to consider. If the central node is really acting in the role of a database, and what you want is for the remote nodes to sychronise with it, then there are other options. For shovelling data across a WAN, rabbit provides a 'shovel' plugin that simply forwards all its messages to another broker. To quote <A HREF="http://www.rabbitmq.com/shovel.html:">http://www.rabbitmq.com/shovel.html:</A>
+
+	&quot;The high level goal of a shovel is to reliably and continually take messages from a queue (a source) in one broker and publish them to exchanges in another broker (a destination).
+	 The source queue and destination exchanges can be on the same broker or distinct brokers.
+	 A shovel behaves like a well-written client application, which connects to its source and destination, reads and writes messages, and copes with connection failures.&quot;
+
+Like federated exchanges (another WAN friendly, highly available and partition tolerant feature), shovel will 'behave itself' and can be configured to use publisher confirms just as a hand written producer would. You can also tweak the properties that get passed on to the destination broker, allowing a client application (such as a house keeper) running against the central broker/cluster to do some intervention if needed.
+
+Using shovel like this is a bit of an esoteric choice - it does not provide the same kind of consistency guarantees that HA (mirror) queues do, but then it's not designed to. And consistency means different things to different people in different contexts. For example, if you simply care about the data getting to the central node eventually, then having shovel use publisher confirms and keep trying to reconnect is the central broker goes down might be 'good enough' for you. If you want to do lots of inter-node coordination, then you probably want to write custom clients (producing and consuming) that will run in both (the central and remote) locations. If you want to avoid delays in delivery, you might even have the shovel fail over and delegate to another (remote) node if/when the central server is not accessible (because network issues between site-a and HQ do not necessarily mean that site-b inaccessible to or from either location!). Just a though.
+
+And you will almost definitely want to set up an HA cluster in your central location, so that you can loose a server and not be dead in the water. Try to bare in mind that a box can actually physically break beyond repair, and under those circumstances you're actually doomed unless you've got clustered replication even in the 'central server' to make the solution available and to prevent data loss.
+
+I'm sure that other, more experienced rabbit-iers will have more useful things to add.
+
+Cheers,
+Tim 
+
+
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20120628/c29456fc/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20120628/c29456fc/attachment.htm</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="020874.html">[rabbitmq-discuss] Populate queues in an instance with queues in	multiple instances
+</A></li>
+	<LI>Next message: <A HREF="020879.html">[rabbitmq-discuss] error building public umbrella
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#20876">[ date ]</a>
+              <a href="thread.html#20876">[ thread ]</a>
+              <a href="subject.html#20876">[ subject ]</a>
+              <a href="author.html#20876">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,307 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Rabbitmq 3.2.2 Keeps crashing in different ways	:(
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Rabbitmq%203.2.2%20Keeps%20crashing%20in%20different%20ways%0A%09%3A%28&In-Reply-To=%3CCALPks8xwm9_9jOx5iL%2Bo2bkQYwGm%2BD77otfGDNTXBj6CKx4FeQ%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="033019.html">
+   <LINK REL="Next"  HREF="033059.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Rabbitmq 3.2.2 Keeps crashing in different ways	:(</H1>
+    <B>Peter Kopias</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Rabbitmq%203.2.2%20Keeps%20crashing%20in%20different%20ways%0A%09%3A%28&In-Reply-To=%3CCALPks8xwm9_9jOx5iL%2Bo2bkQYwGm%2BD77otfGDNTXBj6CKx4FeQ%40mail.gmail.com%3E"
+       TITLE="[rabbitmq-discuss] Rabbitmq 3.2.2 Keeps crashing in different ways	:(">kopias.peter at gmail.com
+       </A><BR>
+    <I>Tue Jan 14 15:15:42 GMT 2014</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="033019.html">[rabbitmq-discuss] Spring AMQP New Releases
+</A></li>
+        <LI>Next message: <A HREF="033059.html">[rabbitmq-discuss] Rabbitmq 3.2.2 Keeps crashing in different ways :(
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#33023">[ date ]</a>
+              <a href="thread.html#33023">[ thread ]</a>
+              <a href="subject.html#33023">[ subject ]</a>
+              <a href="author.html#33023">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Cheers!
+
+ I'm in the process of building a rabbitmq cluster, and before going to
+production I'd like to produce some benchmarks, and run stresstests.
+
+ Unfortunately rabitmq 3.1.3 (stable ubuntu 13.10), and 3.2.2 (stable
+ubuntu 13.10 + rabbitmq.com repository) crashes miserably every time.
+
+
+ I've got 3 nodes, called node1-2-3, but don't get confused, node1 is for
+stresstesting only, and node2+node3 are in a rabbitmq cluster.
+
+ All nodes have 16G of ram and about 100G of disk space. ERLANG16B1. Hipe
+is installed, but not enabled in the configuration as it's marked as
+experimental, and I'd like to get stability first, performance is
+secondary, although that would be nice too. :)
+
+ For benchmarking I'd do a lot of test, most of them do not fail, so we
+will skip those for now. :)
+
+ I run perftest to &quot;attack&quot; the cluster like this:
+
+ consumer: /perftest/rabbitmq-java-client-bin-3.2.2//runjava.sh
+com.rabbitmq.examples.PerfTest -h '<A HREF="amqp://benchmark:xxx@node3/benchmark">amqp://benchmark:xxx@node3/benchmark</A>'
+--consumers 5 --producers 0 -u benchmarkq -p --cmessages 10000
+--multiAckEvery 100 2&gt;&amp;1
+
+
+publisher: perftest/rabbitmq-java-client-bin-3.2.2//runjava.sh
+com.rabbitmq.examples.PerfTest -h '<A HREF="amqp://benchmark:xxx@node2/benchmark">amqp://benchmark:xxx@node2/benchmark</A>'
+--consumers 0 --producers 200 --routingKey 'a.FOOBAR.c' --exchange
+'benchmark.topic' -p -u benchmarkq --size 5242880 --pmessages 50   2&gt;&amp;1
+
+ So from node1 I publish 10000 messages (5mbytes each) to a queue on node2,
+and simultaneously I consume 10000 messages through node3. (The client is
+on node1, which is still NOT PART of the rabbitmq cluster, it just has a
+name like node1)
+
+ For the tests I use a HA policy to duplicate the messages on both nodes,
+but it should not make a big difference in network transfer, as the
+consumer connects to node3, so everything (50Gbyte of data) must go around,
+but it surely makes the things slower as node3 has to write everything to
+disk.
+
+ The nodes have both management plugin enabled, but have no special
+configuration, so no shovel no federation, they are disk nodes, high memory
+watermark set to 0.4.
+
+-------------------------
+ Crash type 1.
+
+ Previously I've reported this bug on irc to bob235, who got the logs for
+that crash and responded as it's a real bug in the software, and asked me
+to write down the specifics, so here we are.
+
+ He acknowledged this as a real bug
+ (&quot;{gm,find_prefix_common_suffix,2,[]}&quot; in the stacktrace)
+
+ (trace can be found at:
+<A HREF="http://corpweb.dunakanyar.net/petrosdump/rabbitcrashlogs.tgz">http://corpweb.dunakanyar.net/petrosdump/rabbitcrashlogs.tgz</A> )
+
+ These logs shows the death of a node, and the sasl log has the details...
+The &quot;attack&quot; was like the above, 200 producers.
+
+ One thing to note is that the network links were unbalanced:
+ - node1-&gt;node2  1000mbit
+ - node2-&gt;node3 100mbit
+ - node3-&gt;node1 100mbit
+
+ But this is not a reason for rabbitmq to stop working. :)
+
+-------------------------
+ Crash type 2.
+
+ Situation: as the consumers have a slower network link, disk runs out on
+node2, and while I had the default setting of (I think 50mbytes), rabbitmq
+run out of disk space, and CRASHED!.
+
+ I don't think high availability has a part of &quot;if (last_err==E_NOSPC)
+die();&quot; or something, so rabbitmq should work like it's documented:
+<A HREF="http://www.rabbitmq.com/memory.html">http://www.rabbitmq.com/memory.html</A>
+
+ Flow control should kick in whenever a disk capacity problem is detected,
+and publishers should stop for a while, and consumers will help the server
+to breath...
+
+ 2.1: If the server does not work like it's documented, then it's a bug.
+ 2.2: If the server's default free space limit (50mybte) does not make
+running a stable service, then it's not a good default setting
+ 2.3 If I have 50gbyte of total data (10000 pcs of 5mbyte messages) in a
+single queue (and It's even consumed while published, so there's never a
+moment where every message is on the server), I don't believe 90gbyte of
+disk space should be allocated, and the server should crash. This is not a
+documented feature I think, so maybe the documentation needs to get
+extended.
+ 2.4 Could we get a documentation in a backward accessible way, so for
+example rabbitmq.com/doc/3.1.8/flowcontrol.html ?   This would make things
+easier when someone does not use the latest.
+ 2.5 (as a side note to default settings: guest:guest as admin, default
+open to everyone may not be the best setting too, as users tend to leave
+this enabled, then fail a few months later)  :) )
+
+ So the flow control does not work well for out of disk space situations,
+even if the amount of data never reaches the disk space available, the
+server can crash, and this is not nice, the server is not failsafe.
+
+--------------------
+Crash type 3.
+
+ Situation: Out of memory.
+
+ I've got 16Gbytes of ram in each node. The watermark is set to 7.8Gbyte,
+so we should never have memory problems.
+
+ If I start the perftest with 10 publishers (1000messages x 5mbytes), and 5
+consumers, the rabbitmq server keeps allocating ram.
+
+ 3.1 Management plugin tells me that it's using for example 9 gigabytes
+(HOW!?), but in real the os shows me, that it's over 12gbytes.
+
+ As the perftest is on the way, the server keeps allocating more and more
+memory. We're swapping now, as rabbitmq is using over 20gigabytes of
+memory. (Still has the watermark at 7.8!)
+
+ And at this moment the lighning strikes:
+
+cat /var/log/rabbitmq/startup_err
+
+&quot;Crash dump was written to: erl_crash.dump
+eheap_alloc: Cannot allocate 8162366936 bytes of memory (of type
+&quot;old_heap&quot;).
+Aborted (core dumped)&quot;
+
+ WTF (What a terrible failure - after Android SDK :D)
+
+ 3.2 So the server configured to use 7.8gbytes memory max tried to allocate
+8 gigabytes over the already allocated 20gigabytes. This is surely a bug.
+
+ 3.3 flow control kicked in, as the logs show, but memory usage did not
+lower... and running out of memory is not something that is out of control
+and a failsafe server &quot;could not handle&quot; like a kill -9. It is a bug to let
+it go over 3 times the allowed memory limit.
+ 3.4 and it's an another bug not to handle the E_NOMEM situation.
+ 3.5 writing a 19gigabyte erl_crash.dump takes a lot of time :), and it's
+not even a binary memorydump with all the data, it's just the stacktrace :D
+
+ The full logs are here:
+
+<A HREF="http://corpweb.dunakanyar.net/petrosdump/rabbitmqoutofmemory20140113.tar.bz2(1.3gigabytes,">http://corpweb.dunakanyar.net/petrosdump/rabbitmqoutofmemory20140113.tar.bz2(1.3gigabytes,</A>
+contains the full 19gbyte stacktrace too, watch out when
+uncompressing)
+
+ I'll remove this file at 2014-02-01.
+
+(I know the db contains the users, passes, but they are worthless as it's
+just a drop-rebuild machine, even the cookie means nothing)
+
+
+-------
+Crash type 4.
+ This happened a few times too, even after fixing the 100m network
+bottleneck between node3 and others.
+
+ Sometimes the server goes down with the message
+
+&quot;Absurdly large distribution output data buffer (2427628186 bytes) passed.
+Aborted (core dumped)&quot;
+
+ I can't find an erl_crash.dump in this case.
+
+ But I have a log for this too:
+<A HREF="http://corpweb.dunakanyar.net/petrosdump/cluster_node2_20140109_163509.tar.bz2">http://corpweb.dunakanyar.net/petrosdump/cluster_node2_20140109_163509.tar.bz2</A>
+
+ The test was something similar, probably 200 publishers * 50 messages each
+5mbytes.
+
+ So total data amount is always 50gigabytes, the total message count is
+10.000, I just play with the producer count sometimes.
+
+
+---
+
+ Questions:
+
+ - What am I doing wrong? Shouldn't be this &quot;10000 messages from publishers
+to consumers&quot; a simple usecase? Why does the message size make difference?
+(This is just the size of my local mailbox, and thunderbird does not crash.
+:<i>) )
+</I> - How could I help to determine and remove the factors that keep rabbitmq
+crashing?
+ - What can I do to deliver 50 pcs of message from each of 200 workers?
+ - Which is the &quot;pivotal preferred stable version&quot;? And which is the
+&quot;pivotal preferred stable linux distribution&quot;?
+ - Does rabbitmq have a ticket system somewhere?
+ - Where to report bugs to?
+
+
+  I can reproduce some of these, but it looks random, which problem kills
+the server faster. :)
+
+  Of course I've raised the disk free limit, so I don't hit that problem
+today.
+
+  As these are testing machines currently it is possible to give a
+developer access to them if it helps.
+
+ Please help me get a failsafe rabbitmqnode to build a failsafe rabbitmq
+cluster from. :)
+
+ Any ideas?
+
+ Thank you!
+
+ Peter Kopias
+
+ps.: I started with 3.1.3, but I figured that reporing crashes in a year
+old release does not interest the devs, so I switched to 3.2.2, as it shows
+a lot of crashes fixed in the changelog. All the above happened to 3.2.2
+serverd by rabbitmq.com ...
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20140114/79420a52/attachment.html">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20140114/79420a52/attachment.html</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="033019.html">[rabbitmq-discuss] Spring AMQP New Releases
+</A></li>
+	<LI>Next message: <A HREF="033059.html">[rabbitmq-discuss] Rabbitmq 3.2.2 Keeps crashing in different ways :(
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#33023">[ date ]</a>
+              <a href="thread.html#33023">[ thread ]</a>
+              <a href="subject.html#33023">[ subject ]</a>
+              <a href="author.html#33023">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

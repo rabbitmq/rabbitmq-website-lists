@@ -1,0 +1,127 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Safely replaying archived messages from an	external store
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Safely%20replaying%20archived%20messages%20from%20an%0A%09external%20store&In-Reply-To=%3Ck5k2jp%243bk%241%40ger.gmane.org%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="023114.html">
+   <LINK REL="Next"  HREF="023109.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Safely replaying archived messages from an	external store</H1>
+    <B>Charles Duffy</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Safely%20replaying%20archived%20messages%20from%20an%0A%09external%20store&In-Reply-To=%3Ck5k2jp%243bk%241%40ger.gmane.org%3E"
+       TITLE="[rabbitmq-discuss] Safely replaying archived messages from an	external store">charles at dyfis.net
+       </A><BR>
+    <I>Tue Oct 16 17:39:04 BST 2012</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="023114.html">[rabbitmq-discuss] Problem with RabbitMQ HA cluster on	EC2	(Windows)
+</A></li>
+        <LI>Next message: <A HREF="023109.html">[rabbitmq-discuss] Safely replaying archived messages from an external store
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#23092">[ date ]</a>
+              <a href="thread.html#23092">[ thread ]</a>
+              <a href="subject.html#23092">[ subject ]</a>
+              <a href="author.html#23092">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Howdy --
+
+I have a process where, on startup, I want to ensure that an internal 
+state machine (using data fed off an AMQP fanout exchange) is 
+synchronized with the state it would be in had it been continuously 
+listening to the feed for the last several hours. (State is guaranteed 
+to be dependent only on messages received within a defined window).
+
+This means archiving messages in an external store (such as a database) 
+in such a way that they can be replayed, in-order, with no losses. As 
+the timestamp in the AMQP header is no more than second-resolution, and 
+I don't trust client-generated timestamps to be synchronized (yes, we 
+use NTP, but this is fed by datacenters that span continents, and I'm 
+wary of jitter resulting in race conditions where multiple instances are 
+out-of-sync), the algorithm that comes to mind is as follows:
+
+Archiver process:
+- Read first message. Note header timestamp. Discard.
+- Read and discard further messages until header timestamp changes 
+(second boundary crossed).
+- Record each message keyed by a (second_timestamp, idx) tuple, 
+resetting idx to 0 at each second boundary.
+
+State machine process:
+- Read first message. Note header timestamp. Discard.
+- Read and discard further messages until header timestamp changes 
+(second boundary crossed). First message on a new second boundary will 
+henceforth be referred to as &quot;first message&quot;.
+- Query archive database for messages between beginning of window and 
+time of first message, inclusive of the latter; replay into engine.
+- Until the first message, or a message newer than same [as measured by 
+the (header_time, idx) tuple], has been retrieved from the database:
+-- Query archive database for oldest message newer than most recent seen 
+in database, LIMIT 1; replay into engine.
+- Close database connection; replay all received messages directly into 
+engine.
+
+Does this have obvious holes? Is a better approach (again, not trusting 
+the clocks of the clients which add content to the exchange to be 
+accurate) available?
+
+Thanks!
+
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="023114.html">[rabbitmq-discuss] Problem with RabbitMQ HA cluster on	EC2	(Windows)
+</A></li>
+	<LI>Next message: <A HREF="023109.html">[rabbitmq-discuss] Safely replaying archived messages from an external store
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#23092">[ date ]</a>
+              <a href="thread.html#23092">[ thread ]</a>
+              <a href="subject.html#23092">[ subject ]</a>
+              <a href="author.html#23092">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

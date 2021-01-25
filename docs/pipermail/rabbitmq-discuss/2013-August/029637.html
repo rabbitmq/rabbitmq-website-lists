@@ -1,0 +1,233 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Queues disappeared after a cluster upgrade to 3.1.5, Erlang R16B01
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Queues%20disappeared%20after%20a%20cluster%20upgrade%0A%20to%203.1.5%2C%20Erlang%20R16B01&In-Reply-To=%3CCAD6m6fGz2Sw-tjNESe6ZiOokr3r4giQMU%3DpPDviQVW7vuqPaOg%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="029623.html">
+   <LINK REL="Next"  HREF="029638.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Queues disappeared after a cluster upgrade to 3.1.5, Erlang R16B01</H1>
+    <B>Jason McIntosh</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Queues%20disappeared%20after%20a%20cluster%20upgrade%0A%20to%203.1.5%2C%20Erlang%20R16B01&In-Reply-To=%3CCAD6m6fGz2Sw-tjNESe6ZiOokr3r4giQMU%3DpPDviQVW7vuqPaOg%40mail.gmail.com%3E"
+       TITLE="[rabbitmq-discuss] Queues disappeared after a cluster upgrade to 3.1.5, Erlang R16B01">mcintoshj at gmail.com
+       </A><BR>
+    <I>Tue Aug 27 15:11:49 BST 2013</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="029623.html">[rabbitmq-discuss] Queues disappeared after a cluster upgrade to 3.1.5, Erlang R16B01
+</A></li>
+        <LI>Next message: <A HREF="029638.html">[rabbitmq-discuss] Queues disappeared after a cluster upgrade to 3.1.5, Erlang R16B01
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#29637">[ date ]</a>
+              <a href="thread.html#29637">[ thread ]</a>
+              <a href="subject.html#29637">[ subject ]</a>
+              <a href="author.html#29637">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>I upgraded from 3.0.4 to 3.1.5 and from esl-erlang R15B03 to esl-erlang
+R16B01.  I've been doing some digging and can't find any reason why this
+would happen, no additional log files, nothing.  Note there are three nodes
+involved in a cluster.  I upgraded my &quot;dvlp&quot; sample box which wasn't
+clustered with no problem using the exact same script I used to upgrade my
+alpha cluster.  Below is the script I'm using (might be useful for others
+upgrading a cluster).  I'm going to try recreating my
+&quot;Alpha&quot; environment and redoing the upgrade.  The ONLY thing that I can
+think of - I was doing stop/starts as part of training of the cluster about
+20 minutes before I did the upgrade to test various concepts, e.g. message
+loss, master node recovery, etc. etc.  At this point, if people haven't
+seen or heard of this, I'll chalk it up to something funky disk or
+otherwise until I can try and replicate it.  My biggest concern at this
+point is that because i no longer have the backup's of the mnesia database,
+replicating the environment won't replicate exactly what was in the
+database, and so I won't be able to replicate it.  When I start deploying
+to our production environment, I won't make that mistake - I'll shutdown
+rabbit, back up my whole rabbit_data_directory first :)
+Thanks!
+Jason
+
+# ########################################
+# 04/22/2013 - JasonMcIntosh - core upgrade script to go through each
+reported node in a cluster and upgrade it
+# ########################################
+if [ ! -e /data/rabbitmq ]; then
+echo &quot;No rabbit found on $1&quot; &gt; /var/log/rabbit_upgrade.log
+exit 0
+fi
+
+export LOG_FILE=/var/log/rabbitmq/upgrade.log
+rm -f $LOG_FILE
+
+export CLUSTER_STATUS=&quot;`rabbitmqctl cluster_status`&quot;
+export CLUSTER_STATUS=&quot;`echo $CLUSTER_STATUS|tr -d ' \n'`&quot;
+echo &quot;Started at `date`&quot; &gt;&gt; $LOG_FILE
+echo &quot;$CLUSTER_STATUS&quot; &gt;&gt; $LOG_FILE
+echo &quot;&quot; &gt;&gt; $LOG_FILE
+
+getServerFQDN() {
+SERVER_FQDN=`echo $1 | awk -F@ '{print $2};'`
+FQDN=`nslookup $SERVER_FQDN|grep Name|awk -F\: '{print $2}'|sed 's/ //g'`
+echo $FQDN
+}
+
+upgradeRabbitNode() {
+SERVER_FQDN=`getServerFQDN $1`
+echo &quot;Doing upgrade of $SERVER_FQDN&quot; &gt;&gt; $LOG_FILE
+# The upgrade deploy job actually stops the rabbit server, shouldn't need
+this, but we'll do it anways
+  # Not exact commands below as I'm using bladelogic internal commands to
+do these, but the idea should be the same.
+remote_exec ${SERVER_FQDN} service rabbitmq-server stop  &gt;&gt; $LOG_FILE
+remote_exec $SERVER_FQDN yum -y erase rabbit* erlang* &gt;&gt; $LOG_FILE
+        remote_exec  $SERVER_FQDN yum -y install rabbitmq-server-3.1.5...
+&gt;&gt;<i> $LOG_FILE
+</I>        remote_exec $SERVER_FQDN rabbitmq-plugins enable
+rabbitmq_management rabbitmq_management_agent
+rabbitmq_management_visualiser rabbitmq_shovel rabbitmq_shovel_management&gt;&gt;
+$LOG_FILE
+        remote_exec  $SERVER_FQDN chkconfig rabbitmq-server on
+}
+
+
+#Get the cluster nodes and pick the first disk node as the &quot;upgrader&quot; node
+export UPGRADER_NODE=`echo &quot;$CLUSTER_STATUS&quot;|awk -F\[ '{print $4}'|awk -F\]
+'{print $1}'|awk -F, '{print $1}'`
+export UPGRADER_FQDN=`getServerFQDN $UPGRADER_NODE`
+export NODE_LIST=&quot;`echo $CLUSTER_STATUS|awk -F\[
+'{sub(/.*running_nodes/,\&quot;\&quot;)};1'|awk -F\[ '{print $2}'|awk -F\] '{print
+$1}'|sed -e 's/,/ /g'`&quot;
+
+echo &quot;Node list: $NODE_LIST &quot; &gt;&gt; $LOG_FILE
+echo &quot;Disk node for last upgrade $UPGRADER_NODE&quot;&gt;&gt; $LOG_FILE
+
+if [ &quot;$UPGRADER_NODE&quot; = &quot;&quot; ]; then
+echo &quot; ** No upgrader node found! EXITING&quot; &gt;&gt; $LOG_FILE
+exit -1
+fi
+
+
+#Shutdown and upgrade all other nodes than the upgrader node
+echo &quot;Doing upgrade of all non upgrade nodes...&quot; &gt;&gt; $LOG_FILE
+for clusterNode in ${NODE_LIST}; do
+if [ $clusterNode != $UPGRADER_NODE ]; then
+upgradeRabbitNode $clusterNode
+fi
+done
+
+#Upgrade the upgrader node now.
+echo &quot;Upgrade the core upgrade node ...&quot; &gt;&gt; $LOG_FILE
+upgradeRabbitNode $UPGRADER_NODE
+
+#NOW start all nodes, starting with the upgrader node.
+echo &quot;Starting rabbit on upgrader node...&quot; &gt;&gt; $LOG_FILE
+remote_exec $UPGRADER_FQDN service rabbitmq-server start &gt;&gt; $LOG_FILE
+for clusterNode in ${NODE_LIST}; do
+if [ $clusterNode != $UPGRADER_NODE ]; then
+SERVER_FQDN=`getServerFQDN $clusterNode`
+echo &quot;Starting rabbit on NON upgrade nodes...&quot; &gt;&gt; $LOG_FILE
+remote_exec $SERVER_FQDN service rabbitmq-server start &gt;&gt; $LOG_FILE
+fi
+done
+
+#Finally, make sure our HA Policy is applied to all our virtual hosts
+
+echo &quot;Finished with upgrade...&quot; &gt;&gt; $LOG_FILE
+#Report how we worked out...
+echo &quot;
+RESULTS
+&quot;
+cat $LOG_FILE
+
+
+
+On Tue, Aug 27, 2013 at 4:58 AM, Emile Joubert &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">emile at rabbitmq.com</A>&gt; wrote:
+
+&gt;<i> On 23/08/13 23:01, Jason McIntosh wrote:
+</I>&gt;<i> &gt; A ps auf shows /usr/lib/erlang/erts-5.9.3.1/bin/epmd -daemon as still
+</I>&gt;<i> &gt; running.  SO I'm wondering if that might have an impact.
+</I>&gt;<i>
+</I>&gt;<i> Depending on how you upgraded Erlang you may need to stop this process
+</I>&gt;<i> manually. I'd be surprised if this was the cause of the error though.
+</I>&gt;<i>
+</I>&gt;<i> &gt; stop rabbit on server X (upgrader is Z, other node is Y)
+</I>&gt;<i> &gt; remove all rabbit/erlang RPM's
+</I>&gt;<i> &gt; Reinstall rabbit software
+</I>&gt;<i> &gt; Update rabbitmqadmin
+</I>&gt;<i> &gt; Enable management plugins (just in case)
+</I>&gt;<i> &gt; Enable auto start.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; Rinse and repeat on servers Y, then Z and then start bringing them up
+</I>&gt;<i> &gt; starting with upgrader node. First start Z, then start Y, then start X.
+</I>&gt;<i>
+</I>&gt;<i> From which versions did you upgrade?
+</I>&gt;<i>
+</I>&gt;<i> &gt; On Fri, Aug 23, 2013 at 4:51 PM, Jason McIntosh wrote:
+</I>&gt;<i>
+</I>&gt;<i> &gt;     =INFO REPORT==== 23-Aug-2013::15:37:45 ===
+</I>&gt;<i> &gt;     Disk free limit set to 1000MB
+</I>&gt;<i>
+</I>&gt;<i> Were there any other log messages in either logfile or console messages
+</I>&gt;<i> on any nodes in the interval between or near 15:37:45 - 15:37:50?
+</I>&gt;<i>
+</I>&gt;<i> &gt;         =ERROR REPORT==== 23-Aug-2013::15:37:50 ===
+</I>&gt;<i> &gt;         ** Generic server &lt;0.303.0&gt; terminating
+</I>&gt;<i> &gt;         ** Last message in was {'EXIT',&lt;0.350.0&gt;,normal}
+</I>&gt;<i> Did you perform the same upgrade in other environments, and the failure
+</I>&gt;<i> only occurred in one of the environments?
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> -Emile
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>
+
+-- 
+Jason McIntosh
+<A HREF="http://mcintosh.poetshome.com/blog/">http://mcintosh.poetshome.com/blog/</A>
+573-424-7612
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20130827/2b4d3ec6/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20130827/2b4d3ec6/attachment.htm</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="029623.html">[rabbitmq-discuss] Queues disappeared after a cluster upgrade to 3.1.5, Erlang R16B01
+</A></li>
+	<LI>Next message: <A HREF="029638.html">[rabbitmq-discuss] Queues disappeared after a cluster upgrade to 3.1.5, Erlang R16B01
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#29637">[ date ]</a>
+              <a href="thread.html#29637">[ thread ]</a>
+              <a href="subject.html#29637">[ subject ]</a>
+              <a href="author.html#29637">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

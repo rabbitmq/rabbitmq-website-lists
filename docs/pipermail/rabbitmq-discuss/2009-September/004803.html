@@ -1,0 +1,311 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Performance degrades with increasing	queue	depth
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20Performance%20degrades%20with%20increasing%0A%09queue%09depth&In-Reply-To=DA74A49F-F030-4720-B7C5-9CC8FF75B02D%40mac.com">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="004801.html">
+   <LINK REL="Next"  HREF="004804.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Performance degrades with increasing	queue	depth</H1>
+    <B>Aisha Fenton</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20Performance%20degrades%20with%20increasing%0A%09queue%09depth&In-Reply-To=DA74A49F-F030-4720-B7C5-9CC8FF75B02D%40mac.com"
+       TITLE="[rabbitmq-discuss] Performance degrades with increasing	queue	depth">aisha.fenton at gmail.com
+       </A><BR>
+    <I>Mon Sep  7 22:28:07 BST 2009</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="004801.html">[rabbitmq-discuss] Performance degrades with increasing	queue	depth
+</A></li>
+        <LI>Next message: <A HREF="004804.html">[rabbitmq-discuss] Performance degrades with increasing	queue	depth
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#4803">[ date ]</a>
+              <a href="thread.html#4803">[ thread ]</a>
+              <a href="subject.html#4803">[ subject ]</a>
+              <a href="author.html#4803">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi Chunk.
+I don't know Suhail. And his problem may be different from mine.
+
+To isolate the problem, I've reduce what I'm doing down to the  
+attached code files. One pushes messages, the other pops them.
+
+I see the problem even when only test_push.rb is running (as long as  
+the queue is sufficiently pre-populated). Nothing else is using  
+rabbitmq when I'm doing the test.
+
+I'm getting the same problem on several different machines here -- my  
+local MacOSX box and a server class Debian box.
+
+
+&gt;<i> exchange - durable or not?
+</I>not durable
+
+&gt;<i> exchange - type? (Looks like &quot;fanout&quot; from the original post)
+</I>fanout
+
+&gt;<i> number of bindings per exchange
+</I>1
+
+&gt;<i> queue  - durable?
+</I>not durable
+
+&gt;<i> publishing settings - require ack? persistent? immediate?
+</I>no ack, non persistent, and non immediate.
+
+&gt;<i> message size? 1K according to the original post
+</I>&lt; 1K
+
+
+
+test_push.rb
+---
+
+require &quot;rubygems&quot;
+require &quot;bunny&quot;
+
+EXCHANGE = &quot;raw_telemetry&quot;
+QUEUE = &quot;process_telemetry&quot;
+
+count ||= 0
+prev_time ||= Time.now
+msg_server = Bunny.new(:spec =&gt; '08')
+msg_server.start
+
+msg_server.exchange(EXCHANGE, :type  =&gt; :fanout)
+msg_server.queue(QUEUE).bind(EXCHANGE)
+
+loop do
+
+   msg_server.exchange(EXCHANGE).publish(&quot;This is my msg&quot;)
+
+   count += 1
+   if count &gt; 100
+     t = Time.now
+     puts(&quot;msgs pushes per sec: #{count / (t - prev_time)}&quot;)
+     prev_time = t
+     count = 0
+   end
+
+end
+
+test_pop.rb
+---
+
+require &quot;rubygems&quot;
+require &quot;bunny&quot;
+
+@msg_server = Bunny.new(:spec =&gt; '08')
+@msg_server.start
+
+def start
+   count ||= 0
+   prev_time ||= Time.now
+   queue = @msg_server.queue(&quot;process_telemetry&quot;)
+
+   loop do
+     result = queue.pop
+     next if result == :queue_empty
+
+     count += 1
+     if count &gt; 100
+       t = Time.now
+       puts(&quot;msgs pops per sec: #{count / (t - prev_time)}&quot;)
+       prev_time = t
+       count = 0
+     end
+   end
+
+end
+
+begin
+   start()
+ensure
+   puts &quot;stopping&quot;
+   @msg_server.stop
+end
+
+
+
+
+On 8/09/2009, at 6:38 AM, Chuck Remes wrote:
+
+&gt;<i> Are you running the same code as Aisha? Are you the same person or  
+</I>&gt;<i> work together? I'm getting a bit confused in this thread.
+</I>&gt;<i>
+</I>&gt;<i> And, someone needs to start showing some code. I'm able to push  
+</I>&gt;<i> hundreds of messages per second and never see a drop off in delivery  
+</I>&gt;<i> performance regardless of the queue size (until I run out of  
+</I>&gt;<i> memory). I don't think it is fair to blame rabbit until we can see  
+</I>&gt;<i> your code and understand what you are doing.
+</I>&gt;<i>
+</I>&gt;<i> Also, please specify the following things:
+</I>&gt;<i>
+</I>&gt;<i> exchange - durable or not?
+</I>&gt;<i> exchange - type? (Looks like &quot;fanout&quot; from the original post)
+</I>&gt;<i> number of bindings per exchange
+</I>&gt;<i> queue  - durable?
+</I>&gt;<i> publishing settings - require ack? persistent? immediate?
+</I>&gt;<i> message size? 1K according to the original post
+</I>&gt;<i>
+</I>&gt;<i> Is your test machine paging or swapping? What is the 'top' output  
+</I>&gt;<i> for your process and for rabbit at various points of the run cycle?  
+</I>&gt;<i> Is it lower or higher when you are getting 300 msg/s than when you  
+</I>&gt;<i> are getting 80 msg/s?
+</I>&gt;<i>
+</I>&gt;<i> What is your subscriber doing with the data it receives? If you make  
+</I>&gt;<i> that process a &quot;no op&quot; how many messages per second can you handle?  
+</I>&gt;<i> Does it ever drop off related to queue size? Why are you &quot;popping&quot;  
+</I>&gt;<i> messages from the queue isn't of having them pushed automatically?
+</I>&gt;<i>
+</I>&gt;<i> This thread has been really frustrating because there has NOT been  
+</I>&gt;<i> very much information shared. All I see is &quot;it's slow.&quot; Give us more  
+</I>&gt;<i> information.
+</I>&gt;<i>
+</I>&gt;<i> cr
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> On Sep 7, 2009, at 11:34 AM, Suhail Doshi wrote:
+</I>&gt;<i>
+</I>&gt;&gt;<i> 2009-09-07 16:33:10,822 INFO [id: 95705166] Processing complete,  
+</I>&gt;&gt;<i> acknowledged.
+</I>&gt;&gt;<i> 2009-09-07 16:33:10,826 INFO [id: 95705166] Received queue item,  
+</I>&gt;&gt;<i> processing...
+</I>&gt;&gt;<i> 2009-09-07 16:33:10,878 INFO [id: 95705166] Processing complete,  
+</I>&gt;&gt;<i> acknowledged.
+</I>&gt;&gt;<i> 2009-09-07 16:33:10,882 INFO [id: 95705166] Received queue item,  
+</I>&gt;&gt;<i> processing...
+</I>&gt;&gt;<i> 2009-09-07 16:33:12,839 INFO [id: 95705166] Processing complete,  
+</I>&gt;&gt;<i> acknowledged.
+</I>&gt;&gt;<i> 2009-09-07 16:33:12,839 INFO [id: 95705166] Received queue item,  
+</I>&gt;&gt;<i> processing...
+</I>&gt;&gt;<i> 2009-09-07 16:33:13,531 INFO [id: 95705166] Processing complete,  
+</I>&gt;&gt;<i> acknowledged.
+</I>&gt;&gt;<i> 2009-09-07 16:33:13,531 INFO [id: 95705166] Received queue item,  
+</I>&gt;&gt;<i> processing...
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> If you see there's like a pause for a second between 10 and 12, an  
+</I>&gt;&gt;<i> item gets processed pretty fast as you can see. Odd isn't it?
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Suhail
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> On Mon, Sep 7, 2009 at 9:32 AM, Suhail Doshi &lt;<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">digitalwarfare at gmail.com</A> 
+</I>&gt;&gt;<i> &gt; wrote:
+</I>&gt;&gt;<i> I almost feel as though rabbitmq can't push items to my consumer  
+</I>&gt;&gt;<i> fast enough, I had a backed up queue with 20 consumers and spawned  
+</I>&gt;&gt;<i> another watching the items get processed and it just seemed so  
+</I>&gt;&gt;<i> slow, saw numerous pauses between item processing and I don't  
+</I>&gt;&gt;<i> believe it is the consumer's fault.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> I am using the Python library for the consumer part.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Suhail
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> On Mon, Sep 7, 2009 at 8:23 AM, Chuck Remes  
+</I>&gt;&gt;<i> &lt;<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">cremes.devlist at mac.com</A>&gt; wrote:
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> On Sep 7, 2009, at 1:07 AM, aisha fenton wrote:
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> &gt; Hi,
+</I>&gt;&gt;<i> &gt; I'm sure I'm doing something wrong since I can't find reference to
+</I>&gt;&gt;<i> &gt; this anywhere else. What I'm seeing is that the performance of
+</I>&gt;&gt;<i> &gt; draining a queue gets slower as the queue size increases.
+</I>&gt;&gt;<i> &gt;
+</I>&gt;&gt;<i> &gt; I'm aware of the issue in RabbitMQ 1.6 that means that when it runs
+</I>&gt;&gt;<i> &gt; out of physical memory that it's performance degrades because it
+</I>&gt;&gt;<i> &gt; starts swapping out. But I'm not anywhere close to running out of
+</I>&gt;&gt;<i> &gt; memory yet, and the degradation starts almost immediately and
+</I>&gt;&gt;<i> &gt; increases linearly as the queue depth grows.
+</I>&gt;&gt;<i> &gt;
+</I>&gt;&gt;<i> &gt; I am publishing 500mps to an exchange. Each message is about 1KB. I
+</I>&gt;&gt;<i> &gt; have a single fanout queue bound to the exchange. A single  
+</I>&gt;&gt;<i> consumer is
+</I>&gt;&gt;<i> &gt; popping messages off the queue.
+</I>&gt;&gt;<i> &gt;
+</I>&gt;&gt;<i> &gt; When the queue is less than 20,000 messages I can pop 300mps off  
+</I>&gt;&gt;<i> the
+</I>&gt;&gt;<i> &gt; queue. When the queue is 200,000 messages the performance drop to
+</I>&gt;&gt;<i> &gt; 40-80mps.
+</I>&gt;&gt;<i> &gt;
+</I>&gt;&gt;<i> &gt; I'm running RabbitMQ 1.6.0. And nether rabbitmq, the consumer, or  
+</I>&gt;&gt;<i> the
+</I>&gt;&gt;<i> &gt; publisher are using more than 40% CPU.
+</I>&gt;&gt;<i> &gt;
+</I>&gt;&gt;<i> &gt; I assume I shouldn't be seeing this? Any help much appreciated.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> You didn't include any code, but I'm going to take a stab in the dark
+</I>&gt;&gt;<i> anyway. If you are using the ruby amqp gem you might be doing
+</I>&gt;&gt;<i> something like this:
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> def next_message
+</I>&gt;&gt;<i>   exchange = MQ.fanout 'foo'
+</I>&gt;&gt;<i>   queue = MQ.queue 'bar'
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i>   queue.bind exchange
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i>   newest_message = queue.pop
+</I>&gt;&gt;<i> end
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> In the code above the call to MQ.&lt;whatever&gt; is opening a new channel
+</I>&gt;&gt;<i> to rabbitmq each time the method is called. You are essentially
+</I>&gt;&gt;<i> leaking channels all over the place every time you try to pop a new
+</I>&gt;&gt;<i> message.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> If you aren't using the ruby amqp stuff, I still recommend checking
+</I>&gt;&gt;<i> your code for whatever library you chose. You only need to allocate a
+</I>&gt;&gt;<i> few channels and reuse them.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> cr
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> _______________________________________________
+</I>&gt;&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;&gt;<i> <A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;&gt;<i> <A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> -- 
+</I>&gt;&gt;<i> <A HREF="http://mixpanel.com">http://mixpanel.com</A>
+</I>&gt;&gt;<i> Blog: <A HREF="http://blog.mixpanel.com">http://blog.mixpanel.com</A>
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> -- 
+</I>&gt;&gt;<i> <A HREF="http://mixpanel.com">http://mixpanel.com</A>
+</I>&gt;&gt;<i> Blog: <A HREF="http://blog.mixpanel.com">http://blog.mixpanel.com</A>
+</I>&gt;<i>
+</I>
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: <A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20090908/0027943b/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20090908/0027943b/attachment.htm</A> 
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="004801.html">[rabbitmq-discuss] Performance degrades with increasing	queue	depth
+</A></li>
+	<LI>Next message: <A HREF="004804.html">[rabbitmq-discuss] Performance degrades with increasing	queue	depth
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#4803">[ date ]</a>
+              <a href="thread.html#4803">[ thread ]</a>
+              <a href="subject.html#4803">[ subject ]</a>
+              <a href="author.html#4803">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

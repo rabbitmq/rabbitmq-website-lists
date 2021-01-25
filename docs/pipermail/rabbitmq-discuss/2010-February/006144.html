@@ -1,0 +1,197 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] routing threads on a rabbitmq node
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20routing%20threads%20on%20a%20rabbitmq%20node&In-Reply-To=20100201144215.GS11819%40mrnibble.lshift.net">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="006122.html">
+   <LINK REL="Next"  HREF="006145.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] routing threads on a rabbitmq node</H1>
+    <B>Brian Sullivan</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20routing%20threads%20on%20a%20rabbitmq%20node&In-Reply-To=20100201144215.GS11819%40mrnibble.lshift.net"
+       TITLE="[rabbitmq-discuss] routing threads on a rabbitmq node">bsullivan at lindenlab.com
+       </A><BR>
+    <I>Tue Feb  2 21:45:48 GMT 2010</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="006122.html">[rabbitmq-discuss] routing threads on a rabbitmq node
+</A></li>
+        <LI>Next message: <A HREF="006145.html">[rabbitmq-discuss] routing threads on a rabbitmq node
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#6144">[ date ]</a>
+              <a href="thread.html#6144">[ thread ]</a>
+              <a href="subject.html#6144">[ subject ]</a>
+              <a href="author.html#6144">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi Matthew,
+
+Thanks for the speedy response.  Answers below.  And yes, this is all memory
+growth on the rabbitmq side, the clients are able to burn through their
+catchup logs pretty quickly, then coast along as regular rates, meanwhile
+the server is chewing on it's work to catch up, sometimes for *hours*.
+
+1) How many msgs/second are being published for this issue to occur?
+&gt;<i>From a single producer, about 900 messages/sec during these burst catchup
+</I>periods.  Normal volumes then drop down to 300-500 mps throughout the day,
+which we can keep up with for the most part.  Note that there are 8-9 such
+producers, distributed across 2 nodes.
+
+2) How big are those messages?
+They vary in size, but in the neighborhood of 500 bytes each.  Pretty small.
+
+3) Can you give an example of the routing key used?
+We were originally looking to do &lt;domain&gt;.&lt;eventname&gt;, but really everything
+subscribes to &quot;#.&lt;eventname&gt;&quot;.  It's a little wasted and I think I would
+like to at some point switch back to a direct exchange and partition our
+traffic by domain another way, since we don't subscribe to things across all
+domains like I expected we might.  There are on the order of about 100
+eventnames at this point, of varying frequencies.
+
+4) How many queues do messages end up in, on average?
+About the same number of bindings - 75.  We don't do many multiple bindings
+per queue (if any).
+
+5) Are the consumers setting qos, and are they using subscriptions or just
+basic.get? What about acknowledgements?
+Consumers are using the Java client, no qos settings, via subscriptions (via
+QueueingConsumer.nextDelivery()).
+
+Acknowledgements are sent after each message is retrieved via
+QueueingConsumer.getChannel().basicAck(envelope.getDeliveryTag(), false);
+
+Like I said, there is no queue backup, so I don't think it's on the
+consuming side.  In fact, I can pull up a new client that just does a simple
+subscription and it will instantly start showing the current place in the
+routing, which could be that past hour of messages.
+
+Does that help?  Thanks again for digging into this with me, this has been a
+growing problem for us that I need to understand better to help rearchitect
+our configuration.
+
+Thanks,
+Brian
+
+
+On Mon, Feb 1, 2010 at 6:42 AM, Matthew Sackman &lt;<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">matthew at lshift.net</A>&gt; wrote:
+
+&gt;<i> Hi Brian,
+</I>&gt;<i>
+</I>&gt;<i> On Sun, Jan 31, 2010 at 10:41:01PM -0800, Brian Sullivan wrote:
+</I>&gt;<i> &gt; I am curious if anyone on the rabbitmq team can confirm/clarify what we
+</I>&gt;<i> are
+</I>&gt;<i> &gt; seeing with respect to some throughput issues on our RMQ cluster.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; The config:
+</I>&gt;<i> &gt; - 2-node RMQ cluster, running a topic-based exchange
+</I>&gt;<i> &gt; - 8 publishers, running on different hosts
+</I>&gt;<i> &gt; - dozens of consumers, ~75 wildcard topic bindings, mostly running on
+</I>&gt;<i> &gt; different hosts (there are a couple running on the RMQ hosts for stats,
+</I>&gt;<i> etc)
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; The issue:
+</I>&gt;<i> &gt; When we publish at a higher rate than normal, there appears to be a
+</I>&gt;<i> &gt; significant delay in the pipeline between when we publish the messages
+</I>&gt;<i> and
+</I>&gt;<i> &gt; when we receive them on the consuming side.
+</I>&gt;<i>
+</I>&gt;<i> Although what you later say about memory growth suggests it's not this,
+</I>&gt;<i> it could be some sort of buffering or nagle algorithm which is causing
+</I>&gt;<i> batching of more messages, up until some buffer is full, before passing
+</I>&gt;<i> them onto the network. On the other hand, if you're seeing memory growth
+</I>&gt;<i> heavily in RabbitMQ-server itself, then that suggests it's nowt to do
+</I>&gt;<i> with buffering in the clients.
+</I>&gt;<i>
+</I>&gt;<i> &gt; Since publishing is
+</I>&gt;<i> &gt; asynchronous, the publisher applications send as fast as they can,
+</I>&gt;<i> meanwhile
+</I>&gt;<i> &gt; we see an increasing delay in when we see those same messages come out on
+</I>&gt;<i> &gt; the other side.  My guess (gathered from
+</I>&gt;<i> &gt; <A HREF="http://www.rabbitmq.com/faq.html#node-per-CPU-core">http://www.rabbitmq.com/faq.html#node-per-CPU-core</A>) is that there is
+</I>&gt;<i> either
+</I>&gt;<i> &gt; a single routing thread per publisher (channel), or even worse a single
+</I>&gt;<i> &gt; routing bottleneck per node.  Either way, this thread cannot route fast
+</I>&gt;<i> &gt; enough in a topic exchange (we have about 75 bindings, using wildcards)
+</I>&gt;<i> and
+</I>&gt;<i> &gt; there is a backup of messages to be routed.
+</I>&gt;<i>
+</I>&gt;<i> Each channel can only route one message at a time. The topic exchanges,
+</I>&gt;<i> with wildcards are inefficient, and are O(N) where N is the number of
+</I>&gt;<i> bindings. This is sub optimal - there are ways in which we are planning
+</I>&gt;<i> on fixing this, we've just not got around to implementing this yet.
+</I>&gt;<i> However, if you really just have approx 75 bindings with wildcards in
+</I>&gt;<i> total, I'm somewhat astonished this can be causing issues. What kind of
+</I>&gt;<i> rates are you publishing at?
+</I>&gt;<i>
+</I>&gt;<i> &gt; The question:
+</I>&gt;<i> &gt; Can you please elaborate on where the routing backup could be occurring,
+</I>&gt;<i> and
+</I>&gt;<i> &gt; what steps might be best to prevent this from happening?  It appears from
+</I>&gt;<i> &gt; the fact that I am waiting on the routing to happen that using flags like
+</I>&gt;<i> &gt; &quot;mandatory&quot; on messages is not going to help me here (though I have not
+</I>&gt;<i> &gt; tested this).
+</I>&gt;<i>
+</I>&gt;<i> I suspect it's in the channel processes. I'm not really sure what you
+</I>&gt;<i> could do to help, but could you provide some more information please?:
+</I>&gt;<i>
+</I>&gt;<i> 1) How many msgs/second are being published for this issue to occur?
+</I>&gt;<i> 2) How big are those messages?
+</I>&gt;<i> 3) Can you give an example of the routing key used?
+</I>&gt;<i> 4) How many queues do messages end up in, on average?
+</I>&gt;<i> 5) Are the consumers setting qos, and are they using subscriptions or
+</I>&gt;<i> just basic.get? What about acknowledgements?
+</I>&gt;<i>
+</I>&gt;<i> &gt; One idea:
+</I>&gt;<i> &gt; If it is truly the case that a single thread per node might be causing
+</I>&gt;<i> this
+</I>&gt;<i> &gt; problem, then perhaps we can run a small rabbitmq node on each publisher
+</I>&gt;<i> &gt; (joined to the cluster), with the sole purpose of doing the routing load?
+</I>&gt;<i> &gt; If we publish locally, all it would need to do is keep up with it's own
+</I>&gt;<i> &gt; routing load, not the combine routing load of 3 other publishers.  It
+</I>&gt;<i> &gt; doesn't really prevent the problem from happening though, if I can
+</I>&gt;<i> produce
+</I>&gt;<i> &gt; messages faster in a single thread than even a dedicated node can route.
+</I>&gt;<i> &gt; Would this even help?
+</I>&gt;<i>
+</I>&gt;<i> Yeah, it may help, but without some more details, I'm not quite sure
+</I>&gt;<i> just yet what to suggest.
+</I>&gt;<i>
+</I>&gt;<i> Matthew
+</I>&gt;<i>
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;<i> <A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;<i> <A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: <A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20100202/69205aea/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20100202/69205aea/attachment.htm</A> 
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="006122.html">[rabbitmq-discuss] routing threads on a rabbitmq node
+</A></li>
+	<LI>Next message: <A HREF="006145.html">[rabbitmq-discuss] routing threads on a rabbitmq node
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#6144">[ date ]</a>
+              <a href="thread.html#6144">[ thread ]</a>
+              <a href="subject.html#6144">[ subject ]</a>
+              <a href="author.html#6144">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

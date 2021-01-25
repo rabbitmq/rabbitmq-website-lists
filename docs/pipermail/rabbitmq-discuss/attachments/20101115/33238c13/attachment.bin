@@ -1,0 +1,209 @@
+Index: php_rabbit.h
+===================================================================
+--- php_rabbit.h	(Revision 98)
++++ php_rabbit.h	(Arbeitskopie)
+@@ -87,5 +87,5 @@
+  * c-basic-offset: 4
+  * End:
+  * vim600: noet sw=4 ts=4 fdm=marker
+- * vim<600: noet sw=4 ts=4
++ * vim<600: noet sw=2 ts=2
+  */
+Index: rabbit.c
+===================================================================
+--- rabbit.c	(Revision 98)
++++ rabbit.c	(Arbeitskopie)
+@@ -46,10 +46,10 @@
+ #define AMQP_HEARBEAT 0		// hearbeat
+ 
+ #define AMQP_NULLARGS amqp_table_t  arguments = {.num_entries = 0, .entries = NULL};
+-#define AMQP_PASSIVE_D	short passive = ( AMQP_PASSIVE & parms )? 1:0;
+-#define AMQP_DURABLE_D	short durable =  ( AMQP_DURABLE & parms )? 1:0;
+-#define AMQP_AUTODELETE_D	short auto_delete =  ( AMQP_AUTODELETE & parms )? 1:0;
+-#define	AMQP_EXCLUSIVE_D	short exclusive = ( AMQP_EXCLUSIVE & parms )? 1:0;
++#define AMQP_PASSIVE_D	int passive = ( AMQP_PASSIVE & parms )? 1:0;
++#define AMQP_DURABLE_D	int durable =  ( AMQP_DURABLE & parms )? 1:0;
++#define AMQP_AUTODELETE_D	int auto_delete =  ( AMQP_AUTODELETE & parms )? 1:0;
++#define	AMQP_EXCLUSIVE_D	int exclusive = ( AMQP_EXCLUSIVE & parms )? 1:0;
+ 
+ /* If you declare any globals in php_rabbit.h uncomment this:
+ ZEND_DECLARE_MODULE_GLOBALS(rabbit)
+@@ -69,7 +69,7 @@
+ 	zend_object  zo;
+ 	char is_connect;
+ 	char is_channal_connect;
+-	int fd;
++  int fd;
+ 	amqp_connection_state_t conn;
+ 
+ } rabbit_object;
+@@ -150,7 +150,7 @@
+ 	NULL,	
+ 	PHP_MINFO(rabbit),
+ #if ZEND_MODULE_API_NO >= 20010901
+-	"0.1", /* Replace with version number for your extension */
++	"0.2", /* Replace with version number for your extension */
+ #endif
+ 	STANDARD_MODULE_PROPERTIES
+ };
+@@ -172,7 +172,7 @@
+       break;
+ 
+     case AMQP_RESPONSE_LIBRARY_EXCEPTION:
+-      spprintf ( pstr, 0, "lib error: %s\n" ,strerror(x.library_errno) );
++      spprintf ( pstr, 0, "lib error: %s\n" ,strerror(x.library_error) );
+       break;
+ 
+     case AMQP_RESPONSE_SERVER_EXCEPTION:
+@@ -215,10 +215,11 @@
+ 	char  login[16];
+ 	char  psw[16] ;
+ 	char  host[32] ;
+-	char  vhost[16];
++  char  vhost[16];
+ 	char   str[256] ;
+ 	char ** pstr =  (char **) &str;
+-	int port=0;
++  int port=0;
++  int channel = 1;
+ 
+ 	//php_set_error_handling(EH_THROW, zend_exception_get_default(TSRMLS_C) TSRMLS_CC);	
+ 			
+@@ -276,9 +277,9 @@
+ 	}
+ 	
+ 	port = INI_INT("rabbit.port");
+-	
+-	if ( iniArr && SUCCESS == zend_hash_find( HASH_OF (iniArr), "port", sizeof("port") ,(void*)&zdata ) ){
+-		port =  (size_t)Z_LVAL_PP(zdata);
++
++  if ( iniArr && SUCCESS == zend_hash_find( HASH_OF (iniArr), "port", sizeof("port") ,(void*)&zdata ) ){
++  		port =  (size_t)Z_LVAL_PP(zdata);
+ 	}
+ 
+  	ctx->conn = amqp_new_connection();
+@@ -289,7 +290,7 @@
+         zend_throw_exception(rabbit_connection_exception_class_entry, "Socket error: could not connect to host.", 0 TSRMLS_CC);
+         return;
+  	}
+- 	ctx->is_connect = '\1';
++  ctx->is_connect = '\1';
+ 
+  	amqp_set_sockfd( ctx->conn, ctx->fd);
+ 
+@@ -302,7 +303,7 @@
+  		return;
+  	}
+ 
+- 	amqp_channel_open(ctx->conn, AMQP_CHANNEL);
++    amqp_channel_open(ctx->conn, AMQP_CHANNEL);
+ 
+  	x =	amqp_get_rpc_reply(ctx->conn);
+     if ( x.reply_type != AMQP_RESPONSE_NORMAL) {
+@@ -440,12 +441,17 @@
+ 	AMQP_PASSIVE_D
+ 	AMQP_DURABLE_D
+ 	AMQP_AUTODELETE_D
+-	
++
++/*
+ 	res = AMQP_SIMPLE_RPC(cnn->conn, 
+ 				AMQP_CHANNEL,
+ 				QUEUE, DECLARE, DECLARE_OK,
+ 				amqp_queue_declare_t,
+ 				0, amqp_name, passive, durable, exclusive, auto_delete, 0, arguments);
++*/
++
++  amqp_queue_declare(cnn->conn, AMQP_CHANNEL, amqp_name, passive, durable, exclusive, auto_delete, arguments);
++  res = amqp_get_rpc_reply(cnn->conn);
+ 	
+ 	if (res.reply_type != AMQP_RESPONSE_NORMAL ){
+ 		char str[256];
+@@ -663,7 +669,7 @@
+ 		char ** pstr =  (char **) &str;
+ 		rabbit_error( res, pstr ); 
+ 
+-//			spprintf(&str, 0, "Binding Queue errror: (%s)", strerror(res.library_errno)); 
++//			spprintf(&str, 0, "Binding Queue errror: (%s)", strerror(res.library_error)); 
+ 			cnn->is_channal_connect = 0;
+ 			zend_throw_exception(rabbit_queue_exception_class_entry, *pstr, 0 TSRMLS_CC);
+             return;
+@@ -729,7 +735,7 @@
+ 		char ** pstr =  (char **) &str;
+ 		rabbit_error( res, pstr ); 
+ 
+-//			spprintf(&str, 0, "Binding Queue errror: (%s)", strerror(res.library_errno)); 
++//			spprintf(&str, 0, "Binding Queue errror: (%s)", strerror(res.library_error)); 
+ 			cnn->is_channal_connect = 0;
+ 			zend_throw_exception(rabbit_queue_exception_class_entry, *pstr, 0 TSRMLS_CC);
+             return;
+@@ -823,7 +829,7 @@
+   	   
+ 	   amqp_maybe_release_buffers(cnn->conn);
+ 	   result = amqp_simple_wait_frame(cnn->conn, &frame);
+-		if (result <= 0) return;
++		if (result < 0) return;
+ 
+ 		if (frame.frame_type != AMQP_FRAME_METHOD){
+ 			continue;
+@@ -834,7 +840,7 @@
+ 		}
+ 	   
+ 		result = amqp_simple_wait_frame(cnn->conn, &frame);
+-		if (result <= 0) {
++		if (result < 0) {
+ 		    zend_throw_exception(rabbit_queue_exception_class_entry, "The returned read frame is invalid.", 0 TSRMLS_CC);
+ 			return;
+ 		}
+@@ -851,7 +857,7 @@
+ 	    pbuf = buf;
+ 		while (body_received < body_target) {
+ 		  result = amqp_simple_wait_frame(cnn->conn, &frame);
+-		  if (result <= 0) break;
++		  if (result < 0) break;
+ 
+ 		  if (frame.frame_type != AMQP_FRAME_BODY) {
+ 		      zend_throw_exception(rabbit_queue_exception_class_entry, "The returned frame has no body.", 0 TSRMLS_CC);
+@@ -939,7 +945,7 @@
+ 		result = amqp_simple_wait_frame(cnn->conn, &frame);
+ 		
+ 		
+-		if (result <= 0) RETURN_FALSE;
++		if (result < 0) RETURN_FALSE;
+ 		
+ 		if (frame.frame_type == AMQP_FRAME_METHOD){
+ 			
+@@ -1262,11 +1268,16 @@
+ 	AMQP_DURABLE_D
+ 	AMQP_AUTODELETE_D
+ 
++/*
+ 	res =
+ 		AMQP_SIMPLE_RPC( ctx_cnn->conn, 
+ 			AMQP_CHANNEL,  EXCHANGE, DECLARE, DECLARE_OK,
+ 		    amqp_exchange_declare_t,
+ 		    0, amqp_name, amqp_type, passive, durable, auto_delete, 0, 0, arguments);
++*/
++
++  amqp_exchange_declare(ctx_cnn->conn, 1, amqp_name, amqp_type, passive, durable, arguments);
++  res = amqp_get_rpc_reply(ctx_cnn->conn);
+  
+ 	
+ 	if (res.reply_type != AMQP_RESPONSE_NORMAL ){
+@@ -1551,7 +1562,7 @@
+ 		char str[256];
+ 		char ** pstr =  (char **) &str;
+ 		rabbit_error( res, pstr ); 
+-//      spprintf(&str, 0, "Binding Queue errror: (%s)", strerror(res.library_errno)); 
++//      spprintf(&str, 0, "Binding Queue errror: (%s)", strerror(res.library_error)); 
+         cnn->is_channal_connect = 0;
+         zend_throw_exception(rabbit_exchange_exception_class_entry, *pstr, 0 TSRMLS_CC);
+         return;
+@@ -1746,5 +1757,5 @@
+  * c-basic-offset: 4
+  * End:
+  * vim600: noet sw=4 ts=4 fdm=marker
+- * vim<600: noet sw=4 ts=4
++ * vim<600: noet sw=2 ts=2
+  */
+

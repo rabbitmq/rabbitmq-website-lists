@@ -1,0 +1,165 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] please help understanding why my pool of	channels are blocking.
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20please%20help%20understanding%20why%20my%20pool%20of%0A%09channels%20are%20blocking.&In-Reply-To=%3C06086441-24B3-4DB8-8975-3B31CA4552AE%40rabbitmq.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="019877.html">
+   <LINK REL="Next"  HREF="019932.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] please help understanding why my pool of	channels are blocking.</H1>
+    <B>Steve Powell</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20please%20help%20understanding%20why%20my%20pool%20of%0A%09channels%20are%20blocking.&In-Reply-To=%3C06086441-24B3-4DB8-8975-3B31CA4552AE%40rabbitmq.com%3E"
+       TITLE="[rabbitmq-discuss] please help understanding why my pool of	channels are blocking.">steve at rabbitmq.com
+       </A><BR>
+    <I>Tue May  8 12:35:28 BST 2012</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="019877.html">[rabbitmq-discuss] please help understanding why my pool of channels are blocking.
+</A></li>
+        <LI>Next message: <A HREF="019932.html">[rabbitmq-discuss] please help understanding why my pool of	channels are blocking.
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#19931">[ date ]</a>
+              <a href="thread.html#19931">[ thread ]</a>
+              <a href="subject.html#19931">[ subject ]</a>
+              <a href="author.html#19931">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Gautam, 
+
+Of course, as Matthias pointed out, everything eventually goes down a
+connection. If this is shared between the channels then SENDing
+messages from the client will clearly serialise at the connection level.
+This is what I'm seeing here, too.
+
+Individual messages are not split into chunks (as they would have to be
+to multi-plex them with others on the network connection), so each
+message will block out all other activity on the connection until it
+is completed.  Larger messages will block for longer.
+
+The reason why you might want multiple channels on one connection is if
+you want to multi-thread work at the client end -- for example Consumer
+callback work. Each connection has a thread-pool of executors to run
+consumer callbacks (deliveries and so on) so that multiple channels can
+run their callbacks simultaneously. Frames received from the server
+still come in serially over the connection, but the callbacks they
+trigger can run in independent threads if they are for distinct
+channels.  You appear not to be doing any consuming, so this is not
+your problem.
+
+AFAIK there isn't a standard for multi-plexing channels/connections at
+the client end, but I suggest that you simply increase the number of
+underlying connections to relieve the bottleneck you are seeing. If, for
+instance, you introduce, 5 connections with 10 channels each you could
+see if this helps things.
+
+Varying the number of channels per connection will allow you to tune the
+potential contention for each connection. Only you can tell what 
+the likely contention is to be.  The selector process for channels might
+want to favour channels which are for connections with fewer used
+channels already.
+
+Let us know how you fare.
+
+Steve Powell  (a happy bunny)
+----------some more definitions from the SPD----------
+chinchilla (n.) Cooling device for the lower jaw.
+socialcast (n.) Someone to whom everyone is speaking but nobody likes.
+literacy (n.) A textually transmitted disease usually contracted in childhood.
+
+On 4 May 2012, at 15:43, Gautam Bakshi wrote:
+
+&gt;<i> Thanks Matthias and Steve. 
+</I>&gt;<i> 
+</I>&gt;<i> Is there a better(or more common/supported) way to pool channels(so I reduce blocking on threaded message passing)?  I'd rather not waste anyone's time if there's already a tried and test solution out there for pooling.
+</I>&gt;<i> 
+</I>&gt;<i> Enjoy the holidays!
+</I>&gt;<i> 
+</I>&gt;<i> On Fri, May 4, 2012 at 7:24 AM, Matthias Radestock &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">matthias at rabbitmq.com</A>&gt; wrote:
+</I>&gt;<i> On 03/05/12 04:34, Gautam Bakshi wrote:
+</I>&gt;<i> I have a multi-threaded application that I was considering using
+</I>&gt;<i> rabbitmq to manage the queue but I'm getting alot of blocking between
+</I>&gt;<i> my channels.  Is there a preferred way to setup pools?
+</I>&gt;<i> 
+</I>&gt;<i> I'm a bit new to Java so I used to the pools from apache commons but
+</I>&gt;<i>  when I profile the channels are all blocking each other.  To test if
+</I>&gt;<i>  dedicated connections per thread worked better I made an example of
+</I>&gt;<i> it as well and it does not block when the same program has a single
+</I>&gt;<i> channel per connection.
+</I>&gt;<i> 
+</I>&gt;<i> So my question, do channels block each other or am I doing something
+</I>&gt;<i>  wrong(using java api wrong or misunderstanding
+</I>&gt;<i> connection/channels)?
+</I>&gt;<i> 
+</I>&gt;<i> Channels are multiplexed on the underlying connection. So when an app
+</I>&gt;<i> is, say, publishing messages on multiple channels, these activities will
+</I>&gt;<i> be serialised at the point the client interacts with the network socket.
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> there a more preferred way? Unrelated to the question, but I was also
+</I>&gt;<i>  wondering is there any difference between channels and connections
+</I>&gt;<i> in terms of throughput(i.e. would there be any benefit of using
+</I>&gt;<i> dedicated connections ignoring the overhead in
+</I>&gt;<i> establishing/maintaining the connection)?
+</I>&gt;<i> 
+</I>&gt;<i> You can get exploit more parallelism in both the client and server when
+</I>&gt;<i> using multiple connections compared to multiple channels. But it is
+</I>&gt;<i> ultimately more costly in CPU and memory. Plus of course network
+</I>&gt;<i> capacity is bounded, so if you are saturating that with a single
+</I>&gt;<i> connection then using more than one will not gain anything.
+</I>&gt;<i> 
+</I>&gt;<i> So the answer on whether multiple channels or multiple connections are
+</I>&gt;<i> better very much depends on the application, the hardware environment
+</I>&gt;<i> at the client and broker end, and the network. Hence your best bet is to conduct some tests, which you are already doing :)
+</I>&gt;<i> 
+</I>&gt;<i> Regards,
+</I>&gt;<i> 
+</I>&gt;<i> Matthias.
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> -- 
+</I>&gt;<i> Regards,
+</I>&gt;<i> 
+</I>&gt;<i> Gautam Bakshi
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20120508/2ec2eb74/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20120508/2ec2eb74/attachment.htm</A>&gt;
+</PRE>
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="019877.html">[rabbitmq-discuss] please help understanding why my pool of channels are blocking.
+</A></li>
+	<LI>Next message: <A HREF="019932.html">[rabbitmq-discuss] please help understanding why my pool of	channels are blocking.
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#19931">[ date ]</a>
+              <a href="thread.html#19931">[ thread ]</a>
+              <a href="subject.html#19931">[ subject ]</a>
+              <a href="author.html#19931">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

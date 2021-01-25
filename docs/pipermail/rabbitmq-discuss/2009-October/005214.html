@@ -1,0 +1,163 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] RabbitMQ crashes hard when it runs out of	memory
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20RabbitMQ%20crashes%20hard%20when%20it%20runs%20out%20of%0A%09memory&In-Reply-To=4AE0E99B.7040300%40lshift.net">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="005213.html">
+   <LINK REL="Next"  HREF="005215.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] RabbitMQ crashes hard when it runs out of	memory</H1>
+    <B>Stephen Day</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20RabbitMQ%20crashes%20hard%20when%20it%20runs%20out%20of%0A%09memory&In-Reply-To=4AE0E99B.7040300%40lshift.net"
+       TITLE="[rabbitmq-discuss] RabbitMQ crashes hard when it runs out of	memory">sjaday at gmail.com
+       </A><BR>
+    <I>Fri Oct 23 01:47:50 BST 2009</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="005213.html">[rabbitmq-discuss] RabbitMQ crashes hard when it runs out of	memory
+</A></li>
+        <LI>Next message: <A HREF="005215.html">[rabbitmq-discuss] RabbitMQ crashes hard when it runs out of	memory
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#5214">[ date ]</a>
+              <a href="thread.html#5214">[ thread ]</a>
+              <a href="subject.html#5214">[ subject ]</a>
+              <a href="author.html#5214">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>I won't bore you with all the output, but I tracked down the binary usage to
+these two processes:
+
+[{Pid1, _Info, _Bin}, {Pid2, _Info2, _Bin2} | Other ] = [{P,
+process_info(P), BinInfo} || {P, {binary, BinInfo}} &lt;- [{P, process_info(P,
+binary)} || P &lt;- processes()], length(BinInfo) &gt; 100000].
+
+&lt;0.157.0&gt;             gen:init_it/6                      1682835  1873131
+0
+                      gen_server2:process_next_msg/8
+13
+&lt;0.158.0&gt;             rabbit_persister:init/1           19590700 29789397
+0
+rabbit_persister      gen_server2:process_next_msg/8
+13
+
+I tried your suggestion to free memory and check, but it looks most was held
+up in the persister:
+
+35&gt; M = [{erlang:garbage_collect(P), memory(total)} || P &lt;-
+erlang:processes()].
+
+51&gt; [{P,Mem} || {Mem, P} &lt;- lists:zip( [Me||{true, Me} &lt;- M], processes()),
+Mem &lt; 842757048].
+[{&lt;0.148.0&gt;,842753448},
+ {&lt;0.149.0&gt;,842700248},
+ {&lt;0.150.0&gt;,842700248},
+ {&lt;0.151.0&gt;,842700248},
+ {&lt;0.152.0&gt;,842697224},
+ {&lt;0.154.0&gt;,842697792},
+ {&lt;0.155.0&gt;,842724104},
+ {&lt;0.156.0&gt;,842712824},
+ {&lt;0.157.0&gt;,825951032},
+ {&lt;0.158.0&gt;,602886872},
+ {&lt;0.159.0&gt;,345002144},
+ {&lt;0.177.0&gt;,345002144},
+ {&lt;0.178.0&gt;,345002144},
+ {&lt;0.179.0&gt;,345002144},
+ {&lt;0.180.0&gt;,345002144},
+ {&lt;0.181.0&gt;,345002144},
+ {&lt;0.182.0&gt;,345002144},
+ {&lt;0.183.0&gt;,345002144},
+ {&lt;0.184.0&gt;,345002144},
+ {&lt;0.245.0&gt;,345000624},
+ {&lt;0.247.0&gt;,345001520},
+ {&lt;0.248.0&gt;,344996984},
+ {&lt;0.249.0&gt;,344995464},
+ {&lt;0.250.0&gt;,344995512},
+ {&lt;0.252.0&gt;,344996416},
+ {&lt;0.253.0&gt;,344991880},
+ {&lt;0.254.0&gt;,344991928},
+ {&lt;0.261.0&gt;,...},
+ {...}|...]
+
+So it looks like the large chunks are held up between between gen_server2
+and rabbit_persister.
+
+_steve
+
+On Thu, Oct 22, 2009 at 4:24 PM, Matthias Radestock &lt;<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">matthias at lshift.net</A>&gt;wrote:
+
+&gt;<i> Stephen,
+</I>&gt;<i>
+</I>&gt;<i> Stephen Day wrote:
+</I>&gt;<i>
+</I>&gt;&gt;<i> (<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at vs-dfw-ctl11</A>)5&gt; [erlang:garbage_collect(P) || P &lt;-
+</I>&gt;&gt;<i> erlang:processes()].
+</I>&gt;&gt;<i> [true,true,true,true,true,true,true,true,true,true,true,
+</I>&gt;&gt;<i>  true,true,true,true,true,true,true,true,true,true,true,true,
+</I>&gt;&gt;<i>  true,true,true,true,true,true|...]
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> (<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at vs-dfw-ctl11</A>)6&gt; memory().
+</I>&gt;&gt;<i>     [{total,145833144},
+</I>&gt;&gt;<i>  {processes,50900752},
+</I>&gt;&gt;<i>  {processes_used,50896864},
+</I>&gt;&gt;<i>  {system,94932392},
+</I>&gt;&gt;<i>  {atom,514765},
+</I>&gt;&gt;<i>  {atom_used,488348},
+</I>&gt;&gt;<i>  {binary,24622512},
+</I>&gt;&gt;<i>  {code,3880064},
+</I>&gt;&gt;<i>  {ets,64745716}]
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> This really cut down on usage, so its likely that the binary gc is falling
+</I>&gt;&gt;<i> behind rabbits requirements.
+</I>&gt;&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> Agreed.
+</I>&gt;<i>
+</I>&gt;<i>  How do I track down the uncollected binary heap usage to a process?
+</I>&gt;&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> Binaries are shared between processes and ref counted, so no single process
+</I>&gt;<i> owns them. There is a process_info item called 'binary' that provides
+</I>&gt;<i> information on the binaries referenced by a process, but I've never looked
+</I>&gt;<i> at that myself, so don't know how useful the contained info is.
+</I>&gt;<i>
+</I>&gt;<i> One thing you could try is to run the above garbage_collect code
+</I>&gt;<i> interleaved with the memory reporting code to identify which process results
+</I>&gt;<i> in the biggest drop in memory memory usage when gc'ed.
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> Regards,
+</I>&gt;<i>
+</I>&gt;<i> Matthias.
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: <A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20091022/70f3fc7f/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20091022/70f3fc7f/attachment.htm</A> 
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="005213.html">[rabbitmq-discuss] RabbitMQ crashes hard when it runs out of	memory
+</A></li>
+	<LI>Next message: <A HREF="005215.html">[rabbitmq-discuss] RabbitMQ crashes hard when it runs out of	memory
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#5214">[ date ]</a>
+              <a href="thread.html#5214">[ thread ]</a>
+              <a href="subject.html#5214">[ subject ]</a>
+              <a href="author.html#5214">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

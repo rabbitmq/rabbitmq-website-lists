@@ -1,0 +1,203 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Rabbitmq Java Client Memory Leak?
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Rabbitmq%20Java%20Client%20Memory%20Leak%3F&In-Reply-To=%3Cc2846c00-7788-428d-a871-fa9fbbd7c00e%40l8g2000yqh.googlegroups.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="010345.html">
+   <LINK REL="Next"  HREF="010334.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Rabbitmq Java Client Memory Leak?</H1>
+    <B>drenz</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Rabbitmq%20Java%20Client%20Memory%20Leak%3F&In-Reply-To=%3Cc2846c00-7788-428d-a871-fa9fbbd7c00e%40l8g2000yqh.googlegroups.com%3E"
+       TITLE="[rabbitmq-discuss] Rabbitmq Java Client Memory Leak?">david.renz at gmail.com
+       </A><BR>
+    <I>Sun Dec 12 15:58:12 GMT 2010</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="010345.html">[rabbitmq-discuss] rabbit client library for android
+</A></li>
+        <LI>Next message: <A HREF="010334.html">[rabbitmq-discuss] Rabbitmq Java Client Memory Leak?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#10332">[ date ]</a>
+              <a href="thread.html#10332">[ thread ]</a>
+              <a href="subject.html#10332">[ subject ]</a>
+              <a href="author.html#10332">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hello,
+
+I have a pretty simple set up where I use the RabbitMQ client library
+to pull objects from a RabbitMQ server.
+
+Unfortunately, there seems to be some memory leak in my program
+because it quickly consumes all of the heap memory with byte arrays.
+I've increased the max memory for the JVM to 2 GB and it consumes all
+of that too.
+
+Here is the code I use to pull data from the queue.  Having used a few
+Java profilers, it looks like the leak is associated with they
+QueueingConsumer.Delivery object, because each Delivery object has a
+member byte[] called _body.
+
+Does anyone have any idea how I can ensure these arrays are garbage
+collected / destroyed?
+
+Thanks in advance!!!
+
+Property values:
+queue.user=guest
+queue.password=guest
+queue.virtualHost=/
+queue.host=127.0.0.1
+queue.hostPort=5672
+queue.heartBeat=0
+queue.exchange=myExchange
+queue.queueName=dtt
+queue.routingKey=dttRoute
+
+Code:
+
+	public void consume() throws IOException, ClassNotFoundException {
+
+		ConnectionFactory factory = new ConnectionFactory();
+		factory.setUsername(PropertyUtil
+				.getProperyFile().getProperty(&quot;queue.user&quot;));
+		factory.setPassword(PropertyUtil
+				.getProperyFile().getProperty(&quot;queue.password&quot;));
+		factory.setVirtualHost(PropertyUtil
+				.getProperyFile().getProperty(&quot;queue.virtualHost&quot;));
+		factory.setRequestedHeartbeat(Integer.parseInt(PropertyUtil
+				.getProperyFile().getProperty(&quot;queue.heartBeat&quot;)));
+		factory.setHost(PropertyUtil
+				.getProperyFile().getProperty(&quot;queue.host&quot;));
+		factory.setPort(Integer.parseInt(PropertyUtil
+				.getProperyFile().getProperty(&quot;queue.hostPort&quot;)));
+
+		boolean durable = true;
+		boolean noAck = false;
+
+		Connection conn = factory.newConnection();
+
+		Channel channel = conn.createChannel();
+
+		channel.basicQos(2);
+		channel.exchangeDeclare(getExchangeName(), &quot;direct&quot;, durable);
+		channel.queueDeclare(getQueueName(), durable, false, false, null);
+		channel.queueBind(getQueueName(), getExchangeName(),
+getRoutingKey());
+
+		QueueingConsumer consumer = new QueueingConsumer(channel);
+		channel.basicConsume(getQueueName(), noAck, consumer);
+
+		boolean runInfinite = true;
+
+		java.sql.Connection sqlConn = null;
+		sqlConn = DatabaseUtil.getConnection();
+
+		long start = 0;
+		long end = 0;
+
+		while (runInfinite) {
+			start = System.currentTimeMillis();
+			QueueingConsumer.Delivery delivery = null;
+			try {
+				delivery = consumer.nextDelivery();
+
+			} catch (Exception ie) {
+				log.error(ie.getMessage(), ie);
+				continue;
+			}
+
+			byte[] body = delivery.getBody();
+
+			ObjectInputStream in = new ObjectInputStream(
+					new ByteArrayInputStream(body));
+
+			Status s = (Status) in.readObject();
+			in.close();
+			in = null;
+
+			try {
+
+				try {
+					process(s, sqlConn);
+
+				} catch (Exception e) {
+					try{
+						sqlConn = DatabaseUtil.getConnection();
+					} catch (Exception e1){
+						log.error(e.getMessage(), e1);
+						throw e1;
+					}
+				}
+
+				// only send an acknowledgement when the processing completed
+				// successfully
+				channel
+						.basicAck(delivery.getEnvelope().getDeliveryTag(),
+								false);
+
+			} catch (Exception e) {
+				log.error(e.getMessage(), e);
+			}
+
+
+			end = System.currentTimeMillis();
+			delivery = null;
+
+			log.debug(&quot;Processing time: &quot;+ (end - start) +&quot; ms&quot;);
+
+		}
+		try {
+			sqlConn.close();
+		} catch (SQLException e) {
+			// TODO Auto-generated catch block
+			log.error(e.getMessage(), e);
+		}
+
+		channel.close();
+		conn.close();
+
+	}
+
+
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="010345.html">[rabbitmq-discuss] rabbit client library for android
+</A></li>
+	<LI>Next message: <A HREF="010334.html">[rabbitmq-discuss] Rabbitmq Java Client Memory Leak?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#10332">[ date ]</a>
+              <a href="thread.html#10332">[ thread ]</a>
+              <a href="subject.html#10332">[ subject ]</a>
+              <a href="author.html#10332">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

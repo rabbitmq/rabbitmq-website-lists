@@ -1,0 +1,127 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Advice needed on new 'feature'
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20Advice%20needed%20on%20new%20%27feature%27&In-Reply-To=acceaadf0904222232t63bf3c02s9c22d21d1628c662%40mail.gmail.com">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003407.html">
+   <LINK REL="Next"  HREF="003413.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Advice needed on new 'feature'</H1>
+    <B>Matthias Radestock</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20Advice%20needed%20on%20new%20%27feature%27&In-Reply-To=acceaadf0904222232t63bf3c02s9c22d21d1628c662%40mail.gmail.com"
+       TITLE="[rabbitmq-discuss] Advice needed on new 'feature'">matthias at lshift.net
+       </A><BR>
+    <I>Thu Apr 23 07:39:39 BST 2009</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003407.html">[rabbitmq-discuss] Advice needed on new 'feature'
+</A></li>
+        <LI>Next message: <A HREF="003413.html">[rabbitmq-discuss] Advice needed on new 'feature'
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3409">[ date ]</a>
+              <a href="thread.html#3409">[ thread ]</a>
+              <a href="subject.html#3409">[ subject ]</a>
+              <a href="author.html#3409">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Nemanja,
+
+Nemanja Stefanovic wrote:
+&gt;<i> The auto_delete's per connection is a good idea. I had considered it but 
+</I>&gt;<i> it seemed like duplicating many bindings per connection per 'primary' 
+</I>&gt;<i> queue might have unnecessary overhead. I suppose there probably wouldn't 
+</I>&gt;<i> be more than a few per user, but how does creating new queues and ~15 or 
+</I>&gt;<i> so bindings for each affect system performance? The other reason for 
+</I>&gt;<i> avoiding re-creation of bindings each time is that the topics are 
+</I>&gt;<i> collected from a user-profile from a database. I really liked the 
+</I>&gt;<i> exchange for this reason because it allowed for minimizing DB-calls. I 
+</I>&gt;<i> realize this is probably a minor point though.
+</I>
+An alternative to duplicating the bindings would be to introduce 
+exchange-to-exchange bindings; something that was originally envisaged 
+in AMQP and wouldn't be too hard to add to RabbitMQ.
+
+You would then be able to have a three-level topology:
+
+1) a topic exchange, just as you have now
+2) one fanout exchange per user, with your ~15 bindings to the topic 
+exchange
+3) the primary and, temporarily, the secondary per-user queues bound 
+with a single binding each to the user's fanout exchange.
+
+You end up with one exchange and 15+1(+1 temporarily) bindings per user, 
+which RabbitMQ should cope with fine and efficiently.
+
+&gt;<i> Lastly, the current 'primary' queue allows me to store messages/events 
+</I>&gt;<i> in it, so when the first client connects it can consume past messages 
+</I>&gt;<i> and display them in a &quot;here's what you missed while you were away&quot; kind 
+</I>&gt;<i> of case. I wouldn't be able to get this same behaviour with auto_delete 
+</I>&gt;<i> queue's since (as far as I know) there's no way to 'synchronize' their 
+</I>&gt;<i> contents with the ones of the' primary' queue.
+</I>
+So, if I understand you correctly ...
+
+- when none of the user's clients are connected, messages for that user 
+should be buffered
+
+- when a user's client connects it should receive all buffered messages 
+(i.e. messages that have not been sent to *any* of the user's clients), 
+followed by any new messages
+
+That's an interesting use case.
+
+One possible approach is to have one permanent queue per user and then 
+temporary queues for each client, with all queues having the same 
+bindings (or being bound to the fanout exchange described above). 
+Clients subscribe to to both the permanent queue and temporary queue and 
+maintain state to allow them to spot duplicates, i.e. messages that came 
+from both the permanent and temporary queue.
+
+While that is not the most efficient of solutions, the cost is bounded. 
+Each message is sent to a client at most twice. And the de-dup state is 
+bounded too - in the worst case you need to remember the hashes of all 
+messages received from the permanent queue that have not been received 
+(yet, or possibly never) from the temporary queue.
+
+&gt;<i> As for acknowledgements, I'm not using them in this case so I'm not too 
+</I>&gt;<i> worried about that.
+</I>
+Right, but it stops the broadcast-queue feature from being orthogonal. 
+Other aspects that will break things are transactional acks, network 
+flow control (which blocks consumers) and channel flow control (ditto).
+
+
+Regards,
+
+Matthias.
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003407.html">[rabbitmq-discuss] Advice needed on new 'feature'
+</A></li>
+	<LI>Next message: <A HREF="003413.html">[rabbitmq-discuss] Advice needed on new 'feature'
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3409">[ date ]</a>
+              <a href="thread.html#3409">[ thread ]</a>
+              <a href="subject.html#3409">[ subject ]</a>
+              <a href="author.html#3409">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

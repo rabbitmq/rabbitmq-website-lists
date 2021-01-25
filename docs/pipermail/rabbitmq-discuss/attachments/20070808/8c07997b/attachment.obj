@@ -1,0 +1,244 @@
+diff -r b6e2e4fb055e src/amqp_client.erl
+--- a/src/amqp_client.erl	Tue Aug 07 17:35:04 2007 +0100
++++ b/src/amqp_client.erl	Wed Aug 08 22:31:56 2007 +0100
+@@ -38,7 +38,7 @@ start_ok(#client_state{username = Userna
+         	locale = <<"en_US">>}.
+ 
+ %---------------------------------------------------------------------------
+-% AMQP message handling
++% AMQP message handling out of band
+ %---------------------------------------------------------------------------
+                                                                                      
+ %% connection.close_ok    
+@@ -50,37 +50,44 @@ amqp_handle(Peer, Message, State ) ->
+     exit({amqp_client, unhandled_message , Message}).
+ 
+ %---------------------------------------------------------------------------
+-% AMQP message sending
+-%---------------------------------------------------------------------------
+-
+-amqp_initial_send(Method, #client_state{peer = Peer}) ->
+-    io:format("Init sending method ~p to peer~n",[Method]),
+-    Peer ! { self(), Method }.
+-
+-amqp_send(Method, #client_state{peer = Peer, direct = Direct}) ->
+-    io:format("AS: Sending method ~p to peer~n",[Method]),
+-    Message = case Direct of
+-              true ->
+-                { method, Method};    			
+-              _ ->
+-                { self(), Method}  
+-              end,
+-    Peer ! Message.
+-
+-amqp_send(Method, Content, #client_state{peer = Peer, direct = Direct}) ->
+-    Message = case Direct of
+-              true ->
+-                { method, Method, Content };    			
+-              _ ->
+-                { self(), Method, Content }  
+-              end,
+-    Peer ! Message.
++% RPC over AMQP
++%---------------------------------------------------------------------------
++
++rpc(Method, Content, State) ->
++    amqp_send(Method, Content, State),
++    %% TODO have a closer look at this, this case statement should be unecessary
++    case amqp_receive() of
++        {Pid,Response} when is_pid(Pid)  ->
++            Response;
++        Response ->
++            Response
++    end.
++
++rpc(Method, State) ->
++    amqp_send(Method, State),
++    %% TODO have a closer look at this, this case statement should be unecessary
++    case amqp_receive() of
++        {Pid,Response} when is_pid(Pid)  ->
++            Response;
++        Response ->
++            Response
++    end.    
++
++%---------------------------------------------------------------------------
++% AMQP message sending, in order to implement the top half of an RPC
++%---------------------------------------------------------------------------
++
++amqp_send(Method, #client_state{peer = Peer}) ->
++    Peer ! { self(), Method } .
++
++amqp_send(Method, Content, #client_state{peer = Peer}) ->
++    Peer ! { self(), Method, Content}.
+ 
+ %---------------------------------------------------------------------------
+ % AMQP blocking reads, in order to implement the bottom half of an RPC
+ %---------------------------------------------------------------------------
+-                                                                                         
+-amqp_receive(Method) ->
++                                                                                        
++amqp_receive() ->
+     receive
+ 	%% This used in the networked case                   
+ 	{frame, Sender, Channel, {method, M, Content} } ->
+@@ -103,34 +110,19 @@ amqp_receive(Method) ->
+         #basic_message{content = Content} = Message,
+         {Sender, Content};            
+     %% TODO Check whether the following ever get used        
+-    {send_command, { M, Content } } ->
+-        {M,Content};
+-	{send_command, { M} } ->
+-        {M};                                                                                                                                                                                                                                                                                                
+-    {Sender, M} when is_pid(Sender) -> 
+-        {Sender,M};
+-    {Sender, ChannelNumber, M} -> 
++    {send_command, { Method, Content } } ->
++        {Method, Content};
++	{send_command, { Method } } ->
++        {Method};                                                                                                                                                                                                                                                                                                
++    {Sender, Method} when is_pid(Sender) -> 
++        {Sender,Method};
++    {Sender, ChannelNumber, Method} -> 
+         %% TODO review whether we actually need to send on the PID, I think it maybe unecessary.....
+-        {Sender,M};          
+-	{Sender, Method} -> 
+-        {Sender,Method};                                      
+-	                                   
++        {Sender,Method};                                             
+     Other -> 
+         io:format("amqp_receive(Method) - This shouldn't be received:--> ~p~n",[Other]),
+         exit(unknown_protocol_sequence)
+-    end.
+-    
+-%% This is an experimental blocking read in order to implement the bottom half of an RPC
+-amqp_receive(Channel, Method) ->
+-    receive
+-	{send_command, { Channel, Method } } ->
+-        Method;
+-	{Sender, { Channel, {Method} } } ->
+-        Method;                                                                                               
+-	Other -> 
+-        io:format("amqp_receive/2 - This shouldn't be received:--> ~p~n",[Other]),
+-        exit(unknown_protocol_sequence)                                                                                                                                            
+-    end.
++    end. 
+ 
+ %---------------------------------------------------------------------------
+ % gen_server callbacks
+@@ -145,11 +137,11 @@ init([User, Pass, ServerHost, VHostPath,
+ 									version_minor = MinorVersion,
+ 									server_properties = Properties,
+ 									mechanisms = Mechansims,
+-									locales = Locales }} = amqp_receive('connection.start'),
+-    WriterPid ! {self(), start_ok(State) },
++									locales = Locales }} = amqp_receive(),
++    WriterPid ! {self(), start_ok(State) },      
+     {Peer, #'connection.tune'{channel_max = ChannelMax, 
+                               frame_max = FrameMax, 
+-                              heartbeat = Heartbeat} } = amqp_receive('connection.tune'),
++                              heartbeat = Heartbeat} } = amqp_receive(),
+     TuneOk = #'connection.tune_ok'{channel_max = ChannelMax, frame_max = FrameMax, heartbeat = Heartbeat},                                                                
+     WriterPid ! {self(), TuneOk },
+     %% This is something where I don't understand the protocol,
+@@ -159,7 +151,7 @@ init([User, Pass, ServerHost, VHostPath,
+                                         capabilities = <<"">>, 
+                                         insist = false },        
+     WriterPid ! {self(), ConnectionOpen},    
+-    case amqp_receive('connection.open_ok') of 
++    case amqp_receive() of 
+         {Peer, {0, #'connection.open_ok'{known_hosts = KnownHosts}}} ->
+             ok;
+         {Peer, #'connection.open_ok'{known_hosts = KnownHosts}} ->
+@@ -205,49 +197,24 @@ handle_call( {open_channel, ChannelNumbe
+                     end,                        
+     {Con, Peer} = Callback({ChannelNumber, OutOfBand}, Connection),                           
+     io:format("Bound AMQP client channel ~p to pid ~p, peer pid is ~p~n", [ChannelNumber, self(), Peer]),           
+-    State1 = State0#client_state{peer = Peer},                            
+-    amqp_initial_send(#'channel.open'{out_of_band = OutOfBand}, State1),
+-    OpenOk = amqp_receive('channel.open_ok'),                    
++    State1 = State0#client_state{peer = Peer},                                                    
++    OpenOk = rpc(#'channel.open'{out_of_band = OutOfBand}, State1),                 
+     {reply, self(), State1};
+ 
+-%% Access a realm                                                  
++%% Access a realm                                      
++%% This should get eliminated because the user should extract
++%% the fields from the return tuple                                                                                                                                                                
+ handle_call({ access_request, Method}, From , State) ->
+-    amqp_send(Method, State),
+-    %% TODO Think about a case block here for better exception handling
+-    %% Also, this case block arises from the difference messages are being passed
+-    %% in the direct and networked cases, this can handled a lot better
+-    case amqp_receive('access.request_ok') of
+-        % network case
+-        {Peer, #'access.request_ok'{ticket = NextTicket}} ->
+-            ok;
+-		% direct case                                                        
+-        #'access.request_ok'{ticket = NextTicket} ->
+-            ok
+-    end,                                                                                                                                     
++	#'access.request_ok'{ticket = NextTicket} = rpc(Method, State),                                                                                                                                                                                                                                         
+ 	{reply, NextTicket, State};                                 
+ 
+ %% TODO look at how to apply this to access_request 
+ %% This is effectively RPC over AMQP                                                                                                                       
+-handle_call({ Method, Content }, From , State) ->                                                                                                                            
+-    amqp_send(Method, Content, State),
+-    %% TODO have a closer look at this, this case statement should be unecessary
+-    case amqp_receive(<<>>) of
+-        {Pid,Response} when is_pid(Pid)  ->
+-            ok;
+-        Response ->
+-            ok
+-    end,                
+-    {reply, Response , State};    
++handle_call({ Method, Content }, From , State) ->                                                                                                                                          
++    {reply, rpc(Method, Content, State) , State};    
+         
+-handle_call({ Method }, From , State) ->                                                                                                                                
+-    amqp_send(Method, State), 
+-    case amqp_receive(<<>>) of 
+-        {Peer, Reply} ->
+-            ok;
+-        Reply ->
+-            ok
+-	end,                          
+-    {reply, Reply , State};        
++handle_call({ Method }, From , State) ->               
++    {reply, rpc(Method, State) , State};                                                                                                                         
+                                                      
+ handle_call(_Request, _From, State) ->
+     {reply, ignored, State}.                                                                                                           
+@@ -257,7 +224,7 @@ handle_cast( { register_consumer, Consum
+     ets:insert(Consumers, {ConsumerTag, Consumer} ),
+     {noreply, State};
+                                       
+-%% Non RPC calls                                                                                                      
++%% Non RPC calls, e.g. basic publish                                                                                                      
+ handle_cast( { Method, Content }, State) ->
+     amqp_send(Method, Content, State),    
+     {noreply, State}.                                                                                                                                               
+diff -r b6e2e4fb055e src/rabbit_channel.erl
+--- a/src/rabbit_channel.erl	Tue Aug 07 17:35:04 2007 +0100
++++ b/src/rabbit_channel.erl	Wed Aug 08 22:31:56 2007 +0100
+@@ -169,16 +169,16 @@ send(#ch{ channel = Channel, writer_pid 
+     
+ mainloop_without_framing(State) ->
+     receive
+-    {method, MethodRecord} ->
++    {Sender, MethodRecord} ->
+ 	    State1 = handle_method(MethodRecord, <<>>, State),
+ 	    mainloop_without_framing(State1);                          
+-	{method, MethodRecord, SubscriberPid} when is_pid(SubscriberPid) ->                                  
++	{Sender, MethodRecord, SubscriberPid} when is_pid(SubscriberPid) ->                                  
+         WriterPid = State#ch.writer_pid,
+         State0 = State#ch{writer_pid = SubscriberPid},
+ 	    State1 = handle_method(MethodRecord, <<>>, State0),
+         State2 = State1#ch{writer_pid = WriterPid},
+ 	    mainloop_without_framing(State2);                                  
+-    {method, MethodRecord, Content} ->
++    {Sender, MethodRecord, Content} ->
+ 	    State1 = handle_method(MethodRecord, Content, State),
+ 	    mainloop_without_framing(State1);
+ 	Other ->

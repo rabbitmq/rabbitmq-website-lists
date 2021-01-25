@@ -1,0 +1,102 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] bug21444 branch experience
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20bug21444%20branch%20experience&In-Reply-To=">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="005558.html">
+   <LINK REL="Next"  HREF="005542.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] bug21444 branch experience</H1>
+    <B>mabrek</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20bug21444%20branch%20experience&In-Reply-To="
+       TITLE="[rabbitmq-discuss] bug21444 branch experience">mabrek at gmail.com
+       </A><BR>
+    <I>Thu Nov 26 16:26:51 GMT 2009</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="005558.html">[rabbitmq-discuss] ANN: Delphi client library for RabbitMQ AMQP	message broker
+</A></li>
+        <LI>Next message: <A HREF="005542.html">[rabbitmq-discuss] bug21444 branch experience
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#5541">[ date ]</a>
+              <a href="thread.html#5541">[ thread ]</a>
+              <a href="subject.html#5541">[ subject ]</a>
+              <a href="author.html#5541">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hello.
+We need to handle large queues (50Gb) and thus I started experimenting
+with bug21444 branch (revision 7a219f11bb3e) that seems to have this
+feature.
+First trouble was concerned with leaking disk space. Queue files were
+remaining open after deletion.
+Simple workaround limited wasted disk space:
+src/rabbit_msg_store.erl
+@@ -43,7 +43,7 @@
+
+ -define(SERVER, ?MODULE).
+
+--define(MAX_READ_FILE_HANDLES, 256).
++-define(MAX_READ_FILE_HANDLES, 32).
+ -define(FILE_SIZE_LIMIT,       (256*1024*1024)).
+ -define(SYNC_INTERVAL,         5). %% milliseconds
+
+Another problem arised while starting server with large disk queue. It
+seems that erlang gc can't keep up with the speed of reading files and
+release unused binary data on time.
+Forced garbage collection helped server to survive startup
+src/rabbit_msg_store.erl
+@@ -790,6 +790,7 @@
+     build_index(undefined, Files, [], State).
+
+ build_index(Left, [], FilesToCompact, State) -&gt;
++	[erlang:garbage_collect(P) || P &lt;- erlang:processes()],
+     ok = index_delete_by_file(undefined, State),
+     Offset = case lists:reverse(index_search_by_file(Left, State)) of
+                  [] -&gt; 0;
+@@ -801,6 +802,7 @@
+             State #msstate { current_file = Left, current_offset = Offset });
+ build_index(Left, [File|Files], FilesToCompact,
+             State = #msstate { dir = Dir, file_summary = FileSummary }) -&gt;
++	[erlang:garbage_collect(P) || P &lt;- erlang:processes()],
+     {ok, Messages} = scan_file_for_valid_messages(Dir, filenum_to_name(File)),
+     {ValidMessages, ValidTotalSize, AllValid} =
+         lists:foldl(
+
+&gt;<i>From repository changelog I can conclude that there is active
+</I>development in branch bug21673 and it have changes concerned with disk
+queue. Is it worth trying?
+
+Regards,
+Anton Lebedevich.
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="005558.html">[rabbitmq-discuss] ANN: Delphi client library for RabbitMQ AMQP	message broker
+</A></li>
+	<LI>Next message: <A HREF="005542.html">[rabbitmq-discuss] bug21444 branch experience
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#5541">[ date ]</a>
+              <a href="thread.html#5541">[ thread ]</a>
+              <a href="subject.html#5541">[ subject ]</a>
+              <a href="author.html#5541">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

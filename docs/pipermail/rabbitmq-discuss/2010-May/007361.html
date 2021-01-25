@@ -1,0 +1,158 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] lost message due to binding delay
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20lost%20message%20due%20to%20binding%20delay&In-Reply-To=">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="007360.html">
+   <LINK REL="Next"  HREF="007392.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] lost message due to binding delay</H1>
+    <B>Aaron Westendorf</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20lost%20message%20due%20to%20binding%20delay&In-Reply-To="
+       TITLE="[rabbitmq-discuss] lost message due to binding delay">aaron at agoragames.com
+       </A><BR>
+    <I>Fri May 21 20:57:57 BST 2010</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="007360.html">[rabbitmq-discuss] RabbitMQ failover and message loss
+</A></li>
+        <LI>Next message: <A HREF="007392.html">[rabbitmq-discuss] lost message due to binding delay
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#7361">[ date ]</a>
+              <a href="thread.html#7361">[ thread ]</a>
+              <a href="subject.html#7361">[ subject ]</a>
+              <a href="author.html#7361">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>We tracked down an interesting bug today in a 1.7.2 cluster.  Our
+setup is as follows:
+
+cluster: 4 hosts, 1 node each  (&quot;rabbit1&quot;, &quot;rabbit2&quot;, &quot;rabbit3&quot;, &quot;rabbit4&quot;)
+clients: 2 services, &quot;serviceA&quot; and &quot;serviceB&quot;; 1 or more processes each
+
+In this situation both services are connected to rabbit1.  Both
+services have a standard queue and binding setup that is built into
+our application stack so that they can receive messages from our HTTP
+bridge, and also receive messages that we send between services.  The
+queues, bindings and consumers are all declared when the services
+start, and the queues are by service name to distribute messages
+between all instances of each service.
+
+The bug occurs when we use the part of our stack that allows serviceA
+to query serviceB and receive a response.  To be sure that the
+response ends up with the right process, each process sets up a queue
+that resolves to its host and pid. The queue and its bindings are not
+allocated at startup but instead on-demand when services interact.
+
+Our python driver is a fork of py-amqplib which uses libevent for all
+IO and scheduling.  The driver has been in use for awhile now, though
+it needs a lot of documentation before it is ready to be released into
+the wild (we promise, we're working on it).  What this means is that
+if we have multiple AMQP messages sent during the same event loop
+cycle, the bytes reside locally in a buffer until the current cycle
+completes.  When a write event is processed, we push as many bytes
+into the socket buffer as possible, and in this case, likely all of
+the bytes would be able to fit into the socket buffer.
+
+So, when we perform inter-service communication, the first time it
+occurs in that process, the bytes for setting up our subscription are
+immediately followed by the message sent to the second service.  For
+example:
+
+serviceA: exchange_declare('response', 'topic')     # already exists
+serviceA: queue_declare('serviceA.response.host.pid')
+serviceA: queue_bind('serviceA.response.host.pid', 'response',
+routing_key='serviceA.response.host.pid')
+serviceA: basic_consume( 'serviceA.response.host.pid' )
+serviceA: tx_select()
+serviceA: basic_publish( &lt;a message to serviceB&gt; )
+serviceA: tx_commit()
+serviceB: on receipt, do a DB query and send response back to serviceA
+
+Using our passive listener application, we can confirm that serviceB
+writes a response with the correct routing keys, but serviceA never
+receives it.  Subsequent messages skip everything before
+basic_publish() and work as expected.
+
+We are unable to reproduce this bug if we're running a single Rabbit
+node.  The reason I suspect that it's a problem with the
+exchange-queue binding is that all of the messages are flowing, which
+means that Rabbit is handling the queue_* and tx_* methods in the
+order in which we expect them to be processed.  Because we're running
+this in a cluster, it is necessary for all nodes to register the
+binding of the exchange to the queue.  I suspect that this is an
+asynchronous operation, and that &quot;rabbit1&quot; has not confirmed that the
+binding is in place by the time serviceB writes its response.  We
+don't have exact timings, but the round-trip time for the request and
+response is between 1 and 5ms.
+
+For now, we're going to change our services so that they setup their
+response queues and bindings when they start.  This will greatly
+increase the number of queues that we have live, as our services are
+all distributed and multi-process, but very few of them use
+inter-service messaging.
+
+-Aaron
+
+
+-- 
+Aaron Westendorf
+Senior Software Engineer
+Agora Games
+359 Broadway
+Troy, NY 12180
+Phone: 518.268.1000
+<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">aaron at agoragames.com</A>
+www.agoragames.com
+
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="007360.html">[rabbitmq-discuss] RabbitMQ failover and message loss
+</A></li>
+	<LI>Next message: <A HREF="007392.html">[rabbitmq-discuss] lost message due to binding delay
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#7361">[ date ]</a>
+              <a href="thread.html#7361">[ thread ]</a>
+              <a href="subject.html#7361">[ subject ]</a>
+              <a href="author.html#7361">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

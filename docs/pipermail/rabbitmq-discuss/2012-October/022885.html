@@ -1,0 +1,213 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] RabbitMQ Performance Tests and max of ~4000	msg/sec
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20RabbitMQ%20Performance%20Tests%20and%20max%20of%20%7E4000%0A%09msg/sec&In-Reply-To=%3C25952366-C794-44AA-B021-303DD154AEEF%40gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="022884.html">
+   <LINK REL="Next"  HREF="022889.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] RabbitMQ Performance Tests and max of ~4000	msg/sec</H1>
+    <B>McIntosh Jason</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20RabbitMQ%20Performance%20Tests%20and%20max%20of%20%7E4000%0A%09msg/sec&In-Reply-To=%3C25952366-C794-44AA-B021-303DD154AEEF%40gmail.com%3E"
+       TITLE="[rabbitmq-discuss] RabbitMQ Performance Tests and max of ~4000	msg/sec">mcintoshj at gmail.com
+       </A><BR>
+    <I>Mon Oct  8 02:55:32 BST 2012</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="022884.html">[rabbitmq-discuss] RabbitMQ Performance Tests and max of ~4000	msg/sec
+</A></li>
+        <LI>Next message: <A HREF="022889.html">[rabbitmq-discuss] RabbitMQ Performance Tests and max of ~4000 msg/sec
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#22885">[ date ]</a>
+              <a href="thread.html#22885">[ thread ]</a>
+              <a href="subject.html#22885">[ subject ]</a>
+              <a href="author.html#22885">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>So an interesting addendum:
+
+I tossed a slight modification of my main method:
+
+		List&lt;Thread&gt; threadsStarted = new ArrayList&lt;Thread&gt;();
+		for (int i = 0; i &lt; 5; i++) {
+			Thread t = new Thread(new RabbitMqTester(&quot;TestExchange&quot;, &quot;Test&quot;, channel));
+			threadsStarted.add(t);
+			t.start();
+		}
+		for (Thread t : threadsStarted) {
+			t.join();
+		}
+And started seeing 16k messages per second.  I'll be doing some more testing to see where my block might be.  Could be as simple as how I'm handling threads...
+Thanks!
+Jason
+
+
+On Oct 7, 2012, at 8:33 PM, McIntosh Jason wrote:
+
+&gt;<i> So I've been trying to design a rabbit configuration to eke the most performance possible out of a system.  However, despite a lot of repeated attempts, I'm not able to get more than 4-5k messages/sec out of any rabbit server.  Here are the results of some tests:
+</I>&gt;<i> 
+</I>&gt;<i> Single connection, Single Exchange, Single queue:  ~4000 msg/sec
+</I>&gt;<i> Single connection, Single Exchange, Two queues  :  ~4000 msg/sec
+</I>&gt;<i> Single connection, Two Exchanges, Single queue  :  ~4000 msg/sec
+</I>&gt;<i> Single connections, Two Exchanges, Two queues   :  ~4000 msg/sec
+</I>&gt;<i> Two connections, Two Exchanges, Two queues      :  ~3300 msg/sec (could be a fluke, haven't repeated this test)
+</I>&gt;<i> 
+</I>&gt;<i> The message rates I've NOT computationally verified - just reading off summary of what rabbit says is going through it's exchanges/queues.  I'll probably work on some more accurate metrics later, but right now, I'm just trying to figure out what to tweak.
+</I>&gt;<i> 
+</I>&gt;<i> While the test was running, I saw at most a 2mb/sec data write rate, and only about 50-60% CPU use.  Rabbit overview in the admin interface:
+</I>&gt;<i> Name	File descriptors (?)
+</I>&gt;<i> (used / available)
+</I>&gt;<i> Socket descriptors (?)
+</I>&gt;<i> (used / available)
+</I>&gt;<i> Erlang processes
+</I>&gt;<i> (used / available)
+</I>&gt;<i> Memory	Disk space	Uptime	Type
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at jasons-mac-pro</A>
+</I>&gt;<i> 35 / 1024
+</I>&gt;<i> 3 / 829
+</I>&gt;<i> 204 / 1048576
+</I>&gt;<i> 496.3MB
+</I>&gt;<i> 2.2GB high watermark
+</I>&gt;<i> 3.0TB
+</I>&gt;<i> 953.7MB low watermark
+</I>&gt;<i> 1h 18m	Disc Stats *
+</I>&gt;<i> 
+</I>&gt;<i> At this point, I'm not sure what the heck to do to get more performance out of Rabbit and could use some advice.  Below is the setup I've got, sample code, etc.  Any advice would be welcome! 
+</I>&gt;<i> 
+</I>&gt;<i> Thanks!
+</I>&gt;<i> Jason
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> Here's the setup:
+</I>&gt;<i> Two Exchanges, TestExchange and TestExchange2
+</I>&gt;<i> Two Queues, Test and Test2
+</I>&gt;<i> Bindings for each exchange to the queue with the routing key = Queue name.  I've got the queues setup as direct and durable, as are the queues (durable).
+</I>&gt;<i> 
+</I>&gt;<i> Here's the java code I'm testing with:
+</I>&gt;<i> import java.io.IOException;
+</I>&gt;<i> 
+</I>&gt;<i> import org.apache.commons.lang.RandomStringUtils;
+</I>&gt;<i> 
+</I>&gt;<i> import com.rabbitmq.client.Channel;
+</I>&gt;<i> import com.rabbitmq.client.Connection;
+</I>&gt;<i> import com.rabbitmq.client.ConnectionFactory;
+</I>&gt;<i> import com.rabbitmq.client.MessageProperties;
+</I>&gt;<i> 
+</I>&gt;<i> public class TestRabbitConnection {
+</I>&gt;<i> 
+</I>&gt;<i> 	public static void main(String[] args) throws Exception {
+</I>&gt;<i> 		ConnectionFactory factory = new ConnectionFactory();
+</I>&gt;<i> 		factory.setHost(&quot;localhost&quot;);
+</I>&gt;<i> 		factory.setUsername(&quot;guest&quot;);
+</I>&gt;<i> 		factory.setPassword(&quot;guest&quot;);
+</I>&gt;<i> 		Connection conn = factory.newConnection();
+</I>&gt;<i> 		Channel channel = conn.createChannel();
+</I>&gt;<i> 		Thread t = new Thread(new RabbitMqTester(&quot;TestExchange&quot;, &quot;Test&quot;, channel));
+</I>&gt;<i> //		Thread t2 = new Thread(new RabbitMqTester(&quot;TestExchange2&quot;, &quot;Test2&quot;, channel));
+</I>&gt;<i> 		t.start();
+</I>&gt;<i> //		t2.start();
+</I>&gt;<i> 	
+</I>&gt;<i> 		t.join();
+</I>&gt;<i> //		t2.join();
+</I>&gt;<i> 	}
+</I>&gt;<i> 	
+</I>&gt;<i> 	private static class RabbitMqTester implements Runnable {
+</I>&gt;<i> 		private final Channel channel;
+</I>&gt;<i> 		private final String exchange;
+</I>&gt;<i> 		private final String routingKey;
+</I>&gt;<i> 		private final byte[] contents = RandomStringUtils.randomAlphabetic(20).getBytes();
+</I>&gt;<i> 
+</I>&gt;<i> 		public RabbitMqTester(String exchange, String routingKey, Channel channel) {
+</I>&gt;<i> 			this.exchange = exchange;
+</I>&gt;<i> 			this.routingKey = routingKey;
+</I>&gt;<i> 			this.channel = channel;
+</I>&gt;<i> 		}
+</I>&gt;<i> 
+</I>&gt;<i> 		@Override
+</I>&gt;<i> 		public void run() {
+</I>&gt;<i> 			try {
+</I>&gt;<i> 				while(true) {
+</I>&gt;<i> 					channel.basicPublish(exchange, routingKey, MessageProperties.MINIMAL_PERSISTENT_BASIC, contents);
+</I>&gt;<i> 				}
+</I>&gt;<i> 			} catch (IOException e) {
+</I>&gt;<i> 				throw new RuntimeException(e);
+</I>&gt;<i> 			}
+</I>&gt;<i> 		}
+</I>&gt;<i> 		
+</I>&gt;<i> 	}
+</I>&gt;<i> }
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> I'm testing on a MacPro with the following plugins/Erlang:
+</I>&gt;<i> 11 plugins activated:
+</I>&gt;<i> * amqp_client-2.8.7
+</I>&gt;<i> * erlando-2.8.7
+</I>&gt;<i> * mochiweb-2.3.1-rmq2.8.7-gitd541e9a
+</I>&gt;<i> * rabbitmq_federation-2.8.7
+</I>&gt;<i> * rabbitmq_federation_management-2.8.7
+</I>&gt;<i> * rabbitmq_management-2.8.7
+</I>&gt;<i> * rabbitmq_management_agent-2.8.7
+</I>&gt;<i> * rabbitmq_mochiweb-2.8.7
+</I>&gt;<i> * rabbitmq_shovel-2.8.7
+</I>&gt;<i> * rabbitmq_shovel_management-2.8.7
+</I>&gt;<i> * webmachine-1.9.1-rmq2.8.7-git52e62bc
+</I>&gt;<i> 
+</I>&gt;<i> erlang version : 5.9.2
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20121007/1f710332/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20121007/1f710332/attachment.htm</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="022884.html">[rabbitmq-discuss] RabbitMQ Performance Tests and max of ~4000	msg/sec
+</A></li>
+	<LI>Next message: <A HREF="022889.html">[rabbitmq-discuss] RabbitMQ Performance Tests and max of ~4000 msg/sec
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#22885">[ date ]</a>
+              <a href="thread.html#22885">[ thread ]</a>
+              <a href="subject.html#22885">[ subject ]</a>
+              <a href="author.html#22885">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

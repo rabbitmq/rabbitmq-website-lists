@@ -1,0 +1,150 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] [ANNOUNCEMENT] Introducing Lyra: A High Availability RabbitMQ Client
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20%5BANNOUNCEMENT%5D%20Introducing%20Lyra%3A%20A%20High%0A%20Availability%20RabbitMQ%20Client&In-Reply-To=%3CCA%2Bes_-yEZs1b%3DHv%3DcUUAXijxfS6D_A2FLv3zLziGfNTtAMnyhA%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="031534.html">
+   <LINK REL="Next"  HREF="031305.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] [ANNOUNCEMENT] Introducing Lyra: A High Availability RabbitMQ Client</H1>
+    <B>Jonathan Halterman</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20%5BANNOUNCEMENT%5D%20Introducing%20Lyra%3A%20A%20High%0A%20Availability%20RabbitMQ%20Client&In-Reply-To=%3CCA%2Bes_-yEZs1b%3DHv%3DcUUAXijxfS6D_A2FLv3zLziGfNTtAMnyhA%40mail.gmail.com%3E"
+       TITLE="[rabbitmq-discuss] [ANNOUNCEMENT] Introducing Lyra: A High Availability RabbitMQ Client">jhalterman at gmail.com
+       </A><BR>
+    <I>Thu Oct 31 18:54:55 GMT 2013</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="031534.html">[rabbitmq-discuss] [ANNOUNCEMENT] Introducing Lyra: A High Availability RabbitMQ Client
+</A></li>
+        <LI>Next message: <A HREF="031305.html">[rabbitmq-discuss] Rabbitmq cluster unstable issue
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#31570">[ date ]</a>
+              <a href="thread.html#31570">[ thread ]</a>
+              <a href="subject.html#31570">[ subject ]</a>
+              <a href="author.html#31570">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi Matthias - Comments below,
+
+On Thu, Oct 31, 2013 at 12:27 AM, Matthias Radestock
+&lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">matthias at rabbitmq.com</A>&gt;wrote:
+
+&gt;<i> Jonathan,
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> On 31/10/13 02:49, Jonathan Halterman wrote:
+</I>&gt;<i>
+</I>&gt;&gt;<i> We could cache delivery tags for channels internally, but I'm
+</I>&gt;&gt;<i> hesitant to go down that road.
+</I>&gt;&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> It wouldn't help anyway, since, as a mentioned, the same delivery_tag
+</I>&gt;<i> can appear on both the old and new incarnation of the channel.
+</I>&gt;<i> delivery_tags are just counters, starting from 1 on a fresh channel.
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>  While Lyra certainly makes it easier for this scenario to pop up,
+</I>&gt;&gt;<i> rare as it might be,
+</I>&gt;&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> It's not rare at all. You are guaranteed to end up in that scenario
+</I>&gt;<i> anytime a recovery takes place while a consumer is processing a message.
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>  the same problem could occur without Lyra when swapping a consumer
+</I>&gt;&gt;<i> over to a new channel after the consumer is unexpectedly cancelled
+</I>&gt;&gt;<i> and/or the channel is unexpectedly closed.
+</I>&gt;&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> Absolutely. Don't do that :)
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>  That said, no good solutions come to mind just yet. Do you have any
+</I>&gt;&gt;<i> ideas?
+</I>&gt;&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> The scenario is impossible to address without changing the API. Bunny does
+</I>&gt;<i> that with the VersionedDeliveryTag. The Messaging Patterns libraries we
+</I>&gt;<i> wrote some years ago do it by making ack() take the entire Message data
+</I>&gt;<i> structure, and have that include the channel version. See
+</I>&gt;<i> <A HREF="http://hg.rabbitmq.com/**rabbitmq-java-messagepatterns/**">http://hg.rabbitmq.com/**rabbitmq-java-messagepatterns/**</A>
+</I>&gt;<i> file/21df7ca85b96/src/main/**java/com/rabbitmq/**messagepatterns/unicast/*
+</I>&gt;<i> *Receiver.java#l19&lt;<A HREF="http://hg.rabbitmq.com/rabbitmq-java-messagepatterns/file/21df7ca85b96/src/main/java/com/rabbitmq/messagepatterns/unicast/Receiver.java#l19">http://hg.rabbitmq.com/rabbitmq-java-messagepatterns/file/21df7ca85b96/src/main/java/com/rabbitmq/messagepatterns/unicast/Receiver.java#l19</A>&gt;
+</I>
+
+One of my goals for Lyra was to minimize the amount of new APIs and allow
+users to interact mostly with the amqp-client API while still gaining the
+benefits of transparent recovery, but it seems like that might not be
+possible.
+
+The ReceivedMessage approach would work as long as you don't need to store
+the ReceivedMessage off for later use, something that I imagine is not
+uncommon. In that case, something like Bunny's VersionedDeliveryTag would
+work well, tracking the channel version rather than an unserializable
+reference to the channel itself.
+
+I don't suppose you're open to enhancing the amqp-client API to include
+something like this? :) One possible change would be the inclusion of a
+VersionedDeliveryTag like object in the Envelope along with some
+corresponding basic ack/nack/reject(VersionedDeliveryTag) methods on the
+Channel interface. The channel's &quot;version&quot; would just be another piece of
+meta information that the user could specify. Short of any amqp-client API
+changes, I'll have to think about how to best introduce new Lyra APIs to
+achieve what's needed here while staying out of the way of the existing
+amqp-client API as much as possible.
+
+One other idea - Brett Cameron suggested tracking the last delivery tag for
+each channel and dropping any ack/nack/reject requests for delivery tags
+greater than that. If a channel is recovered, the last delivery tag for the
+new channel will most likely be less than any delivery tags for messages
+consumed on the previously closed channel. This is obviously not foolproof,
+but it's not a bad start.
+
+Cheers,
+Jonathan
+
+
+
+
+&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> Regards,
+</I>&gt;<i>
+</I>&gt;<i> Matthias.
+</I>&gt;<i> ______________________________**_________________
+</I>&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.</A>**rabbitmq.com&lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>&gt;
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/**cgi-bin/mailman/listinfo/**rabbitmq-discuss&lt;https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/**cgi-bin/mailman/listinfo/**rabbitmq-discuss&lt;https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>&gt;
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20131031/52b410be/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20131031/52b410be/attachment.htm</A>&gt;
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="031534.html">[rabbitmq-discuss] [ANNOUNCEMENT] Introducing Lyra: A High Availability RabbitMQ Client
+</A></li>
+	<LI>Next message: <A HREF="031305.html">[rabbitmq-discuss] Rabbitmq cluster unstable issue
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#31570">[ date ]</a>
+              <a href="thread.html#31570">[ thread ]</a>
+              <a href="subject.html#31570">[ subject ]</a>
+              <a href="author.html#31570">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

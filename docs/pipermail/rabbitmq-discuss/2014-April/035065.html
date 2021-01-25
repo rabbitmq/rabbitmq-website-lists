@@ -1,0 +1,183 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Problem with publish confirms
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Problem%20with%20publish%20confirms&In-Reply-To=%3CCAChGYf_c9sa6xAisHByUZs7OqHRCOo90tGTguP08JvJb8xvc6A%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="035050.html">
+   <LINK REL="Next"  HREF="035067.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Problem with publish confirms</H1>
+    <B>Ryan Brown</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Problem%20with%20publish%20confirms&In-Reply-To=%3CCAChGYf_c9sa6xAisHByUZs7OqHRCOo90tGTguP08JvJb8xvc6A%40mail.gmail.com%3E"
+       TITLE="[rabbitmq-discuss] Problem with publish confirms">ryankbrown at gmail.com
+       </A><BR>
+    <I>Mon Apr  7 18:07:17 BST 2014</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="035050.html">[rabbitmq-discuss] Problem with publish confirms
+</A></li>
+        <LI>Next message: <A HREF="035067.html">[rabbitmq-discuss] Problem with publish confirms
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#35065">[ date ]</a>
+              <a href="thread.html#35065">[ thread ]</a>
+              <a href="subject.html#35065">[ subject ]</a>
+              <a href="author.html#35065">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>You rock Simon! So much great information. I found my problem and it was
+indeed a gen_server timeout due to a missed return in my confirmation chain
+going back up the chain to the rest interface where I respond to the client
+that posted the message for publishing.
+
+However, that said, I am curious about the option of just using
+amqp_channel:wait_for_confirms/1. I did not use this option for a couple of
+reasons.
+
+First was the fact that using the registered handler is mentioned quite
+often as the preferred option. My understanding was that using the
+amqp_channel:wait_for_confirms would cause the channel to wait for a
+response before another message could be published on that channel. If this
+is true, it seems like it could slow-down publishing more than registering
+a handler and letting publishing continue. Is this correct? Or am I
+misunderstanding the whole workflow?
+
+Speaking of misunderstandings; the second reason I did not use
+wait_for_confirms was that I didn't completely understand the definition:
+
+&quot;Wait until all messages published since the last call have been either
+ack'd or nack'd by the broker; or until timeout elapses.&quot;
+
+What exactly does it mean by the &quot;last call&quot;? This sounded to me as if it
+may get in a situation that if calls are coming-in rapidly enough that they
+are publishing new messages prior to the previous message getting ack'd, it
+would not respond until all such queued messages were ack'd/nack'd. I
+realized this was unlikely, but could not come-up with documentation clear
+enough to convince me otherwise and this would not work for me as I need to
+respond to each publish individually.
+
+Thanks again for the, characteristically, excellent and comprehensive
+reponse.
+
+Best,
+
+Ryan
+
+
+On Mon, Apr 7, 2014 at 4:20 AM, Simon MacMullen &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">simon at rabbitmq.com</A>&gt; wrote:
+
+&gt;<i> It's going to be hard to debug this without seeing your code, especially
+</I>&gt;<i> since it sounds like it is quite likely to be a general Erlang problem.
+</I>&gt;<i>
+</I>&gt;<i> Having said that, here are some general pointers:
+</I>&gt;<i>
+</I>&gt;<i> On 04/04/2014 20:44, Ryan Brown wrote:
+</I>&gt;<i> &lt;snip&gt;
+</I>&gt;<i>
+</I>&gt;&gt;<i> Then on publish, I select which one to use based
+</I>&gt;&gt;<i> on the values passed-down the stack from message intake. Set self() as
+</I>&gt;&gt;<i> the confirm handler and respond with a wait so that up the stack I can
+</I>&gt;&gt;<i> initiate a receive loop in the message intake which is not a gen_server.
+</I>&gt;&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> Have you seen amqp_channel:wait_for_confirms/1? That might be easier than
+</I>&gt;<i> handling the confirms yourself if all you are going to do is wait for them
+</I>&gt;<i> anyway.
+</I>&gt;<i>
+</I>&gt;<i>  I have debug messages throughout and it appears that everything is
+</I>&gt;&gt;<i> happening as expected. I trace the message through the publish path. To
+</I>&gt;&gt;<i> being published and passing the wait back up to the receiver. I also see
+</I>&gt;&gt;<i> where the basic.ack is received and the publish_confirm acknowledgement
+</I>&gt;&gt;<i> passed all the way up to the receive loop. However, then things go awry.
+</I>&gt;&gt;<i> I get the attached dump.
+</I>&gt;&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> It's very hard to see what is going wrong here in detail, but the surface
+</I>&gt;<i> issue is that your gen_server took more than 5 seconds to respond to a
+</I>&gt;<i> request - note that gen_server:call/2 will time out after 5 seconds.
+</I>&gt;<i>
+</I>&gt;<i> For this reason we never use gen_server:call/2 (we have a CI task that
+</I>&gt;<i> explodes if we accidentally commit code using it!); we always use call/3
+</I>&gt;<i> with a timeout of 'infinity'. IMO this is a misfeature in Erlang.
+</I>&gt;<i>
+</I>&gt;<i>  My take-away, although likely I am wrong, is that somewhere, apparently
+</I>&gt;&gt;<i> in amqp_balanced_publisher, a gen_server call is timing-out while
+</I>&gt;&gt;<i> waiting for a response. But, I seem to be able to trace the responses
+</I>&gt;&gt;<i> through the whole stack so I am thoroughly confused.
+</I>&gt;&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> That's correct. Of course, it should be quite rare / require heavy load
+</I>&gt;<i> for the 5s timeout to fail because the operation simply took too long. It's
+</I>&gt;<i> quite possible that the gen_server you are calling into is deadlocked or
+</I>&gt;<i> stuck in some other way.
+</I>&gt;<i>
+</I>&gt;<i> I would debug this as follows:
+</I>&gt;<i>
+</I>&gt;<i> 1) Change the call/2 to call/3 with infinity.
+</I>&gt;<i> 2) If the program now hangs rather than times out, launch 'observer' (
+</I>&gt;<i> <A HREF="http://www.erlang.org/doc/apps/observer/observer_ug.html">http://www.erlang.org/doc/apps/observer/observer_ug.html</A>), go and find
+</I>&gt;<i> the server you are calling into, and see what it's current stacktrace is.
+</I>&gt;<i> You may wish to give this process a registered name temporarily so you can
+</I>&gt;<i> find it more easily.
+</I>&gt;<i>
+</I>&gt;<i> Cheers, Simon
+</I>&gt;<i>
+</I>&gt;<i>
+</I>
+
+-- 
+-rb
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20140407/3490b77b/attachment.html">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20140407/3490b77b/attachment.html</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="035050.html">[rabbitmq-discuss] Problem with publish confirms
+</A></li>
+	<LI>Next message: <A HREF="035067.html">[rabbitmq-discuss] Problem with publish confirms
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#35065">[ date ]</a>
+              <a href="thread.html#35065">[ thread ]</a>
+              <a href="subject.html#35065">[ subject ]</a>
+              <a href="author.html#35065">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,288 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] deadlock at QueueingBasicConsumer.Queue.Dequeue
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20deadlock%20at%20QueueingBasicConsumer.Queue.Dequeue&In-Reply-To=%3C000001cb5ca7%240300d0b0%2409027210%24%40com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="009098.html">
+   <LINK REL="Next"  HREF="009116.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] deadlock at QueueingBasicConsumer.Queue.Dequeue</H1>
+    <B>&#40077;&#27589;&#38125;</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20deadlock%20at%20QueueingBasicConsumer.Queue.Dequeue&In-Reply-To=%3C000001cb5ca7%240300d0b0%2409027210%24%40com%3E"
+       TITLE="[rabbitmq-discuss] deadlock at QueueingBasicConsumer.Queue.Dequeue">baoyiming at snda.com
+       </A><BR>
+    <I>Sat Sep 25 12:44:28 BST 2010</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="009098.html">[rabbitmq-discuss] Questions on RabbitMQ
+</A></li>
+        <LI>Next message: <A HREF="009116.html">[rabbitmq-discuss] deadlock at	QueueingBasicConsumer.Queue.Dequeue
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#9097">[ date ]</a>
+              <a href="thread.html#9097">[ thread ]</a>
+              <a href="subject.html#9097">[ subject ]</a>
+              <a href="author.html#9097">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi everyone,
+
+ 
+
+I was blocked when calling QueueingBasicConsumer.Queue.Dequeue(), but after
+several minutes the queue works well and messages can be dequeued.
+
+I run deep into the source code and got that Monitor.Wait(m_queue) was
+blocked.
+
+ 
+
+Also I got an System.Threading.ThreadAbortException triggered by
+System.Threading.Monitor.ObjWait(Boolean exitContext, Int32
+millisecondsTimeout, Object obj)
+
+ 
+
+Below is my code written by C#, the version of RabbitMQ.Client.dll is 1.8.1.
+0.
+
+ 
+
+public static void Send&lt;T&gt;(T data, string serverAddress, string exchange,
+string queuename, string routingKey)
+
+        {
+
+            byte[] message = SerializeToByteArray(data);
+
+            try
+
+            {
+
+                ConnectionFactory cf = new ConnectionFactory();
+
+                cf.Address = serverAddress;
+
+ 
+
+                using (IConnection conn = cf.CreateConnection())
+
+                {
+
+                    using (IModel ch = conn.CreateModel())
+
+                    {
+
+                        conn.AutoClose = true;
+
+                        
+
+                        ch.ExchangeDeclare(exchange, ExchangeType.Direct);
+
+                        ch.QueueDeclare(queuename);
+
+                        ch.QueueBind(queuename, exchange, routingKey, false,
+null);
+
+ 
+
+                        IBytesMessageBuilder ibm = new
+BytesMessageBuilder(ch);
+
+                        ibm.WriteBytes(message);
+
+ 
+
+                        ch.BasicPublish(exchange, routingKey,
+(IBasicProperties)ibm.GetContentHeader(), ibm.GetContentBody());
+
+ 
+
+                        if (ch.IsOpen)
+
+                        {
+
+                            ch.Close();
+
+                        }
+
+                    }
+
+ 
+
+                    if (conn.IsOpen)
+
+                    {
+
+                        conn.Close();
+
+                    }
+
+                }
+
+            }
+
+            catch (Exception exp)
+
+            {
+
+                throw exp;
+
+            }
+
+        }
+
+ 
+
+public static T Receive&lt;T&gt;(string serverAddress, string queuename)
+
+        {
+
+            T data = default(T);
+
+    ConnectionFactory cf = new ConnectionFactory();
+
+            cf.Address = serverAddress;
+
+            using (IConnection conn = cf.CreateConnection())
+
+            {
+
+                using (IModel ch = conn.CreateModel())
+
+                {
+
+                    conn.AutoClose = true;
+
+ 
+
+                    ch.QueueDeclare(queuename);
+
+ 
+
+                    BasicGetResult result = ch.BasicGet(queuename, false);
+
+ 
+
+                    QueueingBasicConsumer consumer = new
+QueueingBasicConsumer(ch);
+
+                    ch.BasicConsume(queuename, null, consumer);
+
+ 
+
+                    BasicDeliverEventArgs e = consumer.Queue.Dequeue() as
+BasicDeliverEventArgs;
+
+                    if (e != null)
+
+                    {
+
+                        IBasicProperties props = e.BasicProperties;
+
+                        byte[] body = e.Body;
+
+                        data = DeserializeFromByteArray&lt;T&gt;(body);
+
+ 
+
+                        ch.BasicAck(e.DeliveryTag, false);
+
+                    }
+
+ 
+
+                    if (ch.IsOpen)
+
+                    {
+
+                        ch.Close();
+
+                    }
+
+                }
+
+ 
+
+                if (conn.IsOpen)
+
+                {
+
+                    conn.Close();
+
+                }
+
+            }
+
+ 
+
+            return data;
+
+        }
+
+ 
+
+I will be appreciated if anybody can help with this issue. Thank you in
+advance.
+
+ 
+
+Yiming
+
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20100925/d7c9cd4c/attachment-0001.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20100925/d7c9cd4c/attachment-0001.htm</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="009098.html">[rabbitmq-discuss] Questions on RabbitMQ
+</A></li>
+	<LI>Next message: <A HREF="009116.html">[rabbitmq-discuss] deadlock at	QueueingBasicConsumer.Queue.Dequeue
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#9097">[ date ]</a>
+              <a href="thread.html#9097">[ thread ]</a>
+              <a href="subject.html#9097">[ subject ]</a>
+              <a href="author.html#9097">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

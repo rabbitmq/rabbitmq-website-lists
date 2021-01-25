@@ -1,0 +1,48 @@
+<tt>
+&lt;div&nbsp;dir=&quot;ltr&quot;&gt;Ok,&nbsp;now&nbsp;I&nbsp;have&nbsp;a&nbsp;better&nbsp;understanding&nbsp;of&nbsp;what&nbsp;you&amp;#39;re&nbsp;trying&nbsp;to&nbsp;accomplish.&lt;div&gt;&lt;br&gt;&lt;/div&gt;&lt;div&nbsp;style&gt;First&nbsp;a&nbsp;bit&nbsp;of&nbsp;a&nbsp;warning:&nbsp;as&nbsp;you&amp;#39;ve&nbsp;already&nbsp;noticed,&nbsp;the&nbsp;rabbitmq-c&nbsp;API&nbsp;doesn&amp;#39;t&nbsp;lend&nbsp;itself&nbsp;to&nbsp;doing&nbsp;RPC-style&nbsp;commands&nbsp;(such&nbsp;as&nbsp;amqp_basic_consume,&nbsp;or&nbsp;amqp_queue_declare,&nbsp;etc)&nbsp;while&nbsp;waiting&nbsp;on&nbsp;a&nbsp;message&nbsp;to&nbsp;be&nbsp;delivered&nbsp;with&nbsp;amqp_simple_wait_frame().&nbsp; So&nbsp;the&nbsp;following&nbsp;solutions&nbsp;won&amp;#39;t&nbsp;be&nbsp;the&nbsp;most&nbsp;natural&nbsp;solutions&nbsp;out&nbsp;there,&nbsp;they&nbsp;may&nbsp;also&nbsp;may&nbsp;suffer&nbsp;from&nbsp;performance&nbsp;issues.&nbsp;If&nbsp;these&nbsp;solutions&nbsp;don&amp;#39;t&nbsp;work&nbsp;for&nbsp;you&nbsp;-&nbsp;I&nbsp;would&nbsp;encourage&nbsp;you&nbsp;to&nbsp;explore&nbsp;using&nbsp;other&nbsp;RabbitMQ&nbsp;clients.&lt;/div&gt;<br>
+&lt;div&nbsp;style&gt;&lt;br&gt;&lt;/div&gt;&lt;div&nbsp;style&gt;&lt;br&gt;&lt;/div&gt;&lt;div&nbsp;style&gt;My&nbsp;first&nbsp;suggestion&nbsp;would&nbsp;be&nbsp;to&nbsp;declare&nbsp;a&nbsp;command&nbsp;queue&nbsp;on&nbsp;the&nbsp;broker&nbsp;and&nbsp;have&nbsp;your&nbsp;message&nbsp;reading&nbsp;thread&nbsp;consume&nbsp;from&nbsp;that&nbsp;command&nbsp;queue.&nbsp; When&nbsp;a&nbsp;user&nbsp;logs&nbsp;into&nbsp;the&nbsp;chat,&nbsp;using&nbsp;a&nbsp;different&nbsp;connection&nbsp;publish&nbsp;a&nbsp;message&nbsp;to&nbsp;that&nbsp;command&nbsp;queue&nbsp;&amp;quot;start&nbsp;consuming&nbsp;from&nbsp;queue&nbsp;X&amp;quot;.&nbsp; Your&nbsp;message&nbsp;reading&nbsp;thread&nbsp;should&nbsp;then&nbsp;read&nbsp;that&nbsp;message,&nbsp;then&nbsp;create&nbsp;the&nbsp;consumer,&nbsp;and&nbsp;go&nbsp;back&nbsp;to&nbsp;waiting&nbsp;for&nbsp;messages.&nbsp; You&nbsp;could&nbsp;use&nbsp;a&nbsp;similar&nbsp;process&nbsp;to&nbsp;stop&nbsp;a&nbsp;consumer.&lt;/div&gt;<br>
+&lt;div&nbsp;style&gt;&lt;br&gt;&lt;/div&gt;&lt;div&nbsp;style&gt;The&nbsp;upside&nbsp;is&nbsp;this&nbsp;is&nbsp;fairly&nbsp;easy&nbsp;to&nbsp;implement,&nbsp;the&nbsp;downside&nbsp;(and&nbsp;you&nbsp;would&nbsp;need&nbsp;to&nbsp;do&nbsp;some&nbsp;performance&nbsp;testing)&nbsp;is&nbsp;that&nbsp;there&nbsp;is&nbsp;a&nbsp;certain&nbsp;cost&nbsp;for&nbsp;having&nbsp;the&nbsp;message&nbsp;go&nbsp;to&nbsp;the&nbsp;broker&nbsp;and&nbsp;back,&nbsp;also&nbsp;if&nbsp;your&nbsp;message&nbsp;reading&nbsp;thread&nbsp;is&nbsp;consuming&nbsp;a&nbsp;lot&nbsp;of&nbsp;messages&nbsp;from&nbsp;different&nbsp;consumers,&nbsp;there&nbsp;could&nbsp;be&nbsp;a&nbsp;significant&nbsp;delay&nbsp;between&nbsp;the&nbsp;time&nbsp;you&nbsp;send&nbsp;the&nbsp;message&nbsp;from&nbsp;one&nbsp;thread,&nbsp;and&nbsp;the&nbsp;time&nbsp;the&nbsp;message&nbsp;is&nbsp;received&nbsp;in&nbsp;your&nbsp;message&nbsp;reading&nbsp;thread.&lt;/div&gt;<br>
+&lt;div&nbsp;style&gt;&lt;br&gt;&lt;/div&gt;&lt;div&nbsp;style&gt;&lt;br&gt;&lt;/div&gt;&lt;div&nbsp;style&gt;My&nbsp;second&nbsp;suggestion&nbsp;would&nbsp;be&nbsp;to&nbsp;create&nbsp;a&nbsp;pipe&nbsp;(&lt;a&nbsp;href=&quot;http://linux.die.net/man/7/pipe&quot;&gt;http://linux.die.net/man/7/pipe&lt;/a&gt;)&nbsp;and&nbsp;before&nbsp;the&nbsp;first&nbsp;amqp_simple_wait_frame()&nbsp;call,&nbsp;extract&nbsp;the&nbsp;socket&nbsp;fd&nbsp;from&nbsp;the&nbsp;amqp_connection_state_t&nbsp;with&nbsp;amqp_get_sockfd()&nbsp;and&nbsp;do&nbsp;a&nbsp;select()&nbsp;call&nbsp;with&nbsp;both&nbsp;the&nbsp;read-end&nbsp;of&nbsp;the&nbsp;pipe&nbsp;and&nbsp;the&nbsp;socket&nbsp;fd.&nbsp;If&nbsp;the&nbsp;pipe&nbsp;can&nbsp;be&nbsp;read&nbsp;that&nbsp;will&nbsp;be&nbsp;the&nbsp;signal&nbsp;that&nbsp;a&nbsp;consumer&nbsp;should&nbsp;be&nbsp;started&nbsp;or&nbsp;stopped,&nbsp;otherwise&nbsp;a&nbsp;message&nbsp;should&nbsp;be&nbsp;read.&lt;/div&gt;<br>
+&lt;div&nbsp;style&gt;&lt;br&gt;&lt;/div&gt;&lt;div&nbsp;style&gt;In&nbsp;the&nbsp;other&nbsp;thread,&nbsp;when&nbsp;a&nbsp;new&nbsp;user&nbsp;logs&nbsp;in&nbsp;write&nbsp;a&nbsp;command&nbsp;to&nbsp;the&nbsp;pipe&nbsp;indicating&nbsp;what&nbsp;other&nbsp;amqp&nbsp;commands&nbsp;the&nbsp;message&nbsp;reader&nbsp;thread&nbsp;should&nbsp;do&nbsp;(start&nbsp;or&nbsp;stop&nbsp;a&nbsp;consumer).&lt;/div&gt;&lt;div&nbsp;style&gt;<br>
+&lt;br&gt;&lt;/div&gt;&lt;div&nbsp;style&gt;The&nbsp;upside&nbsp;is&nbsp;that&nbsp;this&nbsp;will&nbsp;likely&nbsp;be&nbsp;more&nbsp;performant&nbsp;than&nbsp;my&nbsp;first&nbsp;suggestion.&nbsp; The&nbsp;downside&nbsp;is&nbsp;that&nbsp;this&nbsp;is&nbsp;a&nbsp;fair&nbsp;bit&nbsp;more&nbsp;complicated&nbsp;in&nbsp;terms&nbsp;of&nbsp;programming&nbsp;effort,&nbsp;and&nbsp;understanding&nbsp;how&nbsp;pipes&nbsp;work,&nbsp;and&nbsp;outside&nbsp;of&nbsp;Linux&nbsp;i&amp;#39;m&nbsp;not&nbsp;100%&nbsp;sure&nbsp;this&nbsp;will&nbsp;work&nbsp;(I&nbsp;know&nbsp;it&nbsp;will&nbsp;require&nbsp;a&nbsp;different&nbsp;approach&nbsp;on&nbsp;Win32).&lt;/div&gt;<br>
+&lt;div&nbsp;style&gt;&lt;br&gt;&lt;/div&gt;&lt;div&nbsp;style&gt;HTH&lt;/div&gt;&lt;div&nbsp;style&gt;-Alan&lt;/div&gt;&lt;/div&gt;&lt;div&nbsp;class=&quot;gmail_extra&quot;&gt;&lt;br&gt;&lt;br&gt;&lt;div&nbsp;class=&quot;gmail_quote&quot;&gt;On&nbsp;Tue,&nbsp;Jul&nbsp;2,&nbsp;2013&nbsp;at&nbsp;8:51&nbsp;PM,&nbsp;3k4b251&nbsp;&lt;span&nbsp;dir=&quot;ltr&quot;&gt;&amp;lt;&lt;a&nbsp;href=&quot;mailto:314992959@qq.com&quot;&nbsp;target=&quot;_blank&quot;&gt;314992959@qq.com&lt;/a&gt;&amp;gt;&lt;/span&gt;&nbsp;wrote:&lt;br&gt;<br>
+&lt;blockquote&nbsp;class=&quot;gmail_quote&quot;&nbsp;style=&quot;margin:0&nbsp;0&nbsp;0&nbsp;.8ex;border-left:1px&nbsp;#ccc&nbsp;solid;padding-left:1ex&quot;&gt;&lt;br&gt;<br>
+1.&nbsp; 【&nbsp;For&nbsp;example&nbsp;when&nbsp;a&nbsp;new&nbsp;person&nbsp;signs&nbsp;on&nbsp;to&nbsp;this&nbsp;chat,&nbsp;what&nbsp;happens&nbsp;on&lt;br&gt;<br>
+the&nbsp;broker?&nbsp;Do&nbsp;new&nbsp;queues&nbsp;get&nbsp;created?&nbsp;Do&nbsp;you&nbsp;start&nbsp;some&nbsp;consumer?】&lt;br&gt;<br>
+&lt;br&gt;<br>
+Re:&nbsp; &nbsp; when&nbsp; a&nbsp; new&nbsp; person&nbsp; login&nbsp;in&nbsp;the&nbsp; online&nbsp;server,&nbsp;the&nbsp;online&nbsp; Server&lt;br&gt;<br>
+ask&nbsp; &nbsp;rabbitmq-server&nbsp;to&nbsp; create&nbsp; &nbsp;a&nbsp; queue&nbsp; for&nbsp; him.&nbsp;and&nbsp; start&nbsp;a&lt;br&gt;<br>
+consumer&nbsp;for&nbsp; the&nbsp;queue.&nbsp; (if&nbsp; he&nbsp; already&nbsp; have&nbsp; the&nbsp;queue&nbsp;on&nbsp;mq&nbsp;server,&lt;br&gt;<br>
+the&nbsp;create&nbsp;fail,&nbsp;but&nbsp;we&nbsp; don&amp;#39;t&nbsp; care&nbsp;about&nbsp; that.&nbsp; the&nbsp;only&nbsp;thing&nbsp; we&nbsp;care&lt;br&gt;<br>
+about&nbsp; is&nbsp; &nbsp;that&nbsp; &nbsp;when&nbsp; a&nbsp;new&nbsp;person&nbsp; login&nbsp;in&nbsp;,there&nbsp;will&nbsp;be&nbsp;a&nbsp;queue&lt;br&gt;<br>
+server&nbsp;for&nbsp;him)&nbsp; &nbsp; &nbsp;every&nbsp; person&nbsp; only&nbsp; have&nbsp; one&nbsp;queue&nbsp;and&nbsp; one&nbsp; consumer&lt;br&gt;<br>
+for&nbsp;the&nbsp;queue&nbsp; in&nbsp; rabbitmq-server.&lt;br&gt;<br>
+&lt;br&gt;<br>
+&lt;br&gt;<br>
+&lt;br&gt;<br>
+2.&nbsp; 【When&nbsp;a&nbsp;person&nbsp;sends&nbsp;a&nbsp;message&nbsp;to&nbsp;another&nbsp;person&nbsp;over&nbsp;this&nbsp;chat&nbsp;what&lt;br&gt;<br>
+&lt;div&nbsp;class=&quot;im&quot;&gt;queues&nbsp;does&nbsp;it&nbsp;get&nbsp;routed&nbsp;to?&nbsp;How&nbsp;does&nbsp;the&nbsp;message&nbsp;get&nbsp;back&nbsp;to&nbsp;the&lt;br&gt;<br>
+&lt;/div&gt;application&nbsp;the&nbsp;user&nbsp;is&nbsp;using.】&lt;br&gt;<br>
+&lt;br&gt;<br>
+Re:&nbsp; &nbsp; when&nbsp;he&nbsp;want&nbsp;to&nbsp;chart&nbsp;to&nbsp;another&nbsp;person&nbsp; A.&nbsp; he&nbsp;send&nbsp;message&nbsp;to&nbsp;A&amp;#39;s&lt;br&gt;<br>
+only&nbsp;queue.&nbsp; and&nbsp;A&nbsp;may&nbsp;receive&nbsp;the&nbsp;message&nbsp;by&nbsp;him&nbsp;only&nbsp;consumer.&nbsp; if&nbsp;A&nbsp;want&lt;br&gt;<br>
+to&nbsp;reply&nbsp;to&nbsp;sender,&nbsp;he&nbsp;need&nbsp;to&nbsp;send&nbsp;message&nbsp;to&nbsp;sender&amp;#39;s&nbsp;only&nbsp;queue.&nbsp; &nbsp;it&amp;#39;s&lt;br&gt;<br>
+seems&nbsp;like&nbsp;email.&nbsp; &nbsp; maybe&nbsp;we&nbsp;need&nbsp;talk&nbsp;group,&nbsp; so&nbsp;I&amp;#39;d&nbsp;like&nbsp;to&nbsp;create&lt;br&gt;<br>
+exchange&nbsp;for&nbsp;talk&nbsp;group.&nbsp; &nbsp;we&nbsp;can&nbsp;bind&nbsp;the&nbsp;group&nbsp;memebers&nbsp;to&nbsp;a&nbsp;exchange.&nbsp;and&lt;br&gt;<br>
+send&nbsp;message&nbsp;to&nbsp;the&nbsp;exchange.&lt;br&gt;<br>
+&lt;br&gt;<br>
+&lt;br&gt;<br>
+&lt;br&gt;<br>
+&lt;br&gt;<br>
+&lt;br&gt;<br>
+--&lt;br&gt;<br>
+View&nbsp;this&nbsp;message&nbsp;in&nbsp;context:&nbsp;&lt;a&nbsp;href=&quot;http://rabbitmq.1065348.n5.nabble.com/rabbitmq-c-should-I-start-a-thread-for-amqp-simple-wait-frame-to-get-mesage-tp27666p27760.html&quot;&nbsp;target=&quot;_blank&quot;&gt;http://rabbitmq.1065348.n5.nabble.com/rabbitmq-c-should-I-start-a-thread-for-amqp-simple-wait-frame-to-get-mesage-tp27666p27760.html&lt;/a&gt;&lt;br&gt;<br>
+<br>
+&lt;div&nbsp;class=&quot;HOEnZb&quot;&gt;&lt;div&nbsp;class=&quot;h5&quot;&gt;Sent&nbsp;from&nbsp;the&nbsp;RabbitMQ&nbsp;mailing&nbsp;list&nbsp;archive&nbsp;at&nbsp;Nabble.com.&lt;br&gt;<br>
+_______________________________________________&lt;br&gt;<br>
+rabbitmq-discuss&nbsp;mailing&nbsp;list&lt;br&gt;<br>
+&lt;a&nbsp;href=&quot;mailto:rabbitmq-discuss@lists.rabbitmq.com&quot;&gt;rabbitmq-discuss@lists.rabbitmq.com&lt;/a&gt;&lt;br&gt;<br>
+&lt;a&nbsp;href=&quot;https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss&quot;&nbsp;target=&quot;_blank&quot;&gt;https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss&lt;/a&gt;&lt;br&gt;<br>
+&lt;/div&gt;&lt;/div&gt;&lt;/blockquote&gt;&lt;/div&gt;&lt;br&gt;&lt;/div&gt;<br>
+
+</tt>

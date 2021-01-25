@@ -1,0 +1,136 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] The *old* persister: call for help in	experimenting
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20The%20%2Aold%2A%20persister%3A%20call%20for%20help%20in%0A%09experimenting&In-Reply-To=">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="006818.html">
+   <LINK REL="Next"  HREF="006804.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] The *old* persister: call for help in	experimenting</H1>
+    <B>Tony Garnock-Jones</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20The%20%2Aold%2A%20persister%3A%20call%20for%20help%20in%0A%09experimenting&In-Reply-To="
+       TITLE="[rabbitmq-discuss] The *old* persister: call for help in	experimenting">tonyg at lshift.net
+       </A><BR>
+    <I>Mon Apr  5 19:39:48 BST 2010</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="006818.html">[rabbitmq-discuss] RabbitMQ Admin API
+</A></li>
+        <LI>Next message: <A HREF="006804.html">[rabbitmq-discuss] RabbitMQ-based vcloud session clustering
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#6802">[ date ]</a>
+              <a href="thread.html#6802">[ thread ]</a>
+              <a href="subject.html#6802">[ subject ]</a>
+              <a href="author.html#6802">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi all,
+
+The current persister (*not* Matthew's new persister) is very much
+TSTTCPW, and uses a few overly-simple heuristics to decide when to start
+a GC run. Some of them are arbitrarily chosen, and I suspect that many
+readers of this list *might* see a not inconsiderable improvement in
+persistent-message performance by tweaking them. The tradeoff seems to
+be in RAM usage.
+
+If you can help by reporting experiences with tweaked persister-control
+variables, please do try out the suggestions in the rest of this message
+and let us know what happens!
+
+
+The main control variables, all of which are compiled in (!) to the
+code, are
+
+ -define(LOG_BUNDLE_DELAY, 5).
+ -define(COMPLETE_BUNDLE_DELAY, 2).
+ -define(HIBERNATE_AFTER, 10000).
+ -define(MAX_WRAP_ENTRIES, 500).
+
+The *_BUNDLE_DELAY variables are milliseconds to wait for additional
+work to arrive at the persister before performing some I/O to the
+journal, in differing calling contexts.
+
+The HIBERNATE_AFTER variable is the number of milliseconds of persister
+idling after which we choose to GC the journal.
+
+The MAX_WRAP_ENTRIES variable is a completely arbitrary count of I/O
+operations after which we choose to GC the journal.
+
+So here's the issue: MAX_WRAP_ENTRIES really is pretty arbitrary, and I
+think the value 500 is probably one or maybe even two orders of
+magnitude too low.
+
+To see why, imagine that we're submitting a constant stream of work to
+the persister in a situation that results in it waiting for
+COMPLETE_BUNDLE_DELAY (i.e. 2) milliseconds for more work before
+performing (and counting!) a bundled I/O to the journal. Since we will
+GC after MAX_WRAP_ENTRIES I/Os, we will GC every MAX_WRAP_ENTRIES *
+COMPLETE_BUNDLE_DELAY = 1000 milliseconds.
+
+A garbage collection of the whole message store once a second, at worst!
+Ouch.
+
+If people are in a position such that
+
+ - they use the persister heavily (durable queues, persistent messages)
+ - they are submitting moderate load to Rabbit (&gt; 100 messages/sec)
+ - they are experiencing excessive persister log rollover
+ - they run RabbitMQ built from source code
+
+then I'd *love* to hear if changing MAX_WRAP_ENTRIES for your local
+rabbit to something like 5000 makes a difference in terms of rollover
+frequency and general rabbit performance for you.
+
+Note that RAM requirements will rise a bit if you increase
+MAX_WRAP_ENTRIES. I've just run some experiments on my Macbook. Using
+ProducerMain/ConsumerMain to provider a 300 message-per-second
+persistent load through a single durable queue, I notice:
+
+|<i>------------------+----------+--------------+----------+----------|
+</I>|<i> MAX_WRAP_ENTRIES | rollover | max log size | real mem | virt mem |
+</I>|<i>------------------+----------+--------------+----------+----------|
+</I>|<i>              500 | 3.5 s    | 700 kB       | 13 MB    | 609 MB   |
+</I>|<i>             5000 | 34 s     | 7.3 MB       | 19 MB    | 615 MB   |
+</I>|<i>            50000 | ~5 min   | 72 MB        | ~60 MB   | ~660 MB  |
+</I>|<i>------------------+----------+--------------+----------+----------|
+</I>
+(I'm not sure why Rabbit seems to use RAM in proportion to the size of
+the journal.)
+
+Changing MAX_WRAP_ENTRIES from 500 to 5000 gave a tenfold reduction in
+the number of rollovers, at a cost of about 6 MB RAM, which seems pretty
+reasonable to me.
+
+Tony
+
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="006818.html">[rabbitmq-discuss] RabbitMQ Admin API
+</A></li>
+	<LI>Next message: <A HREF="006804.html">[rabbitmq-discuss] RabbitMQ-based vcloud session clustering
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#6802">[ date ]</a>
+              <a href="thread.html#6802">[ thread ]</a>
+              <a href="subject.html#6802">[ subject ]</a>
+              <a href="author.html#6802">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

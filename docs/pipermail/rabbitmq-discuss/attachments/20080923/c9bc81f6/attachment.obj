@@ -1,0 +1,113 @@
+# HG changeset patch
+# User Valentino Volonghi aka dialtone <dialtone@divmod.com>
+# Date 1222196297 25200
+# Node ID 6c2fd92661a054a9307fd02291f4aab1353d2ed5
+# Parent  203d83e646227425acbc793b231263c309ffc1ad
+introduce a couple of new API to make lib_amqp.erl more generally useful
+
+diff -r 203d83e64622 -r 6c2fd92661a0 src/amqp_util.erl
+--- a/src/amqp_util.erl	Mon Sep 15 20:27:03 2008 +0100
++++ b/src/amqp_util.erl	Tue Sep 23 11:58:17 2008 -0700
+@@ -30,10 +30,17 @@
+ 
+ -export([message_payload/1]).
+ -export([binary/1]).
+--export([basic_properties/0, protocol_header/0]).
++-export([basic_properties/0, basic_properties/1, basic_properties/2]).
++-export([basic_properties/3, protocol_header/0]).
+ 
+ basic_properties() ->
+-    #'P_basic'{content_type = <<"application/octet-stream">>, delivery_mode = 1, priority = 0}.
++    basic_properties(<<"application/octet-stream">>, 1, 0).
++basic_properties(DeliveryMode) ->
++    basic_properties(DeliveryMode, 0).
++basic_properties(DeliveryMode, Priority) ->
++    basic_properties(<<"application/octet-stream">>, DeliveryMode, Priority).
++basic_properties(ContentType, DeliveryMode, Priority) ->
++    #'P_basic'{content_type = ContentType, delivery_mode = DeliveryMode, priority = Priority}.
+ 
+ protocol_header() ->
+     <<"AMQP", 1, 1, ?PROTOCOL_VERSION_MAJOR, ?PROTOCOL_VERSION_MINOR>>.
+diff -r 203d83e64622 -r 6c2fd92661a0 src/lib_amqp.erl
+--- a/src/lib_amqp.erl	Mon Sep 15 20:27:03 2008 +0100
++++ b/src/lib_amqp.erl	Tue Sep 23 11:58:17 2008 -0700
+@@ -7,10 +7,16 @@
+ -compile(export_all).
+ 
+ start_connection() ->
+-    amqp_connection:start("guest", "guest").
++    start_connection("guest", "guest", direct).
+ 
+ start_connection(Host) ->
+-    amqp_connection:start("guest", "guest", Host).
++    start_connection("guest", "guest", Host).
++
++start_connection(User, Password, Host) ->
++    case Host of
++        direct -> amqp_connection:start(User, Password);
++        _ -> amqp_connection:start(User, Password, Host)
++    end.
+ 
+ start_channel(Connection) ->
+     amqp_connection:open_channel(Connection).
+@@ -19,9 +25,12 @@
+     declare_exchange(Channel, X, <<"direct">>).
+ 
+ declare_exchange(Channel, X, Type) ->
++    declare_exchange(Channel, X, Type, false).
++
++declare_exchange(Channel, X, Type, Durable) ->
+     ExchangeDeclare = #'exchange.declare'{exchange = X,
+                                           type = Type,
+-                                          passive = false, durable = false,
++                                          passive = false, durable = Durable,
+                                           auto_delete = false, internal = false,
+                                           nowait = false, arguments = []},
+     amqp_channel:call(Channel, ExchangeDeclare).
+@@ -32,15 +41,18 @@
+     #'exchange.delete_ok'{} = amqp_channel:call(Channel, ExchangeDelete).
+ 
+ publish(Channel, X, RoutingKey, Payload) ->
+-    publish(Channel, X, RoutingKey, Payload, false).
++    publish(Channel, X, RoutingKey, Payload, false, 1).
+ 
+ publish(Channel, X, RoutingKey, Payload, Mandatory) ->
++    publish(Channel, X, RoutingKey, Payload, Mandatory, 1).
++
++publish(Channel, X, RoutingKey, Payload, Mandatory, DeliveryMode) ->
+     BasicPublish = #'basic.publish'{exchange = X,
+                                     routing_key = RoutingKey,
+                                     mandatory = Mandatory, immediate = false},
+     {ClassId, MethodId} = rabbit_framing:method_id('basic.publish'),
+     Content = #content{class_id = ClassId,
+-                   properties = amqp_util:basic_properties(),
++                   properties = amqp_util:basic_properties(DeliveryMode),
+                    properties_bin = none,
+                    payload_fragments_rev = [Payload]},
+     amqp_channel:cast(Channel, BasicPublish, Content).
+@@ -86,6 +98,12 @@
+     BasicAck = #'basic.ack'{delivery_tag = DeliveryTag, multiple = false},
+     ok = amqp_channel:cast(Channel, BasicAck).
+ 
++tx_select(Channel) ->
++    #'tx.select_ok'{} = amqp_channel:call(Channel, #'tx.select'{}).
++
++tx_commit(Channel) ->
++    #'tx.commit_ok'{} = amqp_channel:call(Channel, #'tx.commit'{}).
++
+ subscribe(Channel, Q, Consumer) ->
+     subscribe(Channel, Q, Consumer, <<>>, true).
+ 
+@@ -109,8 +127,11 @@
+     ok.
+ 
+ declare_queue(Channel, Q) ->
++    declare_queue(Channel, Q, false).
++
++declare_queue(Channel, Q, Durable) ->
+     QueueDeclare = #'queue.declare'{queue = Q,
+-                                    passive = false, durable = false,
++                                    passive = false, durable = Durable,
+                                     exclusive = false, auto_delete = false,
+                                     nowait = false, arguments = []},
+     #'queue.declare_ok'{queue = Q1,

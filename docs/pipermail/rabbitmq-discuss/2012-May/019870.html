@@ -1,0 +1,172 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Direct vs Topic exchange - Question
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Direct%20vs%20Topic%20exchange%20-%20Question&In-Reply-To=%3C4FA3AB6F.6030201%40rabbitmq.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="019865.html">
+   <LINK REL="Next"  HREF="019887.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Direct vs Topic exchange - Question</H1>
+    <B>Simon MacMullen</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Direct%20vs%20Topic%20exchange%20-%20Question&In-Reply-To=%3C4FA3AB6F.6030201%40rabbitmq.com%3E"
+       TITLE="[rabbitmq-discuss] Direct vs Topic exchange - Question">simon at rabbitmq.com
+       </A><BR>
+    <I>Fri May  4 11:11:59 BST 2012</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="019865.html">[rabbitmq-discuss] Direct vs Topic exchange - Question
+</A></li>
+        <LI>Next message: <A HREF="019887.html">[rabbitmq-discuss] Direct vs Topic exchange - Question
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#19870">[ date ]</a>
+              <a href="thread.html#19870">[ thread ]</a>
+              <a href="subject.html#19870">[ subject ]</a>
+              <a href="author.html#19870">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Thanks. I was able to get this to run.
+
+However, with the code as it stands I think it's hard to measure 
+performance of the broker. In order to see how fast the broker can go, 
+you need to have the client pushing it as hard as it can - therefore the 
+broker pretty much needs to enter flow control by definition.
+
+I attempted to make this happen by setting the rate limit in the client 
+to 100,000 msg/s. However, this caused the memory usage of the client to 
+explode - due to the line 115 of publisher_wrk.erl:
+
+     amqp_channel:cast(Channel, Publish, Msg).
+
+Since this is pushing messages as fast as possible into the client 
+channel process, you end up filling its mailbox as you can give it 
+messages faster than it can send them out on the wire.
+
+After only a few seconds of this the client process was so big that my 
+machine started to swap badly, bits of RabbitMQ got swapped out, and 
+performance became very poor.
+
+Changing this cast to a call slows the client down a bit (but not much) 
+but makes its memory use stable at high message rates. With this change 
+in place, and a very high rate limit, I was able to get:
+
+direct, 1 producer,   1 consumer:   ~25kHz
+topic,  1 producer,   1 consumer:   ~14kHz
+direct, 10 producers, 10 consumers: ~25kHz
+         (but queues grew since consumers could not keep up)
+topic,  10 producers, 10 consumers: ~16kHz
+
+on my workstation. This is very roughly what I would expect - with tiny 
+messages quite a lot of the cost of each message is routing, and topic 
+routing *is* more complex.
+
+So I'm afraid I don't really trust the results you got - how were you 
+choosing a rate limit for the client? Too low and you're not driving the 
+broker as hard as you can, and with that cast in place, too high and 
+you'll start to eat all memory and eventually cause RabbitMQ to get 
+swapped out.
+
+Cheers, Simon
+
+On 03/05/12 20:45, Konstantin Kalin wrote:
+&gt;<i> Hello, Simon.
+</I>&gt;<i>
+</I>&gt;<i> Thank you for looking at this. Sorry for causing troubles. Please see
+</I>&gt;<i> inline.
+</I>&gt;<i>
+</I>&gt;<i> On May 3, 2012, at 3:12 AM, Simon MacMullen wrote:
+</I>&gt;<i>
+</I>&gt;&gt;<i> On 02/05/12 17:09, Konstantin Kalin wrote:
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> OK, that's just a typo I assume, I'll change it to:
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Connection = connections:get_connection(),
+</I>&gt;&gt;<i>
+</I>&gt;<i> Yep. It was typo.
+</I>&gt;<i>
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> So it looks like the connection server is not getting started?
+</I>&gt;&gt;<i>
+</I>&gt;<i> Yes. Connection was not created.
+</I>&gt;<i> Actually I don't know why AMQP connections are not created if you start
+</I>&gt;<i> apps from command line using *-s*. It works fine when an app is started
+</I>&gt;<i> in Erlang shell using same &quot;start&quot; function.
+</I>&gt;<i>
+</I>&gt;<i> I created start_publisher.sh and start_consumer.sh scripts. The scripts
+</I>&gt;<i> don't start the application actually. But they put proper ERL_LIBS and
+</I>&gt;<i> search path. Publisher and Consumer apps cannot work in same Erlang VMs
+</I>&gt;<i> because each app tries to create own Connection pool.
+</I>&gt;<i>
+</I>&gt;<i> I have added comments for API methods in publisher.erl and consumer.erl.
+</I>&gt;<i> See attached file.
+</I>&gt;<i>
+</I>&gt;<i> Here are steps that I use to start the test:
+</I>&gt;<i> _Consumer_:
+</I>&gt;<i> 1) start_consumer.sh
+</I>&gt;<i> 2) consumer:start([&quot;<A HREF="amqp://guest:guest@10.10.161.237:5672&quot;]">amqp://guest:guest@10.10.161.237:5672&quot;]</A>).
+</I>&gt;<i> 3) consumer:start_consumer(&lt;&lt;&quot;topic&quot;&gt;&gt;, &lt;&lt;&quot;topic&quot;&gt;&gt;).
+</I>&gt;<i> _Publisher_:
+</I>&gt;<i> 1) start_publisher.sh
+</I>&gt;<i> 2) publisher:start([&quot;<A HREF="amqp://guest:guest@10.10.161.237:5672&quot;]">amqp://guest:guest@10.10.161.237:5672&quot;]</A>).
+</I>&gt;<i> 3) publisher:start_publish(&lt;&lt;&quot;topic&quot;&gt;&gt;, &lt;&lt;&quot;topic&quot;&gt;&gt;, 1000, 1000).
+</I>&gt;<i>
+</I>&gt;<i> Hope it will work now :)
+</I>&gt;<i>
+</I>&gt;<i> I run several tests yesterday and got more confusing results:
+</I>&gt;<i> Topic Exchange
+</I>&gt;<i> 1) 1 Consumer and 1 publisher - RabbitMQ shows ~10k per second. (4 times
+</I>&gt;<i> less than same test with Direct)
+</I>&gt;<i> 2) 10 Consumers and 10 publishers - RabbitMQ shows ~4k per second. (10
+</I>&gt;<i> times less than same test with Direct).
+</I>&gt;<i> 3) 100 Consumers and 100 publishers - RabbitMQ shows same ~4k per
+</I>&gt;<i> second. (10 times less than same test with Direct).
+</I>&gt;<i>
+</I>&gt;<i> And I see &quot;Flow control&quot; on Publisher connections. CPU is ~300% and
+</I>&gt;<i> Memory is ~300kb (VM is 8 CPU and 4Gb). So VM machine is slightly loaded.
+</I>&gt;<i>
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Cheers, Simon
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> --
+</I>&gt;&gt;<i> Simon MacMullen
+</I>&gt;&gt;<i> RabbitMQ, VMware
+</I>&gt;<i>
+</I>&gt;<i> Thank you,
+</I>&gt;<i> Kostya.
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>
+
+-- 
+Simon MacMullen
+RabbitMQ, VMware
+</PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="019865.html">[rabbitmq-discuss] Direct vs Topic exchange - Question
+</A></li>
+	<LI>Next message: <A HREF="019887.html">[rabbitmq-discuss] Direct vs Topic exchange - Question
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#19870">[ date ]</a>
+              <a href="thread.html#19870">[ thread ]</a>
+              <a href="subject.html#19870">[ subject ]</a>
+              <a href="author.html#19870">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

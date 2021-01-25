@@ -1,0 +1,146 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Exactly Once Delivery
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Exactly%20Once%20Delivery&In-Reply-To=%3C20100805112252.GH17061%40rabbitmq.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="008252.html">
+   <LINK REL="Next"  HREF="008272.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Exactly Once Delivery</H1>
+    <B>Matthew Sackman</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Exactly%20Once%20Delivery&In-Reply-To=%3C20100805112252.GH17061%40rabbitmq.com%3E"
+       TITLE="[rabbitmq-discuss] Exactly Once Delivery">matthew at rabbitmq.com
+       </A><BR>
+    <I>Thu Aug  5 12:22:52 BST 2010</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="008252.html">[rabbitmq-discuss] Exactly Once Delivery
+</A></li>
+        <LI>Next message: <A HREF="008272.html">[rabbitmq-discuss] Exactly Once Delivery
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#8271">[ date ]</a>
+              <a href="thread.html#8271">[ thread ]</a>
+              <a href="subject.html#8271">[ subject ]</a>
+              <a href="author.html#8271">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi Mike,
+
+On Tue, Aug 03, 2010 at 04:43:56AM -0400, Mike Petrusis wrote:
+&gt;<i> In reviewing the mailing list archives, I see various threads which state that ensuring &quot;exactly once&quot; delivery requires deduplication by the consumer.  For example the following:
+</I>&gt;<i> 
+</I>&gt;<i> &quot;Exactly-once requires coordination between consumers, or idempotency,
+</I>&gt;<i> even when there is just a single queue. The consumer, broker or network
+</I>&gt;<i> may die during the transmission of the ack for a message, thus causing
+</I>&gt;<i> retransmission of the message (which the consumer has already seen and
+</I>&gt;<i> processed) at a later point.&quot;  <A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/2009-July/004237.html">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/2009-July/004237.html</A>
+</I>&gt;<i> 
+</I>&gt;<i> In the case of competing consumers which pull messages from the same queue, this will require some sort of shared state between consumers to de-duplicate messages (assuming the consumers are not idempotent).   
+</I>&gt;<i> 
+</I>&gt;<i> Our application is using RabbitMQ to distribute tasks across multiple workers residing on different servers, this adds to the cost of sharing state between the workers. 
+</I>&gt;<i> 
+</I>&gt;<i> Another message in the email archive mentions that &quot;You can guarantee exactly-once delivery if you use transactions, durable queues and exchanges, and persistent messages, but only as long as any failing node eventually recovers.&quot;
+</I>
+All the above is sort of wrong. You can never *guarantee* exactly once
+(there's always some argument about whether receiving message duplicates
+but relying on idempotency is achieving exactly once. I don't feel it
+does, and this should become clearer as to why further on...)
+
+The problem is publishers. If the server on which RabbitMQ is running
+crashes, after commiting a transaction containing publishes, it's
+possible the commit-ok message may get lost. Thus the publishers still
+think they need to republish, so wait until the broker comes back up and
+then republishes. This can happen an infinite number of times: the
+publishers connect, start a transaction, publish messages, commit the
+transaction and then the commit-ok gets lost and so the publishers
+repeat the process.
+
+As a result, on the clients, you need to detect duplicates. Now this is
+really a barrier to making all operations idempotent. The problem is
+that you never know how many copies of a message there will be. Thus you
+never know when it's safe to remove messages from your dedup cache. Now
+things like redis apparently have the means to delete entries after an
+amount of time, which would at least allow you to avoid the database
+eating up all the RAM in the universe, but there's still the possibility
+that after the entry's been deleted, another duplicate will come along
+which you now won't detect as a duplicate.
+
+This isn't just a problem with RabbitMQ - in any messaging system, if
+any message can be lost, you can not achieve exactly once semantics. The
+best you can hope for is a probability of a large number of 9s that you
+will be able to detect all the duplicates. But that's the best you can
+achieve.
+
+Scaling horizontally is thus more tricky because, as you say, you may
+now have multiple consumers which each receive one copy of a message.
+Thus the dedup database would have to be distributed. With high message
+rates, this might well become prohibitive because of the amount of
+network traffic due to transactions between the consumers.
+
+&gt;<i> What's the recommended way to deal with the potential of duplicate messages?  
+</I>
+Currently, there is no &quot;recommended&quot; way. If you have a single consumer,
+it's quite easy - something like tokyocabinet should be more than
+sufficiently performant. For multiple consumers, you're currently going
+to have to look at some sort of distributed database.
+
+&gt;<i> Is this a rare enough edge case that most people just ignore it?
+</I>
+No idea. But one way of making your life easier is for the producer to
+send slightly different messages on every republish (they would still
+obviously need to have the same msg id). That way, if you detect a msg
+with &quot;republish count&quot; == 0, then you know it's the first copy, so you
+can insert async into your shared database and then act on the message.
+You only need to do a query on the database whenever you receive a msg
+with &quot;republish count&quot; &gt; 0 - thus you can tune your database for
+inserts and hopefully save some work - the common case will then be the
+first case, and lookups will be exceedingly rare.
+
+The question then is: if you've received a msg, republish count &gt; 0 but
+there are no entries in the database, what do you do? It shouldn't have
+overtaken the first publish (though if consumers disconnected without
+acking, or requeued messages, it could have), but you need to cause some
+sort of synchronise operation between all the consumers to ensure none
+are in the process of adding to the database - it all gets a bit hairy
+at this point.
+
+Thus if your message rate is low, you're much safer doing the insert and
+select on every message. If that's too expensive, you're going to have
+to think very hard indeed about how to avoid races between different
+consumers thinking they're both/all responsible for acting on the same
+message.
+
+This stuff isn't easy.
+
+Matthew
+</PRE>
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="008252.html">[rabbitmq-discuss] Exactly Once Delivery
+</A></li>
+	<LI>Next message: <A HREF="008272.html">[rabbitmq-discuss] Exactly Once Delivery
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#8271">[ date ]</a>
+              <a href="thread.html#8271">[ thread ]</a>
+              <a href="subject.html#8271">[ subject ]</a>
+              <a href="author.html#8271">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

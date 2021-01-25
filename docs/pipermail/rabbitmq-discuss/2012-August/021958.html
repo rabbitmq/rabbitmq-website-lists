@@ -1,0 +1,143 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] tx_commit() semantics with async connections (e.g Pika SelectConnection)
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20tx_commit%28%29%20semantics%20with%20async%20connections%0A%20%28e.g%20Pika%20SelectConnection%29&In-Reply-To=%3CCAKwdTWdvgiaCDGxAuW4kja6hJgj8oo8VqTL90VdneEzRQwsaqg%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="021957.html">
+   <LINK REL="Next"  HREF="021968.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] tx_commit() semantics with async connections (e.g Pika SelectConnection)</H1>
+    <B>Gavin M. Roy</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20tx_commit%28%29%20semantics%20with%20async%20connections%0A%20%28e.g%20Pika%20SelectConnection%29&In-Reply-To=%3CCAKwdTWdvgiaCDGxAuW4kja6hJgj8oo8VqTL90VdneEzRQwsaqg%40mail.gmail.com%3E"
+       TITLE="[rabbitmq-discuss] tx_commit() semantics with async connections (e.g Pika SelectConnection)">gmr at meetme.com
+       </A><BR>
+    <I>Fri Aug 17 20:38:50 BST 2012</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="021957.html">[rabbitmq-discuss] tx_commit() semantics with async connections	(e.g Pika SelectConnection)
+</A></li>
+        <LI>Next message: <A HREF="021968.html">[rabbitmq-discuss] tx_commit() semantics with async connections (e.g Pika SelectConnection)
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#21958">[ date ]</a>
+              <a href="thread.html#21958">[ thread ]</a>
+              <a href="subject.html#21958">[ subject ]</a>
+              <a href="author.html#21958">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>On Fri, Aug 17, 2012 at 3:13 PM, Matt Pietrek &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">mpietrek at skytap.com</A>&gt; wrote:
+
+&gt;<i> I've been drilling into an issue for a few days where my Pika channel is
+</I>&gt;<i> abruptly closed. I'm pretty sure I've found either:
+</I>&gt;<i>
+</I>&gt;<i>    - A large gap in my understanding
+</I>&gt;<i>    - A misuse of the Rabbit/Pika APIs
+</I>&gt;<i>
+</I>&gt;<i> Depending on your perspective, this seems the most likely, in that there
+</I>is not any logic in Pika for managing Tx. It lets you send the RPC calls
+and leaves it to you to manage state outside of the connection/channel.
+
+&gt;<i>
+</I>&gt;<i>    - A serious bug in Pika.
+</I>&gt;<i>
+</I>&gt;<i> My original understanding about transactions is that calling tx_select()
+</I>&gt;<i> is a synchronous operation, and that when it returns, whatever actions
+</I>&gt;<i> you've sent to the broker are committed.
+</I>&gt;<i>
+</I>&gt;<i> However, in stepping through the Pika tx_commit() code, it seems like it
+</I>&gt;<i> all it does is add the Tx.Commit message to an outgoing buffer, and that
+</I>&gt;<i> the tx_commit() call returns without anything actually sent to the broker.
+</I>&gt;<i> (I've set breakpoints in the debugger at strategic points to verify this.)
+</I>&gt;<i>
+</I>This is correct, because pika is event-loop driven, it is putting the frame
+in the output buffer and returning to you. The event loop will write the
+data out as the operating system tells it it can You are correct that it is
+not blocking on the Tx.Commit until the data is written over the socket.
+
+&gt;<i> In my message handler, I'm writing a reply to the incoming message, using
+</I>&gt;<i> the same channel. What I'm seeing (verified via WireShark) is that the
+</I>&gt;<i> Tx.Commit message is followed by some number of Basic.Publish,
+</I>&gt;<i> Content-Header, and Content-Body records corresponding to my reply message
+</I>&gt;<i> writes.
+</I>&gt;<i>
+</I>Your frames are sent in the order the methods are called.
+
+&gt;<i> This violates the AMQP standard, which says that nothing should be sent to
+</I>&gt;<i> the broker after sending a Tx.Commit and before receiving a Tx.Commit-Ok
+</I>&gt;<i> reply. (If it helps understanding, my incoming message queue has a few
+</I>&gt;<i> messages in it already, so I see a series of incoming messages immediately
+</I>&gt;<i> after starting.)
+</I>&gt;<i>
+</I>You should add a callback for the Tx.Commit-Ok reply and then send your
+messages. You are correct that Pika is not enforcing the behavior of
+blocking until Tx.Commit-Ok.
+
+You could open a 2nd channel and send your replies over that.
+
+&gt;<i> I see that the tx_commit() method takes a callback method, but if I were
+</I>&gt;<i> to simply block in my message handler, waiting for the callback to be
+</I>&gt;<i> invoked, I'd deadlock because Pika's buffer processing code doesn't get a
+</I>&gt;<i> chance to run.
+</I>&gt;<i>
+</I>How are you blocking? If you're using any truly blocking method, it will
+stop the event loop from running. Since you're on the async loop, I'd use a
+timer and a state variable to toggle between the various states you're
+trying to achieve.
+
+Gavin
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20120817/49c3681b/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20120817/49c3681b/attachment.htm</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="021957.html">[rabbitmq-discuss] tx_commit() semantics with async connections	(e.g Pika SelectConnection)
+</A></li>
+	<LI>Next message: <A HREF="021968.html">[rabbitmq-discuss] tx_commit() semantics with async connections (e.g Pika SelectConnection)
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#21958">[ date ]</a>
+              <a href="thread.html#21958">[ thread ]</a>
+              <a href="subject.html#21958">[ subject ]</a>
+              <a href="author.html#21958">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

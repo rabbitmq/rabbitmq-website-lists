@@ -1,0 +1,173 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Fwd: question on the faq
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20Fwd%3A%20question%20on%20the%20faq&In-Reply-To=2CC00877-4438-4B1F-8A38-AC5FD42B8088%40coote.org">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002462.html">
+   <LINK REL="Next"  HREF="002463.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Fwd: question on the faq</H1>
+    <B>Peter Silva</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20Fwd%3A%20question%20on%20the%20faq&In-Reply-To=2CC00877-4438-4B1F-8A38-AC5FD42B8088%40coote.org"
+       TITLE="[rabbitmq-discuss] Fwd: question on the faq">Peter.Silva at ec.gc.ca
+       </A><BR>
+    <I>Thu Jan  8 16:19:34 GMT 2009</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002462.html">[rabbitmq-discuss] Fwd: question on the faq
+</A></li>
+        <LI>Next message: <A HREF="002463.html">[rabbitmq-discuss] Fwd: question on the faq
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2465">[ date ]</a>
+              <a href="thread.html#2465">[ thread ]</a>
+              <a href="subject.html#2465">[ subject ]</a>
+              <a href="author.html#2465">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>
+fwiw:
+
+I suspect there is no point in looking prior to committing if the state 
+isn&#180;t saved, because you get into an endless recursion... say 10 systems 
+have to be updated.   When you look, all 10 are ok, but the situation in 
+any of the 10 systems could change.  When it comes time to commit, 2 out 
+of the 10 systems could have run out of whatever they need to reserve, 
+so you end up having to check all 10 again, prior to committing to any 
+one.  If they don&#180;t lock this time either, then recurse, recurse again 
+with ever smaller intervals...  It doesn&#180;t sound like a robust way to 
+proceed.
+
+ From the client perspective, it will look odd as well, the initial 
+attempt will work, but when they say confirm it might not.  You aren&#180;t 
+giving the client something they can actually purchase.
+
+It makes more sense is if the tentative booking is itself a transaction, 
+which does something (ie. grabs the resources being reserved) If you 
+want to back out later, that would have to be another transaction.  
+There needs to be an application level tag that does everything a real 
+reservation does, but marks it as provisional.    A completely separate 
+application process could back out of provisional reservations which 
+were not confirmed after some period of time. (cancelling provisional 
+reservations is a separate application transaction.)
+
+Tim Coote wrote:
+&gt;<i> Hi Ben
+</I>&gt;<i> On 7 Jan 2009, at 22:18, Ben Hood wrote:
+</I>&gt;<i>
+</I>&gt;<i>   
+</I>&gt;&gt;<i> Tim,
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> On Wed, Jan 7, 2009 at 12:31 PM, Tim Coote &lt;tim 
+</I>&gt;&gt;<i> <A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">+rabbitmq.com at coote.org</A>&gt; wrote:
+</I>&gt;&gt;<i>     
+</I>&gt;&gt;&gt;<i> Not sure what you mean here? why do I need any exclusive lock?
+</I>&gt;&gt;&gt;<i>       
+</I>&gt;&gt;<i> Because of the implication of this statement from you:
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> &quot;eg, in the real world, I can make a provisional booking, which times
+</I>&gt;&gt;<i> out if I don't commit to a firm booking within a known (possibly
+</I>&gt;&gt;<i> variable) timeline.&quot;
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Unless I see this incorrectly, a provisional booking implies
+</I>&gt;&gt;<i> temporally exclusive access to the resource that you have requested.
+</I>&gt;&gt;<i> Were this not the case, a provisional booking would be of questionable
+</I>&gt;&gt;<i> value, because it would only reflect resource availability at the
+</I>&gt;&gt;<i> point in time that the request was processed. Beyond that, this
+</I>&gt;&gt;<i> *booking* would be meaningless.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i>     
+</I>&gt;<i> As far as my apps concerned it has exclusive access to some resource  
+</I>&gt;<i> while it's in the transaction. However, the tx can fail for any number  
+</I>&gt;<i> of reasons before it commits.  What that means in the real world may  
+</I>&gt;<i> vary.
+</I>&gt;<i>   
+</I>&gt;&gt;&gt;<i> If the resource that my app's looking to 'get a lock on' gets  
+</I>&gt;&gt;&gt;<i> consumed, the
+</I>&gt;&gt;&gt;<i> transaction aborts. What's the problem?
+</I>&gt;&gt;&gt;<i>       
+</I>&gt;&gt;<i> As indicated above, what would be the value of this lock if doesn't
+</I>&gt;&gt;<i> actually lock anything?
+</I>&gt;&gt;<i>     
+</I>&gt;<i> I don't think it's a lock. My app just sees the world in a consistent  
+</I>&gt;<i> state. If I use Oracle, it doesn't lock data that's read, it just  
+</I>&gt;<i> notes what's been looked at and keeps a copy if the data changes. if  
+</I>&gt;<i> the app then tries to commit a tx based on that data, it will fail.   
+</I>&gt;<i> You could implement a lock here if you want, but the type would depend  
+</I>&gt;<i> on how much contention you're expecting.
+</I>&gt;<i>   
+</I>&gt;&gt;<i> If it's not really a lock, then what implication does this have for
+</I>&gt;&gt;<i> the I in ACID?
+</I>&gt;&gt;<i>     
+</I>&gt;<i> None. The I in ACID is about interleaved updates or read  
+</I>&gt;<i> inconsistencies. It's valid for a tx to abort if the world changes.   
+</I>&gt;<i> don't need an exclusive lock to achieve that.
+</I>&gt;<i>   
+</I>&gt;&gt;<i> What I fail to see here is where the logical unit of work is here if
+</I>&gt;&gt;<i> an external process can affect the outcome of your transaction - e.g.
+</I>&gt;&gt;<i> somebody else actually booking and paying for the plane seats you were
+</I>&gt;&gt;<i> eyeballing whilst your code was waiting for each TX-participant to
+</I>&gt;&gt;<i> reach a consensus.
+</I>&gt;&gt;<i>     
+</I>&gt;<i> So, how would you approach this?  Change the high level service so  
+</I>&gt;<i> that it cannot guarantee atomic holiday bookings and leave the process  
+</I>&gt;<i> of sorting out the mess as an exercise for the user?  Or build code in  
+</I>&gt;<i> the holiday booking app that tries to second guess what the individual  
+</I>&gt;<i> booking failures mean, which typically leads to a bigger mess,  
+</I>&gt;<i> especially as the failure types change over time. In the meantime,  
+</I>&gt;<i> there's no sensible legal framework for the holiday booking app to  
+</I>&gt;<i> work in, so you don't know who owns any costs of component booking  
+</I>&gt;<i> failures.
+</I>&gt;<i>   
+</I>&gt;&gt;<i> BTW - did Carl ever post you his answer to your problem?
+</I>&gt;&gt;<i>     
+</I>&gt;<i> No.
+</I>&gt;<i>   
+</I>&gt;&gt;<i> Ben
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i>     
+</I>&gt;<i>
+</I>&gt;<i> Tim Coote
+</I>&gt;<i> <A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">tim at coote.org</A>
+</I>&gt;<i> vincit veritas
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;<i> <A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;<i> <A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>&gt;<i>   
+</I>
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: <A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20090108/f92560a4/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20090108/f92560a4/attachment.htm</A> 
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002462.html">[rabbitmq-discuss] Fwd: question on the faq
+</A></li>
+	<LI>Next message: <A HREF="002463.html">[rabbitmq-discuss] Fwd: question on the faq
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2465">[ date ]</a>
+              <a href="thread.html#2465">[ thread ]</a>
+              <a href="subject.html#2465">[ subject ]</a>
+              <a href="author.html#2465">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

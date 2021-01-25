@@ -1,0 +1,79 @@
+diff --git a/src/rabbit_stomp_processor.erl b/src/rabbit_stomp_processor.erl
+index 15f8ef4..cfb6065 100644
+--- a/src/rabbit_stomp_processor.erl
++++ b/src/rabbit_stomp_processor.erl
+@@ -612,11 +612,10 @@ send_delivery(Delivery = #'basic.deliver'{consumer_tag = ConsumerTag},
+               State = #state{session_id    = SessionId,
+                              subscriptions = Subs}) ->
+     case dict:find(ConsumerTag, Subs) of
+-        {ok, #subscription{dest_hdr = Destination}} ->
++        {ok, #subscription{}} ->
+             send_frame(
+               "MESSAGE",
+-              rabbit_stomp_util:message_headers(Destination, SessionId,
+-                                                Delivery, Properties),
++              rabbit_stomp_util:message_headers(SessionId, Delivery, Properties),
+               Body,
+               State);
+         error ->
+diff --git a/src/rabbit_stomp_util.erl b/src/rabbit_stomp_util.erl
+index 89be86e..f912000 100644
+--- a/src/rabbit_stomp_util.erl
++++ b/src/rabbit_stomp_util.erl
+@@ -19,7 +19,7 @@
+ -export([parse_destination/1, parse_routing_information/1,
+          parse_message_id/1, durable_subscription_queue/2]).
+ -export([longstr_field/2]).
+--export([ack_mode/1, consumer_tag/1, message_headers/4, message_properties/1]).
++-export([ack_mode/1, consumer_tag/1, message_headers/3, message_properties/1]).
+ -export([negotiate_version/2]).
+ -export([trim_headers/1]).
+ -export([valid_dest_prefixes/0]).
+@@ -76,10 +76,14 @@ message_properties(Frame = #stomp_frame{headers = Headers}) ->
+       headers          = [longstr_field(K, V) ||
+                              {K, V} <- Headers, user_header(K)]}.
+ 
+-message_headers(Destination, SessionId,
++message_headers(SessionId,
+                 #'basic.deliver'{consumer_tag = ConsumerTag,
+-                                 delivery_tag = DeliveryTag},
++                                 delivery_tag = DeliveryTag,
++                                 exchange = ExchangeBin,
++                                 routing_key = RoutingKeyBin},
+                 Props = #'P_basic'{headers       = Headers}) ->
++    Destination = format_exchange_destination(binary_to_list(ExchangeBin),
++                                              binary_to_list(RoutingKeyBin)),
+     Basic = [{?HEADER_DESTINATION, Destination},
+              {?HEADER_MESSAGE_ID,
+               create_message_id(ConsumerTag, SessionId, DeliveryTag)}],
+@@ -197,6 +201,13 @@ trim_headers(Frame = #stomp_frame{headers = Hdrs}) ->
+     Frame#stomp_frame{headers = [{K, string:strip(V, left)} || {K, V} <- Hdrs]}.
+ 
+ %%--------------------------------------------------------------------
++%% Destination Formatting
++%%--------------------------------------------------------------------
++
++format_exchange_destination(ExchangeName, RoutingKey) ->
++    ?EXCHANGE_PREFIX ++ "/" ++ escape(ExchangeName) ++ "/" ++ escape(RoutingKey).
++
++%%--------------------------------------------------------------------
+ %% Destination Parsing
+ %%--------------------------------------------------------------------
+ 
+@@ -282,3 +293,16 @@ unescape(Str) -> unescape(Str, []).
+ unescape("%2F" ++ Str, Acc) -> unescape(Str, [$/ | Acc]);
+ unescape([C | Str],    Acc) -> unescape(Str, [C | Acc]);
+ unescape([],           Acc) -> lists:reverse(Acc).
++
++escape(Str) -> escape(Str, []).
++
++escape([$/ | Str], Acc) ->
++    escape(Str, "F2%" ++ Acc);
++escape([X | Str], Acc) when X < 32 orelse X >= 128 ->
++    escape(Str, lists:reverse(hexdigit(X)) ++ "%" ++ Acc);
++escape([C | Str], Acc) ->
++    escape(Str, [C | Acc]);
++escape([], Acc) ->
++    lists:reverse(Acc).
++
++hexdigit(D) -> integer_to_list((D bsr 4) band 15, 16) ++ integer_to_list(D band 15, 16).

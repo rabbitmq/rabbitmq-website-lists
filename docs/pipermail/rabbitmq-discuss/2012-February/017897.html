@@ -1,0 +1,151 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Binding to multiple queues in a round-robin	style using the PIKA library
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Binding%20to%20multiple%20queues%20in%20a%20round-robin%0A%09style%20using%20the%20PIKA%20library&In-Reply-To=%3Cfe044deb-e0b6-4650-a132-c35ab5212927%40db5g2000vbb.googlegroups.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="017892.html">
+   <LINK REL="Next"  HREF="017900.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Binding to multiple queues in a round-robin	style using the PIKA library</H1>
+    <B>Stephen Young</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Binding%20to%20multiple%20queues%20in%20a%20round-robin%0A%09style%20using%20the%20PIKA%20library&In-Reply-To=%3Cfe044deb-e0b6-4650-a132-c35ab5212927%40db5g2000vbb.googlegroups.com%3E"
+       TITLE="[rabbitmq-discuss] Binding to multiple queues in a round-robin	style using the PIKA library">stephen.t.young at gmail.com
+       </A><BR>
+    <I>Fri Feb  3 15:49:59 GMT 2012</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="017892.html">[rabbitmq-discuss] Binding to multiple queues in a round-robin style using the PIKA library
+</A></li>
+        <LI>Next message: <A HREF="017900.html">[rabbitmq-discuss] Binding to multiple queues in a round-robin style using the PIKA library
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#17897">[ date ]</a>
+              <a href="thread.html#17897">[ thread ]</a>
+              <a href="subject.html#17897">[ subject ]</a>
+              <a href="author.html#17897">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hey Emile,
+
+The approach is currently set up like the following:
+
+Q1...Qn are the queues I have created
+Each consumer binds to all queues, and has the capability of parsing
+and using data from each queue.
+
+A request is pushed through a broker and generates a set of queue
+entries, E1...En
+Ej must be processed for Ej+1...En to be processed, the rest are
+independent of the result of Ej.
+Bundling requests together causes the system to be significantly
+slower, as it doesn't capitalize on the heavy parallelism of running
+E1..Ej simultaneously, and once Ej is processed, Ej+1...En
+simultaneously.
+
+As long as there are dedicated consumers monitoring Ej only, there is
+no deadlock as the Ej entries are parsed faster
+However, this tends to be a waste of resources, as Ej is not a
+particularly heavy process, so those consumers are idle for most of
+the time.
+
+When I don't have these consumers, or have a single consumer managing
+the whole system, what seems to be happening is that the consumer will
+stop on one of the queues Qj+m, and read a request, determine that it
+cant complete, send basic_reject, and then read again from the same
+queue. This is not problematic all the time, but occasionally
+generates a loop on that queue by the consumer. What i'd like to do is
+have the consumer act like:
+
+read queue Qi
+determine blockage, send basic_reject
+read queue Qk
+process, send basic_ack
+
+Instead it seems to get stuck in a loop reading Qi.
+
+Let me know if you need any more clarification!
+
+
+On Feb 3, 7:10&#160;am, Emile Joubert &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">em... at rabbitmq.com</A>&gt; wrote:
+&gt;<i> Hi Stephen,
+</I>&gt;<i>
+</I>&gt;<i> On 02/02/12 16:36, Stephen Young wrote:
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> &gt; I'm working on a system that receives a variety of different message
+</I>&gt;<i> &gt; types from different source queues, like the following:
+</I>&gt;<i>
+</I>&gt;<i> &gt; client binds to Q1, Q2, Q3
+</I>&gt;<i> &gt; server posts to Q2
+</I>&gt;<i> &gt; client reads request and updates database. If something goes awry, the
+</I>&gt;<i> &gt; client sends a basic_reject to requeue the request
+</I>&gt;<i>
+</I>&gt;<i> &gt; however, this seems to cause some problems in that the client will see
+</I>&gt;<i> &gt; a message in Q2, but need to have parsed a message in another queue
+</I>&gt;<i> &gt; first. However the clients seem to keep polling the same queue until
+</I>&gt;<i> &gt; success. Is there any better way to implement this system? Currently
+</I>&gt;<i> &gt; I'm defeating the deadlock by having enough clients + some dedicated
+</I>&gt;<i> &gt; clients on the bottleneck queues, but would prefer if each client
+</I>&gt;<i> &gt; could run autonomously and read from queues in a pattern / priority of
+</I>&gt;<i> &gt; some sort.
+</I>&gt;<i>
+</I>&gt;<i> I'm reading your question as: How can I organise a workload with
+</I>&gt;<i> multiple clients where some messages have dependencies on each other?
+</I>&gt;<i>
+</I>&gt;<i> If possible publish all the information required to complete a task as a
+</I>&gt;<i> single message.
+</I>&gt;<i>
+</I>&gt;<i> Priorities can be emulated by using different queues, and consuming from
+</I>&gt;<i> the queues designated as higher priority more often.
+</I>&gt;<i>
+</I>&gt;<i> It's hard to give any further advice without more information about how
+</I>&gt;<i> messages are intended to match up and how the parsing dependency works.
+</I>&gt;<i> Perhaps you could offer more details.
+</I>&gt;<i>
+</I>&gt;<i> -Emile
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-disc... at lists.rabbitmq.comhttps</A>://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss
+</I></PRE>
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="017892.html">[rabbitmq-discuss] Binding to multiple queues in a round-robin style using the PIKA library
+</A></li>
+	<LI>Next message: <A HREF="017900.html">[rabbitmq-discuss] Binding to multiple queues in a round-robin style using the PIKA library
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#17897">[ date ]</a>
+              <a href="thread.html#17897">[ thread ]</a>
+              <a href="subject.html#17897">[ subject ]</a>
+              <a href="author.html#17897">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

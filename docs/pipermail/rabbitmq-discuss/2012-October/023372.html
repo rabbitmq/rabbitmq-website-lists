@@ -1,0 +1,944 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Persistent messages on durable queue sometimes not delivered to consumers
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Persistent%20messages%20on%20durable%20queue%20sometimes%0A%20not%20delivered%20to%20consumers&In-Reply-To=%3C32767268-59bf-4cc9-9988-9c6396a74b81%40googlegroups.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="023364.html">
+   <LINK REL="Next"  HREF="023378.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Persistent messages on durable queue sometimes not delivered to consumers</H1>
+    <B>Tyler Power</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Persistent%20messages%20on%20durable%20queue%20sometimes%0A%20not%20delivered%20to%20consumers&In-Reply-To=%3C32767268-59bf-4cc9-9988-9c6396a74b81%40googlegroups.com%3E"
+       TITLE="[rabbitmq-discuss] Persistent messages on durable queue sometimes not delivered to consumers">tyler at appsecute.com
+       </A><BR>
+    <I>Fri Oct 26 00:50:26 BST 2012</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="023364.html">[rabbitmq-discuss] Example on event based or logging
+</A></li>
+        <LI>Next message: <A HREF="023378.html">[rabbitmq-discuss] Persistent messages on durable queue sometimes not delivered to consumers
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#23372">[ date ]</a>
+              <a href="thread.html#23372">[ thread ]</a>
+              <a href="subject.html#23372">[ subject ]</a>
+              <a href="author.html#23372">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi there,
+
+I'm having an issues where *sometimes* messages that appear to be 
+successfully pushed to RabbitMQ are not delivered to any subscribers.
+
+I am using RabbitMQ Server 2.4 and the .NET client 2.8.7.0.
+
+I am using the default exchange (&quot;&quot;), which sounds adequate for our needs 
+right now, but thought I'd point it out incase I'm not using it the way it 
+was intended.
+
+In the server I can see the SubmitDeploymentToQueue() method always 
+completes successfully, so it appears messages are *always* being submitted 
+to RabbitMQ, but in the Consume() method of the consumer, 
+the consumer.Queue.Dequeue() method *sometimes* does not return a message, 
+so the next line (the console.writeline) is never called etc. and it 
+will just sit there blocking.
+
+In this situation where messages appear to be lost, restarting the 
+consumers doesn't fix it, the messages are simply never delivered and seem 
+to be lost forever.
+
+I have attached the code below, inline, I hope this is OK.
+
+
+*Server:*
+
+//
+// Copyright (c) Appsecute 2011-2012 - ALL RIGHTS RESERVED.
+//
+using System;
+using RabbitMQ.Client;
+using System.Threading;
+using AppsecuteKernel.Logging;
+using AppsecuteServerFramework.Database;
+using AppsecuteKernel.Documents.Deployments;
+using AppsecuteKernel.Operations.Deployment;
+using AppsecuteKernel.Operations.Applications;
+using AppsecuteKernel.Operations.Notifications;
+using RabbitMQ.Client.Exceptions;
+namespace AppsecuteDeploymentScheduler
+{
+    /// &lt;summary&gt;
+    /// Periodically inspects the database and submits deployments to the 
+queue once they have met the appropriate criteria.
+    /// &lt;/summary&gt;
+    public class DeploymentScheduler : IDisposable
+    {
+        /// &lt;summary&gt;
+        /// Rabbit MQ properties.
+        /// &lt;/summary&gt;
+        private IModel _channel;
+        private IConnection _connection;
+        
+        
+        /// &lt;summary&gt;
+        /// A wait handle that other threads can use to wait on the 
+scheduler to finish
+        /// &lt;/summary&gt;
+        public ManualResetEvent SchedulerWaitHandle = new ManualResetEvent(
+false);
+
+        /// &lt;summary&gt;
+        /// A logger for the scheduler to use.
+        /// &lt;/summary&gt;
+        public PlatformLogger Logger = new PlatformLogger(typeof(
+DeploymentScheduler));
+
+         /// &lt;summary&gt;
+        /// The time in milliseconds the scheduler should sleep for between 
+finishing work
+        /// and waking up to check/process new work.
+        /// &lt;/summary&gt;
+        private const int SLEEP_MILLISECONDS = 5000;
+
+        /// &lt;summary&gt;
+        /// A timer used to peridoically wake up and poll for deployments 
+to queue.
+        /// &lt;/summary&gt;
+        private Timer _pollDeploymentsTimer;
+
+        /// &lt;summary&gt;
+        /// Creates a new deployment scheduler.
+        /// &lt;/summary&gt;
+        public DeploymentScheduler()
+        {
+            WriteLine(&quot;Starting scheduler&quot;);
+            OpenConnection();
+        }
+
+        /// &lt;summary&gt;
+        /// Opens the connection to RabbitMQ.
+        /// &lt;/summary&gt;
+        private void OpenConnection()
+        {
+            var connectionFactory = new ConnectionFactory { uri = 
+ApplicationDeploymentOperations.GetAmqpConnectionUri() };
+            WriteLine(&quot;Opening RabbitMQ connection...&quot;);
+            _connection = connectionFactory.CreateConnection();
+            if (_connection.IsOpen)
+            {
+                WriteLine(&quot;Connection opened.&quot;);
+                _connection = connectionFactory.CreateConnection();
+                _channel = _connection.CreateModel();
+                _channel.QueueDeclare(ApplicationDeploymentOperations.DEPLOYMENT_QUEUE_NAME, 
+true, false, false, null);
+                ThreadPool.QueueUserWorkItem(ProcessDeployments);
+                WriteLine(&quot;Scheduler started.&quot;);
+            }
+            else
+            {
+                WriteLine(&quot;Scheduler failed to start.&quot;);
+            }
+        }
+
+        private void WriteLine(string message)
+        {
+            Console.WriteLine(&quot;{0}: {1}&quot;, Thread.CurrentThread.ManagedThreadId, 
+message);
+        }
+
+        /// &lt;summary&gt;
+        /// Schedules the scheduler to wake up at a later time to poll the 
+database.
+        /// &lt;/summary&gt;
+        private void Reschedule()
+        {
+            WriteLine(&quot;Rescheduling&quot;);
+            if (_pollDeploymentsTimer != null)
+            {
+                _pollDeploymentsTimer.Dispose();
+            }
+            _pollDeploymentsTimer = new Timer(ProcessDeployments, new object(), 
+SLEEP_MILLISECONDS, 0);
+        }
+
+        /// &lt;summary&gt;
+        /// Evaluates deployments and queues them to be deployed if 
+appropriate.
+        /// &lt;/summary&gt;
+        private void ProcessDeployments(object state)
+        {
+            Console.WriteLine();
+            WriteLine(&quot;Processing deployments&quot;);
+            try
+            {
+                var deployments = ApplicationDeploymentDatabaseOperations
+.GetApplicationDeploymentsToQueue();
+                // If there is any work to do then do it, otherwise 
+reschedule this worker
+                if (deployments.Count &gt; 0)
+                {
+                    foreach (var deploymentData in deployments)
+                    {
+                        ProcessDeployment(deploymentData);
+                    }
+                    WriteLine(&quot;Scheduling completed&quot;);
+                    // *TODO: If these workers are kept busy (i.e They're 
+continuously working instead of sleeping/waking) there is a chance this 
+recursive calling could exceed the stack size
+*                    ProcessDeployments(null);
+                }
+                else
+                {
+                    Reschedule();
+                }
+            }
+            catch (Exception e)
+            {
+                WriteLine(string.Format(&quot;Caught exception processing 
+deployments: {0}&quot;, e.Message));
+                LogException(null, e);
+                Reschedule();
+            }
+        }
+
+        /// &lt;summary&gt;
+        /// Processes a deployment, updating the status, raising 
+notifications and submitting to the deployment queue
+        /// as appropriate.
+        /// &lt;/summary&gt;
+        /// &lt;param name=&quot;deploymentData&quot;&gt;&lt;/param&gt;
+        private void ProcessDeployment(ApplicationDeploymentDatadeploymentData)
+        {
+            try
+            {
+                MySqlLocking.TryRun(
+                    MySqlWrapper.PLATFORM_DATABASE_NAME,
+                    string.Format(&quot;deployment-scheduler-{0}&quot;, 
+deploymentData.Id),
+                    new TimeSpan(0, 0, 0, 5),
+                    api =&gt;
+                        {
+                            // If the deployment should now wait for manual 
+start update the status
+                            if (deploymentData.DeploymentStatus.Equals(
+ApplicationDeploymentOperations.DEPLOYMENT_STATUS_WAITING_FOR_SCHEDULED_TIME) 
+&amp;&amp;
+                                deploymentData.IsManualStart)
+                            {
+                                // Run in a transaction so that if raising 
+notifications fails, the status update will be rolled back
+                                MySqlWrapper.RunInNewTransaction(
+                                    MySqlWrapper.PLATFORM_DATABASE_NAME,
+                                    database =&gt;
+                                        {
+                                            // Update the status first, to 
+effectivley reserve this deployment
+                                            ApplicationDeploymentOperations
+.UpdateDeploymentStatusAtomic(
+                                                deploymentData.Id,
+                                                
+deploymentData.DeploymentStatus,
+                                                
+ApplicationDeploymentOperations.
+                                                    
+DEPLOYMENT_STATUS_WAITING_FOR_MANUAL_START);
+                                            
+RaiseDeploymentWaitingOnManualStartNotification(deploymentData);
+                                        });
+                                WriteLine(string.Format(&quot;Deployment with id 
+{0} is now waiting on manual start.&quot;, deploymentData.Id));
+                                Logger.Info(string.Format(&quot;Deployment with 
+id {0} is now waiting on manual start.&quot;, deploymentData.Id));
+                            }
+                            else
+                            {
+                                // Run in a transaction so that if 
+submitting to queue fails, the status update will be rolled back
+                                MySqlWrapper.RunInNewTransaction(
+                                    MySqlWrapper.PLATFORM_DATABASE_NAME,
+                                    database =&gt;
+                                        {
+                                            // Update the status first, to 
+effectivley reserve this deployment
+                                            ApplicationDeploymentOperations
+.UpdateDeploymentStatusAtomic(
+                                                deploymentData.Id,
+                                                
+deploymentData.DeploymentStatus,
+                                                
+ApplicationDeploymentOperations.DEPLOYMENT_STATUS_QUEUED_FOR_DEPLOYMENT);
+                                            // Submit the deployment to the 
+queue
+                                            
+SubmitDeploymentToQueue(deploymentData);
+                                        }
+                                    );
+                                
+                                WriteLine(string.Format(&quot;Deployment with id 
+{0} has been submitted to the deployment queue.&quot;, deploymentData.Id));
+                                Logger.Info(string.Format(&quot;Deployment with 
+id {0} has been submitted to the deployment queue.&quot;, deploymentData.Id));
+                            }
+                        });
+            }
+            catch (Exception e)
+            {
+                LogException(deploymentData, e);
+            }
+        }
+
+        /// &lt;summary&gt;
+        /// Submits a deployment to the RabbitMQ message queue so that it 
+will be processed by a background worker.
+        /// &lt;/summary&gt;
+        /// &lt;param name=&quot;deploymentData&quot;&gt;The deployment to queue.&lt;/param&gt;
+        private void SubmitDeploymentToQueue(ApplicationDeploymentDatadeploymentData)
+        {
+            try
+            {
+                var basicProperties = _channel.CreateBasicProperties();
+                basicProperties.SetPersistent(true);
+                _channel.BasicPublish(string.Empty, 
+ApplicationDeploymentOperations.DEPLOYMENT_QUEUE_NAME, basicProperties, 
+BitConverter.GetBytes(deploymentData.Id));
+            }
+            catch (Exception)
+            {
+                Console.WriteLine(&quot;Detected broken connection to RabbitMQ, 
+restablishing...&quot;);
+                Dispose();
+                OpenConnection();
+                throw;
+            }
+        }
+
+        /// &lt;summary&gt;
+        /// Raises a notification for a deployment that is waiting on 
+manual start.
+        /// &lt;/summary&gt;
+        /// &lt;param name=&quot;applicationDeploymentData&quot;&gt;The deployment that is 
+waiting on manual start.&lt;/param&gt;
+        private void RaiseDeploymentWaitingOnManualStartNotification(
+ApplicationDeploymentData applicationDeploymentData)
+        {
+            try
+            {
+                var applicationData = ApplicationOperations
+.GetApplication(applicationDeploymentData.ApplicationId);
+                NotificationOperations.RaiseNotification(
+                    applicationDeploymentData.SubmitterLegalEntityId,
+                    NotificationCode
+.ApplicationDeploymentWaitingForManualStart,
+                    NotificationSeverity.Warning,
+                    &quot;Deployment waiting on manual start&quot;,
+                    string.Format(&quot;Deployment to {0} scheduled for {1} is 
+now waiting to be manually started.&quot;,
+                                  applicationData.DisplayName,
+                                  
+applicationDeploymentData.ScheduledStartDate),
+                    applicationDeploymentData.Id,
+                    true);
+            }
+            catch (Exception)
+            {/* eat it*/}
+        }
+
+        /// &lt;summary&gt;
+        /// Logs an exception, including inner exceptions.
+        /// &lt;/summary&gt;
+        internal void LogException(ApplicationDeploymentDatadeploymentData, 
+Exception exception, bool inner = false, string innerMessage = &quot;&quot;)
+        {
+            try
+            {
+                string errorMessage;
+                if (!inner)
+                {
+                    if (deploymentData != null)
+                    {
+                        errorMessage = string.Format(
+                            &quot;Error caught executing deployment with id {0}for application 
+{1}:&quot; +
+                            &quot;\r\n\r\nThe exception was:\r\n\t{2}&quot; +
+                            &quot;\r\n\r\nThe stacktrace was:\r\n{3}\r\n&quot;,
+                            deploymentData.Id,
+                            deploymentData.ApplicationId,
+                            exception.Message,
+                            exception.StackTrace);
+                    }
+                    else
+                    {
+                        errorMessage = string.Format(
+                            &quot;Error caught&quot; +
+                            &quot;\r\n\r\nThe exception was:\r\n\t{0}&quot; +
+                            &quot;\r\n\r\nThe stacktrace was:\r\n{1}\r\n&quot;,
+                            exception.Message,
+                            exception.StackTrace);
+                    }
+                }
+                else
+                {
+                    errorMessage = innerMessage + string.Format(
+                        &quot;\r\nThe inner exception was:\r\n\t{0}&quot; +
+                        &quot;\r\n\r\nThe inner stacktrace was:\r\n{1}\r\n&quot;,
+                        exception.Message,
+                        exception.StackTrace);
+                }
+                if (exception.InnerException != null)
+                {
+                    LogException(deploymentData, exception.InnerException, 
+true, errorMessage);
+                }
+                else
+                {
+                    Logger.Error(errorMessage);
+                }
+            }
+            catch (Exception)
+            {/* eat it */}
+        }
+
+        /// &lt;summary&gt;
+        /// Disposes of the scheduler and frees up resources.
+        /// &lt;/summary&gt;
+        public void Dispose()
+        {
+            if (_channel != null)
+            {
+                _channel.Abort();
+            }
+            if (_connection != null)
+            {
+                try
+                {
+                    _connection.Close();
+                }
+                catch (AlreadyClosedException)
+                {
+                    /* Eat it */
+                }
+            }
+        }
+    }
+}
+
+
+*Consumer:*
+
+//
+// Copyright (c) Appsecute 2011-2012 - ALL RIGHTS RESERVED.
+//
+using System;
+using System.IO;
+using RabbitMQ.Client;
+using AppsecuteKernel.Logging;
+using AppsecuteServerFramework.Exceptions;
+using AppsecuteKernel.Documents.Deployments;
+using AppsecuteKernel.Operations.Deployment;
+using AppsecuteKernel.Operations.Applications;
+using AppsecuteKernel.Operations.Notifications;
+using RabbitMQ.Client.Events;
+using RabbitMQ.Client.Exceptions;
+namespace AppsecuteDeploymentWorker
+{
+    /// &lt;summary&gt;
+    /// A deployment worker that receives deployment jobs from RabbitMQ.
+    /// &lt;/summary&gt;
+    public class DeploymentWorker : IDisposable
+    {
+        /// &lt;summary&gt;
+        /// Rabbit MQ properties
+        /// &lt;/summary&gt;
+        private IModel _channel;
+        private IConnection _connection;
+
+        /// &lt;summary&gt;
+        /// A logger for the deployment worker to use.
+        /// &lt;/summary&gt;
+        public PlatformLogger Logger = new PlatformLogger(typeof(
+DeploymentWorker));
+
+        /// &lt;summary&gt;
+        /// Creates a new deployment worker.
+        /// &lt;/summary&gt;
+        public DeploymentWorker()
+        {
+            Console.WriteLine(&quot;Starting worker&quot;);
+            OpenConnection();
+            Consume();
+        }
+
+        /// &lt;summary&gt;
+        /// Opens the connection to RabbitMQ and sets up the channel.
+        /// &lt;/summary&gt;
+        private void OpenConnection()
+        {
+            var connectionFactory = new ConnectionFactory
+            {
+                uri = ApplicationDeploymentOperations
+.GetAmqpConnectionUri(),
+                RequestedHeartbeat = 10
+            };
+            Console.WriteLine(&quot;Opening RabbitMQ connection...&quot;);
+            _connection = connectionFactory.CreateConnection();
+            if (_connection.IsOpen)
+            {
+                Console.WriteLine(&quot;Connection opened.&quot;);
+                _channel = _connection.CreateModel();
+                _channel.BasicQos(0, 1, false);
+                _channel.QueueDeclare(ApplicationDeploymentOperations.DEPLOYMENT_QUEUE_NAME, 
+true, false, false, null);
+                Console.WriteLine(&quot;Deployment worker started.&quot;);
+            }
+            else
+            {
+                Console.WriteLine(&quot;Deployment worker failed to start.&quot;);
+            }
+        }
+
+        /// &lt;summary&gt;
+        /// Starts the synchronus consumption of queued deployments.
+        /// This method will only return if a critical exception occurs.
+        /// &lt;/summary&gt;
+        private void Consume()
+        {
+            var consumer = new QueueingBasicConsumer(_channel);
+            _channel.BasicConsume(ApplicationDeploymentOperations.DEPLOYMENT_QUEUE_NAME, 
+false, consumer);
+            while (true)
+            {
+                try
+                {
+                    Console.WriteLine(&quot;Waiting for next job...&quot;);
+                    var messageEvent = (BasicDeliverEventArgs
+)consumer.Queue.Dequeue();
+                    Console.WriteLine(&quot;Processing new job...&quot;);
+                    try
+                    {
+                        var applicationDeploymentId = BitConverter.ToInt64(messageEvent.Body, 
+0);
+                        var applicationDeployment = 
+ApplicationDeploymentDatabaseOperations
+.GetApplicationDeployment(applicationDeploymentId);
+                        DoApplicationDeployment(applicationDeployment);
+                        _channel.BasicAck(messageEvent.DeliveryTag, false);
+                    }
+                    catch (Exception e)
+                    {
+                        _channel.BasicNack(messageEvent.DeliveryTag, false, 
+false);
+                        LogException(null, e);
+                    }
+                }
+                catch (EndOfStreamException e)
+                {
+                    Console.WriteLine(&quot;Detected broken connection to 
+RabbitMQ, restablishing...&quot;);
+                    LogException(null, e);
+                    Dispose();
+                    OpenConnection();
+                    Consume();
+                }
+                catch (Exception e)
+                {
+                    LogException(null, e);
+                    break;
+                }
+            }
+        }
+
+        /// &lt;summary&gt;
+        /// Executes an application deployment synchronusly.
+        /// &lt;/summary&gt;
+        /// &lt;param name=&quot;applicationDeploymentData&quot;&gt;The application 
+deployment to execute.&lt;/param&gt;
+        private void DoApplicationDeployment(ApplicationDeploymentDataapplicationDeploymentData)
+        {
+            try
+            {
+                Console.WriteLine(&quot;Running deployment with id {0}...&quot;, 
+applicationDeploymentData.Id);
+                Logger.Info(string.Format(&quot;Running deployment with id {0}
+...&quot;, applicationDeploymentData.Id));
+                ApplicationDeploymentOperations.SetActualDeploymentStartDate(applicationDeploymentData.Id, 
+DateTime.UtcNow);
+                ConfirmDeploymentShouldStart(applicationDeploymentData);
+                ApplicationDeploymentOperations
+.UpdateDeploymentStatusAtomic(
+                    applicationDeploymentData.Id, 
+                    applicationDeploymentData.DeploymentStatus,
+                    ApplicationDeploymentOperations
+.DEPLOYMENT_STATUS_DEPLOYING);
+                var packagePath = 
+DownloadApplicationDeploymentPackage(applicationDeploymentData);
+                var stagingDirectory = 
+StageApplicationDeploymentPackage(applicationDeploymentData, packagePath);
+                PushApplicationDeploymentPackage(applicationDeploymentData, 
+stagingDirectory);
+                CleanUpApplicationDeploymentPackage(packagePath, 
+stagingDirectory);
+                ApplicationDeploymentOperations
+.UpdateDeploymentStatusAtomic(
+                    applicationDeploymentData.Id,
+                    ApplicationDeploymentOperations
+.DEPLOYMENT_STATUS_DEPLOYING,
+                    ApplicationDeploymentOperations
+.DEPLOYMENT_STATUS_DEPLOYMENT_SUCCESSFUL);
+                ApplicationDeploymentOperations.SetActualDeploymentEndDate(applicationDeploymentData.Id, 
+DateTime.UtcNow);
+                
+RaiseDeploymentSuceededNotification(applicationDeploymentData);
+                Console.WriteLine(&quot;Deployment succeeded.&quot;);
+                Logger.Info(&quot;Deployment succeeded.&quot;);
+            }
+            catch (Exception e)
+            {
+                LogException(applicationDeploymentData, e);
+                ApplicationDeploymentOperations.MarkDeploymentAsFailed(applicationDeploymentData.Id, 
+e.Message);
+                ApplicationDeploymentOperations.SetActualDeploymentEndDate(applicationDeploymentData.Id, 
+DateTime.UtcNow);
+                
+RaiseDeploymentFailedNotification(applicationDeploymentData, e.Message);
+                Console.WriteLine(&quot;Deployment failed.&quot;);
+                throw;
+            }
+        }
+
+        /// &lt;summary&gt;
+        /// Confirms that a deployment should start based on the current 
+time and available deployment window.
+        /// &lt;/summary&gt;
+        /// &lt;param name=&quot;deploymentData&quot;&gt;The deployment to check.&lt;/param&gt;
+        private void ConfirmDeploymentShouldStart(ApplicationDeploymentDatadeploymentData)
+        {
+            if((DateTime.UtcNow - new TimeSpan(0, 5, 0)) &gt; 
+deploymentData.ScheduledEndDate)
+            {
+                throw new AppSnapException(
+                    string.Format(
+                        &quot;Unable to start as deployment window has passed or 
+it was determined that deployment wouldn't complete within the window.&quot;));
+            }
+        }
+
+        /// &lt;summary&gt;
+        /// Raises a notification for a failed deployment.
+        /// &lt;/summary&gt;
+        /// &lt;param name=&quot;applicationDeploymentData&quot;&gt;The deployment that 
+failed.&lt;/param&gt;
+        /// &lt;param name=&quot;failureReason&quot;&gt;A human readable reason of why the 
+deploy failed.&lt;/param&gt;
+        private void RaiseDeploymentFailedNotification(
+ApplicationDeploymentData applicationDeploymentData, string failureReason)
+        {
+            try
+            {
+                var applicationData = ApplicationOperations
+.GetApplication(applicationDeploymentData.ApplicationId);
+                NotificationOperations.RaiseNotification(
+                    applicationData.OwnerLegalEntityId,
+                    NotificationCode.ApplicationDeploymentFailed,
+                    NotificationSeverity.Critical,
+                    &quot;Deploy failed&quot;,
+                    string.Format(&quot;Deployment to {0} scheduled for {1}failed with error \&quot;
+{2}\&quot;.&quot;,
+                                  applicationData.DisplayName,
+                                  
+applicationDeploymentData.ScheduledStartDate,
+                                  failureReason),
+                    applicationDeploymentData.Id,
+                    true);
+            }
+            catch (Exception)
+            {/* eat it */}
+        }
+
+        /// &lt;summary&gt;
+        /// Raises a notification for a successful deployment.
+        /// &lt;/summary&gt;
+        /// &lt;param name=&quot;applicationDeploymentData&quot;&gt;The deployment that 
+succeeded.&lt;/param&gt;
+        private void RaiseDeploymentSuceededNotification(
+ApplicationDeploymentData applicationDeploymentData)
+        {
+            try
+            {
+                var applicationData = ApplicationOperations
+.GetApplication(applicationDeploymentData.ApplicationId);
+                NotificationOperations.RaiseNotification(
+                    applicationData.OwnerLegalEntityId,
+                    NotificationCode.ApplicationDeploymentFailed,
+                    NotificationSeverity.Info,
+                    &quot;Deploy succeeded&quot;,
+                    string.Format(&quot;Deployment to {0} scheduled for {1}completed successfully.&quot;
+,
+                                  applicationData.DisplayName,
+                                  
+applicationDeploymentData.ScheduledStartDate),
+                    applicationDeploymentData.Id,
+                    true);
+            }
+            catch (Exception)
+            {/* eat it */}
+        }
+
+        /// &lt;summary&gt;
+        /// Downloads and verifies an application deployment package to a 
+local directory.
+        /// &lt;/summary&gt;
+        /// &lt;param name=&quot;applicationDeploymentData&quot;&gt;&lt;/param&gt;
+        /// &lt;returns&gt;The full path to the local deployment package once 
+downloaded.&lt;/returns&gt;
+        private string DownloadApplicationDeploymentPackage(
+ApplicationDeploymentData applicationDeploymentData)
+        {
+            Console.WriteLine(&quot;Downloading...&quot;);
+            var downloadedPackagePath = DeploymentPackageDownloadClient
+.DownloadDeploymentPackage(new Uri
+(applicationDeploymentData.DeploymentPackageDownloadUrl));
+            try
+            {
+                var computedHash = DeploymentFileUtils
+.ComputeDeploymentPackageHash(downloadedPackagePath);
+                if(applicationDeploymentData.DeploymentPackageHash == null|| computedHash.Equals(applicationDeploymentData.DeploymentPackageHash))
+                {
+                    return downloadedPackagePath;
+                }
+                else
+                {
+                    throw new AppSnapInvalidDataException(
+                        &quot;Integrity check of deployment package failed. MD5 
+hashes do not match. Deployment package possibly corrupt or incomplete.&quot;);
+                }
+            }
+            catch (Exception e)
+            {
+                CleanUpApplicationDeploymentPackage(downloadedPackagePath, 
+null);
+                throw new AppSnapException(&quot;Failed to download deployment 
+package. Fatal error.&quot;, e);
+            }
+        }
+
+        /// &lt;summary&gt;
+        /// Extracts a local deployment package to a temp directory.
+        /// &lt;/summary&gt;
+        /// &lt;returns&gt;The full path to the directory the deployment package 
+was extracted to.&lt;/returns&gt;
+        private string StageApplicationDeploymentPackage(
+ApplicationDeploymentData applicationDeploymentData, stringdownloadedPackagePath)
+        {
+            Console.WriteLine(&quot;Staging...&quot;);
+            Logger.Info(&quot;Staging...&quot;);
+            try
+            {
+                return DeploymentFileUtils
+.ExtractDeploymentPackage(downloadedPackagePath);
+            }
+            catch (Exception e)
+            {
+                CleanUpApplicationDeploymentPackage(downloadedPackagePath, 
+null);
+                throw new AppSnapException(&quot;Failed to stage deployment. 
+Fatal error.&quot;, e);
+            }
+        }
+
+        /// &lt;summary&gt;
+        /// Pushes an application deployment package to the cloud.
+        /// &lt;/summary&gt;
+        private void PushApplicationDeploymentPackage(
+ApplicationDeploymentData applicationDeploymentData, string stagingPath)
+        {
+            Console.WriteLine(&quot;Pushing...&quot;);
+            Logger.Info(&quot;Pushing...&quot;);
+            try
+            {
+                var applicationData = ApplicationOperations
+.GetApplication(applicationDeploymentData.ApplicationId);
+                DeploymentPusher.UploadApplication(applicationData.CloudLoginId, 
+applicationData, stagingPath);
+            }
+            catch (Exception)
+            {
+                CleanUpApplicationDeploymentPackage(null, stagingPath);
+                throw;
+            }
+        }
+
+        /// &lt;summary&gt;
+        /// Cleans up all temp files from an application deployment.
+        /// &lt;/summary&gt;
+        /// &lt;param name=&quot;downloadPackagePath&quot;&gt;The full path to the 
+downloaded deployment package.&lt;/param&gt;
+        /// &lt;param name=&quot;stagingPath&quot;&gt;The full path to the staging 
+directory that contains the extracted deployment package.&lt;/param&gt;
+        private void CleanUpApplicationDeploymentPackage(stringdownloadPackagePath, 
+string stagingPath)
+        {
+            Console.WriteLine(&quot;Cleaning up...&quot;);
+            Logger.Info(&quot;Cleaning up...&quot;);
+            try
+            {
+                if (!string.IsNullOrWhiteSpace(downloadPackagePath))
+                {
+                    DeploymentFileUtils.DeleteFile(downloadPackagePath);
+                }
+                if (!string.IsNullOrWhiteSpace(stagingPath))
+                {
+                    DeploymentFileUtils.DeleteDirectory(stagingPath);
+                }
+            }
+            catch (Exception e)
+            {
+                Logger.Error(string.Format(&quot;Failed to clean up deployment 
+at {0} and {1}. Error was: {2}&quot;,
+                                           downloadPackagePath,
+                                           stagingPath,
+                                           e.Message));
+            }
+        }
+
+        /// &lt;summary&gt;
+        /// Logs an exception, including inner exceptions.
+        /// &lt;/summary&gt;
+        internal void LogException(ApplicationDeploymentDatadeploymentData, 
+Exception exception, bool inner = false, string innerMessage = &quot;&quot;)
+        {
+            try
+            {
+                string errorMessage;
+                if (!inner)
+                {
+                    if (deploymentData != null)
+                    {
+                        errorMessage = string.Format(
+                            &quot;Error caught executing deployment with id {0}for application 
+{1}:&quot; +
+                            &quot;\r\n\r\nThe exception was:\r\n\t{2}&quot; +
+                            &quot;\r\n\r\nThe stacktrace was:\r\n{3}\r\n&quot;,
+                            deploymentData.Id,
+                            deploymentData.ApplicationId,
+                            exception.Message,
+                            exception.StackTrace);
+                    }
+                    else
+                    {
+                        errorMessage = string.Format(
+                            &quot;Error caught&quot; +
+                            &quot;\r\n\r\nThe exception was:\r\n\t{0}&quot; +
+                            &quot;\r\n\r\nThe stacktrace was:\r\n{1}\r\n&quot;,
+                            exception.Message,
+                            exception.StackTrace);
+                    }
+                }
+                else
+                {
+                    errorMessage = innerMessage + string.Format(
+                        &quot;\r\nThe inner exception was:\r\n\t{0}&quot; +
+                        &quot;\r\n\r\nThe inner stacktrace was:\r\n{1}\r\n&quot;,
+                        exception.Message,
+                        exception.StackTrace);
+                }
+                if (exception.InnerException != null)
+                {
+                    LogException(deploymentData, exception.InnerException, 
+true, errorMessage);
+                }
+                else
+                {
+                    Logger.Error(errorMessage);
+                }
+            }
+            catch (Exception)
+            {/* eat it */}
+        }
+
+        /// &lt;summary&gt;
+        /// Disposes of the deployment worker and frees up resources.
+        /// &lt;/summary&gt;
+        public void Dispose()
+        {
+            if (_channel != null)
+            {
+                _channel.Abort();
+            }
+            if (_connection != null)
+            {
+                try
+                {
+                    _connection.Close();
+                }
+                catch (AlreadyClosedException)
+                {
+                    /* Eat it */
+                }
+            }
+        }
+    }
+}
+
+ 
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20121025/bcd2a73d/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20121025/bcd2a73d/attachment.htm</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="023364.html">[rabbitmq-discuss] Example on event based or logging
+</A></li>
+	<LI>Next message: <A HREF="023378.html">[rabbitmq-discuss] Persistent messages on durable queue sometimes not delivered to consumers
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#23372">[ date ]</a>
+              <a href="thread.html#23372">[ thread ]</a>
+              <a href="subject.html#23372">[ subject ]</a>
+              <a href="author.html#23372">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

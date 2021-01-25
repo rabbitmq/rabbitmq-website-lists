@@ -1,0 +1,109 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] server crashes with very fast consumers
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20server%20crashes%20with%20very%20fast%20consumers&In-Reply-To=%3C8D6C08AB-4478-463A-89A3-4D5C2330A966%40detreville.org%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="012313.html">
+   <LINK REL="Next"  HREF="012397.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] server crashes with very fast consumers</H1>
+    <B>John DeTreville</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20server%20crashes%20with%20very%20fast%20consumers&In-Reply-To=%3C8D6C08AB-4478-463A-89A3-4D5C2330A966%40detreville.org%3E"
+       TITLE="[rabbitmq-discuss] server crashes with very fast consumers">john at detreville.org
+       </A><BR>
+    <I>Thu Apr 14 01:04:02 BST 2011</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="012313.html">[rabbitmq-discuss] server crashes with very fast consumers
+</A></li>
+        <LI>Next message: <A HREF="012397.html">[rabbitmq-discuss] server crashes with very fast consumers
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#12381">[ date ]</a>
+              <a href="thread.html#12381">[ thread ]</a>
+              <a href="subject.html#12381">[ subject ]</a>
+              <a href="author.html#12381">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Alex,
+
+I've spent the last few days trying to reproduce your problems (along with a little eating and sleeping). I'm not sure I've seen your problem, but I've reproduced a few that might be similar.
+
+Let me start by saying that it's very hard for RabbitMQ to die the way you describe. Not impossible, but difficult. For example, if an Erlang process inside RabbitMQ fails (Erlang processes are like Java threads), the fact is logged and the process is restarted. But funny things can happen on a loaded machine, and your test case loads the machine pretty heavily, creating 1,000 Unix processes at a time, and this can cause various kinds of trouble. If the underpinnings below RabbitMQ start to fail, then RabbitMQ can itself fail in mysterious ways.
+
+For example, in one of my test runs, I was using a VM that ran out of disk space. Not surprisingly, RabbitMQ had problems. Just as unsurprisingly, when it crashed, it couldn't even write a proper log file. Similarly, if the Linux kernel is running short of swap space, it might pick a Unix process to kill to free some up, and the odds of that Unix process being RabbitMQ are pretty good. Again, this would cause a failure without anything in the log.
+
+In many of my tests, I ran with a 32-bit Erlang, and with a relatively small amount of RAM. RabbitMQ had to do quite a lot more work to conserve RAM, and sometimes it failed to do so fast enough, and Erlang couldn't allocate more memory, and crashed. Nothing gets logged in this case; Erlang merely writes a message to stderr that is easy to miss. Perhaps we could automatically restart RabbitMQ in such a case, but it's hard to know how far that would get when the machine is so overloaded that shell scripts are complaining about interrupted system calls. (By the way, this sort of RabbitMQ failure seems most common on Windows machines, which have no 64-bit Erlang.)
+
+As I've said, your test case is perhaps atypical in that it creates 1,000 client processes on the same machine as the broker, starving the broker of CPU time. Could you retry it with the broker on a separate machine? And could you say exactly which versions of everything you're running?
+
+Cheers,
+John
+
+On Apr 8, 2011, at 9:12 PM, alex chen wrote:
+
+&gt;<i> John,
+</I>&gt;<i> 
+</I>&gt;<i> &gt; When I run your test, many of the publishers and consumers die because they can't contact the RabbitMQ broker, or can't connect to it in time. This is not surprising, since a small VM with over 1,000 active processes will run very slowly. The failing processes die with messages like &quot;Cannot connect to localhost:5672&quot; and &quot;Opening socket: Connection timed out&quot; and so on.
+</I>&gt;<i> 
+</I>&gt;<i> Did you use the latest amqp_consumer.c that i sent in my previous email?  it re-connects instead of exits in case of connection failure.
+</I>&gt;<i> <A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/2011-March/012099.html">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/2011-March/012099.html</A>
+</I>&gt;<i> However, you still need run it on a more powerful machine.  the broker crash happens when 1000 consumers start consuming messages simultaneously.  To to that, you need to have all publishers running at the same time also.  Otherwise, if messages in 1000 queues are published sequentially, some consumers will finish consuming 3000 messages before others start.  the machine i used for testing has 16 GB memory and 8 cpu.  i did not see any publisher got timeout.
+</I>&gt;<i> 
+</I>&gt;<i> &gt; Although these processes were temporarily unable to connect to the RabbitMQ broker, the broker itself seems to behave properly; it processes messages from and to the subset of publishers and consumers that were able to get through the initial connection storm. It had nothing unusual in its log.
+</I>&gt;<i> 
+</I>&gt;<i> as mentioned above, this is because you did not get all consumers to start simultaneously.  
+</I>&gt;<i> 
+</I>&gt;<i> &gt; Could you confirm that this is NOT the failure mode you saw? And how did you know that the RabbitMQ broker had crashed? Did the process go away? Or was it impossible to contact it later on? And how did you try to contact it?
+</I>&gt;<i> 
+</I>&gt;<i> When it crashed, &quot;ps auxww | grep beam&quot; did not show the broker process running.  &quot;rabbmitmqctl list_queues&quot; failed to connect.
+</I>&gt;<i> &quot;telnet localhost 5672&quot; failed.  
+</I>&gt;<i> 
+</I>&gt;<i> -alex
+</I>&gt;<i> &lt;ATT00001..txt&gt;
+</I>
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20110413/4a7a3fe4/attachment-0001.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20110413/4a7a3fe4/attachment-0001.htm</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="012313.html">[rabbitmq-discuss] server crashes with very fast consumers
+</A></li>
+	<LI>Next message: <A HREF="012397.html">[rabbitmq-discuss] server crashes with very fast consumers
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#12381">[ date ]</a>
+              <a href="thread.html#12381">[ thread ]</a>
+              <a href="subject.html#12381">[ subject ]</a>
+              <a href="author.html#12381">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

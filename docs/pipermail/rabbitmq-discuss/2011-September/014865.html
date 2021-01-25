@@ -1,0 +1,142 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] When are persistent messages flushed to disk?
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20When%20are%20persistent%20messages%20flushed%20to%20disk%3F&In-Reply-To=%3C20110902152537.GB9658%40rabbitmq.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="014862.html">
+   <LINK REL="Next"  HREF="014887.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] When are persistent messages flushed to disk?</H1>
+    <B>Matthew Sackman</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20When%20are%20persistent%20messages%20flushed%20to%20disk%3F&In-Reply-To=%3C20110902152537.GB9658%40rabbitmq.com%3E"
+       TITLE="[rabbitmq-discuss] When are persistent messages flushed to disk?">matthew at rabbitmq.com
+       </A><BR>
+    <I>Fri Sep  2 16:25:39 BST 2011</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="014862.html">[rabbitmq-discuss] When are persistent messages flushed to disk?
+</A></li>
+        <LI>Next message: <A HREF="014887.html">[rabbitmq-discuss] When are persistent messages flushed to disk?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#14865">[ date ]</a>
+              <a href="thread.html#14865">[ thread ]</a>
+              <a href="subject.html#14865">[ subject ]</a>
+              <a href="author.html#14865">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi Iain,
+
+On Fri, Sep 02, 2011 at 10:14:17AM -0500, Iain Hull wrote:
+&gt;<i> I have a simple test that pushes 1,000,000 messages to the broker as
+</I>&gt;<i> fast as possible.  Once this is finished I kill the broker.  
+</I>&gt;<i> 
+</I>&gt;<i> * When the messages are small &lt; 100 bytes only 250,000 of the message
+</I>&gt;<i> survive.  I can see in the Web console the number of messages in the
+</I>&gt;<i> queue raises very slowly compared to the rate the client sends new
+</I>&gt;<i> messages.
+</I>&gt;<i> * When the message is larger = 1Kb all or most of the messages are
+</I>&gt;<i> persisted.  I can see in the Web console the number of messages in the
+</I>&gt;<i> queue closely matches the number of messages the client has sent.
+</I>&gt;<i> 
+</I>&gt;<i> I know that my test is a little unrealistic but we are planning to use
+</I>&gt;<i> RabbitMQ to smooth out bursts of activity on our ESB caused by batch
+</I>&gt;<i> updates, I expect most messages to arrive in large bursts and be less
+</I>&gt;<i> than 1 kb.  I am trying to understand the nature of the window where
+</I>&gt;<i> persistent messages could be lost.  
+</I>
+If you are not using publisher confirms, then you have no way of telling
+whether the packets have even reached the broker, yet alone the broker
+having done anything about those messages. Many of those messages might
+even still be in the TCP stack on the client's OS.
+
+&gt;<i> * Is it time based? flushed to disk every n milliseconds.
+</I>&gt;<i> * Is it memory based? Flushed after a buffer of a certain size is
+</I>&gt;<i> filled.  (Our messages will be small &lt; 1k)
+</I>&gt;<i> * Does the rate that messages arrive change the window?
+</I>&gt;<i> * Is most of the buffering at the socket level or in side RabbitMQ?
+</I>
+The answer to nearly all of those is &quot;yes&quot;.
+
+Rabbit will request some TCP buffers. From time to time when it runs out
+of memory and is waiting disks to catch up, it'll stop draining those
+buffers in order to halt producers.
+
+In order to avoid doing lots of tiny little writes, we do a lot of
+buffering internally so as to be able to drive hard disks as fast as
+possible.
+
+We also have timers to make sure that once a message has reached a
+queue, it'll be written and fsync'd to disk promptly. That said, a queue
+can only go so fast, and so messages can back up as they're passed
+between processes within Rabbit.
+
+All of which is essentially why we introduced publisher confirms (well,
+that, plus the fact that transactions are almost never what you actually
+want - think of publisher confirms as being there to solve the fact you
+can't pipeline transactions). Thus I'd recommend you read
+<A HREF="http://www.rabbitmq.com/extensions.html#confirms">http://www.rabbitmq.com/extensions.html#confirms</A> and use them, and
+architect your clients such that they understand that until they receive
+confirmation from the broker that the broker has taken responsibility
+for the message (which in the case of a persistent msg sent to durable
+queues (normally) means the msg has been fsync'd to disk), the
+publishing client is still responsible for the message and should be
+prepared to republish the message should its connection to the broker
+fail before it receives the confirm.
+
+Now of course, the confirm could be lost in mid-flight, and you'll then
+get duplicates, but there are almost always ways of getting duplicates -
+you normally have to choose between &quot;at least once&quot; and &quot;at most once&quot;
+delivery - &quot;exactly once&quot; is normally unobtainable except in very
+restricted circumstances. So that means you may have to make sure your
+clients are doing idempotent operations or at least can detect
+duplicates etc etc, but that's all standard stuff.
+
+Hope that's of help,
+
+Matthew
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="014862.html">[rabbitmq-discuss] When are persistent messages flushed to disk?
+</A></li>
+	<LI>Next message: <A HREF="014887.html">[rabbitmq-discuss] When are persistent messages flushed to disk?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#14865">[ date ]</a>
+              <a href="thread.html#14865">[ thread ]</a>
+              <a href="subject.html#14865">[ subject ]</a>
+              <a href="author.html#14865">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

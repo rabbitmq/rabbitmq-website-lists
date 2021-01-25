@@ -1,0 +1,99 @@
+<tt>
+Matthew&nbsp;-&lt;br&gt;&lt;br&gt;Thanks&nbsp;for&nbsp;trying&nbsp;but&nbsp;that&nbsp;does&nbsp;not&nbsp;really&nbsp;help. &nbsp;I&nbsp;want&nbsp;to&nbsp;interrupt&nbsp;a&nbsp;free-running&lt;br&gt;process&nbsp;that&nbsp;has&nbsp;already&nbsp;posted&nbsp;the&nbsp;read. &nbsp;To&nbsp;explore&nbsp;this,&nbsp;I&nbsp;modified&nbsp;RabbitMQ&amp;#39;s&lt;br&gt;SimpleConsumer&nbsp;class&nbsp;(below)&nbsp;to&nbsp;post&nbsp;a&nbsp;read&nbsp;(via&nbsp;the&nbsp;nextDelivery&nbsp;method),&nbsp;and&lt;br&gt;<br>
+while&nbsp;it&nbsp;is&nbsp;waiting,&nbsp;have&nbsp;another&nbsp;thread&nbsp;close&nbsp;the&nbsp;channel.&lt;br&gt;&lt;br&gt;Thanks,&lt;br&gt;&lt;br&gt;-&nbsp;Jim&lt;br&gt;&lt;br&gt;//  &nbsp;The&nbsp;contents&nbsp;of&nbsp;this&nbsp;file&nbsp;are&nbsp;subject&nbsp;to&nbsp;the&nbsp;Mozilla&nbsp;Public&nbsp;License&lt;br&gt;//  &nbsp;Version&nbsp;1.1&nbsp;(the&nbsp;&amp;quot;License&amp;quot;);&nbsp;you&nbsp;may&nbsp;not&nbsp;use&nbsp;this&nbsp;file&nbsp;except&nbsp;in&lt;br&gt;<br>
+//  &nbsp;compliance&nbsp;with&nbsp;the&nbsp;License.&nbsp;You&nbsp;may&nbsp;obtain&nbsp;a&nbsp;copy&nbsp;of&nbsp;the&nbsp;License&nbsp;at&lt;br&gt;//  &nbsp;&lt;a&nbsp;href=&quot;http://www.mozilla.org/MPL/&quot;&gt;http://www.mozilla.org/MPL/&lt;/a&gt;&lt;br&gt;//&lt;br&gt;//  &nbsp;Software&nbsp;distributed&nbsp;under&nbsp;the&nbsp;License&nbsp;is&nbsp;distributed&nbsp;on&nbsp;an&nbsp;&amp;quot;AS&nbsp;IS&amp;quot;&lt;br&gt;<br>
+//  &nbsp;basis,&nbsp;WITHOUT&nbsp;WARRANTY&nbsp;OF&nbsp;ANY&nbsp;KIND,&nbsp;either&nbsp;express&nbsp;or&nbsp;implied.&nbsp;See&nbsp;the&lt;br&gt;//  &nbsp;License&nbsp;for&nbsp;the&nbsp;specific&nbsp;language&nbsp;governing&nbsp;rights&nbsp;and&nbsp;limitations&lt;br&gt;//  &nbsp;under&nbsp;the&nbsp;License.&lt;br&gt;//&lt;br&gt;//  &nbsp;The&nbsp;Original&nbsp;Code&nbsp;is&nbsp;RabbitMQ.&lt;br&gt;<br>
+//&lt;br&gt;//  &nbsp;The&nbsp;Initial&nbsp;Developers&nbsp;of&nbsp;the&nbsp;Original&nbsp;Code&nbsp;are&nbsp;LShift&nbsp;Ltd,&lt;br&gt;//  &nbsp;Cohesive&nbsp;Financial&nbsp;Technologies&nbsp;LLC,&nbsp;and&nbsp;Rabbit&nbsp;Technologies&nbsp;Ltd.&lt;br&gt;//&lt;br&gt;//  &nbsp;Portions&nbsp;created&nbsp;before&nbsp;22-Nov-2008&nbsp;00:00:00&nbsp;GMT&nbsp;by&nbsp;LShift&nbsp;Ltd,&lt;br&gt;<br>
+//  &nbsp;Cohesive&nbsp;Financial&nbsp;Technologies&nbsp;LLC,&nbsp;or&nbsp;Rabbit&nbsp;Technologies&nbsp;Ltd&lt;br&gt;//  &nbsp;are&nbsp;Copyright&nbsp;(C)&nbsp;2007-2008&nbsp;LShift&nbsp;Ltd,&nbsp;Cohesive&nbsp;Financial&lt;br&gt;//  &nbsp;Technologies&nbsp;LLC,&nbsp;and&nbsp;Rabbit&nbsp;Technologies&nbsp;Ltd.&lt;br&gt;//&lt;br&gt;//  &nbsp;Portions&nbsp;created&nbsp;by&nbsp;LShift&nbsp;Ltd&nbsp;are&nbsp;Copyright&nbsp;(C)&nbsp;2007-2009&nbsp;LShift&lt;br&gt;<br>
+//  &nbsp;Ltd.&nbsp;Portions&nbsp;created&nbsp;by&nbsp;Cohesive&nbsp;Financial&nbsp;Technologies&nbsp;LLC&nbsp;are&lt;br&gt;//  &nbsp;Copyright&nbsp;(C)&nbsp;2007-2009&nbsp;Cohesive&nbsp;Financial&nbsp;Technologies&lt;br&gt;//  &nbsp;LLC.&nbsp;Portions&nbsp;created&nbsp;by&nbsp;Rabbit&nbsp;Technologies&nbsp;Ltd&nbsp;are&nbsp;Copyright&lt;br&gt;//  &nbsp;(C)&nbsp;2007-2009&nbsp;Rabbit&nbsp;Technologies&nbsp;Ltd.&lt;br&gt;<br>
+//&lt;br&gt;//  &nbsp;All&nbsp;Rights&nbsp;Reserved.&lt;br&gt;//&lt;br&gt;//  &nbsp;Contributor(s):&nbsp;______________________________________.&lt;br&gt;//&lt;br&gt;&lt;br&gt;package&nbsp;com.rabbitmq.examples;&lt;br&gt;&lt;br&gt;import&nbsp;com.rabbitmq.client.AMQP;&lt;br&gt;import&nbsp;com.rabbitmq.client.Channel;&lt;br&gt;<br>
+import&nbsp;com.rabbitmq.client.Connection;&lt;br&gt;import&nbsp;com.rabbitmq.client.ConnectionFactory;&lt;br&gt;import&nbsp;com.rabbitmq.client.QueueingConsumer;&lt;br&gt;&lt;br&gt;public&nbsp;class&nbsp;SimpleConsumerCancel&nbsp;implements&nbsp;Runnable&nbsp;{&lt;br&gt;   &nbsp;&lt;br&gt;   &nbsp;private&nbsp;static&nbsp;int&nbsp;count&nbsp;=&nbsp;0;&lt;br&gt;<br>
+   &nbsp;&lt;br&gt;   &nbsp;private&nbsp;static&nbsp;Channel&nbsp;channel&nbsp;=&nbsp;null;&lt;br&gt;   &nbsp;&lt;br&gt;   &nbsp;private&nbsp;static&nbsp;String&nbsp;consumerTag&nbsp;=&nbsp;null;&lt;br&gt;&lt;br&gt;   &nbsp;public&nbsp;static&nbsp;void&nbsp;main(String[]&nbsp;args)&nbsp;{&lt;br&gt;       &nbsp;try&nbsp;{&lt;br&gt;           &nbsp;String&nbsp;hostName&nbsp;=&nbsp;(args.length&nbsp;&amp;gt;&nbsp;0)&nbsp;?&nbsp;args[0]&nbsp;:&nbsp;&amp;quot;172.20.125.34&amp;quot;;&lt;br&gt;<br>
+           &nbsp;int&nbsp;portNumber&nbsp;=&nbsp;(args.length&nbsp;&amp;gt;&nbsp;1)&nbsp;?&nbsp;Integer.parseInt(args[1])&nbsp;:&nbsp;AMQP.PROTOCOL.PORT;&lt;br&gt;           &nbsp;String&nbsp;queueName&nbsp;=&nbsp;(args.length&nbsp;&amp;gt;&nbsp;2)&nbsp;?&nbsp;args[2]&nbsp;:&nbsp;&amp;quot;SimpleQueue&amp;quot;;&lt;br&gt;&lt;br&gt;           &nbsp;ConnectionFactory&nbsp;connFactory&nbsp;=&nbsp;new&nbsp;ConnectionFactory();&lt;br&gt;<br>
+           &nbsp;Connection&nbsp;conn&nbsp;=&nbsp;connFactory.newConnection(hostName,&nbsp;portNumber);&lt;br&gt;&lt;br&gt;           &nbsp;channel&nbsp;=&nbsp;conn.createChannel();&lt;br&gt;&lt;br&gt;           &nbsp;channel.queueDeclare(queueName);&lt;br&gt;&lt;br&gt;           &nbsp;Thread&nbsp;thread&nbsp;=&nbsp;new&nbsp;Thread(new&nbsp;SimpleConsumerCancel());&lt;br&gt;<br>
+           &nbsp;thread.start();&lt;br&gt;&lt;br&gt;           &nbsp;QueueingConsumer&nbsp;consumer&nbsp;=&nbsp;new&nbsp;QueueingConsumer(channel);&lt;br&gt;           &nbsp;consumerTag&nbsp;=&nbsp;channel.basicConsume(queueName,&nbsp;consumer);&lt;br&gt;           &nbsp;System.out.println(&amp;quot;consumerTag:&nbsp;&amp;quot;&nbsp;+&nbsp;consumerTag);&lt;br&gt;<br>
+           &nbsp;while&nbsp;(true)&nbsp;{&lt;br&gt;               &nbsp;try&nbsp;{&lt;br&gt;                   &nbsp;System.out.println(&amp;quot;Waiting&nbsp;for&nbsp;delivery.&amp;quot;);&lt;br&gt;                   &nbsp;QueueingConsumer.Delivery&nbsp;delivery&nbsp;=&nbsp;consumer.nextDelivery();&lt;br&gt;                   &nbsp;System.out.println(&amp;quot;\nGot&nbsp;delivery.&amp;quot;);&lt;br&gt;<br>
+                   &nbsp;count++;&lt;br&gt;                   &nbsp;System.out.println(&amp;quot;SimpleConsumerCancel&nbsp;got&nbsp;Message:&nbsp;&amp;quot;&nbsp;+&nbsp;new&nbsp;String(delivery.getBody())&nbsp;+&nbsp;&amp;quot;&nbsp;:&nbsp;&amp;quot;&nbsp;+&nbsp;count);&lt;br&gt;                   &nbsp;channel.basicAck(delivery.getEnvelope().getDeliveryTag(),&nbsp;false);&lt;br&gt;<br>
+               &nbsp;}&lt;br&gt;               &nbsp;catch&nbsp;(Exception&nbsp;ex)&nbsp;{&lt;br&gt;                   &nbsp;System.err.println(&amp;quot;Read&nbsp;thread&nbsp;caught&nbsp;exception:&nbsp;&amp;quot;&nbsp;+&nbsp;ex);&lt;br&gt;&lt;br&gt;                   &nbsp;channel&nbsp;=&nbsp;conn.createChannel();&lt;br&gt;                   &nbsp;channel.queueDeclare(queueName);&lt;br&gt;<br>
+                   &nbsp;consumer&nbsp;=&nbsp;new&nbsp;QueueingConsumer(channel);&lt;br&gt;                   &nbsp;consumerTag&nbsp;=&nbsp;channel.basicConsume(queueName,&nbsp;consumer);&lt;br&gt;                   &nbsp;System.out.println(&amp;quot;consumerTag:&nbsp;&amp;quot;&nbsp;+&nbsp;consumerTag);&lt;br&gt;<br>
+               &nbsp;}&lt;br&gt;           &nbsp;}&lt;br&gt;       &nbsp;}&lt;br&gt;       &nbsp;catch&nbsp;(Exception&nbsp;ex)&nbsp;{&lt;br&gt;           &nbsp;System.err.println(&amp;quot;Main&nbsp;thread&nbsp;caught&nbsp;exception:&nbsp;&amp;quot;&nbsp;+&nbsp;ex);&lt;br&gt;           &nbsp;//ex.printStackTrace();&lt;br&gt;       &nbsp;}&lt;br&gt;<br>
+       &nbsp;System.out.println(&amp;quot;\nMain&nbsp;thread&nbsp;exiting&nbsp;normally.&amp;quot;);&lt;br&gt;   &nbsp;}&lt;br&gt;&lt;br&gt;   &nbsp;@Override&lt;br&gt;   &nbsp;public&nbsp;void&nbsp;run()&nbsp;{&lt;br&gt;&lt;br&gt;       &nbsp;while&nbsp;(true)&nbsp;{&lt;br&gt;           &nbsp;try&nbsp;{&lt;br&gt;               &nbsp;System.out.println(&amp;quot;Cancel&nbsp;thread&nbsp;is&nbsp;sleeping...&amp;quot;);&lt;br&gt;<br>
+               &nbsp;Thread.sleep(4000);&lt;br&gt;               &nbsp;System.out.println(&amp;quot;Going&nbsp;to&nbsp;cancel&nbsp;channel&nbsp;with&nbsp;consumerTag:&nbsp;&amp;quot;&nbsp;+&nbsp;consumerTag);&lt;br&gt;               &nbsp;//&nbsp;channel.basicCancel(consumerTag);&lt;br&gt;               &nbsp;channel.close();&lt;br&gt;<br>
+               &nbsp;//&nbsp;channel.abort();&lt;br&gt;               &nbsp;System.out.println(&amp;quot;\nCancelled&nbsp;channel&nbsp;with&nbsp;consumerTag:&nbsp;&amp;quot;&nbsp;+&nbsp;consumerTag);&lt;br&gt;           &nbsp;}&lt;br&gt;           &nbsp;catch&nbsp;(Exception&nbsp;ex)&nbsp;{&lt;br&gt;               &nbsp;System.err.println(&amp;quot;SimpleConsumerCancel&nbsp;ex:&nbsp;&amp;quot;&nbsp;+&nbsp;ex);&lt;br&gt;<br>
+               &nbsp;//ex.printStackTrace();&lt;br&gt;           &nbsp;}&lt;br&gt;       &nbsp;}&lt;br&gt;&lt;br&gt;   &nbsp;}&lt;br&gt;}&lt;br&gt;&lt;br&gt;&lt;br&gt;&lt;br&nbsp;clear=&quot;all&quot;&gt;Jim&nbsp;Irrer&nbsp; &nbsp; &nbsp;&lt;a&nbsp;href=&quot;mailto:irrer@umich.edu&quot;&gt;irrer@umich.edu&lt;/a&gt;&nbsp; &nbsp; &nbsp; &nbsp;(734)&nbsp;647-4409&lt;br&gt;University&nbsp;of&nbsp;Michigan&nbsp;Hospital&nbsp;Radiation&nbsp;Oncology&lt;br&gt;<br>
+519&nbsp;W.&nbsp;William&nbsp;St.&nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp;Ann&nbsp;Arbor,&nbsp;MI&nbsp;48103&lt;br&gt;<br>
+&lt;br&gt;&lt;br&gt;&lt;div&nbsp;class=&quot;gmail_quote&quot;&gt;On&nbsp;Thu,&nbsp;Jan&nbsp;14,&nbsp;2010&nbsp;at&nbsp;6:24&nbsp;AM,&nbsp;Matthew&nbsp;Sackman&nbsp;&lt;span&nbsp;dir=&quot;ltr&quot;&gt;&amp;lt;&lt;a&nbsp;href=&quot;mailto:matthew@lshift.net&quot;&gt;matthew@lshift.net&lt;/a&gt;&amp;gt;&lt;/span&gt;&nbsp;wrote:&lt;br&gt;&lt;blockquote&nbsp;class=&quot;gmail_quote&quot;&nbsp;style=&quot;border-left:&nbsp;1px&nbsp;solid&nbsp;rgb(204,&nbsp;204,&nbsp;204);&nbsp;margin:&nbsp;0pt&nbsp;0pt&nbsp;0pt&nbsp;0.8ex;&nbsp;padding-left:&nbsp;1ex;&quot;&gt;<br>
+Hi&nbsp;Jim,&lt;br&gt;<br>
+&lt;div&nbsp;class=&quot;im&quot;&gt;&lt;br&gt;<br>
+On&nbsp;Wed,&nbsp;Jan&nbsp;13,&nbsp;2010&nbsp;at&nbsp;02:06:57PM&nbsp;-0500,&nbsp;Jim&nbsp;Irrer&nbsp;wrote:&lt;br&gt;<br>
+&amp;gt;&nbsp;I&nbsp;have&nbsp;several&nbsp;consumers&nbsp;reading&nbsp;from&nbsp;the&nbsp;same&nbsp;queue.&nbsp; I&nbsp;would&nbsp;like&lt;br&gt;<br>
+&amp;gt;&nbsp;to&nbsp;be&nbsp;able&nbsp;to&nbsp;interrupt&nbsp;their&nbsp;pending&nbsp;read&nbsp;to&nbsp;suspend&nbsp;and&nbsp;resume&nbsp;any&lt;br&gt;<br>
+&amp;gt;&nbsp;one&nbsp;of&nbsp;them.&nbsp; &nbsp;I&amp;#39;ve&nbsp;played&nbsp;around&nbsp;with:&lt;br&gt;<br>
+&amp;gt;&lt;br&gt;<br>
+&amp;gt;&nbsp;Channel.basicCancel(consumerTag)&nbsp;:&nbsp;don&amp;#39;t&nbsp;know&nbsp;how&nbsp;to&nbsp;resume&lt;br&gt;<br>
+&amp;gt;&nbsp;Channel.abort()&nbsp; &nbsp; produces&nbsp;com.rabbitmq.client.ShutdownSignalException&lt;br&gt;<br>
+&amp;gt;&nbsp;Channel.close()&nbsp; &nbsp;produces&nbsp;com.rabbitmq.client.ShutdownSignalException&lt;br&gt;<br>
+&amp;gt;&lt;br&gt;<br>
+&amp;gt;&nbsp;The&nbsp;close()&nbsp;and&nbsp;abort()&nbsp;methods&nbsp;seem&nbsp;to&nbsp;act&nbsp;about&nbsp;the&nbsp;same.&nbsp; I&nbsp;can&nbsp;resume&lt;br&gt;<br>
+&amp;gt;&nbsp;reading&nbsp;from&nbsp;the&nbsp;queue&nbsp;by&nbsp;creating&nbsp;a&nbsp;new&nbsp;channel&nbsp;and&nbsp;a&nbsp;new&nbsp;QueueingConsumer.&lt;br&gt;<br>
+&amp;gt;&nbsp;I&nbsp;could&nbsp;not&nbsp;figure&nbsp;out&nbsp;how&nbsp;to&nbsp;resume&nbsp;after&nbsp;a&nbsp;basicCancel.&lt;br&gt;<br>
+&amp;gt;&lt;br&gt;<br>
+&amp;gt;&nbsp;Is&nbsp;using&nbsp;close()&nbsp;and&nbsp;then&nbsp;re-constructing&nbsp;the&nbsp;channel&nbsp;and&nbsp;QueueingConsumer&lt;br&gt;<br>
+&amp;gt;&nbsp;the&nbsp;right&nbsp;way&nbsp;to&nbsp;go?&nbsp; Will&nbsp;resources&nbsp;be&nbsp;properly&nbsp;taken&nbsp;care&nbsp;of&nbsp;by&nbsp;garbage&lt;br&gt;<br>
+&amp;gt;&nbsp;collection?&lt;br&gt;<br>
+&lt;br&gt;<br>
+&lt;/div&gt;What&nbsp;I&nbsp;would&nbsp;do&nbsp;is&nbsp;set&nbsp;QoS&nbsp;prefetch&nbsp;to&nbsp;1,&nbsp;and&nbsp;make&nbsp;sure&nbsp;that&nbsp;you&amp;#39;re&lt;br&gt;<br>
+doing&nbsp;ack-ing&nbsp;manually&nbsp;(i.e.&nbsp;don&amp;#39;t&nbsp;set&nbsp;noAck).&nbsp;Then,&nbsp;when&nbsp;you&nbsp;want&nbsp;to&lt;br&gt;<br>
+&amp;quot;suspend&amp;quot;,&nbsp;just&nbsp;delay&nbsp;acking&nbsp;the&nbsp;last&nbsp;message&nbsp;you&nbsp;received.&nbsp;That&amp;#39;ll&lt;br&gt;<br>
+prevent&nbsp;further&nbsp;messages&nbsp;being&nbsp;sent&nbsp;to&nbsp;you.&nbsp;Once&nbsp;you&nbsp;want&nbsp;to&nbsp;resume,&lt;br&gt;<br>
+send&nbsp;the&nbsp;ack&nbsp;and&nbsp;then&nbsp;the&nbsp;next&nbsp;message&nbsp;will&nbsp;be&nbsp;sent&nbsp;down&nbsp;to&nbsp;you.&nbsp;Does&lt;br&gt;<br>
+that&nbsp;help?&lt;br&gt;<br>
+&lt;div&nbsp;class=&quot;im&quot;&gt;&lt;br&gt;<br>
+&amp;gt;&nbsp;BTW&nbsp;-&nbsp;I&nbsp;use&nbsp;the&nbsp;consumerTag&nbsp;returned&nbsp;by&nbsp;Channel.basicConsume(queueName,&lt;br&gt;<br>
+&amp;gt;&nbsp;consumer)&lt;br&gt;<br>
+&amp;gt;&nbsp;for&nbsp;the&nbsp;argument&nbsp;to&nbsp;Channel.basicCancel,&nbsp;eg:&nbsp;*&lt;br&gt;<br>
+&amp;gt;&nbsp;amq.ctag-1m/H7+SDcZpbzTMgsUyhNg==*&nbsp;.&lt;br&gt;<br>
+&amp;gt;&nbsp;When&nbsp;called,&nbsp;it&nbsp;prints:&lt;br&gt;<br>
+&amp;gt;&lt;br&gt;<br>
+&amp;gt;&nbsp;Consumer&nbsp;null&nbsp;method&nbsp;handleCancelOk&nbsp;for&nbsp;channel&nbsp;AMQChannel(amqp://&lt;br&gt;<br>
+&amp;gt;&nbsp;&lt;a&nbsp;href=&quot;http://guest@172.20.125.34:5672/,1&quot;&nbsp;target=&quot;_blank&quot;&gt;guest@172.20.125.34:5672/,1&lt;/a&gt;)&nbsp;threw&nbsp;an&nbsp;exception:&lt;br&gt;<br>
+&amp;gt;&nbsp;java.lang.NullPointerException&lt;br&gt;<br>
+&amp;gt;&nbsp; &nbsp; &nbsp;at&nbsp;com.rabbitmq.client.impl.ChannelN$2.transformReply(ChannelN.java:728)&lt;br&gt;<br>
+&amp;gt;&nbsp; &nbsp; &nbsp;at&nbsp;com.rabbitmq.client.impl.ChannelN$2.transformReply(ChannelN.java:721)&lt;br&gt;<br>
+&amp;gt;&nbsp; &nbsp; &nbsp;at&lt;br&gt;<br>
+&amp;gt;&nbsp;com.rabbitmq.client.impl.AMQChannel$BlockingRpcContinuation.handleCommand(AMQChannel.java:327)&lt;br&gt;<br>
+&amp;gt;&nbsp; &nbsp; &nbsp;at&lt;br&gt;<br>
+&amp;gt;&nbsp;com.rabbitmq.client.impl.AMQChannel.handleCompleteInboundCommand(AMQChannel.java:162)&lt;br&gt;<br>
+&amp;gt;&nbsp; &nbsp; &nbsp;at&nbsp;com.rabbitmq.client.impl.AMQChannel.handleFrame(AMQChannel.java:110)&lt;br&gt;<br>
+&amp;gt;&nbsp; &nbsp; &nbsp;at&lt;br&gt;<br>
+&amp;gt;&nbsp;com.rabbitmq.client.impl.AMQConnection$MainLoop.run(AMQConnection.java:456)&lt;br&gt;<br>
+&lt;br&gt;<br>
+&lt;/div&gt;The&nbsp;Javadoc&nbsp;says:&lt;br&gt;<br>
+&lt;br&gt;<br>
+&nbsp; &nbsp; /**&lt;br&gt;<br>
+&nbsp; &nbsp; &nbsp;*&nbsp;Cancel&nbsp;a&nbsp;consumer.&nbsp;Calls&nbsp;the&nbsp;consumer&amp;#39;s&nbsp;{@link&nbsp;Consumer#handleCancelOk}&lt;br&gt;<br>
+&nbsp; &nbsp; &nbsp;*&nbsp;method&nbsp;before&nbsp;returning.&lt;br&gt;<br>
+&nbsp; &nbsp; &nbsp;*&nbsp;@param&nbsp;consumerTag&nbsp;a&nbsp;client-&nbsp;or&nbsp;server-generated&nbsp;consumer&nbsp;tag&nbsp;to&nbsp;establish&nbsp;context&lt;br&gt;<br>
+&nbsp; &nbsp; &nbsp;*&nbsp;@throws&nbsp;java.io.IOException&nbsp;if&nbsp;an&nbsp;error&nbsp;is&nbsp;encountered&lt;br&gt;<br>
+&nbsp; &nbsp; &nbsp;*&nbsp;@see&nbsp;com.rabbitmq.client.AMQP.Basic.Cancel&lt;br&gt;<br>
+&nbsp; &nbsp; &nbsp;*&nbsp;@see&nbsp;com.rabbitmq.client.AMQP.Basic.CancelOk&lt;br&gt;<br>
+&nbsp; &nbsp; &nbsp;*/&lt;br&gt;<br>
+&nbsp; &nbsp; void&nbsp;basicCancel(String&nbsp;consumerTag)&nbsp;throws&nbsp;IOException;&lt;br&gt;<br>
+&lt;br&gt;<br>
+The&nbsp;DefaultConsumer&nbsp;does&nbsp;have&nbsp;the&nbsp;handleCancelOk&nbsp;filled&nbsp;in,&nbsp;and&nbsp;Consumer&lt;br&gt;<br>
+is&nbsp;an&nbsp;interface,&nbsp;so&nbsp;I&amp;#39;m&nbsp;a&nbsp;little&nbsp;alarmed&nbsp;by&nbsp;the&nbsp;possibility&nbsp;that&nbsp;it&lt;br&gt;<br>
+can&amp;#39;t&nbsp;find&nbsp;the&nbsp;handleCancelOk&nbsp;method.&nbsp;What&nbsp;consumer&nbsp;class&nbsp;are&nbsp;you&nbsp;using?&lt;br&gt;<br>
+-&nbsp;in&nbsp;short,&nbsp;could&nbsp;you&nbsp;send&nbsp;us&nbsp;a&nbsp;small&nbsp;code&nbsp;example&nbsp;that&nbsp;exhibits&nbsp;this&lt;br&gt;<br>
+behaviour?&lt;br&gt;<br>
+&lt;br&gt;<br>
+Best&nbsp;wishes,&lt;br&gt;<br>
+&lt;br&gt;<br>
+Matthew&lt;br&gt;<br>
+&lt;br&gt;<br>
+_______________________________________________&lt;br&gt;<br>
+rabbitmq-discuss&nbsp;mailing&nbsp;list&lt;br&gt;<br>
+&lt;a&nbsp;href=&quot;mailto:rabbitmq-discuss@lists.rabbitmq.com&quot;&gt;rabbitmq-discuss@lists.rabbitmq.com&lt;/a&gt;&lt;br&gt;<br>
+&lt;a&nbsp;href=&quot;http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss&quot;&nbsp;target=&quot;_blank&quot;&gt;http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss&lt;/a&gt;&lt;br&gt;<br>
+&lt;/blockquote&gt;&lt;/div&gt;&lt;br&gt;<br>
+
+</tt>

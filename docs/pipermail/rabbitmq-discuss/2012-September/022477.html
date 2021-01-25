@@ -1,0 +1,239 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] amqp 1.0.4 blocking consume seems to block forever even though new messages are on the queue
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20amqp%201.0.4%20blocking%20consume%20seems%20to%20block%0A%20forever%20even%20though%20new%20messages%20are%20on%20the%20queue&In-Reply-To=%3C9af5dd67-245f-4c9e-b90d-452fdaa1e8d2%40googlegroups.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="022508.html">
+   <LINK REL="Next"  HREF="022478.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] amqp 1.0.4 blocking consume seems to block forever even though new messages are on the queue</H1>
+    <B>servobit</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20amqp%201.0.4%20blocking%20consume%20seems%20to%20block%0A%20forever%20even%20though%20new%20messages%20are%20on%20the%20queue&In-Reply-To=%3C9af5dd67-245f-4c9e-b90d-452fdaa1e8d2%40googlegroups.com%3E"
+       TITLE="[rabbitmq-discuss] amqp 1.0.4 blocking consume seems to block forever even though new messages are on the queue">johnc at codecobblers.com
+       </A><BR>
+    <I>Thu Sep 13 19:07:51 BST 2012</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="022508.html">[rabbitmq-discuss] is anybody using 'immediate' publish?
+</A></li>
+        <LI>Next message: <A HREF="022478.html">[rabbitmq-discuss] amqp 1.0.4 blocking consume seems to block forever even though new messages are on the queue
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#22477">[ date ]</a>
+              <a href="thread.html#22477">[ thread ]</a>
+              <a href="subject.html#22477">[ subject ]</a>
+              <a href="author.html#22477">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi All.
+
+When I start my AMQP 1.0.4 PHP client, Assuming there are pending messages 
+in the queue,  I can read all of the pending messages from the queue.  I am 
+doing this using consume( 'processMsg') which is a blocking call.
+
+The strange thing is, after I process and ACK the pending messages on the 
+Queue, any new messages I add to the queue are not &quot;picked up&quot; by the 
+consume callback.  In other words, it seems as if the exchange + channel 
+conn has gone stale.
+
+If I restart my client, the pending messages are picked up without a 
+problem.
+
+It appears the consume call expires (for lack of better term) almost 
+exactly @ the 2 minute mark. 
+My broker is SwiftMQ.  Unfortunately, I don't have access to config 
+settings on the broker at the moment.
+
+Any help would be greatly appreciated.  BTW, I saw the same problem with 
+STOMP, which I believe is no longer supported anyway.
+
+
+Here is my main loop:
+
+            // run forever
+            while(1) {
+
+                try {
+
+                    if ( $this-&gt;conn == null ){
+                        self::init();
+                    }
+                    
+                    if ( ! $this-&gt;channel-&gt;isConnected() ) {
+                        self::trace(__METHOD__ . &quot; &quot; . &quot; Channel is not 
+connected, reconnecting...&quot;);
+                        self::init( );
+                    }
+
+                    // keep our connection alive
+                    if ( isset( $this-&gt;conn )){
+                        if ( $this-&gt;conn-&gt;isConnected() == false ){
+                            // reinit
+                            self::init();
+                        }
+                    }
+                    
+                    $result = $this-&gt;readMsg( );
+
+                }catch( Exception $e ){
+                    self::trace(__METHOD__ . &quot; Error: &quot; . 
+$e-&gt;getTraceAsString()  );
+                }
+            }
+
+Here is the readMsg( ) method:
+
+        /**
+         * read a message from the Broker queue
+         * @return  $result (true or false)
+         */
+public function readMsg(  ) {
+            // read the messages from the queue, acknowledge if no errs so
+            // the messages are removed from the queue.  If we don't ack, 
+            // messages will remain in the queue and will be marked as 
+&quot;redelivered&quot;.
+            
+            // CALLBACK
+            $result = $this-&gt;consumer-&gt;consume( 'processMsg' );
+                    
+            return $result;
+          
+}
+
+And here is the callback:
+
+/**
+ * CALLBACK - Note we are called via queue-&gt;consume which uses Synchronous 
+I/O (Blocking)
+ * 
+* process the envelope body
+* @param $amqpEnvelope
+* @return false when done - see php AMQP docs for consume and returning to 
+the calling thread.
+* @throws Exception
+*/
+function processMsg( $amqpEnvelope, $consumer ) {
+
+    try {
+        
+        if ( $amqpEnvelope == null || empty($amqpEnvelope) ){
+            return false; // still blocking
+        }
+        
+        $payload = $amqpEnvelope-&gt;getBody( );
+        
+        if ($payload == null ){
+            return false; // still blocking
+        }
+
+        $deliveryTag = $amqpEnvelope-&gt;getDeliveryTag();
+
+        trace( __FUNCTION__ . &quot; Delivery Tag: &quot; . $deliveryTag );
+        
+        $response = sendRemoteWebserviceRequest( $payload );
+        
+        processRemoteWebserviceResponse( $response );
+        
+        $consumer-&gt;ack( $deliveryTag );
+        
+        // return false indicating we are done (weird, but that's what the 
+docs show)
+        return false; 
+
+
+    }catch( AMQPChannelException $e ) {
+        throw $e;
+    }catch( AMQPConnectionException $e ){
+        throw $e;
+    }catch( Exception $e ){
+        //
+        // When known application errs occur, we need to ack the message 
+and remove
+        // it from the queue.
+        if ( strpos($amqpEnvelope-&gt;getBody( ), '&lt;error&gt;Title already 
+exists' ) !== false){
+            $consumer-&gt;ack( $amqpEnvelope-&gt;getDeliveryTag() );
+        }
+        throw $e;
+    }
+}
+
+
+Note that if I re-establish the connection / exchange / queue that this is 
+a non-issue.  Although I don't want to have to do this.
+FWIW, I have one subscriber and one queue.
+
+Best,
+
+John
+
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20120913/056df8d6/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20120913/056df8d6/attachment.htm</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="022508.html">[rabbitmq-discuss] is anybody using 'immediate' publish?
+</A></li>
+	<LI>Next message: <A HREF="022478.html">[rabbitmq-discuss] amqp 1.0.4 blocking consume seems to block forever even though new messages are on the queue
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#22477">[ date ]</a>
+              <a href="thread.html#22477">[ thread ]</a>
+              <a href="subject.html#22477">[ subject ]</a>
+              <a href="author.html#22477">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

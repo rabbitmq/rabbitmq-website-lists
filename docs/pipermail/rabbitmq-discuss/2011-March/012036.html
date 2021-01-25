@@ -1,0 +1,233 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Spying on &quot;mandatory&quot; messages
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Spying%20on%20%22mandatory%22%20messages&In-Reply-To=%3CAANLkTimzFnXDWnUWpB2Ub246uOU61EYO-49RaWHBHhcH%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="012006.html">
+   <LINK REL="Next"  HREF="012045.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Spying on &quot;mandatory&quot; messages</H1>
+    <B>Charly Hamy</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Spying%20on%20%22mandatory%22%20messages&In-Reply-To=%3CAANLkTimzFnXDWnUWpB2Ub246uOU61EYO-49RaWHBHhcH%40mail.gmail.com%3E"
+       TITLE="[rabbitmq-discuss] Spying on &quot;mandatory&quot; messages">charly.hamy at gmail.com
+       </A><BR>
+    <I>Fri Mar 25 14:15:03 GMT 2011</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="012006.html">[rabbitmq-discuss] Spying on &quot;mandatory&quot; messages
+</A></li>
+        <LI>Next message: <A HREF="012045.html">[rabbitmq-discuss] Spying on &quot;mandatory&quot; messages
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#12036">[ date ]</a>
+              <a href="thread.html#12036">[ thread ]</a>
+              <a href="subject.html#12036">[ subject ]</a>
+              <a href="author.html#12036">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Matthew, Alvaro,
+
+thanks for your answers and your reactivity!
+
+I understand that the &quot;mandatory&quot; feature definitely lacks flexibility to be
+used for one-to-many communications and that there is no easy workaround.
+
+The &quot;non auto-delete, non exclusive queue&quot; solution would not be suitable to
+my case, I really need messages to be dropped, and the sender to be alerted.
+The Smart Proxy approach is interesting, but doesn't seem compatible with
+the use of the mandatory flag, and the return alerts associated.
+
+I've managed - with 10 lines of erlang - to let queues have an additional
+boolean &quot;spy&quot; parameter, and have the &quot;spy&quot; queues deliver the mandatory
+messages without this counting as a correct delivery, from the router point
+of view. Twisted, but it's working. (and it's much simpler than having &quot;spy&quot;
+bindings, the routing and delivery being two separated mechanisms).
+
+My modifications:
+
+*rabbit.hrl :*
+*(edition of the amqqueue record, line 47)*
+*
+*
+     -record(amqqueue, {name, durable, auto_delete, exclusive_owner = none,
+spy=false,
+                   arguments, pid}).
+
+
+*rabbit_amqqueue.erl :*
+*
+*
+*(line 115, spec of deliver/2 edited )*
+
+* -spec(deliver/2 :: (pid(), rabbit_types:delivery()) -&gt; boolean()|spy).*
+
+*
+*
+*(edition of rabbit_amqqueue:declare)*
+
+declare(QueueName, Durable, AutoDelete, Args, Owner) -&gt;
+    ok = check_declare_arguments(QueueName, Args),
+    Q = start_queue_process(#amqqueue{name = QueueName,
+                                      durable = Durable,
+                                      auto_delete = AutoDelete,
+                                      arguments = Args,
+                                      spy = case lists:keyfind(&lt;&lt;&quot;spy&quot;&gt;&gt;, 1,
+Args) of
+                                             false -&gt; false;
+                                             _ -&gt; true
+                                      end,
+                                      exclusive_owner = Owner,
+                                      pid = none}),
+    case gen_server2:call(Q#amqqueue.pid, {init, false}, infinity) of
+        not_found -&gt; rabbit_misc:not_found(QueueName);
+        Q1        -&gt; Q1
+    end.
+
+
+*(edition of rabbit_amqqueue:deliver/2)*
+*
+*
+     deliver(QPid, Delivery = #delivery{immediate = true}) -&gt;
+          gen_server2:call(QPid, {deliver_immediately, Delivery}, infinity);
+     deliver(QPid, Delivery = #delivery{mandatory = true}) -&gt;
+          case gen_server2:call(QPid, {deliver, Delivery}, infinity) of
+               spy -&gt; spy;
+               _ -&gt; true
+          end;
+     deliver(QPid, Delivery) -&gt;
+          gen_server2:cast(QPid, {deliver, Delivery}),
+          true.
+
+
+*rabbit_amqqueue_router.erl :*
+*(edition of rabbit_router:fold_deliveries/2, line 105)*
+
+     fold_deliveries({Pid, true},{_, Handled}) -&gt; {true, [Pid|Handled]};
+     fold_deliveries({_,  spy}, {false, Handled}) -&gt; {false, Handled};
+     fold_deliveries({_,  _},{_, Handled}) -&gt; {true, Handled}.
+
+
+For the moment, I think I'll go with this :)
+Thanks again for your help.
+
+Charly
+*
+*
+
+On Thu, Mar 24, 2011 at 4:16 PM, Alvaro Videla &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">videlalvaro at gmail.com</A>&gt;wrote:
+
+&gt;<i> Hi,
+</I>&gt;<i>
+</I>&gt;<i> For spying messages on an RPC setup I'm working on an implementation of the
+</I>&gt;<i> Smart Proxy messaging pattern: <A HREF="http://www.eaipatterns.com/SmartProxy.htmlperhaps">http://www.eaipatterns.com/SmartProxy.htmlperhaps</A> you could implement that too.
+</I>&gt;<i>
+</I>&gt;<i> This is what I've done so far: <A HREF="http://vimeo.com/20966661">http://vimeo.com/20966661</A> which is at early
+</I>&gt;<i> stage of development and very alpha.
+</I>&gt;<i>
+</I>&gt;<i> Also take a look at the Wire Tap messaging pattern:
+</I>&gt;<i> <A HREF="http://www.eaipatterns.com/WireTap.html">http://www.eaipatterns.com/WireTap.html</A>
+</I>&gt;<i>
+</I>&gt;<i> I guess most of the patterns from that book can be implemented with
+</I>&gt;<i> RabbitMQ, and some of them are already there but with different
+</I>&gt;<i> nomenclature.
+</I>&gt;<i>
+</I>&gt;<i> Hope this helps,
+</I>&gt;<i>
+</I>&gt;<i> Alvaro
+</I>&gt;<i>
+</I>&gt;<i> On Mar 24, 2011, at 4:05 PM, Matthew Sackman wrote:
+</I>&gt;<i>
+</I>&gt;<i> &gt; Hi Charly,
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; On Thu, Mar 24, 2011 at 03:35:35PM +0100, Charly Hamy wrote:
+</I>&gt;<i> &gt;&gt; For the req/res scenario, I'm using the mandatory flag on my messages,
+</I>&gt;<i> so
+</I>&gt;<i> &gt;&gt; that sending a request message to a disconnected component (no
+</I>&gt;<i> corresponding
+</I>&gt;<i> &gt;&gt; queue declared on the broker) returns an error to the sender. This works
+</I>&gt;<i> as
+</I>&gt;<i> &gt;&gt; expected.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; Well... you're using mandatory as a poor-man's form of resource
+</I>&gt;<i> &gt; monitoring.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt;&gt; But now, I would want to plug new components to spy on those flows of
+</I>&gt;<i> &gt;&gt; requests and responses, without interfering with the ongoing
+</I>&gt;<i> &gt;&gt; communications... which is not by default compatible with my use of the
+</I>&gt;<i> &gt;&gt; mandatory flag : when a &quot;spy&quot; component is monitorng request/response
+</I>&gt;<i> &gt;&gt; messages, those messages end-up in its queue, then even if the actual
+</I>&gt;<i> target
+</I>&gt;<i> &gt;&gt; component for those messages is not present on the broker (no queue), no
+</I>&gt;<i> &gt;&gt; error is returned to the sender.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; Indeed, which is why mandatory is probably a mis-feature and should not
+</I>&gt;<i> &gt; be used. Basically, AMQP does not really provide any sort of sane
+</I>&gt;<i> &gt; resource monitoring. We've added in the 2.4.0 release consumer-death
+</I>&gt;<i> &gt; notifications, but that's not going to help you here. You really have a
+</I>&gt;<i> &gt; choice: make the queue non-exclusive and non-autodelete. Thus it always
+</I>&gt;<i> &gt; stays there and will always receive messages. Then, you have your
+</I>&gt;<i> &gt; clients just consume from it. The queue will do round-robining between
+</I>&gt;<i> &gt; the consumers and all should be well, but you might have reasons why you
+</I>&gt;<i> &gt; want the queue to be exclusive or autodelete. The other option is to use
+</I>&gt;<i> &gt; some other tool to do monitoring of your consumers and to address that
+</I>&gt;<i> &gt; problem outside of AMQP/RabbitMQ.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; Best wishes,
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; Matthew
+</I>&gt;<i> &gt; _______________________________________________
+</I>&gt;<i> &gt; rabbitmq-discuss mailing list
+</I>&gt;<i> &gt; <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;<i> &gt; <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>&gt;<i>
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20110325/bcfcad29/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20110325/bcfcad29/attachment.htm</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="012006.html">[rabbitmq-discuss] Spying on &quot;mandatory&quot; messages
+</A></li>
+	<LI>Next message: <A HREF="012045.html">[rabbitmq-discuss] Spying on &quot;mandatory&quot; messages
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#12036">[ date ]</a>
+              <a href="thread.html#12036">[ thread ]</a>
+              <a href="subject.html#12036">[ subject ]</a>
+              <a href="author.html#12036">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,185 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] memory usage
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20memory%20usage&In-Reply-To=498C7F1F.1060801%40lshift.net">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002930.html">
+   <LINK REL="Next"  HREF="002953.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] memory usage</H1>
+    <B>Philip Stubbings</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20memory%20usage&In-Reply-To=498C7F1F.1060801%40lshift.net"
+       TITLE="[rabbitmq-discuss] memory usage">phil at parasec.net
+       </A><BR>
+    <I>Mon Feb  9 11:12:07 GMT 2009</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002930.html">[rabbitmq-discuss] memory usage
+</A></li>
+        <LI>Next message: <A HREF="002953.html">[rabbitmq-discuss] memory usage
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2944">[ date ]</a>
+              <a href="thread.html#2944">[ thread ]</a>
+              <a href="subject.html#2944">[ subject ]</a>
+              <a href="author.html#2944">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi Matthias, Thank you for your reply.
+
+I used rabbitmqctl to determine the status of my queues and my messages are flagged as persistent. 
+I have run the same test again, but this time I inject/consume a few messages later on, as you suggested. 
+However, the memory footprint remains the same:
+
+
+After injecting 1 million messages
+----------------------------------
+
+./rabbitmqctl list_queues -p / name durable auto_delete messages_ready messages_unacknowledged memory consumers
+Listing queues ...
+myQueue 	true    false   1000000 0       1324422960      0
+...done.
+
+top:
+  PID USER      PR  NI  VIRT  RES  SHR S %CPU %MEM    TIME+  COMMAND
+11243 phil      23   0 3480m 3.0g 2048 S    0 39.0  10:56.64 beam.smp
+
+persister logs:
+-rw-rw-r--  1 phil phil 286M Feb  9 11:43 rabbit_persister.LOG
+-rw-rw-r--  1 phil phil 196M Feb  9 11:42 rabbit_persister.LOG.previous
+ 
+After consuming 1 million messages with a single consumer
+---------------------------------------------------------
+
+rabbitmqctl list_queues -p / name durable auto_delete messages_ready messages_unacknowledged memory consumers
+Listing queues ...
+myExchange      false   false   0       0       3976    0
+myQueue 	true    false   0       0       3976    0
+...done.
+
+top:
+  PID USER      PR  NI  VIRT  RES  SHR S %CPU %MEM    TIME+  COMMAND
+11243 phil      23   0 2903m 1.8g 2048 S    0 23.5  21:55.42 beam.smp
+
+persister logs:
+-rw-rw-r--  1 phil phil 463M Feb  9 12:00 rabbit_persister.LOG
+-rw-rw-r--  1 phil phil 303M Feb  9 12:00 rabbit_persister.LOG.previous
+
+After injecting/consuming a few messages (after consuming the first million), beam's use of physical 
+memory (1.8G) remains the same... Moreover, should the persister logs be this large after consuming 
+(and acknowledging) all messages? 
+
+I intend to use rabbit in a SMS routing application, where typically I need to persist messages at a sustained rate 
+of 30 - 90 messages per second. Less frequently, there will be bursts of 1 million or more messages.
+
+Thanks again,
+
+Philip
+
+
+On Fri, Feb 06, 2009 at 06:19:11PM +0000, Matthias Radestock wrote:
+&gt;<i> Philip,
+</I>&gt;<i>
+</I>&gt;<i> Philip Stubbings wrote:
+</I>&gt;&gt;<i> I have set up Rabbit 1.5.1 running as a single node. During testing, I
+</I>&gt;&gt;<i> notice that memory use is extremely high. More specifically, if I push
+</I>&gt;&gt;<i> 1 million messages to a queue and later consume them (with
+</I>&gt;&gt;<i> acknowledgment) memory usage remains very high (in excess of 3G). I can
+</I>&gt;&gt;<i> verify that all consumed messages where acknowledged and that the queue
+</I>&gt;&gt;<i> is empty. Why does the process still require 3G of memory even after 24
+</I>&gt;&gt;<i> hours of inactivity? 
+</I>&gt;<i>
+</I>&gt;<i> How did you determine that the queues were empty?
+</I>&gt;<i>
+</I>&gt;<i> Are your messages flagged as persistent? How big is the persister log  
+</I>&gt;<i> (usually in /var/lib/rabbitmq/mnesia/rabbit/rabbit_persister.LOG).
+</I>&gt;<i>
+</I>&gt;<i> Can you send us the code to reproduce the problem?
+</I>&gt;<i>
+</I>&gt;&gt;<i> The only way to reduce the memory footprint is to restart rabbitmq.,
+</I>&gt;&gt;<i> However this is not an option for me.
+</I>&gt;<i>
+</I>&gt;<i> Erlang processes only perform garbage collection when there is some  
+</I>&gt;<i> activity. That usually isn't a problem, since most systems are not  
+</I>&gt;<i> expected to be both idle for a long time and have other processes  
+</I>&gt;<i> needing memory at the same time.
+</I>&gt;<i>
+</I>&gt;<i> Does the memory usage remain high when you inject &amp; consume some more  
+</I>&gt;<i> messages?
+</I>&gt;<i>
+</I>&gt;&gt;<i> The second problem I have encountered is during, and immediately after
+</I>&gt;&gt;<i> pushing 1 million messages to rabbitmq. If I try to connect a consumer
+</I>&gt;&gt;<i> whilst messages are being produced, I get the following error on the
+</I>&gt;&gt;<i> consumer side:
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> (connection error; reason:
+</I>&gt;&gt;<i> {#method&lt;connection.close&gt;(reply-code=541,reply-text=INTERNAL_ERROR,class-id=0,method-id=0),null,&quot;&quot;})
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> While, on the rabbit server:
+</I>&gt;&gt;<i> =ERROR REPORT==== 5-Feb-2009::12:43:57 ===
+</I>&gt;&gt;<i> connection &lt;0.3155.0&gt; (running), channel 1 - error:
+</I>&gt;&gt;<i> {timeout,{gen_server,call,[rabbit_persister,serial]}}
+</I>&gt;&gt;<i> =WARNING REPORT==== 5-Feb-2009::12:43:57 ===
+</I>&gt;&gt;<i> Non-AMQP exit reason
+</I>&gt;&gt;<i> '{timeout,{gen_server,call,[rabbit_persister,serial]}}'
+</I>&gt;<i>
+</I>&gt;<i> That looks like the same problem Darien Kindlund reported. See my  
+</I>&gt;<i> response to him a few moments ago.
+</I>&gt;<i>
+</I>&gt;&gt;<i> And also, during and just after the 1 million messages have been
+</I>&gt;&gt;<i> produced (with no consumers connected) I get the following error while
+</I>&gt;&gt;<i> trying to examine the queue status:
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> ../rabbitmq-server-1.5.1/scripts/rabbitmqctl list_queues -p /
+</I>&gt;&gt;<i> Listing queues ...
+</I>&gt;&gt;<i> Error: {badrpc,
+</I>&gt;&gt;<i>            {'EXIT',
+</I>&gt;&gt;<i> 	        {timeout,
+</I>&gt;&gt;<i> 			{gen_server,call,[&lt;4472.2308.0&gt;,{info,[name,messages]}]}}}}
+</I>&gt;<i>
+</I>&gt;<i> The queues are probably busy processing the message backlog. The info  
+</I>&gt;<i> request will be stuck behind the messages. I have filed a bug to do  
+</I>&gt;<i> something about that.
+</I>&gt;<i>
+</I>&gt;<i> Is the kind of bursty behaviour you are testing - with lots of messages  
+</I>&gt;<i> being injected at a high rate followed by periods of inactivity -  
+</I>&gt;<i> typical of your application?
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> Regards,
+</I>&gt;<i>
+</I>&gt;<i> Matthias.
+</I>
+-- 
+
+
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002930.html">[rabbitmq-discuss] memory usage
+</A></li>
+	<LI>Next message: <A HREF="002953.html">[rabbitmq-discuss] memory usage
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2944">[ date ]</a>
+              <a href="thread.html#2944">[ thread ]</a>
+              <a href="subject.html#2944">[ subject ]</a>
+              <a href="author.html#2944">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

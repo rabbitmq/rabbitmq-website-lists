@@ -1,0 +1,150 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Connection and channel resource management in servlet
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Connection%20and%20channel%20resource%20management%0A%20in%20servlet&In-Reply-To=%3CetPan.53331b6a.3d1b58ba.afcf%40mercurio.local%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="034798.html">
+   <LINK REL="Next"  HREF="034820.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Connection and channel resource management in servlet</H1>
+    <B>Michael Klishin</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Connection%20and%20channel%20resource%20management%0A%20in%20servlet&In-Reply-To=%3CetPan.53331b6a.3d1b58ba.afcf%40mercurio.local%3E"
+       TITLE="[rabbitmq-discuss] Connection and channel resource management in servlet">mklishin at gopivotal.com
+       </A><BR>
+    <I>Wed Mar 26 18:24:13 GMT 2014</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="034798.html">[rabbitmq-discuss] Connection and channel resource management in	servlet
+</A></li>
+        <LI>Next message: <A HREF="034820.html">[rabbitmq-discuss] Connection and channel resource management in servlet
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#34799">[ date ]</a>
+              <a href="thread.html#34799">[ thread ]</a>
+              <a href="subject.html#34799">[ subject ]</a>
+              <a href="author.html#34799">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>
+
+On 26 March 2014 at 20:44:04, Bertrand Guay-Paquet (<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">bernie at step.polymtl.ca</A>) wrote:
+&gt;<i> &gt; My current understanding and questions:
+</I>&gt;<i> 1) I don't see a need to have more than 1 Connection instance in  
+</I>&gt;<i> either
+</I>&gt;<i> the servlet or the client. This connection should be created  
+</I>&gt;<i> on
+</I>&gt;<i> application or servlet startup and closed on shutdown. Are there  
+</I>&gt;<i> pitfalls with long-lived connections or is this all handled  
+</I>&gt;<i> by RabbitMQ
+</I>&gt;<i> (keep-alive)?
+</I>
+RabbitMQ connections are supposed to be long-lived. Set heartbeat interval
+to a lower value (say, 60 seconds) if you have a firewall between clients
+and RabbitMQ.
+
+&gt;<i>  
+</I>&gt;<i> 2) How should I handle broken Connections to the broker? If a new  
+</I>&gt;<i> one
+</I>&gt;<i> must be created, do all the channels need to be reopened as well?
+</I>
+If a connection fails, it needs to be reopened, as do all the channels
+on it. Some clients support automatic recovery from TCP connection
+failures. Java client will offer this feature in the upcoming 3.3.0 release.
+&#160;  
+&gt;<i>  
+</I>&gt;<i> 3) It seems like it would be bad practice to create a new channel  
+</I>&gt;<i> each
+</I>&gt;<i> time a web request wants to publish a message. Should I pool them?  
+</I>&gt;<i> Share
+</I>&gt;<i> a single one? Use ThreadLocals? Is there a problem if they're  
+</I>&gt;<i> never
+</I>&gt;<i> closed (the connection would be on shutdown though)? The java  
+</I>&gt;<i> client api
+</I>&gt;<i> documentation states that channels *should* be closed but that  
+</I>&gt;<i> it's not
+</I>&gt;<i> necessary.
+</I>
+Opening a channel is a network round trip. So is closing a channel. If that&#8217;s acceptable to you,
+opening and closing a channel per request is fine. Channels should not be shared
+across threads.
+
+For Web apps, a single connection and channel is usually sufficient, although
+in Java and .NET you need to understand how your framework dispatches requests
+in order to avoid concurrent publishes on a shared channel. Thread locals
+should work OK, especially if you can pre-initialise all channels.&#160;
+
+&gt;<i>  
+</I>&gt;<i> 4) My tests seem to show that when a subscribed consumer throws  
+</I>&gt;<i> an
+</I>&gt;<i> exception in handleDelivery(), it consumes the rest of its buffered  
+</I>&gt;<i> messages and is then terminated.
+</I>
+That&#8217;s not correct. You likely use automatic acknowledgements and/or a
+QueueingConsumer which accumulates all deliveries locally in a java.util.concurrent
+queue.
+
+See tutorial 2:
+<A HREF="http://www.rabbitmq.com/tutorials/tutorial-two-java.html">http://www.rabbitmq.com/tutorials/tutorial-two-java.html</A>
+
+&gt;<i> Does that mean I should never  
+</I>&gt;<i> throw
+</I>&gt;<i> from handleDelivery()? Or should I monitor currently active  
+</I>&gt;<i> consumers
+</I>&gt;<i> and restart the failed ones?
+</I>
+Unhandled exceptions will be delegated to ExceptionHandler which
+is configured per channel. If you use manual acknowledgements,
+throwing exceptions in handleDelivery without acking or rejecting
+a delivery is not a very good idea: RabbitMQ will think that the
+delivery is still being processed, and will keep the message around.
+--  
+MK  
+
+Software Engineer, Pivotal/RabbitMQ
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="034798.html">[rabbitmq-discuss] Connection and channel resource management in	servlet
+</A></li>
+	<LI>Next message: <A HREF="034820.html">[rabbitmq-discuss] Connection and channel resource management in servlet
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#34799">[ date ]</a>
+              <a href="thread.html#34799">[ thread ]</a>
+              <a href="subject.html#34799">[ subject ]</a>
+              <a href="author.html#34799">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

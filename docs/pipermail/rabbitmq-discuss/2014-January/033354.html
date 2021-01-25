@@ -1,0 +1,123 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Dead-Lettering Queue Contents On Queue	Expiration
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Dead-Lettering%20Queue%20Contents%20On%20Queue%0A%09Expiration&In-Reply-To=%3C52E66E16.2040600%40rabbitmq.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="033152.html">
+   <LINK REL="Next"  HREF="033124.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Dead-Lettering Queue Contents On Queue	Expiration</H1>
+    <B>Matthias Radestock</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Dead-Lettering%20Queue%20Contents%20On%20Queue%0A%09Expiration&In-Reply-To=%3C52E66E16.2040600%40rabbitmq.com%3E"
+       TITLE="[rabbitmq-discuss] Dead-Lettering Queue Contents On Queue	Expiration">matthias at rabbitmq.com
+       </A><BR>
+    <I>Mon Jan 27 14:32:54 GMT 2014</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="033152.html">[rabbitmq-discuss] Dead-Lettering Queue Contents On Queue	Expiration
+</A></li>
+        <LI>Next message: <A HREF="033124.html">[rabbitmq-discuss] Dead-Lettering Queue Contents On Queue	Expiration
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#33354">[ date ]</a>
+              <a href="thread.html#33354">[ thread ]</a>
+              <a href="subject.html#33354">[ subject ]</a>
+              <a href="author.html#33354">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Alex,
+
+On 17/01/14 22:08, Alex Robson wrote:
+&gt;<i> I have updated the pull request. I jumped the gun a bit in thinking that
+</I>&gt;<i> I had solved this with the initial pull. I still may not have resolved
+</I>&gt;<i> it in a way that would make sense to devs who know the code base better
+</I>&gt;<i> than I do. I wasn't sure if there were a better way to remove bindings
+</I>&gt;<i> from an expiring queue and its DLX, so I'm removing them first from the
+</I>&gt;<i> destination using rabbit_binding:remove_for_destination and then calling
+</I>&gt;<i> the exchanges remove_bindings. The latter call is necessary because with
+</I>&gt;<i> out it, a consistent hash exchange will retain invalid routes and
+</I>&gt;<i> continue to try and route messages to the expired queue.
+</I>
+I can see why this is necessary, but it makes a whole bunch of 
+assumptions about topology that work for c-h-x but not in general.
+
+Wwhy not remove all bindings, indeed even perhaps the queue itself? i.e. 
+bring forward part of what happens in terminate_delete, in particular 
+the call to rabbit_amqqueue:internal_delete.
+
+That is not w/o problems either since now you have a &quot;dark&quot; queue, i.e. 
+a queue that is completely invisible to routing and management. Yet that 
+queue is still operating - it's dead-lettering - and using the backing 
+queue, etc. That is likely problematic. So, for example, a client could 
+come along and create a new queue with the same name, which would end up 
+stomping on or tripping over the persistent storage of the dark queue.
+
+Yet if you don't remove the queue record then there is nothing stopping 
+clients from creating new bindings for it. Including to the DLX.
+
+So perhaps this queue record in mnesia needs to indicate some limbo 
+state, similar to what happens to durable queues residing on down nodes. 
+In that state, the existence of the queue is known but no operations can 
+be performed on it.
+
+This is all getting rather tricky.
+
+Plus we still have to deal with the issue I mentioned previously, of 
+messages that are in-flight between the exchange and 
+in-the-process-of-deletion queue getting lost. That can actually be 
+addressed for specific use cases, namely those where the message is 
+expected to reach exactly one queue - by publishing in mandatory mode 
+and re-sending the message when a basic.return is received. Obviously 
+this can create dups, but they are inevitable in most cases anyway. It's 
+also rather slow since it's synchronous (though that will change in the 
+next RabbitMQ feature release).
+
+Trouble is, you'd also have to get the dead-lettering to publish in 
+mandatory mode. Which introduces all sorts of complications.
+
+Also note, btw, that, in general, dead-lettering is not guaranteed. It 
+doesn't use confirms (and doing so would be very complex indeed), so 
+messages can get lost due to failures during dead lettering.
+
+
+Summary: It's all rather complicated.
+
+
+Regards,
+
+Matthias.
+</PRE>
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="033152.html">[rabbitmq-discuss] Dead-Lettering Queue Contents On Queue	Expiration
+</A></li>
+	<LI>Next message: <A HREF="033124.html">[rabbitmq-discuss] Dead-Lettering Queue Contents On Queue	Expiration
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#33354">[ date ]</a>
+              <a href="thread.html#33354">[ thread ]</a>
+              <a href="subject.html#33354">[ subject ]</a>
+              <a href="author.html#33354">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

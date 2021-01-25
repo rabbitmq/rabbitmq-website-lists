@@ -1,0 +1,123 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Experiments with the fanout exchange and	many queues
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Experiments%20with%20the%20fanout%20exchange%20and%0A%09many%20queues&In-Reply-To=%3CAEA52859-55F8-4B0D-9838-ECF40D1AA64A%40gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="012828.html">
+   <LINK REL="Next"  HREF="012829.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Experiments with the fanout exchange and	many queues</H1>
+    <B>Alvaro Videla</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Experiments%20with%20the%20fanout%20exchange%20and%0A%09many%20queues&In-Reply-To=%3CAEA52859-55F8-4B0D-9838-ECF40D1AA64A%40gmail.com%3E"
+       TITLE="[rabbitmq-discuss] Experiments with the fanout exchange and	many queues">videlalvaro at gmail.com
+       </A><BR>
+    <I>Fri May 13 15:43:54 BST 2011</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="012828.html">[rabbitmq-discuss] Experiments with the fanout exchange and many queues
+</A></li>
+        <LI>Next message: <A HREF="012829.html">[rabbitmq-discuss] Help tracking down disconnection locations in	code
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#12854">[ date ]</a>
+              <a href="thread.html#12854">[ thread ]</a>
+              <a href="subject.html#12854">[ subject ]</a>
+              <a href="author.html#12854">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi,
+
+I think I have a pretty convincing theory of why the fanout exchange is slow when is bound to too many queues. The problem is that it does crash the server when this happens.
+
+1) On rabbit_exchange_type_fanout:route there's a full Mnesia table scan. That's really slow and AFAIK is not Mnesia's best part. I've encountered problems like that with Mnesia when I tried to use it for other projects. Also the same table scan is done by the rabbit_exchange_type_direct:route call. If I'm not mistaken no indexes are used here.
+
+2) This table scan is made to obtain a list of rabbit_types:binding_destination which will be or queue names, or exchange names. Then&#8230; that's used on rabbit_router:lookup_qpids/1to finally get the QPids. For each queue name that the previous call returned, a mnesia:dirty_read({rabbit_queue, QName}) operation is performed.
+
+3) Then finally the message is delivered to the queue.
+
+Imagine this process happening for each of the 5000 msgs/sec. I think is not optimal. I'm sure your devs know about it. I understand that having a reliable persister is more important than a fanout exchange that works for 1000s queues. Really, I don't see what's the use case of that, besides for a Game or a Chat App.
+
+After I created 500 queues bound to one fanout exchange I ran mnesia:info() on the RabbitMQ node., I've got this:
+
+rabbit_queue   : with 500      records occupying 14822    words of mem
+rabbit_route   : with 1000     records occupying 47112    words of mem
+
+The rabbit_route table will be scanned to obtain the queue names, then the rabbit_queue will get *dirty_read* 500 times to get the qpids.
+
+How would I optimize this?
+
+1) on Mnesia I will have a map like this:  rabbit_exchange:name() -&gt; [rabbit_types:binding_destination], probably on a new table managed by the exchange. So in one operation I can get all the bindings, instead of scanning a Mnesia table. (I'm pretty sure this is the main problem). The problem here is to find the right data structure that is easy to update in case of binding removals. I think a list wouldn't do in this case. I was looking into the gb_trees module and some others, but I'm really not sure in this particular case. I don't know if the data structure used for the topic exchange will help here, I've probably have to read some papers about it.
+
+The next set changes seems doable, but will require changes on many places of RabbitMQ's code.
+
+2) I would alter the rabbit_route table definition, so the #route{} record will also have the Pid to the Queue. If I'm not mistaken, the rabbit_route can also contain alternate exchanges inside, so that could present a problem. By having the Queue Pid on this record, there's no need for all the mnesia:dirty_read operations mentioned before. 
+
+What problems can this present? When the server restarts and it has to bring back all the persistent queues, then the Pids stored on Mnesia are meaningless. This means that once the Queue is back up, then this record will have to get updated. Here we have the tradeoff of a slower start up, but the message routing will be faster. Same has to be taken into account when declaring a queue, that is, to store the QPid in the respective rabbit_route record if needed.
+
+In my point of view, a RabbitMQ server is doing much more *route* calls than queue_declare, or server restarts. So I think this should be worth trying.
+
+Cheers,
+
+Alvaro
+
+
+On May 12, 2011, at 6:34 PM, Simon MacMullen wrote:
+
+&gt;<i> On 12/05/11 16:17, Alvaro Videla wrote:
+</I>&gt;&gt;<i> Please keep in mind that in my case I don't consider this use case a
+</I>&gt;&gt;<i> typical one, far from it. Still it might be useful for you guys to be
+</I>&gt;&gt;<i> able to easily reproduce this.
+</I>&gt;<i> 
+</I>&gt;<i> Thanks.
+</I>&gt;<i> 
+</I>&gt;<i> It pains me to say it, but I suspect the management plugin to be the source of most of your problems. Currently it doesn't deal very well with large numbers (many thousands) of queues, all of which are active at once, or with very high rates of connection / channel churn. Switching off fine grained statistics helps quite a bit, but it's still not as good as it should be.
+</I>&gt;<i> 
+</I>&gt;<i> Coincidentally I've been doing some work in this area (inspired by Ian Ragsdale's recent postings), some of which is starting to bear fruit, so hopefully this sort of scenario will improve in the relatively short term...
+</I>&gt;<i> 
+</I>&gt;<i> Cheers, Simon
+</I>&gt;<i> 
+</I>&gt;<i> -- 
+</I>&gt;<i> Simon MacMullen
+</I>&gt;<i> Staff Engineer, RabbitMQ
+</I>&gt;<i> SpringSource, a division of VMware
+</I>&gt;<i> 
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>
+Sent form my Nokia 1100
+
+
+
+</PRE>
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="012828.html">[rabbitmq-discuss] Experiments with the fanout exchange and many queues
+</A></li>
+	<LI>Next message: <A HREF="012829.html">[rabbitmq-discuss] Help tracking down disconnection locations in	code
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#12854">[ date ]</a>
+              <a href="thread.html#12854">[ thread ]</a>
+              <a href="subject.html#12854">[ subject ]</a>
+              <a href="author.html#12854">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

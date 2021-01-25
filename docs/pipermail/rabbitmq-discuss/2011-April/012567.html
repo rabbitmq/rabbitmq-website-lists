@@ -1,0 +1,243 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Message Aggregating Queue
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Message%20Aggregating%20Queue&In-Reply-To=%3C4DB930E9.1020700%40rabbitmq.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="012563.html">
+   <LINK REL="Next"  HREF="012590.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Message Aggregating Queue</H1>
+    <B>Tim Fox</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Message%20Aggregating%20Queue&In-Reply-To=%3C4DB930E9.1020700%40rabbitmq.com%3E"
+       TITLE="[rabbitmq-discuss] Message Aggregating Queue">tim at rabbitmq.com
+       </A><BR>
+    <I>Thu Apr 28 10:18:33 BST 2011</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="012563.html">[rabbitmq-discuss] Message Aggregating Queue
+</A></li>
+        <LI>Next message: <A HREF="012590.html">[rabbitmq-discuss] Message Aggregating Queue
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#12567">[ date ]</a>
+              <a href="thread.html#12567">[ thread ]</a>
+              <a href="subject.html#12567">[ subject ]</a>
+              <a href="author.html#12567">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>On 28/04/11 10:06, Alexis Richardson wrote:
+&gt;<i> Jason
+</I>&gt;<i>
+</I>&gt;<i> Interesting stuff :-)
+</I>&gt;<i>
+</I>&gt;<i> Prior discussions on this subject have tended to the view that the
+</I>&gt;<i> exchange is the best place to cache a 'last value'.
+</I>&gt;<i>
+</I>&gt;<i> In your example below, the way to identify that #1 and #3 refer to the
+</I>&gt;<i> same stock would be to use the stock ticker (eg &quot;UBS&quot;) as the routing
+</I>&gt;<i> key in a direct exchange.
+</I>Other systems that implement &quot;last value queues&quot;, that I know of, 
+HornetQ and Qpid do it by having a special &quot;queue&quot; type which doesn't 
+actually queue anything, but instead maintains a map of value_key =&gt; message
+
+As new messages arrive with the same value of value_key they are put 
+into the map, overwriting any previous value for that same key.
+
+The value_key is passed in the message in a header with a well known name.
+
+This is actually very simple to implement and doesn't require you to 
+route things in special ways.
+&gt;<i> See for example this prototype: <A HREF="https://github.com/squaremo/rabbitmq-lvc-plugin">https://github.com/squaremo/rabbitmq-lvc-plugin</A>
+</I>&gt;<i>
+</I>&gt;<i> An aggregation capability is also doable but it's not obvious what the
+</I>&gt;<i> best way to do it is.  It depends whether aggregate messages are the
+</I>&gt;<i> same type as their constituents.  If they are not, as in your example,
+</I>&gt;<i> then you might want to republish a new aggregate message whenever
+</I>&gt;<i> something changes, and then cache aggregates using the LVC approach.
+</I>&gt;<i>
+</I>&gt;<i> alexis
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> On Thu, Apr 28, 2011 at 9:28 AM, Jason Zaugg&lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">jzaugg at gmail.com</A>&gt;  wrote:
+</I>&gt;&gt;<i> Among other things, we're using RabbitMQ to distribute market data
+</I>&gt;&gt;<i> ticks. The interesting characteristic about this stream of messages is
+</I>&gt;&gt;<i> that a new tick for a obsoletes previous, unprocessed, ticks for the
+</I>&gt;&gt;<i> same stock.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> After a little brainstorming last night with Alvaro Videla, I'm
+</I>&gt;&gt;<i> curious to discuss how this could be modeled with an extension to
+</I>&gt;&gt;<i> RabbitMQ.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> It seems a similar problem to the Queue Based TTL [1], however TTL
+</I>&gt;&gt;<i> isn't quite right for this case, as the validity period of a tick
+</I>&gt;&gt;<i> depends on the liquidity of the stock. We really just want the
+</I>&gt;&gt;<i> *latest* tick.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Assume a message stream:
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> 1. Tick { stock = &quot;UBS&quot;, bid = 12.3 }   RK=&quot;tick.UBS&quot;
+</I>&gt;&gt;<i> 2. Tick { stock = &quot;ABB&quot;, bid = 15.3 }  RK=&quot;tick.ABB&quot;
+</I>&gt;&gt;<i> 3. Tick { stock = &quot;UBS&quot;, bid = 12.28 } RK=&quot;tick.UBS&quot;
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> These are sent to a fanout exchange, and on to a queue(s) for a
+</I>&gt;&gt;<i> Consumer(s). Assume that consumer is slow, and the messages are not
+</I>&gt;&gt;<i> processed immediately. Rather than just en queuing message #3, I would
+</I>&gt;&gt;<i> like to insert it in place of message #1.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> This has the nice property that the broker won't overrun with messages
+</I>&gt;&gt;<i> if the consumer can't keep up; and that the consumer doesn't do work
+</I>&gt;&gt;<i> that is obsolete.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> What would be the suitable way to identify that #1 and #3 refer to the
+</I>&gt;&gt;<i> same stock? Is the routing key of message #1 retained after it has
+</I>&gt;&gt;<i> been en queued?
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> An generalization of this would be to provide a function that takes
+</I>&gt;&gt;<i> the old and new message and combines them into an aggregated message.
+</I>&gt;&gt;<i> For example, we might want to track the latest, min and max:
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i>   AggregatedTick { stock = &quot;UBS&quot;, latestBid = 12.28 minBid=12.28 maxBid=12.30 }
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> So, does this sound sensible and possible?
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> -jason
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> [1] <A HREF="http://www.rabbitmq.com/extensions.html#queue-ttl">http://www.rabbitmq.com/extensions.html#queue-ttl</A>
+</I>&gt;&gt;<i> _______________________________________________
+</I>&gt;&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>&gt;&gt;<i>
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="012563.html">[rabbitmq-discuss] Message Aggregating Queue
+</A></li>
+	<LI>Next message: <A HREF="012590.html">[rabbitmq-discuss] Message Aggregating Queue
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#12567">[ date ]</a>
+              <a href="thread.html#12567">[ thread ]</a>
+              <a href="subject.html#12567">[ subject ]</a>
+              <a href="author.html#12567">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

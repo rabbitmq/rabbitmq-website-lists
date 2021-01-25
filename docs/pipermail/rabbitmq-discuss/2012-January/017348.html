@@ -1,0 +1,178 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] High publish rates, mirrored queues, high watermark...
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20High%20publish%20rates%2C%20mirrored%20queues%2C%0A%20high%20watermark...&In-Reply-To=%3C4F0F170E.4010501%40rabbitmq.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="017347.html">
+   <LINK REL="Next"  HREF="017350.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] High publish rates, mirrored queues, high watermark...</H1>
+    <B>Simon MacMullen</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20High%20publish%20rates%2C%20mirrored%20queues%2C%0A%20high%20watermark...&In-Reply-To=%3C4F0F170E.4010501%40rabbitmq.com%3E"
+       TITLE="[rabbitmq-discuss] High publish rates, mirrored queues, high watermark...">simon at rabbitmq.com
+       </A><BR>
+    <I>Thu Jan 12 17:23:26 GMT 2012</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="017347.html">[rabbitmq-discuss] High publish rates, mirrored queues,	high watermark...
+</A></li>
+        <LI>Next message: <A HREF="017350.html">[rabbitmq-discuss] Rabbit forgetting users after shutting down both	cluster-nodes
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#17348">[ date ]</a>
+              <a href="thread.html#17348">[ thread ]</a>
+              <a href="subject.html#17348">[ subject ]</a>
+              <a href="author.html#17348">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>On 12/01/12 16:41, Jim Myhrberg wrote:
+&gt;<i> Hi, I was hoping you guys would be able to answer some quick questions
+</I>&gt;<i> about an issue we're having.
+</I>
+Hi Jim.
+
+&gt;<i> We've recently started using mirrored queues across two RabbitMQ
+</I>&gt;<i> instances on two servers, and it's working really well except for when
+</I>&gt;<i> publish rates are really high for a longer period of time. At that point
+</I>&gt;<i> RabbitMQ starts eating a lot of memory on the master node until it hits
+</I>&gt;<i> our high watermark limit of 18.9GB, at which point things basically stop
+</I>&gt;<i> working.
+</I>&gt;<i>
+</I>&gt;<i> My theory of what is happening is that when RabbitMQ can't process
+</I>&gt;<i> incoming publish requests fast enough, it caches the raw TCP packets in
+</I>&gt;<i> memory until it can deal with them and direct it to the queue(s) in
+</I>&gt;<i> question.
+</I>
+This is approximately true. In fact RabbitMQ can be viewed as a 
+pipeline, when publishing over AMQP it would look like:
+
+(OS TCP buffer) -&gt; [reader] -&gt; [channel] -&gt; [queue] -&gt; etc...
+
+Each of the square bracketed things is an Erlang process. The reader 
+(aka connection) disassembles packets into AMQP methods (most frequently 
+basic.publish). The channel applies those methods (in the case of basic 
+publish by making routing decisions, checking security, etc). And then 
+there's the queue.
+
+The Erlang processes communicate by message passing - so each process 
+has a mailbox which contains messages which have been sent on by the 
+previous stage but not yet handled.
+
+The OS manages the size of the TCP buffer and in general it won't be 
+able to contain *too* huge a number of messages, but the process 
+mailboxes can grow arbitrarily large when you publish &quot;too fast&quot; for the 
+queue to keep up. And that's where most of your memory is going I'll bet.
+
+The theory was that more and more memory will get used up by the process 
+mailboxes and eventually the memory alarm will go off, which will cause 
+all the readers to block while Rabbit sorts itself out. However, by this 
+stage there can be a huge amount of work to do (ironically the more 
+memory you have the worse off you are), and everything grinds to a halt 
+for potentially a very long time.
+
+The good news is that we're working (right now, by lucky coincidence) on 
+a system of internal flow control that will prevent the process 
+mailboxes from becoming too big. This means that a publisher which is 
+publishing &quot;too fast&quot; for a queue to handle will get pushed back on much 
+more rapidly (within a second or so rather than after memory fills up).
+
+This feature is likely to be in the next release, but if you can't wait 
+until then you can improve matters considerably by using confirms and 
+only allowing each publisher to have (e.g.) 1000 unconfirmed messages. 
+You won't get a confirm back until the message has hit the queue, so you 
+bound the number of in-flight messages.
+
+Arguably you should be doing that anyway - if your messages are 
+important enough that they need to go to mirrored queues they are 
+probably important enough that the publisher needs confirmation that 
+they've been accepted by the broker.
+
+&gt;<i> And I'm assuming the fact that we are using mirrored queues
+</I>&gt;<i> adds overhead in dealing with a publish request as it needs to be synced
+</I>&gt;<i> to the other node(s). Am I right?
+</I>
+Yes, very much so. Mirrored queues are noticeably slower than 
+non-mirrored ones due to the extra work involved. And also they're newer 
+and not as heavily optimised.
+
+&gt;<i> My theory is based on the fact that we could deal with much higher
+</I>&gt;<i> publish rates without and problems before we switched to mirrored
+</I>&gt;<i> queues. And the fact that we've had a few points when memory usage has
+</I>&gt;<i> been excessive we've seen queues that were completely empty according to
+</I>&gt;<i> the management plugin, but our workers were still processing +1000
+</I>&gt;<i> messages/sec for a good hour, all the while the management plugin said
+</I>&gt;<i> no incoming messages, and +1000 msg/s get/acks.
+</I>
+Yes, that's exactly consistent with messages being backed up in process 
+mailboxes.
+
+Cheers, Simon
+
+-- 
+Simon MacMullen
+RabbitMQ, VMware
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="017347.html">[rabbitmq-discuss] High publish rates, mirrored queues,	high watermark...
+</A></li>
+	<LI>Next message: <A HREF="017350.html">[rabbitmq-discuss] Rabbit forgetting users after shutting down both	cluster-nodes
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#17348">[ date ]</a>
+              <a href="thread.html#17348">[ thread ]</a>
+              <a href="subject.html#17348">[ subject ]</a>
+              <a href="author.html#17348">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

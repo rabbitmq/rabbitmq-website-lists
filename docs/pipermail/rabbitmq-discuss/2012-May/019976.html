@@ -1,0 +1,130 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Request Handshake Timeout Increase
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Request%20Handshake%20Timeout%20Increase&In-Reply-To=%3CFC3463BECF39B74996BF6ADDCB9BE7D70807D79710%40MX36A.corp.emc.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="019950.html">
+   <LINK REL="Next"  HREF="020010.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Request Handshake Timeout Increase</H1>
+    <B>james.poole at rsa.com</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Request%20Handshake%20Timeout%20Increase&In-Reply-To=%3CFC3463BECF39B74996BF6ADDCB9BE7D70807D79710%40MX36A.corp.emc.com%3E"
+       TITLE="[rabbitmq-discuss] Request Handshake Timeout Increase">james.poole at rsa.com
+       </A><BR>
+    <I>Thu May 10 19:53:58 BST 2012</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="019950.html">[rabbitmq-discuss] Request Handshake Timeout Increase
+</A></li>
+        <LI>Next message: <A HREF="020010.html">[rabbitmq-discuss] Request Handshake Timeout Increase
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#19976">[ date ]</a>
+              <a href="thread.html#19976">[ thread ]</a>
+              <a href="subject.html#19976">[ subject ]</a>
+              <a href="author.html#19976">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Yeah, the simple fix would be to just add our root CA to the Windows Trust 
+Store as a &quot;trusted CA&quot;.  However, this is not what we want to do, since this 
+would be a security risk.  We don't want the entire machine to trust our CA, 
+but we want only our product (rabbit client) to trust the CA.  (This is going 
+to be in customer environments who are sensitive to security... not an 
+internal deployment)
+
+When the internet is available on the machine, the .NET client fails to find 
+the CA, but then our registered certificate validation callback is run, and we 
+can manually inspect the certificate, validate it is &quot;our&quot; certificate, and 
+let the SSL handshake proceed.
+
+If the internet is not available, the 15 second delay causes the handshake to 
+time out and close the SSL connection before we get a chance to handle the 
+certificate validation.
+
+To get around this, we would just need the timeout (pointed out by Emile - 
+<A HREF="http://hg.rabbitmq.com/rabbitmq-server/file/e852cd4060d3/src/rabbit_reader.erl#l30">http://hg.rabbitmq.com/rabbitmq-server/file/e852cd4060d3/src/rabbit_reader.erl#l30</A>) 
+to be relaxed to 20 seconds.  This would give the client enough time to wait 
+for the Windows 15 second delay, verify the certificate, and allow the SSL 
+connection to be established.
+
+-James
+
+-----Original Message-----
+From: Matthias Radestock [mailto:<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">matthias at rabbitmq.com</A>]
+Sent: Tuesday, May 08, 2012 2:08 PM
+To: Poole, James
+Cc: <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+Subject: Re: [rabbitmq-discuss] Request Handshake Timeout Increase
+
+James,
+
+On 08/05/12 15:42, <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">james.poole at rsa.com</A> wrote:
+&gt;<i> It turns out that Microsoft has a default policy that tries to connect
+</I>&gt;<i> to Windows Update on the internet to validate Certificate Authorities.
+</I>&gt;<i> If the client machine is not connected to the internet (our likely
+</I>&gt;<i> customer deployment scenario and our development environment), then this
+</I>&gt;<i> can cause a 15 second delay when validating certificates. Since the
+</I>&gt;<i> RabbitMQ handshake timeout is 10 seconds, then this fails and closes the
+</I>&gt;<i> connection. This was only seen from the .NET client, and not the Java
+</I>&gt;<i> client.
+</I>&gt;<i>
+</I>&gt;<i> I verified that disabling the local machine policy (directions here
+</I>&gt;<i> <A HREF="http://technet.microsoft.com/en-us/library/cc749331%28v=ws.10%29.aspx">http://technet.microsoft.com/en-us/library/cc749331%28v=ws.10%29.aspx</A>)
+</I>&gt;<i> allowed the SSL connection to immediately succeed.
+</I>
+ From the description of that policy it sounds like disabling would
+cause connections to fail:
+&lt;quote&gt;
+If the user is presented with a certificate issued by a root
+certification authority that is not directly trusted, and the Update
+Root Certificates feature is turned off through Group Policy, the user
+can be prevented from completing the action that required authentication.
+&lt;/quote&gt;
+
+Though this may depend on the policy settings of the app. Have you
+looked at <A HREF="http://www.rabbitmq.com/ssl.html#trust-dotNET?">http://www.rabbitmq.com/ssl.html#trust-dotNET?</A>
+
+Also, the policy appears to only come into play when hitherto unknown
+root certificates are encountered. So it should be possible to avoid
+that situation by getting a server certificate with a root CA that
+Windows trusts by default.
+
+
+Matthias.
+
+-------------- next part --------------
+A non-text attachment was scrubbed...
+Name: smime.p7s
+Type: application/x-pkcs7-signature
+Size: 7449 bytes
+Desc: not available
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20120510/4458910e/attachment.bin">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20120510/4458910e/attachment.bin</A>&gt;
+</PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="019950.html">[rabbitmq-discuss] Request Handshake Timeout Increase
+</A></li>
+	<LI>Next message: <A HREF="020010.html">[rabbitmq-discuss] Request Handshake Timeout Increase
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#19976">[ date ]</a>
+              <a href="thread.html#19976">[ thread ]</a>
+              <a href="subject.html#19976">[ subject ]</a>
+              <a href="author.html#19976">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

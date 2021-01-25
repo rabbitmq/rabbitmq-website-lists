@@ -1,0 +1,294 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] connection problem. i want reconnection if failed
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20connection%20problem.%20i%20want%20reconnection%20if%20failed&In-Reply-To=%3CCALLCUZZJMjhAt%3D_dW5Z7Yte84SBA2G40dMxn6ami3vySSSKaNw%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="031003.html">
+   <LINK REL="Next"  HREF="031036.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] connection problem. i want reconnection if failed</H1>
+    <B>Abdul Nasir Khayam</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20connection%20problem.%20i%20want%20reconnection%20if%20failed&In-Reply-To=%3CCALLCUZZJMjhAt%3D_dW5Z7Yte84SBA2G40dMxn6ami3vySSSKaNw%40mail.gmail.com%3E"
+       TITLE="[rabbitmq-discuss] connection problem. i want reconnection if failed">khayamabdulnasir at gmail.com
+       </A><BR>
+    <I>Tue Oct 15 13:49:10 BST 2013</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="031003.html">[rabbitmq-discuss] Error while starting rabbitmq-server.
+</A></li>
+        <LI>Next message: <A HREF="031036.html">[rabbitmq-discuss] connection problem. i want reconnection if failed
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#31006">[ date ]</a>
+              <a href="thread.html#31006">[ thread ]</a>
+              <a href="subject.html#31006">[ subject ]</a>
+              <a href="author.html#31006">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>My connecction fails to attempt, plz help me how to correct error. see
+exception in log file. and code is below.
+
+Log file:
+
+2013-10-15 07:15:26,943 [18] DEBUG adam602.container: AMQP &lt;-- this is an
+amqp message published
+2013-10-15 07:15:30,041 [18] DEBUG adam602.container: Exception:
+SharedQueue closed
+A first chance exception of type 'System.IO.EndOfStreamException' occurred
+in RabbitMQ.Client.dll
+The thread 0xed0 has exited with code 0 (0x0).
+The thread 0xb364 has exited with code 0 (0x0).
+The thread 0x2ef0 has exited with code 0 (0x0).
+The program '[14372] adam602.vshost.exe: Managed' has exited with code 0
+(0x0).
+
+
+Code:
+
+using System;
+using System.Windows.Forms;
+using System.Collections.Generic;
+using System.Linq;
+using System.Text;
+using System.Messaging;
+using RabbitMQ.Client;
+using RabbitMQ.Client.Exceptions;
+using System.Collections;
+
+namespace adam602
+{
+    public delegate void ProcessAmqpMessage(string webcmd, Hashtable
+inputHash);
+
+    class dispatchRabbitMq
+    {
+        protected IModel Model;
+        protected IConnection Connection;
+        protected string QueueName;
+        protected bool isConsuming;
+
+        // used to pass messages back to UI for processing
+        public event onReceiveMessage onMessageReceived;
+
+        //internal delegate to run the consuming queue on a seperate thread
+        private delegate void ConsumeDelegate();
+
+        //delegate to post to UI thread
+        private delegate void showMessageDelegate(string message);
+
+        public ProcessAmqpMessage _processAmqpMessage = null;
+
+        public dispatchRabbitMq()
+        {
+        }
+
+        public void init()
+        {
+            QueueName = &quot;testqueue&quot;;
+            string exchange = &quot;exch&quot;;
+
+            ConnectionFactory connectionFactory = new ConnectionFactory();
+            try
+            {
+                connectionFactory.HostName = globals.serverHost;
+                connectionFactory.Port = globals.amqpPort;
+                connectionFactory.UserName = globals.amqpUser;
+                connectionFactory.Password = globals.amqpPass;
+                connectionFactory.RequestedHeartbeat = 30;
+
+                //   connectionFactory.Parameters.RequestedHeartbeat = 30;
+//if above line not works, then comment that line and uncomment this line
+
+
+                Connection = connectionFactory.CreateConnection();
+
+
+                Model = Connection.CreateModel();
+                Model.QueueDeclare(QueueName, false, false, false, null);
+                Model.QueueBind(QueueName, exchange, &quot;&quot;);
+                StartConsuming();
+            }
+            catch (Exception e)
+            {
+                Console.WriteLine(&quot;AMQP.init: &quot; + e.Message);
+
+            }
+
+            this.onMessageReceived += this.parseAmqpData;
+
+
+
+}
+
+        private void StartConsuming()
+        {
+            isConsuming = true;
+            ConsumeDelegate c = new ConsumeDelegate(Consume);
+            c.BeginInvoke(null, null);
+        }
+
+
+      // new method for check if connection null then call init() method
+again for reconnectig x times
+
+
+
+        private void Consume()
+        {
+            QueueingBasicConsumer consumer = new
+QueueingBasicConsumer(Model);
+            String consumerTag = Model.BasicConsume(QueueName, false,
+consumer);
+            //Console.WriteLine(&quot;CONSUMER-TAG: |&quot; + consumerTag + &quot;|&quot;);
+            while (isConsuming)
+            {
+                try
+                {
+                    RabbitMQ.Client.Events.BasicDeliverEventArgs e =
+(RabbitMQ.Client.Events.BasicDeliverEventArgs)consumer.Queue.Dequeue();
+                    IBasicProperties props = e.BasicProperties;
+                    byte[] body = e.Body;
+
+                    // ... process the message
+                    onMessageReceived(body);
+
+                    Model.BasicAck(e.DeliveryTag, false);
+
+                }
+                catch (OperationInterruptedException ex)
+                {
+                    // The consumer was removed, either through
+                    // channel or connection closure, or through the
+                    // action of IModel.BasicCancel().
+                    Console.WriteLine(&quot;OperationInterruptedException: &quot; +
+ex.Message);
+                    break;
+                }
+                catch (Exception exx)
+                {
+                    Console.WriteLine(&quot;Exception: &quot; + exx.Message);
+                    break;
+                }
+            }
+
+        }
+
+        public void StopConsuming()
+        {
+            isConsuming = false;
+            if (Connection != null)
+                Connection.Close();
+            if (Model != null)
+                Model.Abort();
+        }
+
+        public void parseAmqpData(byte[] message)
+        {
+            string incomingString =
+System.Text.Encoding.UTF8.GetString(message);
+            incomingString.Trim();
+            incomingString = incomingString.Replace(&quot;\n&quot;, &quot;&quot;);
+            Console.WriteLine(String.Format(&quot;AMQP &lt;-- {0}&quot;,
+incomingString));
+        }
+    }
+}
+
+
+
+-- 
+Best Regards
+
+Abdul Nasir Khayam
+Software Engineer
+Tel : 00923319449551
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20131015/91cd114c/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20131015/91cd114c/attachment.htm</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="031003.html">[rabbitmq-discuss] Error while starting rabbitmq-server.
+</A></li>
+	<LI>Next message: <A HREF="031036.html">[rabbitmq-discuss] connection problem. i want reconnection if failed
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#31006">[ date ]</a>
+              <a href="thread.html#31006">[ thread ]</a>
+              <a href="subject.html#31006">[ subject ]</a>
+              <a href="author.html#31006">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

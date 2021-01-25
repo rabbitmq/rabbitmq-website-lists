@@ -1,0 +1,226 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Design Help?
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Design%20Help%3F&In-Reply-To=%3C4F427D0C.10907%402600hz.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="018287.html">
+   <LINK REL="Next"  HREF="018466.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Design Help?</H1>
+    <B>James Aimonetti</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Design%20Help%3F&In-Reply-To=%3C4F427D0C.10907%402600hz.com%3E"
+       TITLE="[rabbitmq-discuss] Design Help?">james at 2600hz.com
+       </A><BR>
+    <I>Mon Feb 20 17:04:12 GMT 2012</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="018287.html">[rabbitmq-discuss] Android: unable to open stack traces error
+</A></li>
+        <LI>Next message: <A HREF="018466.html">[rabbitmq-discuss] Design Help?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#18278">[ date ]</a>
+              <a href="thread.html#18278">[ thread ]</a>
+              <a href="subject.html#18278">[ subject ]</a>
+              <a href="author.html#18278">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>-----BEGIN PGP SIGNED MESSAGE-----
+Hash: SHA1
+
+Hey list,
+
+Curious for feedback, as this design idea I have would possibly extend
+to several places in our application, and I'd love to make it generic
+enough to do so.
+
+The basic problem:
+
+We have a queue of work to be done, represented as a named queue. For
+redundancy, we have 2-&gt;many processes (in Erlang) that will read from
+the queue and do the work. Easy so far.
+
+However, we also have a list of resources needed to process the work
+queue, which needs to be shared across all worker processes. When one
+worker retrieves a job from the work queue, it must also get the list of
+available resources, match resource to job, and return the list of
+resources (with the used resource flagged as such) back to a globally
+accessible place (hoping to avoid the DB, but it may be a good-enough
+sync point).
+
+So, for example, there are four jobs, two that require a paper shredder,
+two that require a wood chipper. There is only one paper shredder and
+one wood chipper. There are also 10 workers available to actually shred
+stuff.
+
+Worker one consumes the list of available equipment (one paper shredder,
+one wood chipper), and then pulls the first job (paper to be shredded).
+Worker one grabs the paper shredder, returns the list of resources
+having flagged the paper shredder as in use, and ACKs the job. When
+worker one finishes shredding paper, it will wait until the resources
+list is available and update it with 1 more paper shredder available.
+
+Once a job is actually started, I don't care if the worker crashes or
+not; that will be handled later. And I'll have a supervising gen_server
+pull the resource list, add the resource its using to its state, and
+spawn the actual worker (catching exits to return the resource). I'm
+sure other measures will be needed to ensure the resource is added back
+eventually, but I'm trying to get the basic idea down.
+
+So once worker one is done retrieving a resource, worker two can next
+get the resources list and the next job. If the job is paper shredding,
+worker two will nack the job (as there are no paper shredders at the
+moment) and return the resource list. I will eventually want to support
+being able to requeue the job to the back of the job queue, but for now,
+work stalls until the first item in the queue can be processed successfully.
+
+So while the resources list is out of queue, no workers will consume
+jobs from the work queue. As soon as it reappears in queue, I want the
+next worker in line to grab it and try to process the next job.
+
+
+Some initial concerns:
+
+No resources available for the job at the front of the queue means a lot
+of fetching and nacking of jobs, and fetching/returning the resource list.
+
+Losing the resources list: if whatever node (our Erlang VMs only
+communicate via AMQP) goes down while handling the resources list, it
+will obviously never be republished. We do usually have a timeout window
+for the worker to get a resource for a job (sometimes the actual finding
+of the resource takes a while), so if I could coordinate all workers
+consuming from the resources_available queue, I could know after timeout
++ a small fudge factor, that someone else should have begun processing.
+So maybe the resources_available queue is more a try_to_process_a_job
+queue, and each worker process maintains an identical list of resources
+available, with a worker that pairs a job to resource publishing the
+resource's in-use status.
+
+So perhaps the solution is:
+
+Jobs queue round robins amongst all workers, but only one worker can
+fetch/(n)ack. A worker can only fetch from the jobs queue by consuming a
+&quot;next&quot; message from a shared coordination queue. All workers publish
+updates to resources available to a routing key so all workers'
+resources state is in sync. If a worker can't find a resource for a job,
+it can (configurable) 1) nack the job and send a 'next' to the
+coordination queue; 2) requeue the job at the end of the jobs queue and
+send a 'next'; 3) sit on the job (meaning no other worker can fetch from
+the jobs queue) until an appropriate resource comes available.
+
+Concerns here:
+
+Starting/recovering the 'next' token.
+
+I'm sure others but am realizing this is getting long.
+
+Sorry for the wall of text and stream of consciousness writing. We have
+a lot of places where this pattern is showing up and would love to get a
+module or library written to ease doing this kind of coordination. Any
+ideas or directions towards appropriate messaging patterns warmly welcome :)
+
+- -- 
+James Aimonetti
+Distributed Systems Engineer / DJ MC_
+
+2600hz | <A HREF="http://2600hz.com">http://2600hz.com</A>
+sip:<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">james at 2600hz.com</A>
+tel: 415.886.7905
+-----BEGIN PGP SIGNATURE-----
+Version: GnuPG v1.4.10 (GNU/Linux)
+Comment: Using GnuPG with Mozilla - <A HREF="http://enigmail.mozdev.org/">http://enigmail.mozdev.org/</A>
+
+iQEcBAEBAgAGBQJPQn0MAAoJENc77s1OYoGgh+gH/i/kW2M5EMfQ/xz3dU6soUd4
+joGvWC46MdAX2CqlEKyIcP+EsmiTH4Ojjh64Y5MrVv68xV2Zasi8O7W5scFGK31Q
+5r1Uc4lLrCANiEA7MYnaKM3J+s+bf4m3NlDwhE/QKCO+OhZoZl/zYfzlzSlsQ3QX
+3dIKIxJnvnvmehat/oqbpZFFZO7NX4dKWGr3Ysp4OBjPhQLDGGkZ3Tbjbe3KfL0j
+EfdZubwXQQLsTU7oqI7K3HoZc1uWx50VdR28JT1ZTaBdchpUpQ9PXdbq1b++KA++
+SkHpwYB37PgTqK9A3gsmuRCsRMmYP8p3iGPrflnP53kuuESZIZwUFuhbthV5DM8=
+=MDx7
+-----END PGP SIGNATURE-----
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="018287.html">[rabbitmq-discuss] Android: unable to open stack traces error
+</A></li>
+	<LI>Next message: <A HREF="018466.html">[rabbitmq-discuss] Design Help?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#18278">[ date ]</a>
+              <a href="thread.html#18278">[ thread ]</a>
+              <a href="subject.html#18278">[ subject ]</a>
+              <a href="author.html#18278">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

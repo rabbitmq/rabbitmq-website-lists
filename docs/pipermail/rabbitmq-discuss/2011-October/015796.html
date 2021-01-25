@@ -1,0 +1,148 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] RabbitMQ writes non stop to disk
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20RabbitMQ%20writes%20non%20stop%20to%20disk&In-Reply-To=%3CCAD7X3-%3D9u-GyAPoEiC8QR9OriKE2OCETGsSqNPTOZGNf5ZXQgw%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="015793.html">
+   <LINK REL="Next"  HREF="015797.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] RabbitMQ writes non stop to disk</H1>
+    <B>Raphael Simon</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20RabbitMQ%20writes%20non%20stop%20to%20disk&In-Reply-To=%3CCAD7X3-%3D9u-GyAPoEiC8QR9OriKE2OCETGsSqNPTOZGNf5ZXQgw%40mail.gmail.com%3E"
+       TITLE="[rabbitmq-discuss] RabbitMQ writes non stop to disk">raphael at rightscale.com
+       </A><BR>
+    <I>Thu Oct 27 00:26:38 BST 2011</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="015793.html">[rabbitmq-discuss] RabbitMQ writes non stop to disk
+</A></li>
+        <LI>Next message: <A HREF="015797.html">[rabbitmq-discuss] RabbitMQ writes non stop to disk
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#15796">[ date ]</a>
+              <a href="thread.html#15796">[ thread ]</a>
+              <a href="subject.html#15796">[ subject ]</a>
+              <a href="author.html#15796">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Thank you for the long explanation Matthew, you had already explained this
+to me once and I have a vague understanding of how the memory allocation
+algorithm works at a high level. I don't think what we are seeing is normal
+though and can be explained by this. From what I could gather looking at the
+files written by rabbit they contain messages addressed to queues that are
+part of the &quot;active&quot; group. Also even if rabbit was to write every single
+message it gets through all the queues it would not result in that many
+writes. We don't have a throughput of 6000 msg/sec which is the number of
+writes iostat reports (spikes at 17,000/s). Our rate is more like 20 msg/sec
+across all queues.
+
+We'll leave it running as is but I'm worried that like in the past it will
+keep getting worst until the machine simply can't handle the load.
+
+--
+Raphael.
+
+On Wed, Oct 26, 2011 at 4:01 PM, Matthew Sackman &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">matthew at rabbitmq.com</A>&gt;wrote:
+
+&gt;<i> Raphael,
+</I>&gt;<i>
+</I>&gt;<i> Rabbit uses a somewhat sophisticated mechanism to allocate RAM to
+</I>&gt;<i> queues. The allocation of RAM to queues is extremely difficult to do -
+</I>&gt;<i> what are the criteria that you should use to decide to prioritise one
+</I>&gt;<i> queue over another? Furthermore, if the same msg ends up in multiple
+</I>&gt;<i> queues then that msg will exist just once in RAM but be shared by all
+</I>&gt;<i> those queues. So it's actually nonsensical to ask how much memory a
+</I>&gt;<i> queue is using.
+</I>&gt;<i>
+</I>&gt;<i> The approach we adopt results in Rabbit telling all the queues on a node
+</I>&gt;<i> to achieve the same *duration* in RAM. I.e. if that duration is, for
+</I>&gt;<i> example, 10 seconds, then every queue should ensure that given their
+</I>&gt;<i> individual current ingress and egress rates, the number of messages they
+</I>&gt;<i> hold in RAM does not represent more than 10 seconds. Messages beyond
+</I>&gt;<i> that count will be written to disk.
+</I>&gt;<i>
+</I>&gt;<i> The effect of this strategy is that very fast queues find that an awful
+</I>&gt;<i> lot of messages make up that duration, and very slow queues find that
+</I>&gt;<i> very few messages make up that duration. Thus very slow queues can end
+</I>&gt;<i> up with a &quot;target_ram_count&quot; of 0 or small numbers, whilst fast queues
+</I>&gt;<i> have much higher &quot;target_ram_counts&quot;.
+</I>&gt;<i>
+</I>&gt;<i> This is desireable because a slow queue is far more likely to withstand
+</I>&gt;<i> having to write everything to disk and read from disk than a fast queue
+</I>&gt;<i> can. As I have blogged about,
+</I>&gt;<i> ( <A HREF="http://www.rabbitmq.com/blog/2011/09/24/sizing-your-rabbits/">http://www.rabbitmq.com/blog/2011/09/24/sizing-your-rabbits/</A> ), as a
+</I>&gt;<i> queue gets longer, its CPU-per-msg goes up. As it starts having to write
+</I>&gt;<i> to disk, the CPU-per-msg goes up even faster. Plus disks have much lower
+</I>&gt;<i> bandwidth than RAM. Thus a fast queue is likely to catastrophically
+</I>&gt;<i> consume CPU and disk bandwidth if it starts getting forced out to disk.
+</I>&gt;<i> But for a slow queue, this is absolutely fine.
+</I>&gt;<i>
+</I>&gt;<i> Thus in the case of a slow queue receiving a lot rate of messages, what
+</I>&gt;<i> is the problem with Rabbit deciding to write these out to disk? It's
+</I>&gt;<i> doing it deliberately because it believes that queue can cope with being
+</I>&gt;<i> pushed to disk (which it seems to be able to - ingress and egress rates
+</I>&gt;<i> match), and in order to free up vital resources (RAM) for other queues
+</I>&gt;<i> which can not cope with being sent to disk.
+</I>&gt;<i>
+</I>&gt;<i> Rabbit works hard to avoid crowbars - sudden events where it decides to
+</I>&gt;<i> write out millions of messages. In order to avoid this on a queue that
+</I>&gt;<i> slowly grows and forces RAM usage to head towards the limit, Rabbit
+</I>&gt;<i> starts writing out to disk very early on so that the transition to
+</I>&gt;<i> fully-on-disk operation is as smooth and unnoticable as possible. Thus
+</I>&gt;<i> even when Rabbit is some way away from its memory limit, it can still
+</I>&gt;<i> choose to start to push msgs out to disk so to reduce the chances of
+</I>&gt;<i> hitting the memory limit and then realising that there are millions of
+</I>&gt;<i> msgs that need writing out causing a massive burst to the disk which'll
+</I>&gt;<i> disrupt performance substantially.
+</I>&gt;<i>
+</I>&gt;<i> I hope that helps explain a little more.
+</I>&gt;<i>
+</I>&gt;<i> Matthew
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20111026/49bb87c5/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20111026/49bb87c5/attachment.htm</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="015793.html">[rabbitmq-discuss] RabbitMQ writes non stop to disk
+</A></li>
+	<LI>Next message: <A HREF="015797.html">[rabbitmq-discuss] RabbitMQ writes non stop to disk
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#15796">[ date ]</a>
+              <a href="thread.html#15796">[ thread ]</a>
+              <a href="subject.html#15796">[ subject ]</a>
+              <a href="author.html#15796">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,206 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] performance
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20performance&In-Reply-To=f9d1f3560808291517x41ab377cq3a8d82b0577496d5%40mail.gmail.com">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001261.html">
+   <LINK REL="Next"  HREF="001263.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] performance</H1>
+    <B>Ryan Pratt</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20performance&In-Reply-To=f9d1f3560808291517x41ab377cq3a8d82b0577496d5%40mail.gmail.com"
+       TITLE="[rabbitmq-discuss] performance">ryan.pratt at gmail.com
+       </A><BR>
+    <I>Fri Aug 29 23:20:03 BST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001261.html">[rabbitmq-discuss] performance
+</A></li>
+        <LI>Next message: <A HREF="001263.html">[rabbitmq-discuss] performance
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1262">[ date ]</a>
+              <a href="thread.html#1262">[ thread ]</a>
+              <a href="subject.html#1262">[ subject ]</a>
+              <a href="author.html#1262">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>...and the receiver code is:
+
+package com.optionshouse.test;
+
+import java.io.IOException;
+
+import com.rabbitmq.client.*;
+import com.rabbitmq.client.Channel;
+import com.rabbitmq.client.AMQP;
+
+
+public class TestReceiver {
+
+    public static boolean doStop = false;
+
+    public static void main(String[] args) {
+
+        try {
+            ConnectionParameters params = new ConnectionParameters();
+            params.setUsername(&quot;guest&quot;);
+            params.setPassword(&quot;guest&quot;);
+            params.setVirtualHost(&quot;/&quot;);
+            params.setRequestedHeartbeat(0);
+            ConnectionFactory factory = new ConnectionFactory(params);
+            Connection conn = factory.newConnection(&quot;localhost&quot;, 5672);
+
+            Channel channel = conn.createChannel();
+            int ticket = channel.accessRequest(&quot;/data&quot;);
+
+            channel.exchangeDeclare(ticket, &quot;TEST&quot;, &quot;direct&quot;);
+            channel.queueDeclare(ticket, &quot;action.test&quot;);
+            long count = 0;
+            long start = 0;
+            while (!doStop) {
+                boolean noAck = false;
+                GetResponse response = channel.basicGet(ticket,
+&quot;action.test&quot;, true);
+                if (response == null) {
+
+                } else {
+                    if (start == 0)
+                        start = System.currentTimeMillis();
+                    else{
+                        count++;
+                        if (count % 1000 == 0) {
+                            long now = System.currentTimeMillis();
+                            double tis = (now-start)/1000d;
+                            System.out.println(&quot;count:&quot;+count+&quot;, tis:
+&quot;+tis+&quot;, MPS: &quot;+(count/tis));
+                        }
+                    }
+                    AMQP.BasicProperties props = response.getProps();
+                    byte[] body = response.getBody();
+                    long deliveryTag =
+response.getEnvelope().getDeliveryTag();
+                    //channel.basicAck(deliveryTag, false);
+                }
+            }
+        }
+        catch (IOException ex) {
+            ex.printStackTrace();
+        }
+    }
+
+}
+
+On Fri, Aug 29, 2008 at 5:17 PM, Ryan Pratt &lt;<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">ryan.pratt at gmail.com</A>&gt; wrote:
+
+&gt;<i> I have been running some small performance tests and have not seen the
+</I>&gt;<i> throughput I was expecting. I want to see if my numbers are similar to what
+</I>&gt;<i> others have seen, or if something else (setup, etc) is causing my
+</I>&gt;<i> performance to be not so good.
+</I>&gt;<i>
+</I>&gt;<i> I have a single broker running with a sender and receiver all on the same
+</I>&gt;<i> machine. The machine is a dual quad core 2.66 GHz Xeon with 8 gigs of
+</I>&gt;<i> memory. I have to throttle the sender to keep the queue from backing way up,
+</I>&gt;<i> which then causes the broker to basically go to a crawl. The sender sends 40
+</I>&gt;<i> messages then sleeps for 5 millseconds, and loops doing this continually. If
+</I>&gt;<i> a run a receiver that continuously calls basicGet I am seeing a max of about
+</I>&gt;<i> 4000 messages per second. The message I am sending is &quot;Hello, World!&quot;
+</I>&gt;<i> If I add a second Receiver on the same queue I end up getting it up to
+</I>&gt;<i> about 6000 messages per second. 3 Receivers is about the same as 2. Maybe my
+</I>&gt;<i> expectations are off but I was hoping to see at least 20000 messages per
+</I>&gt;<i> second going through. The sender and receiver code is attached. Is there
+</I>&gt;<i> anything obviously wrong with my setup, or is this throughput what I should
+</I>&gt;<i> expect to see? Thanks
+</I>&gt;<i>
+</I>&gt;<i> package com.optionshouse.test;
+</I>&gt;<i>
+</I>&gt;<i> import java.io.IOException;
+</I>&gt;<i> import com.rabbitmq.client.*;
+</I>&gt;<i> import com.rabbitmq.client.Channel;
+</I>&gt;<i> import com.rabbitmq.client.AMQP;
+</I>&gt;<i> import java.util.*;
+</I>&gt;<i>
+</I>&gt;<i> public class TestSender {
+</I>&gt;<i>
+</I>&gt;<i>     public static boolean doStop = false;
+</I>&gt;<i>
+</I>&gt;<i>     public static void main(String[] args) {
+</I>&gt;<i>
+</I>&gt;<i>         try {
+</I>&gt;<i>                 ConnectionParameters params = new ConnectionParameters();
+</I>&gt;<i>                 params.setUsername(&quot;guest&quot;);
+</I>&gt;<i>                 params.setPassword(&quot;guest&quot;);
+</I>&gt;<i>                 params.setVirtualHost(&quot;/&quot;);
+</I>&gt;<i>                 params.setRequestedHeartbeat(0);
+</I>&gt;<i>                 ConnectionFactory factory = new ConnectionFactory(params);
+</I>&gt;<i>                 Connection conn = factory.newConnection(&quot;localhost&quot;, 5672);
+</I>&gt;<i>
+</I>&gt;<i>                 Channel channel = conn.createChannel();
+</I>&gt;<i>                 int ticket = channel.accessRequest(&quot;/data&quot;);
+</I>&gt;<i>                 channel.exchangeDeclare(ticket, &quot;TEST&quot;, &quot;direct&quot;);
+</I>&gt;<i>                 channel.queueDeclare(ticket, &quot;action.test&quot;);
+</I>&gt;<i>                 channel.queueBind(ticket, &quot;action.test&quot;, &quot;TEST&quot;,
+</I>&gt;<i> &quot;action.test&quot;);
+</I>&gt;<i>
+</I>&gt;<i>                 byte[] messageBodyBytes = &quot;Hello, world!&quot;.getBytes();
+</I>&gt;<i> int counter = 0;
+</I>&gt;<i>                 while (!doStop) {
+</I>&gt;<i>                     channel.basicPublish(ticket, &quot;TEST&quot;, &quot;action.test&quot;,
+</I>&gt;<i> null, messageBodyBytes);
+</I>&gt;<i>                     counter++;
+</I>&gt;<i>
+</I>&gt;<i>                     if (counter == 30) {
+</I>&gt;<i>                     try {
+</I>&gt;<i>                         counter = 0;
+</I>&gt;<i>                         Thread.sleep(5);
+</I>&gt;<i>                     }
+</I>&gt;<i>                     catch (InterruptedException ex) {
+</I>&gt;<i>                         ex.printStackTrace();
+</I>&gt;<i>                     }
+</I>&gt;<i>                     }
+</I>&gt;<i>                 }
+</I>&gt;<i>
+</I>&gt;<i>         }
+</I>&gt;<i>         catch (IOException ex) {
+</I>&gt;<i>             ex.printStackTrace();
+</I>&gt;<i>         }
+</I>&gt;<i>     }
+</I>&gt;<i>
+</I>&gt;<i> }
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: <A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20080829/8ca3b38b/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20080829/8ca3b38b/attachment.htm</A> 
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001261.html">[rabbitmq-discuss] performance
+</A></li>
+	<LI>Next message: <A HREF="001263.html">[rabbitmq-discuss] performance
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1262">[ date ]</a>
+              <a href="thread.html#1262">[ thread ]</a>
+              <a href="subject.html#1262">[ subject ]</a>
+              <a href="author.html#1262">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

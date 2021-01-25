@@ -1,0 +1,30 @@
+-module(loadsa_channels).
+
+-include_lib("amqp_client/include/amqp_client.hrl").
+
+-export([run/1]).
+
+run(NCh) ->
+    {ok, Conn} = amqp_connection:start(#amqp_params_network{}),
+    pub([setup(Conn) || _ <- lists:duplicate(NCh, 0)]).
+
+setup(Conn) ->
+    {ok, Ch} = amqp_connection:open_channel(Conn),
+    Args = [{<<"x-max-length">>, short, 5}],
+    #'queue.declare_ok'{queue = Q} =
+        amqp_channel:call(Ch, #'queue.declare'{exclusive = true,
+                                               arguments = Args}),
+    X = <<"x-", Q/binary>>,
+    #'exchange.declare_ok'{} =
+        amqp_channel:call(Ch, #'exchange.declare'{exchange    = X,
+                                                  type        = <<"fanout">>,
+                                                  auto_delete = true}),
+    #'queue.bind_ok'{} =
+        amqp_channel:call(Ch, #'queue.bind'{exchange = X, queue = Q}),
+    {Ch, X, Q}.
+
+pub(CXQ) ->
+    M = #amqp_msg{},
+    [amqp_channel:call(Ch, #'basic.publish'{exchange = X}, M) ||
+        {Ch, X, _} <- CXQ],
+    pub(CXQ).

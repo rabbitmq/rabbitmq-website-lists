@@ -1,0 +1,209 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] RabbitMQ and batch processing
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20RabbitMQ%20and%20batch%20processing&In-Reply-To=%3CCANpjuCs-zSanUvqw7Gn5Bb0XWWwFJcdPT9vPdnSGBeme91zcfQ%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="036094.html">
+   <LINK REL="Next"  HREF="036096.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] RabbitMQ and batch processing</H1>
+    <B>Greg Poirier</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20RabbitMQ%20and%20batch%20processing&In-Reply-To=%3CCANpjuCs-zSanUvqw7Gn5Bb0XWWwFJcdPT9vPdnSGBeme91zcfQ%40mail.gmail.com%3E"
+       TITLE="[rabbitmq-discuss] RabbitMQ and batch processing">greg.poirier at opower.com
+       </A><BR>
+    <I>Mon May 19 22:00:04 BST 2014</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="036094.html">[rabbitmq-discuss] RabbitMQ and batch processing
+</A></li>
+        <LI>Next message: <A HREF="036096.html">[rabbitmq-discuss] RabbitMQ and batch processing
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#36095">[ date ]</a>
+              <a href="thread.html#36095">[ thread ]</a>
+              <a href="subject.html#36095">[ subject ]</a>
+              <a href="author.html#36095">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>On Mon, May 19, 2014 at 1:10 PM, Laing, Michael
+&lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">michael.laing at nytimes.com</A>&gt;wrote:
+
+&gt;<i>
+</I>&gt;<i> It's taking longer than I thought :) Bits and pieces are in the pipeline -
+</I>&gt;<i> our RabbitMQ / Python / Cassandra benchmarks will be out there by Cassandra
+</I>&gt;<i> Day NYC, here at the NYTimes 21 Jun. A big piece of our rabbit_helpers
+</I>&gt;<i> python framework is included.
+</I>&gt;<i>
+</I>
+I totally appreciate that. For about two files of Ruby code, it took me 2-3
+weeks to get it open sourced. :) I appreciate the effort though! Looking
+forward to its eventual announcement, whenever that may be.
+
+
+&gt;<i> We let them pass whatever size message they want pretty much. If it is
+</I>&gt;<i> over a configurable size, currently 10k, we try gzipping it; if it is still
+</I>&gt;<i> over another configurable amount, currently 100k, we push it to S3 and
+</I>&gt;<i> place a signed URL in the metadata.
+</I>&gt;<i>
+</I>
+Yeah, we already have one of our users gzipping before sending their
+messages. This actually helped considerably on memory and disk. I really
+like the idea of doing this on the RabbitMQ side. We would have to support
+Java and Ruby for this, but I think that's not entirely terrible... as we
+could probably figure out away to do this reasonably with JRuby. We'll see.
+
+
+&gt;<i> The proxy clusters buy us a lot by: forcing non-persistence, buffering the
+</I>&gt;<i> core clusters, making copies for message replay, allowing us to redirect
+</I>&gt;<i> the message flows among core clusters, etc. And they are relatively local
+</I>&gt;<i> to the our internal customers. We don't run any code on them other than
+</I>&gt;<i> shovels and and federation. Each internal customer has its own vhost.
+</I>&gt;<i>
+</I>
+Yeah, this part is pretty key to me as well. Having a buffer for core
+RabbitMQ clusters is essential to things like seamless upgrade, cluster
+migration, scaling, configuration changes, etc. I want to be able to bring
+up an entirely new cluster with all of the new changes, begin shoveling
+data from the old cluster to the new cluster, and then flip the proxy over
+to the new cluster as the shovel empties the old cluster's queues.
+
+We already have the use pattern where every internal customer has its own
+vhost. If two services want to communicate, they are given access to the
+appropriate vhost and go from there -- as well as having their own.
+Basically, multiple pub-sub channels that any two services can communicate
+on. This has worked out well, but right now they all reside on the same
+clusters. This is not great, because it means that one user can cause an
+outage for all services utilizing our RabbitMQ offering. Makes for a pretty
+bad user experience.
+
+
+
+&gt;<i> Our customers don't actually pay attention to the fact that they go
+</I>&gt;<i> through a proxy - it is all 'fabrik' to them.
+</I>&gt;<i>
+</I>
+That's exactly where I want to head.
+
+
+Our proxies are 2-way.
+&gt;<i>
+</I>&gt;<i> The publish-to exchange in the proxy has a queue bound to it which is
+</I>&gt;<i> shoveled to the core cluster. The queue will buffer the messages until they
+</I>&gt;<i> are shoveled. The core does whatever. A proxy consume-from exchange is
+</I>&gt;<i> federated to the core as its upstream. The core publishes whatever to that
+</I>&gt;<i> exchange. Consumers create queues and bind to the proxy consume-from
+</I>&gt;<i> exchange, implicitly signaling the upstream to send matching messages. This
+</I>&gt;<i> is one way of configuring the plumbing.
+</I>&gt;<i>
+</I>
+Fabrik is responsible for the creation of this plumbing? I.e. users ineract
+with Fabrik like a standard AMQP library, but when they, for example,
+create the exchange, Fabrik takes over, creates the publish-to exchange,
+proxy queue, and shovel configuration... then when they bind a queue to the
+exchange, Fabrik creates the consume-from exchange and federation
+configuration on the proxy and core?
+
+Ahhh... and you don't have to maintain state, because all of the state is
+kept in RabbitMQ. Each new client that comes up is going to attempt to
+create the appropriate queues/exchanges, but these become noops because
+they already exist.
+
+
+Event-driven, no MxN, fast, reliable, flexible, cheap. We have 2 forms of
+&gt;<i> persistence: S3 for big messages, and Cassandra for memory. So most of the
+</I>&gt;<i> fabrik focuses on the routing of small messages. Cassandra lets us 'replay'
+</I>&gt;<i> messages selectively: show me the messages I missed, give me the messages
+</I>&gt;<i> sent yesterday during a 5 minute period, give me the latest 10 messages on
+</I>&gt;<i> this topic, etc. And it lets us gather event messages for near real-time
+</I>&gt;<i> and longitudinal analysis.
+</I>&gt;<i>
+</I>
+So do you persist every messages sent via Fabrik? I think we could do this
+for some things, but we would have to have TTLs for others. We could even
+have our persistence store honor TTLs that are assigned during queue
+creation, I think. I wonder if Cassandra has something built in that would
+make this easy for us.
+
+That's what we do. Actually we store the json-like stuff in the headers
+&gt;<i> property as a 'metadata' item. The body is opaque to the fabrik - we treat
+</I>&gt;<i> it as binary.
+</I>&gt;<i>
+</I>
+I like this. So you have a consistent message format which, when
+simplified, resmebles:
+
+{ metadata: {}, body: &quot;&quot; }
+
+I like it.
+
+Thanks again.
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20140519/bd6a6585/attachment.html">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20140519/bd6a6585/attachment.html</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="036094.html">[rabbitmq-discuss] RabbitMQ and batch processing
+</A></li>
+	<LI>Next message: <A HREF="036096.html">[rabbitmq-discuss] RabbitMQ and batch processing
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#36095">[ date ]</a>
+              <a href="thread.html#36095">[ thread ]</a>
+              <a href="subject.html#36095">[ subject ]</a>
+              <a href="author.html#36095">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

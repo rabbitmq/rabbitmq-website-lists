@@ -1,0 +1,294 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Posting MQTT to RabbitMQ QOS=1
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Posting%20MQTT%20to%20RabbitMQ%20QOS%3D1&In-Reply-To=%3C8d289f0142c2ca19ceb10823391e161e%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="032068.html">
+   <LINK REL="Next"  HREF="032081.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Posting MQTT to RabbitMQ QOS=1</H1>
+    <B>Adrian Yip</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Posting%20MQTT%20to%20RabbitMQ%20QOS%3D1&In-Reply-To=%3C8d289f0142c2ca19ceb10823391e161e%40mail.gmail.com%3E"
+       TITLE="[rabbitmq-discuss] Posting MQTT to RabbitMQ QOS=1">ayip at recondynamics.com
+       </A><BR>
+    <I>Fri Nov 22 02:19:29 GMT 2013</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="032068.html">[rabbitmq-discuss] Channel performance question
+</A></li>
+        <LI>Next message: <A HREF="032081.html">[rabbitmq-discuss] Posting MQTT to RabbitMQ QOS=1
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#32072">[ date ]</a>
+              <a href="thread.html#32072">[ thread ]</a>
+              <a href="subject.html#32072">[ subject ]</a>
+              <a href="author.html#32072">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi,
+
+
+
+I have a receiver that is waiting on an topic exchange and I can publish
+MQTT messages with Mosquitto with QOS=0 just fine from multiple clients,
+1000s of messages.
+
+
+
+When I publish with QOS=1 however, the client appears successful in
+publishing, but the receiver always stops at 20 messages.  I can kick off
+another client without stopping the receiver and it will also do the same
+thing, the receiver will show 20 messages and nothing more.
+
+
+
+Ideas?
+
+
+
+Adrian
+
+
+
+
+
+
+
+
+
+Receive_json.py
+
+------------------
+
+
+
+#!/usr/bin/env python
+
+import pika, traceback
+
+import json
+
+
+
+prev_id = 0
+
+
+
+def callback(ch, method, properties, body):
+
+    global prev_id
+
+
+
+    ch.basic_ack(delivery_tag=method.delivery_tag)
+
+    msgBody = json.loads(body)
+
+    print &quot; [x] %r:%r&quot; % (method.routing_key,msgBody,)
+
+    if prev_id + 1 != int(msgBody['id']):
+
+        print &quot;Missing %d&quot; % (prev_id + 1)
+
+    prev_id = msgBody['id']
+
+    return
+
+
+
+
+
+while True:
+
+    try:
+
+
+
+        connection = pika.BlockingConnection(pika.ConnectionParameters(
+
+                host='localhost'))
+
+        channel = connection.channel()
+
+
+
+        channel.exchange_declare(exchange='mqtt.topic',
+
+                                 type='topic')
+
+
+
+        result = channel.queue_declare(&quot;mqtt-json-queue&quot;)
+
+        queue_name = result.method.queue
+
+
+
+        # topic here is what the mqtt plugin posts to
+
+        channel.queue_bind(exchange='mqtt.topic',
+
+                           queue=queue_name,
+
+                           routing_key=&quot;json_routing_key&quot;)
+
+
+
+        print ' [*] Waiting for logs. To exit press CTRL+C'
+
+
+
+        channel.basic_consume(callback,
+
+                              queue=queue_name
+
+                              )
+
+
+
+        channel.start_consuming()
+
+
+
+    except Exception, e:
+
+        traceback.print_exc()
+
+
+
+
+
+Client
+
+------
+
+
+
+import mosquitto
+
+import sys
+
+import time
+
+import random
+
+import json
+
+
+
+def on_connect(self, mosq, obj, rc):
+
+    if rc == 0:
+
+        print(&quot;Connected successfully.&quot;)
+
+
+
+if len(sys.argv) != 4:
+
+    print &quot;Usage: cnt sleep_s qos&quot;
+
+    exit(-1)
+
+cnt = int(sys.argv[1])
+
+sleep_s = float(sys.argv[2])
+
+qos = int(sys.argv[3])
+
+
+
+client = mosquitto.Mosquitto(&quot;test-client%d&quot; % random.randint(1,100))
+
+print client._client_id
+
+
+
+client.connect(&quot;localhost&quot;,port=1884)
+
+
+
+i = 1
+
+while i &lt;=  cnt:
+
+    print &quot;Sending JSON msg %d via MQTT&quot; % i
+
+    msg = {}
+
+    msg[&quot;id&quot;] = i
+
+
+
+    try :
+
+        client.publish(&quot;json_routing_key&quot;,json.dumps(msg),qos=qos)
+
+    except :
+
+        print &quot;Unexpected publish error: &quot;,sys.exc_info()[0]
+
+    i = i + 1
+
+
+
+    time.sleep(sleep_s)
+
+
+
+time.sleep(2)
+
+try:
+
+    client.disconnect()
+
+except:
+
+    print &quot;Unexpected disconnect error: &quot;,sys.exc_info()[0]
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20131121/dc80cfb6/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20131121/dc80cfb6/attachment.htm</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="032068.html">[rabbitmq-discuss] Channel performance question
+</A></li>
+	<LI>Next message: <A HREF="032081.html">[rabbitmq-discuss] Posting MQTT to RabbitMQ QOS=1
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#32072">[ date ]</a>
+              <a href="thread.html#32072">[ thread ]</a>
+              <a href="subject.html#32072">[ subject ]</a>
+              <a href="author.html#32072">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

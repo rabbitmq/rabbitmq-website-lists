@@ -1,0 +1,190 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] rabbitmq-c with high availability
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20rabbitmq-c%20with%20high%20availability&In-Reply-To=%3CCAAt2poLEyOeYFz65YhDjLPKb3XmWxZ-CeDPzMfpCg%3DZU5HDs%3Dg%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="023587.html">
+   <LINK REL="Next"  HREF="023590.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] rabbitmq-c with high availability</H1>
+    <B>Alan Antonuk</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20rabbitmq-c%20with%20high%20availability&In-Reply-To=%3CCAAt2poLEyOeYFz65YhDjLPKb3XmWxZ-CeDPzMfpCg%3DZU5HDs%3Dg%40mail.gmail.com%3E"
+       TITLE="[rabbitmq-discuss] rabbitmq-c with high availability">alan.antonuk at gmail.com
+       </A><BR>
+    <I>Mon Nov  5 17:04:40 GMT 2012</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="023587.html">[rabbitmq-discuss] rabbitmq-c with high availability
+</A></li>
+        <LI>Next message: <A HREF="023590.html">[rabbitmq-discuss] rabbitmq-c amqp_table_t (high availability	configuration params)
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#23589">[ date ]</a>
+              <a href="thread.html#23589">[ thread ]</a>
+              <a href="subject.html#23589">[ subject ]</a>
+              <a href="author.html#23589">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>So the following loop:
+
+   for (int k = 0; k &lt; table.num_entries; k++) {
+*       free(table.entries[k].value.value.array.entries);*
+   }
+
+This would only work if table.entries[k].kind == AMQP_FIELD_KIND_ARRAY.  If
+kind is something else, you get undefined behavior, which is what you're
+getting.
+
+-Alan
+
+
+On Mon, Nov 5, 2012 at 10:31 AM, Arun Chandrasekaran &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">visionofarun at gmail.com</A>
+&gt;<i> wrote:
+</I>
+&gt;<i> Hi all,
+</I>&gt;<i>
+</I>&gt;<i> Has anyone used rabbitmq-c with high availability configuration?
+</I>&gt;<i>
+</I>&gt;<i> I am stuck with a double free corruption when using rabbitmq-c with high
+</I>&gt;<i> availability configuration. For HA, since the nodes names have to be taken
+</I>&gt;<i> from a config file, I have implemented the following way of getting the key
+</I>&gt;<i> value params.
+</I>&gt;<i>
+</I>&gt;<i>    amqp_table_t table;
+</I>&gt;<i>    std::vector&lt;amqp_field_value_t_ *&gt; array_ptrs;
+</I>&gt;<i>
+</I>&gt;<i>    memset(&amp;table, 0, sizeof(table));
+</I>&gt;<i>    table.num_entries = ha_map.size();
+</I>&gt;<i>    if (table.num_entries)
+</I>&gt;<i>        table.entries = (amqp_table_entry_t *) calloc(1,
+</I>&gt;<i> sizeof(amqp_table_entry_t) * table.num_entries);
+</I>&gt;<i>    int i = 0;
+</I>&gt;<i>
+</I>&gt;<i>    std::map&lt;std::string, std::vector&lt;std::string&gt; &gt;::const_iterator it;
+</I>&gt;<i>    for (it = ha_map.begin(); it != ha_map.end(); it++, i++) {
+</I>&gt;<i>       table.entries[i].key.len = (*it).first.size();
+</I>&gt;<i>       table.entries[i].key.bytes = (void *) (*it).first.c_str();
+</I>&gt;<i>
+</I>&gt;<i>       if ((*it).second.size() == 1) {
+</I>&gt;<i>          table.entries[i].value.kind = AMQP_FIELD_KIND_UTF8;
+</I>&gt;<i>          table.entries[i].value.value.bytes.len = (*it).second[0].size();
+</I>&gt;<i>          table.entries[i].value.value.bytes.bytes = (void *)
+</I>&gt;<i> (*it).second[0].c_str();
+</I>&gt;<i>
+</I>&gt;<i>       } else if ((*it).second.size() &gt; 1) {
+</I>&gt;<i>          table.entries[i].value.kind = AMQP_FIELD_KIND_ARRAY;
+</I>&gt;<i>          table.entries[i].value.value.array.num_entries =
+</I>&gt;<i> (*it).second.size();
+</I>&gt;<i>          amqp_field_value_t *f = (amqp_field_value_t_ *)
+</I>&gt;<i> malloc(sizeof(amqp_field_value_t_) * (*it).second.size());
+</I>&gt;<i>          array_ptrs.push_back(f);
+</I>&gt;<i>          table.entries[i].value.value.array.entries = f;
+</I>&gt;<i>          LogInfo((&quot;Before pointer: %p&quot;,
+</I>&gt;<i> table.entries[i].value.value.array.entries));
+</I>&gt;<i>          for (size_t j = 0; j &lt; (*it).second.size(); j++) {
+</I>&gt;<i>             table.entries[i].value.value.array.entries[j].kind =
+</I>&gt;<i> AMQP_FIELD_KIND_UTF8;
+</I>&gt;<i>             table.entries[i].value.value.array.entries[j].value.bytes.len
+</I>&gt;<i> = (*it).second[j].size();
+</I>&gt;<i>
+</I>&gt;<i> table.entries[i].value.value.array.entries[j].value.bytes.bytes = (void *)
+</I>&gt;<i> (*it).second[j].c_str();
+</I>&gt;<i>          }
+</I>&gt;<i>          LogInfo((&quot;Before1 pointer: %p&quot;,
+</I>&gt;<i> table.entries[i].value.value.array.entries));
+</I>&gt;<i>       }
+</I>&gt;<i>    }
+</I>&gt;<i>
+</I>&gt;<i>    amqp_queue_declare_ok_t *r =
+</I>&gt;<i>       amqp_queue_declare(m_conn, m_channel,
+</I>&gt;<i> amqp_cstring_bytes(m_queue.c_str()), 0, 1, 0, 0, table);
+</I>&gt;<i>
+</I>&gt;<i>    for (size_t i = 0; i &lt; array_ptrs.size(); i++) {
+</I>&gt;<i>       free(array_ptrs[i]);
+</I>&gt;<i>    }
+</I>&gt;<i>    free(table.entries);
+</I>&gt;<i>
+</I>&gt;<i> This works perfectly fine. But the crash happens when I replace
+</I>&gt;<i>
+</I>&gt;<i>    for (size_t i = 0; i &lt; array_ptrs.size(); i++) {
+</I>&gt;<i>       free(array_ptrs[i]);
+</I>&gt;<i>    }
+</I>&gt;<i>
+</I>&gt;<i> with
+</I>&gt;<i>    for (int k = 0; k &lt; table.num_entries; k++) {
+</I>&gt;<i> *       free(table.entries[k].value.value.array.entries);*
+</I>&gt;<i>    }
+</I>&gt;<i>
+</I>&gt;<i> Am I doing something wrong here? Or is this a bug in the rabbitmq-c
+</I>&gt;<i> library itself?
+</I>&gt;<i>
+</I>&gt;<i> Thanks,
+</I>&gt;<i> Arun
+</I>&gt;<i>
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20121105/5578f22f/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20121105/5578f22f/attachment.htm</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="023587.html">[rabbitmq-discuss] rabbitmq-c with high availability
+</A></li>
+	<LI>Next message: <A HREF="023590.html">[rabbitmq-discuss] rabbitmq-c amqp_table_t (high availability	configuration params)
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#23589">[ date ]</a>
+              <a href="thread.html#23589">[ thread ]</a>
+              <a href="subject.html#23589">[ subject ]</a>
+              <a href="author.html#23589">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

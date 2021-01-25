@@ -1,0 +1,155 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Topic routing
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20Topic%20routing&In-Reply-To=47A96577-B185-4BE9-8ECA-CB7644284887%40lindenlab.com">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001753.html">
+   <LINK REL="Next"  HREF="001758.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Topic routing</H1>
+    <B>Ben Hood</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20Topic%20routing&In-Reply-To=47A96577-B185-4BE9-8ECA-CB7644284887%40lindenlab.com"
+       TITLE="[rabbitmq-discuss] Topic routing">0x6e6562 at gmail.com
+       </A><BR>
+    <I>Mon Oct 20 21:37:37 BST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001753.html">[rabbitmq-discuss] RabbitMQ - in SF tomorrow and Saturday
+</A></li>
+        <LI>Next message: <A HREF="001758.html">[rabbitmq-discuss] txAMQP and multiple queues per channel
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1754">[ date ]</a>
+              <a href="thread.html#1754">[ thread ]</a>
+              <a href="subject.html#1754">[ subject ]</a>
+              <a href="author.html#1754">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Brian,
+
+On Mon, Oct 20, 2008 at 6:00 PM, Brian Sullivan &lt;<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">bsullivan at lindenlab.com</A>&gt; wrote:
+&gt;<i> The former.  We want to have a routing key &quot;&lt;domain&gt;.&lt;event&gt;&quot;, so that we
+</I>&gt;<i> can easily subscribe to the same event across all domains.  You could think
+</I>&gt;<i> of it like trying to listen to events that are happening across a number of
+</I>&gt;<i> servers.  Same set of event types, but N servers, which we might like to see
+</I>&gt;<i> individually, or all together in a subscription.  If we did it with separate
+</I>&gt;<i> topic exchanges, we'd need to know the full list of them and subscribe to
+</I>&gt;<i> each individually - we'd like to keep it more dynamic than that.
+</I>
+Ok, this sounds like an ideal candidate for topic exchanges from an
+application perspective.
+
+&gt;<i> Is there a way to speed up this draining process, in case there is a
+</I>&gt;<i> particularly high volume feed that has gotten out of control and we don't
+</I>&gt;<i> want it to impact more critical feeds?
+</I>
+The way to deal with high volume ingress is the Channel.Flow command.
+Please refer to this thread:
+
+<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/2008-October/002132.html">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/2008-October/002132.html</A>
+
+I've just checked the timestamp of that thread - it is 3 minutes
+earlier that this post, hence you probably did not have a chance to
+read it before you wrote this.
+
+&gt;<i> My plan has been to route the
+</I>&gt;<i> heaviest feeds to particular nodes on the cluster, so that they can manage
+</I>&gt;<i> that busy queue there.  Our publishers are sending all event types, so the
+</I>&gt;<i> heavier topics are not yet separated out (hence the appeal of a message
+</I>&gt;<i> queue routing system).
+</I>
+Clustering will not affect the run time complexity of routing, since
+the routing table has to be coherent across the cluster.
+
+In a clustered scenario, the queues may reside on different nodes,
+whereas exchanges will *exist* on every node.
+
+&gt;<i> Also, from what I can see in testing, the overhead of routing messages to
+</I>&gt;<i> nodes in the cluster that have active subscriptions is pretty low.  I know I
+</I>&gt;<i> can throw more consuming applications to pull off a single queue on that
+</I>&gt;<i> node to keep up with the flow.  However, there's got to be a saturation
+</I>&gt;<i> point where that node cannot manage the volume of all messages with that
+</I>&gt;<i> topic key going to one place.
+</I>
+I think that you might be touching on the subject that would make AMQP
+truly globally scalable - eventual consistency.
+
+With eventual consistency, you *could* relax the constraint of having
+to have a single gloabally consistent queue endpoint and allow
+multiple queues with the same name. If you were to do this, you'd have
+to build in the notions of merging and other conflicts that may arise
+into the AMQP model.
+
+Until this happens, you are stuck with the global consistency of AMQP.
+
+&gt;<i>From a practical perspective, you have to ask yourself, when I am
+</I>likely to run into that saturation point.
+
+If you think that may happen at some stage soon, you may well have to
+reconsider using RabbitMQ.
+
+Might be worth just calibrating this.
+
+&gt;<i> Is there any way to scale this without
+</I>&gt;<i> changing my routing keys?
+</I>
+Ok, so the general advice we give is to try to exploit some kind of
+partition that is natural to your application  - not a very original
+idea, I know and doesn't *actually* answer your question :-(
+
+&gt;<i> The only way I can think of managing that limit
+</I>&gt;<i> at this point is to start generating smarter keys so that I can split the
+</I>&gt;<i> load by key to different nodes (for example &quot;mytopickey.1&quot;, &quot;mytopickey.2&quot;).
+</I>&gt;<i>  Is there something cleaner (non-data-related) than that?
+</I>
+No and yes.
+
+No in the sense that there is nothing OOTB that I know of that will
+solve this issue *without* you getting funky with your routing keys.
+
+Yes in the sense that you could implement a custom exchange type that
+allows you to continue with your current naming scheme and the
+exchange is smart enough to perform some kind of partitioned routing
+that would facilitate very high volume routing.
+
+&gt;<i> The only &quot;issue&quot; I have been able having is theoretical, since I expected
+</I>&gt;<i> the SpammyTopicProducer sample code to sustain some max throughput without
+</I>&gt;<i> any subscribers.  I have made a quick modification to publish on a constant
+</I>&gt;<i> topic (to make sure it wasn't due to a routing table issue with millions of
+</I>&gt;<i> topics) and I still saw the same behavior (where it seems the broker doesn't
+</I>&gt;<i> throw away the messages fast enough).
+</I>
+Yes, the solution for this is the Channel.Flow patch (as the Linux
+team say - crashing a kernel sometime near you soon :-)
+
+Ben
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001753.html">[rabbitmq-discuss] RabbitMQ - in SF tomorrow and Saturday
+</A></li>
+	<LI>Next message: <A HREF="001758.html">[rabbitmq-discuss] txAMQP and multiple queues per channel
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1754">[ date ]</a>
+              <a href="thread.html#1754">[ thread ]</a>
+              <a href="subject.html#1754">[ subject ]</a>
+              <a href="author.html#1754">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

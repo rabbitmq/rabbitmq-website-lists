@@ -1,0 +1,61 @@
+using System;
+using System.Text;
+using RabbitMQ.Client;
+using System.IO;
+using RabbitMQ.Client.Content;
+using RabbitMQ.Client.Events;
+using RabbitMQ.Client.MessagePatterns;
+using RabbitMQ.Util;
+
+namespace ConsoleApplication2
+{
+    class Program
+    {
+        static void Main(string[] args)
+        {
+
+            IProtocol protocol = Protocols.FromEnvironment("my-protocol");
+            string hostName = "localhost";
+            int portNumber = 5672;
+            string exchangeName = "testexchange";
+            string queueName = "testqueue";
+            string routingKey = "routingkey";
+            ConnectionFactory factory = new ConnectionFactory();
+            IConnection conn = factory.CreateConnection(protocol, hostName, portNumber);
+            IModel channel = conn.CreateModel();
+            string realm = "/data";
+            ushort ticket = channel.AccessRequest(realm);
+            channel.ExchangeDeclare(ticket, exchangeName, ExchangeType.Direct);
+            channel.QueueDeclare(ticket, queueName);
+            channel.QueueBind(ticket, queueName, exchangeName, routingKey, false, null);
+
+            QueueingBasicConsumer consumer = new QueueingBasicConsumer(channel);
+            channel.BasicConsume(ticket, queueName, null, consumer);
+            Console.WriteLine("Entering Loop .. Please press Control C to exit");
+            while (true)
+            {
+                try
+                {
+                        RabbitMQ.Client.Events.BasicDeliverEventArgs e2 =
+                        (RabbitMQ.Client.Events.BasicDeliverEventArgs)consumer.Queue.Dequeue();
+                        IBasicProperties props = e2.BasicProperties;
+                        byte[] body = e2.Body;
+                        
+                        string str = System.Text.Encoding.UTF8.GetString(body);
+                        
+                        Console.WriteLine(str);
+                        channel.BasicAck(e2.DeliveryTag, false);
+                }
+                catch (EndOfStreamException ex)
+                {
+                    // The consumer was removed, either through
+                    // channel or connection closure, or through the
+                    // action of IModel.BasicCancel().
+                    
+                    Console.WriteLine(ex.ToString());
+                  break;
+                }
+            }
+        }
+    }
+}

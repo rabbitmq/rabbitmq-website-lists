@@ -1,0 +1,120 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Option for surviving connection failure	feature suggestion
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Option%20for%20surviving%20connection%20failure%0A%09feature%20suggestion&In-Reply-To=%3C8CAE2086-394A-4EAB-AD6F-DABBA9D2CD6D%40rabbitmq.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="032859.html">
+   <LINK REL="Next"  HREF="032862.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Option for surviving connection failure	feature suggestion</H1>
+    <B>Tim Watson</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Option%20for%20surviving%20connection%20failure%0A%09feature%20suggestion&In-Reply-To=%3C8CAE2086-394A-4EAB-AD6F-DABBA9D2CD6D%40rabbitmq.com%3E"
+       TITLE="[rabbitmq-discuss] Option for surviving connection failure	feature suggestion">tim at rabbitmq.com
+       </A><BR>
+    <I>Fri Jan  3 13:41:41 GMT 2014</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="032859.html">[rabbitmq-discuss] How can a consumer get notification of	arrival of a message in the queue?
+</A></li>
+        <LI>Next message: <A HREF="032862.html">[rabbitmq-discuss] Option for surviving connection failure feature suggestion
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#32860">[ date ]</a>
+              <a href="thread.html#32860">[ thread ]</a>
+              <a href="subject.html#32860">[ subject ]</a>
+              <a href="author.html#32860">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>On 5 Dec 2013, at 18:17, Wayne Brantley wrote:
+&gt;<i> Disclaimer:  I am new to RabbitMQ.  :-)
+</I>&gt;<i> 
+</I>
+Welcome to the party! ;)
+
+&gt;<i> I would propose a new option on a queue.
+</I>&gt;<i> 
+</I>&gt;<i> If the connection is dropped, that would not make the message available to another consumer.
+</I>&gt;<i> The message would have a 'processing timeout'.  Only after that time has expired would the message become available to other consumers.
+</I>&gt;<i> 
+</I>&gt;<i> There would be several different options that could be set on the message for how to determine to deliver the message to another consumer.
+</I>&gt;<i> 
+</I>&gt;<i> 1)  You could have an 'absolute processing timeout'.  
+</I>&gt;<i>     -  RabbitMQ would keep track of how long the consumer has had the message.
+</I>&gt;<i>     -  The client could send 'keep alive' acknowledgements to reset the the time RabbitMQ is tracking to zero.
+</I>&gt;<i>     -  All that matters is has the message been processing longer than the timeout value.  (where timeout can be reset by client).  A dropped connection would not matter. 
+</I>&gt;<i> 
+</I>
+Not sure I follow this properly, so to clarify, you're suggesting that the broker should track the message and if the client doesn't ACK within a specified time frame, consider the message REJECTed and give it to another client? What if the client did send an ACK within the requisite time frame, but the network was congested and therefore the ACK didn't make it to the broker in time? You'd then be in an inconsistent state. Client's already send 'keep-alive' messages for connections - AMQP heartbeats - so are you suggesting that on receipt of a heartbeat, the broker should reset this timer? If so, that would intertwine connection management with queue processing in a fiddly way, that would likely harm performance. If not, then what you're suggesting is an extension of the protocol, since AMQP doesn't have this concept at the moment. Protocol enhancements have been introduced by RabbitMQ in the past, so that's not out of the question, but I'd suggest the semantics need to be formally identified before pursuing that kind of thing.
+
+You might be able to approximate this with multiple queues and TTL, though I'm not sure.
+
+&gt;<i> 2)  You could have a 'broken connection timeout'
+</I>&gt;<i>     -  RabbitMQ would keep track of how long the consumer has had the message, AFTER the connection is dropped.
+</I>&gt;<i>     -  The client would NOT ever need to send 'keep alive' acknowledgements.
+</I>&gt;<i>     -  If a consumer connection is re-established - the consumer should somehow indicate they are still working on the message.
+</I>&gt;<i>     -  Potentially - when the consumer is working on the message, they send 'keep alive' every so often.  This way if the connection broke and was reconnected, the next time a 'keep alive' is sent, it would let RabbitMQ know you are still working on the message.
+</I>&gt;<i> 
+</I>
+What would the server do if the connection never came back? Presumably you're suggesting that the queue would consider the message still &quot;out on loan&quot; until the timeout expires?
+
+&gt;<i> The above options would probably have default values at the queue level, and each message could override (for example if you know the message takes a long time to process.)
+</I>&gt;<i> 
+</I>&gt;<i> This makes it where any intermittent connection from consumer to publisher would not necessarily mean the consumer 'failed' and the message should be passed to another consumer.
+</I>
+There are a number of potential races with both (1) and (2) that could be problematic. There's also a lot of overhead for the queues to take on, just to support a fairly narrow use case - i.e., when a consumer dies you wish to wait a while before considering un-acked messages associated with that consumer ready for re-queuing. There's also the problem of &quot;how to identify that it is the same consumer&quot;, since the AMQP specification dictates the following: &quot;The consumer tag is local to a channel, so two clients can use the same consumer tags&quot;. Since the client will &quot;return&quot; on a new connection and new channel, how does the broker know that this is the same (previously handled) client of a specific queue?
+
+Hopefully those are some useful things to think about whilst pondering how this might work. It's also worth considering whether or not there are other designs that might achieve what you want, based on existing features. We might be able to help with that too.
+
+Cheers,
+Tim
+
+
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="032859.html">[rabbitmq-discuss] How can a consumer get notification of	arrival of a message in the queue?
+</A></li>
+	<LI>Next message: <A HREF="032862.html">[rabbitmq-discuss] Option for surviving connection failure feature suggestion
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#32860">[ date ]</a>
+              <a href="thread.html#32860">[ thread ]</a>
+              <a href="subject.html#32860">[ subject ]</a>
+              <a href="author.html#32860">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

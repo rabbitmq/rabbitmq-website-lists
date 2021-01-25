@@ -1,0 +1,201 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] why rabbit eating so much memory?
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20why%20rabbit%20eating%20so%20much%20memory%3F&In-Reply-To=%3CCA%2BBFTFtDBQ0AvOyxkDmM%3D%2BP4PHYHK9%3DmPy20-3wQCBF7ZBmCjg%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="028468.html">
+   <LINK REL="Next"  HREF="028485.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] why rabbit eating so much memory?</H1>
+    <B>Rubo Liang</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20why%20rabbit%20eating%20so%20much%20memory%3F&In-Reply-To=%3CCA%2BBFTFtDBQ0AvOyxkDmM%3D%2BP4PHYHK9%3DmPy20-3wQCBF7ZBmCjg%40mail.gmail.com%3E"
+       TITLE="[rabbitmq-discuss] why rabbit eating so much memory?">liangrubo at bytedance.com
+       </A><BR>
+    <I>Thu Jul 11 02:35:53 BST 2013</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="028468.html">[rabbitmq-discuss] why rabbit eating so much memory?
+</A></li>
+        <LI>Next message: <A HREF="028485.html">[rabbitmq-discuss] why rabbit eating so much memory?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#28482">[ date ]</a>
+              <a href="thread.html#28482">[ thread ]</a>
+              <a href="subject.html#28482">[ subject ]</a>
+              <a href="author.html#28482">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi Matthias,
+
+There is no other vhosts. I can't keep the problem for investigation since
+it is a production server. &quot;rabbitmqctl stop_app; rabbitmqctl start_app&quot;
+frees the memory.
+
+I am new to rabbit and this is just one of a series problems I meet. I am
+not sure whether it helps but I am going to list the problems I experienced
+to provide more context.
+
+Environment:
+- Debian 7.1
+- A cluster with 3 servers
+- A virtual ip is assigned to the servers, using keepalive to shift the
+virtual ip(automatic)
+- use default exchange
+- 6 queues (ha.snssdk.log, ha.snssdk.log.dispatch,
+ha.snssdk.log.output, ssesion,
+session.log, session.output), queues whose name begin with 'ha.' are
+mirrored queues
+- all queues and messages are none-durable
+- message publish rate: 4000 ~ 10000 msg/s
+
+Problems(with actions I took):
+1. Initially use rabbit version 3.1.1, the rabbit server crash with message
+like following sometime: Slogan: std_alloc: Cannot allocate
+1119579832804544 bytes of memory (of type &quot;arg_reg&quot;).
+    - action: upgrade both rabbit and erlang to the latest version.
+2. rabbit take up to much memory
+    - action: rabbitmqctl stop_app; rabbitmqctl start_app
+3. block on declaring queue 'ha.snssdk.log.dispatch', but it is OK to
+declare other queues, including 'ha.snssdk.log.dispatch2'
+    - action: stop rabbit, remove mnesia folder, start rabbit and rebuild
+the cluster.
+4. the management_plugin doesn't work, with message like &quot;TypeError: Cannot
+read property 'connections' of undefined&quot;
+   - action: asking in maillist but no action is taken so far
+5. though all the queues and messages are none-durable, and the memory
+consumption is far below configured by 'vm_memory_high_watermark', the
+mnesia folder sometimes can take up much space(e.g. 19G), it is basically
+taken by 'msg_store_transient' folder. I don't understand why.
+   - action: none
+6. sometimes rabbit doesn't push message to consumers in time: I found some
+consumers don't get message from time to time even there are messages in
+the queue. But this seems to be transient (lasting for about 1 minute).
+   - action: none
+
+Thanks.
+
+On Thu, Jul 11, 2013 at 12:55 AM, Matthias Radestock
+&lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">matthias at rabbitmq.com</A>&gt;wrote:
+
+&gt;<i> On 09/07/13 15:59, Rubo Liang wrote:
+</I>&gt;<i>
+</I>&gt;&gt;<i> My rabbit eats 25G memory, but the queues don't take to much as shown by
+</I>&gt;&gt;<i> this command: 'rabbitmqctl list_queues name messages memory':
+</I>&gt;&gt;<i> Listing queues ...
+</I>&gt;&gt;<i> ha.snssdk.log   695954  16426216
+</I>&gt;&gt;<i> ha.snssdk.log.dispatch  660748  102698808
+</I>&gt;&gt;<i> ha.snssdk.log.output    63573   32800680
+</I>&gt;&gt;<i> ssesion 0       25952
+</I>&gt;&gt;<i> ssesion.log     101     436328
+</I>&gt;&gt;<i> ssesion.output  0       148816
+</I>&gt;&gt;<i> ...done.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> As shown above the queues only take about 150M memory. But the rabbit
+</I>&gt;&gt;<i> process actually takes about 25G.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> 'rabbitmqctl status' gives me following output on memory:
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i>   {memory,
+</I>&gt;&gt;<i>       [{total,25394382848},
+</I>&gt;&gt;<i>        {connection_procs,140253648},
+</I>&gt;&gt;<i>        {queue_procs,19311874888},
+</I>&gt;&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> So that shows queue processes taking up 19G. Perhaps you have queue's in
+</I>&gt;<i> vhosts other than '/'? Note that 'rabbitmqctl list_queues' only shows
+</I>&gt;<i> information on one vhost ('/' by default).
+</I>&gt;<i>
+</I>&gt;<i> Matthias.
+</I>&gt;<i>
+</I>
+
+
+-- 
+&#26753;&#27741;&#27874;
+&#25163;&#26426;&#65306;+86-18600464396
+&#22320;&#22336;&#65306;&#21271;&#20140;&#24066;&#28023;&#28096;&#21306;&#30693;&#26149;&#36335;&#30002;48&#21495;&#30408;&#37117;&#22823;&#21414;B&#24231;10&#23618;
+&#37038;&#32534;&#65306;100088
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20130711/c42a1cf7/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20130711/c42a1cf7/attachment.htm</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="028468.html">[rabbitmq-discuss] why rabbit eating so much memory?
+</A></li>
+	<LI>Next message: <A HREF="028485.html">[rabbitmq-discuss] why rabbit eating so much memory?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#28482">[ date ]</a>
+              <a href="thread.html#28482">[ thread ]</a>
+              <a href="subject.html#28482">[ subject ]</a>
+              <a href="author.html#28482">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,144 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] difficulties with prefetch count
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20difficulties%20with%20prefetch%20count&In-Reply-To=%3CBANLkTim4OsCDNZwefpqSGbEBTC7a%2BtgA2A%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="012635.html">
+   <LINK REL="Next"  HREF="012699.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] difficulties with prefetch count</H1>
+    <B>Allan Kamau</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20difficulties%20with%20prefetch%20count&In-Reply-To=%3CBANLkTim4OsCDNZwefpqSGbEBTC7a%2BtgA2A%40mail.gmail.com%3E"
+       TITLE="[rabbitmq-discuss] difficulties with prefetch count">kamauallan at gmail.com
+       </A><BR>
+    <I>Mon May  2 13:28:24 BST 2011</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="012635.html">[rabbitmq-discuss] difficulties with prefetch count
+</A></li>
+        <LI>Next message: <A HREF="012699.html">[rabbitmq-discuss] difficulties with prefetch count
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#12636">[ date ]</a>
+              <a href="thread.html#12636">[ thread ]</a>
+              <a href="subject.html#12636">[ subject ]</a>
+              <a href="author.html#12636">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>On Mon, May 2, 2011 at 3:01 PM, james anderson &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">james.anderson at setf.de</A>&gt; wrote:
+&gt;<i> good afternoon, gentlemen;
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> we find that a qos request with prefetch count of 1 does not reliably
+</I>&gt;<i> achieve &quot;fair dispatch&quot; and seek advice, what we should reconfigure in order
+</I>&gt;<i> to achieve it.
+</I>&gt;<i>
+</I>&gt;<i> the specification page[1] indicates that rmq supports local prefetch limits,
+</I>&gt;<i> but not global ones. the BasicQosDesign[2] wiki entry describes some
+</I>&gt;<i> restrictions, in particular qos/consume ordering. the work queue tutorial
+</I>&gt;<i> describes how to use prefetch constraints to achieve &quot;fair dispatch&quot;.
+</I>&gt;<i>
+</I>&gt;<i> despite adhering to these understandings, we observe the following with rmq
+</I>&gt;<i> 2.1.1:
+</I>&gt;<i>
+</I>&gt;<i> a server process establishes four worker threads, each of which
+</I>&gt;<i> &#160;- creates a connection to the rmq broker
+</I>&gt;<i> &#160;- creates a shared work queue (most likely redundantly)
+</I>&gt;<i> &#160;- a private sub-task queue for responses to delegated tasks
+</I>&gt;<i> &#160;- creates two channels on its connection;
+</I>&gt;<i> &#160; - one channel is for task messages; there it requests qos(prefetch=1),
+</I>&gt;<i> consume(work queue).
+</I>&gt;<i> &#160; - one channel is used to delegate tasks; on this one just
+</I>&gt;<i> consume(delegated response queue).
+</I>&gt;<i> &#160;- accepts delivery of task messages, processes them, publishes results to a
+</I>&gt;<i> task-identified response queue.
+</I>&gt;<i>
+</I>&gt;<i> a front-end process establishes equivalent threads, each of which supports
+</I>&gt;<i> http requests and mediates them to the server.
+</I>&gt;<i> for each front-end request, a thread
+</I>&gt;<i> &#160;- creates a connection to the rmq server
+</I>&gt;<i> &#160;- creates a task-specific queue (as per routing) for an eventual response
+</I>&gt;<i> &#160;- subscribes to the response queue
+</I>&gt;<i> &#160;- publishes a task message with routing to the work queue
+</I>&gt;<i> &#160;- accepts delivery of task responses
+</I>&gt;<i> &#160;- tears down the task response subscription and queue.
+</I>&gt;<i>
+</I>&gt;<i> in this particular situation, no delegation occurs. that is, no messages
+</I>&gt;<i> pass through the delegated work queue.
+</I>&gt;<i>
+</I>&gt;<i> we observe that, if a posted task takes an &quot;long&quot; time, not only its
+</I>&gt;<i> front-end thread will wait until that processing completes, but one
+</I>&gt;<i> additional front-end task hangs was well.
+</I>&gt;<i>
+</I>&gt;<i> while the long task transpires, other http requests are processed without
+</I>&gt;<i> delay. that is, their setup, request, subscription, delivery, and tear-down,
+</I>&gt;<i> all complete as normal. their task messages are delivered to one of the
+</I>&gt;<i> three unoccupied server threads which does the work and produces the
+</I>&gt;<i> response.
+</I>&gt;<i>
+</I>&gt;<i> independent of whether the front-end leaves the hung task to wait for a
+</I>&gt;<i> response or aborts it, by canceling the subscription, deleting the queue,
+</I>&gt;<i> and closing the connection, once the long-running server thread completes
+</I>&gt;<i> its task, the next message delivered to it is that message from the
+</I>&gt;<i> waiting-or-aborted front-end thread.
+</I>&gt;<i>
+</I>&gt;<i> if we use rabbitmqctl to display the connection/subscription/queue state
+</I>&gt;<i> during the long task processing, we observe that
+</I>&gt;<i> - the work queue has one unacknowledged message, but zero ready messages
+</I>&gt;<i> - the server task channels have a prefetch window of 1
+</I>&gt;<i> - no connection has a send pending
+</I>&gt;<i>
+</I>&gt;<i> that is, it appears as if one single message is held up until the long task
+</I>&gt;<i> complete, but is no where to be seen.
+</I>&gt;<i> what do we not understand about prefetch windows?
+</I>&gt;<i>
+</I>&gt;<i> ---------------
+</I>&gt;<i>
+</I>&gt;<i> [1] <A HREF="http://www.rabbitmq.com/specification.html">http://www.rabbitmq.com/specification.html</A>
+</I>&gt;<i> [2] <A HREF="https://dev.rabbitmq.com/wiki/BasicQosDesign">https://dev.rabbitmq.com/wiki/BasicQosDesign</A>
+</I>&gt;<i> [3] <A HREF="http://www.rabbitmq.com/tutorials/tutorial-two-python.html">http://www.rabbitmq.com/tutorials/tutorial-two-python.html</A>
+</I>&gt;<i>
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>&gt;<i>
+</I>
+I am quite new to RabbitMQ, reading your first line it seem you would
+like the &quot;fair dispatch&quot; or round robin message fetching. This is the
+default behaviour. The prefetch count of 1 does disable this &quot;fair
+dispatch&quot; and lets the jobs be fetched by clients at quickly as they
+can manage to consume them.
+
+Allan.
+</PRE>
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="012635.html">[rabbitmq-discuss] difficulties with prefetch count
+</A></li>
+	<LI>Next message: <A HREF="012699.html">[rabbitmq-discuss] difficulties with prefetch count
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#12636">[ date ]</a>
+              <a href="thread.html#12636">[ thread ]</a>
+              <a href="subject.html#12636">[ subject ]</a>
+              <a href="author.html#12636">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

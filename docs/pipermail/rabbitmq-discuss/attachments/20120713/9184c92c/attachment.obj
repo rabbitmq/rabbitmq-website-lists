@@ -1,0 +1,54 @@
+#!/bin/bash
+
+rabbitmq_server=/usr/lib/rabbitmq/bin/rabbitmq-server
+rabbitmqctl=/usr/lib/rabbitmq/bin/rabbitmqctl
+temp_dir=`mktemp -d`
+
+function start {
+    RABBITMQ_NODE_PORT=$2 \
+    RABBITMQ_SERVER_START_ARGS="-rabbitmq_mochiweb listeners [{mgmt,[{port,5"$2"}]}]" \
+    RABBITMQ_NODENAME=$1 \
+    RABBITMQ_MNESIA_DIR=$temp_dir/rabbitmq-$1-mnesia \
+    RABBITMQ_PLUGINS_EXPAND_DIR=$temp_dir/rabbitmq-$1-plugins-scratch \
+    RABBITMQ_LOG_BASE=$temp_dir \
+    $rabbitmq_server </dev/null &>/dev/null &
+
+    $rabbitmqctl -n $1 wait $temp_dir/rabbitmq-$1-mnesia.pid
+}
+
+function stop {
+    $rabbitmqctl -n $1 stop $temp_dir/rabbitmq-$1-mnesia.pid
+}
+
+echo "temp dir: $temp_dir"
+echo "---------------------------------------"
+
+echo "starting A"
+start a 5672
+echo "declaring queues"
+python declare.py
+echo "starting B"
+start b 5673
+echo "clustering B with A"
+stop b
+$rabbitmqctl -n b reset
+$rabbitmqctl -n b cluster a@`hostname` b@`hostname`
+start b 5673
+
+echo "----------------------------------------"
+
+echo "1st iteration"
+stop a
+start a 5672
+stop b
+
+echo "2nd iteration"
+start b 5673
+stop a
+
+echo "3rd iteration"
+start a 5672
+stop b
+
+echo "restarting b"
+start b 5673

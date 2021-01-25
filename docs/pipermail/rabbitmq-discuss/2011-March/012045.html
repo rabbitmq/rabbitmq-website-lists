@@ -1,0 +1,134 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Spying on &quot;mandatory&quot; messages
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Spying%20on%20%22mandatory%22%20messages&In-Reply-To=%3C20110325145842.GC24102%40rabbitmq.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="012036.html">
+   <LINK REL="Next"  HREF="012046.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Spying on &quot;mandatory&quot; messages</H1>
+    <B>Matthew Sackman</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Spying%20on%20%22mandatory%22%20messages&In-Reply-To=%3C20110325145842.GC24102%40rabbitmq.com%3E"
+       TITLE="[rabbitmq-discuss] Spying on &quot;mandatory&quot; messages">matthew at rabbitmq.com
+       </A><BR>
+    <I>Fri Mar 25 14:58:43 GMT 2011</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="012036.html">[rabbitmq-discuss] Spying on &quot;mandatory&quot; messages
+</A></li>
+        <LI>Next message: <A HREF="012046.html">[rabbitmq-discuss] Spying on &quot;mandatory&quot; messages
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#12045">[ date ]</a>
+              <a href="thread.html#12045">[ thread ]</a>
+              <a href="subject.html#12045">[ subject ]</a>
+              <a href="author.html#12045">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Charly,
+
+This is most impressive! I have a few comments on the code though...
+
+On Fri, Mar 25, 2011 at 03:15:03PM +0100, Charly Hamy wrote:
+&gt;<i> *rabbit_amqqueue.erl :*
+</I>&gt;<i> *(line 115, spec of deliver/2 edited )*
+</I>&gt;<i> 
+</I>&gt;<i> * -spec(deliver/2 :: (pid(), rabbit_types:delivery()) -&gt; boolean()|spy).*
+</I>
+Traditionally, atoms in specs should be quoted, so 'spy', not spy. This
+has no bearing on much other than for consistency with the rest of the
+code base (and perhaps syntax highlighting too).
+
+&gt;<i> declare(QueueName, Durable, AutoDelete, Args, Owner) -&gt;
+</I>&gt;<i>     ok = check_declare_arguments(QueueName, Args),
+</I>&gt;<i>     Q = start_queue_process(#amqqueue{name = QueueName,
+</I>&gt;<i>                                       durable = Durable,
+</I>&gt;<i>                                       auto_delete = AutoDelete,
+</I>&gt;<i>                                       arguments = Args,
+</I>&gt;<i>                                       spy = case lists:keyfind(&lt;&lt;&quot;spy&quot;&gt;&gt;, 1,
+</I>&gt;<i> Args) of
+</I>&gt;<i>                                              false -&gt; false;
+</I>&gt;<i>                                              _ -&gt; true
+</I>&gt;<i>                                       end,
+</I>&gt;<i>                                       exclusive_owner = Owner,
+</I>&gt;<i>                                       pid = none}),
+</I>
+I'd probably bring that out to a Spy variable. Also, take a look at
+rabbit_misc:table_lookup/2. Also, you might want to delay that
+inspection until you're in amqqueue_process:delay - though
+unfortunately, because it needs to be in the mnesia record, you'll have
+to do it before the call to amqqueue:internal_declare, rather than as
+part of process_args. It probably doesn't make too much difference
+either way...
+
+&gt;<i> *(edition of rabbit_amqqueue:deliver/2)*
+</I>&gt;<i> *
+</I>&gt;<i> *
+</I>&gt;<i>      deliver(QPid, Delivery = #delivery{immediate = true}) -&gt;
+</I>&gt;<i>           gen_server2:call(QPid, {deliver_immediately, Delivery}, infinity);
+</I>&gt;<i>      deliver(QPid, Delivery = #delivery{mandatory = true}) -&gt;
+</I>&gt;<i>           case gen_server2:call(QPid, {deliver, Delivery}, infinity) of
+</I>&gt;<i>                spy -&gt; spy;
+</I>&gt;<i>                _ -&gt; true
+</I>
+Purely cosmetic: we'd vertically align the -&gt; arrows there.
+
+I would imagine you're missing a diff here: surely the handle_call in
+amqqueue_process for the mandatory delivery that should be returning
+true|spy?
+
+&gt;<i> *rabbit_amqqueue_router.erl :*
+</I>&gt;<i> *(edition of rabbit_router:fold_deliveries/2, line 105)*
+</I>&gt;<i> 
+</I>&gt;<i>      fold_deliveries({Pid, true},{_, Handled}) -&gt; {true, [Pid|Handled]};
+</I>&gt;<i>      fold_deliveries({_,  spy}, {false, Handled}) -&gt; {false, Handled};
+</I>&gt;<i>      fold_deliveries({_,  _},{_, Handled}) -&gt; {true, Handled}.
+</I>
+Neat: so a response of spy causes the delivery to that queue to be
+ignored from the pov of mandatory.
+
+This is very impressive for a first hack on Rabbit.
+
+Matthew
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="012036.html">[rabbitmq-discuss] Spying on &quot;mandatory&quot; messages
+</A></li>
+	<LI>Next message: <A HREF="012046.html">[rabbitmq-discuss] Spying on &quot;mandatory&quot; messages
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#12045">[ date ]</a>
+              <a href="thread.html#12045">[ thread ]</a>
+              <a href="subject.html#12045">[ subject ]</a>
+              <a href="author.html#12045">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

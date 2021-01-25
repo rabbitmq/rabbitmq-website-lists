@@ -1,0 +1,124 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] FW: Multiple consumers
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20FW%3A%20Multiple%20consumers&In-Reply-To=lybqdvr6le.fsf%40tanto.lshift.net">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000069.html">
+   <LINK REL="Next"  HREF="000072.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] FW: Multiple consumers</H1>
+    <B>Ben Hood</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20FW%3A%20Multiple%20consumers&In-Reply-To=lybqdvr6le.fsf%40tanto.lshift.net"
+       TITLE="[rabbitmq-discuss] FW: Multiple consumers">0x6e6562 at gmail.com
+       </A><BR>
+    <I>Sun Jul 29 10:01:45 BST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000069.html">[rabbitmq-discuss] FW: Multiple consumers
+</A></li>
+        <LI>Next message: <A HREF="000072.html">[rabbitmq-discuss] FW: Multiple consumers
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#70">[ date ]</a>
+              <a href="thread.html#70">[ thread ]</a>
+              <a href="subject.html#70">[ subject ]</a>
+              <a href="author.html#70">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Matthias,
+
+&gt;<i> &gt; I orginally started with that variant, then I thought it might be
+</I>&gt;<i> &gt; ambiguous when you are connecting to more than one AMQP server.
+</I>&gt;<i>
+</I>&gt;<i> It would not be ambiguous because the Channel process will have been
+</I>&gt;<i> created by the Client/Connection/Reader process, which equips it with
+</I>&gt;<i> references to the correct Reader, Writer for a particular connection.
+</I>
+That is true, but what happens when you have connections to mulitple
+remotes servers or you have one connection via the direct API and
+another via the networked API (e.g. if you were connecting to rabbitmq
+directly and interacting with say QPid remotely)?
+
+Example:
+
+User --&gt; ChannelProcess(N) --&gt; ServerReader/Writer
+User --&gt; ChannelProcess(N) --&gt; Network --&gt; Server
+
+In this example a user has opened channel N using the direct API and
+has opened another channel N with a remote network server. How does
+the user distinguish between the two Pids that they would have to use
+in conjunction with an API call? If you just supplied the channel as a
+parameter, the channel Pid resolution wouldn't work, unless the user
+stores the Pid of the spawned channel process when they start it. Then
+in that case, for the direct API since you have a process per channel,
+you wouldn't even need to supply the channel. You would only need the
+channel in the network case, where you have a single socket handling
+process.
+
+&gt;<i> The problem with this is that basic.consume_ok should be returned as the
+</I>&gt;<i> response to the caller, not sent to the subscriber. That is what is
+</I>&gt;<i> happening in the Java client.
+</I>
+This is not happening. To solve this I've introduced the concept of an
+acknowledgement pid that the *_ok methods get dispatched to, so the
+basic.consume_ok goes to the caller and the actual message gets
+delivered to the subscriber. This is what I described in the mail that
+got returned which I re-incorporated into this discussion thread.
+
+&gt;<i>
+</I>&gt;<i> I reckon the easiest way  to accomplish this in the direct client is to
+</I>&gt;<i> shift the responsibility of sending the consume_ok from the queue to the
+</I>&gt;<i> channel, as indicated in my previous email. That is on our todo list,
+</I>&gt;<i> but it won't get done in time for the next release.
+</I>
+That would be another way of solving it:
+
+case rabbit_amqqueue:basic_consume(Q, NoAck, ReaderPid, WriterPid, AckPid,
+					       ConsumerTag, ExclusiveConsume, NoWait) of
+		{ok, ActualConsumerTag} -&gt;
+		    put_consumer_mapping(ActualConsumerTag, ActualQueueName),
+		    %% send consume_ok here
+		    State;
+
+&gt;<i>
+</I>&gt;<i> With that change in place, the above code then needs to be tweaked so
+</I>&gt;<i> that the handling of the basic.consume method gets access to both the
+</I>&gt;<i> WriterPid (for sending back the consume_ok) and the SubscriberPid (for
+</I>&gt;<i> passing to the queue).
+</I>
+Well, as I've stated above, I solved it another way so it's not
+currently an issue, but to change it to the way you suggest would be
+easy enough anyway. I'll wait direction if you think you are going to
+revisit this area after the next release.
+
+Ben
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000069.html">[rabbitmq-discuss] FW: Multiple consumers
+</A></li>
+	<LI>Next message: <A HREF="000072.html">[rabbitmq-discuss] FW: Multiple consumers
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#70">[ date ]</a>
+              <a href="thread.html#70">[ thread ]</a>
+              <a href="subject.html#70">[ subject ]</a>
+              <a href="author.html#70">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

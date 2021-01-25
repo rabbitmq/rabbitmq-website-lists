@@ -1,0 +1,278 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Rabbit Client Supervision Architecture
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Rabbit%20Client%20Supervision%20Architecture&In-Reply-To=%3Cloom.20100922T132427-860%40post.gmane.org%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="009031.html">
+   <LINK REL="Next"  HREF="009033.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Rabbit Client Supervision Architecture</H1>
+    <B>Erik Seres</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Rabbit%20Client%20Supervision%20Architecture&In-Reply-To=%3Cloom.20100922T132427-860%40post.gmane.org%3E"
+       TITLE="[rabbitmq-discuss] Rabbit Client Supervision Architecture">erikseres at exosite.com
+       </A><BR>
+    <I>Wed Sep 22 12:49:49 BST 2010</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="009031.html">[rabbitmq-discuss] Rabbit Client Supervision Architecture
+</A></li>
+        <LI>Next message: <A HREF="009033.html">[rabbitmq-discuss] Rabbit Client Supervision Architecture
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#9032">[ date ]</a>
+              <a href="thread.html#9032">[ thread ]</a>
+              <a href="subject.html#9032">[ subject ]</a>
+              <a href="author.html#9032">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Matthew Sackman &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">matthew at ...</A>&gt; writes:
+
+&gt;<i> 
+</I>&gt;<i> Hi Erik,
+</I>&gt;<i> 
+</I>&gt;<i> On Wed, Sep 22, 2010 at 07:42:46AM +0000, Erik Seres wrote:
+</I>&gt;<i> &gt; I have a few questions regarding the RabbitMQ Erlang client library...
+</I>&gt;<i> 
+</I>&gt;<i> Excellent. As you've probably noticed it is still very much experimental
+</I>&gt;<i> and in a state of flux. Things should be calming down soon though, and
+</I>&gt;<i> it might even become officially supported soon!
+</I>&gt;<i> 
+</I>&gt;<i> &gt; 1) The client now has layers of supervision built in. Apparently, however, 
+</I>the 
+&gt;<i> &gt; maximum restart count for the various supervisors is set to 0. This will 
+</I>prevent 
+&gt;<i> &gt; the supervisor from trying to restart its children in case of a crash. I 
+</I>have 
+&gt;<i> &gt; verified this to be the case by the following:
+</I>&gt;<i> &gt;  - created a network type connection to the server,
+</I>&gt;<i> &gt;  - opened 2 channels within that connection,
+</I>&gt;<i> &gt;  - sent a non-normal exit signal to the newly opened channel process.
+</I>&gt;<i> &gt; 
+</I>&gt;<i> &gt; The channel process crashed, its supervisor propagated the exit signal to 
+</I>the 
+&gt;<i> &gt; other channel and finally, it shut down itself, too. The client has never 
+</I>&gt;<i> &gt; started back up again.
+</I>&gt;<i> &gt; 
+</I>&gt;<i> &gt; Question: What would be the intended use case of a supervisor with 
+</I>MaxRetryCount 
+&gt;<i> &gt; set to 0?
+</I>&gt;<i> 
+</I>&gt;<i> This is a very common trick in our codebase and indeed further
+</I>&gt;<i> requirements led us to introduce the &quot;intrinsic&quot; restart strategy in our
+</I>&gt;<i> supervisor2 module.
+</I>&gt;<i> 
+</I>&gt;<i> In our view, one of the most important properties of supervisors is to
+</I>&gt;<i> structure the relationship between different processes and lower
+</I>&gt;<i> coupling. The fact that it can do restarting is almost irrelevant in
+</I>&gt;<i> many cases.
+</I>&gt;<i> 
+</I>&gt;<i> In the case of the client, restarting the connection in the event of a
+</I>&gt;<i> crash of some sort is a bizarre thing to do simply because it would be
+</I>&gt;<i> _impossible_ to be sure that you've got the connection and all the
+</I>&gt;<i> channels back to the same state. Channels themselves are stateful, but
+</I>&gt;<i> the state is _not_ set at channel creation - e.g. channel.qos txn.select
+</I>&gt;<i> basic.consume etc etc. Thus even if channel processes did restart, they
+</I>&gt;<i> would not be able to get back to the same state they were last in.
+</I>&gt;<i> 
+</I>&gt;<i> It's not even reasonable to restart the connection: queues can be
+</I>&gt;<i> declared with exclusive=true which means when the connection closes, for
+</I>&gt;<i> whatever reason, the queues must be deleted. Of course, when the
+</I>&gt;<i> connection is created, it has no idea what queues are going to be
+</I>&gt;<i> declared this way, so if the connection gets automatically restarted, it
+</I>&gt;<i> can't possibly get back to the same state.
+</I>&gt;<i> 
+</I>&gt;<i> All in all, this really means that there is just no way of hiding the
+</I>&gt;<i> fact the connection / channels have died from the user of the client.
+</I>&gt;<i> Also, AMQP is designed to pass errors back to the client by explicitly
+</I>&gt;<i> forcing channels or even the connection to be closed. Obviously, if the
+</I>&gt;<i> user has done something wrong, you would not want those events to be
+</I>&gt;<i> silently papered over.
+</I>&gt;<i> 
+</I>&gt;<i> &gt; 2) There is a channels manager process sitting at the same level in the 
+</I>&gt;<i> &gt; supervision tree as the supervisor that supervises the supervisors of the 
+</I>&gt;<i> &gt; channels (and writer and framing channel). The channels manager process does 
+</I>not 
+&gt;<i> &gt; have any links to the channels it apparently is to manage.
+</I>&gt;<i> 
+</I>&gt;<i> I think you're on the wrong branch - that sounds a lot like branch
+</I>&gt;<i> bug23024 which is not through QA yet. Please make sure you're using the
+</I>&gt;<i> default branch.
+</I>&gt;<i> 
+</I>&gt;<i> &gt; Question: What is the intended purpose of the channels manager?
+</I>&gt;<i> 
+</I>&gt;<i> Basically, channel number allocation and mapping from channel number &lt;-&gt;
+</I>&gt;<i> Pid. Also, don't worry about the lack of links - we use monitoring a lot
+</I>&gt;<i> and rely on the supervisor hierarchy to tear down the world if something
+</I>&gt;<i> really bad happens.
+</I>&gt;<i> 
+</I>&gt;<i> &gt; 3) I am trying to figure out how the four layers of supervision is supposed 
+</I>to 
+&gt;<i> &gt; work and can't really wrap my head around it. The way I conceive it should 
+</I>work 
+&gt;<i> &gt; is something like this, from top down:
+</I>&gt;<i> &gt;  - Layer 1: supervise the entire client library
+</I>&gt;<i> &gt;  - Layer 2: one_for_all supervision per connection. That is, when the 
+</I>&gt;<i> &gt; connection, main reader or writer dies, shutdown all channels within that 
+</I>&gt;<i> &gt; connection, restart the connection and all previously open channels.
+</I>&gt;<i> &gt;  - Layer 3: one_for_one supervision per channel. That is, when a channel 
+</I>dies, 
+&gt;<i> &gt; restart the channel only and not affect anything else.
+</I>&gt;<i> &gt; 
+</I>&gt;<i> &gt; Question: Is this the intended behavior or am I on the wrong track?
+</I>&gt;<i> 
+</I>&gt;<i> Well, no restarting will ever happen. This is by design. From the bug
+</I>&gt;<i> that introduced this all, the diagram is roughly:
+</I>&gt;<i> 
+</I>&gt;<i> amqp_sup (amqp_sup) (simple-141-term) (Note, this isn't there yet!)
+</I>&gt;<i> |
+</I>&gt;<i> +--undefined (amqp_connection_sup) (one-for-all) *
+</I>&gt;<i>    |
+</I>&gt;<i>    +--connection (amqp_{network,direct}_connection) (i)
+</I>&gt;<i>    |
+</I>&gt;<i>    +--channels_manager (amqp_channels_manager) (i) (bug23024)
+</I>&gt;<i>    |
+</I>&gt;<i>    +--connection_type_sup (amqp_connection_specific_sup) (i) (def)
+</I>&gt;<i>    |  |
+</I>&gt;<i>    |  +--framing (rabbit_framing_channel) (i) (N)
+</I>&gt;<i>    |  +--writer (rabbit_writer) (i) (N)
+</I>&gt;<i>    |  +--main_reader (amqp_main_reader) (i) (N)
+</I>&gt;<i>    |  +--rabbit_hearbeat_sender (rabbit_heartbeat) (i) (N) (def)
+</I>&gt;<i>    |  +--rabbit_hearbeat_receiver (rabbit_heartbeat) (i) (N) (def)
+</I>&gt;<i>    |  +--collector (rabbit_queue_collector) (i) (D)
+</I>&gt;<i>    |
+</I>&gt;<i>    +--channel_sup_sup (amqp_channel_sup_sup) (simple-141-kill)
+</I>&gt;<i>       |
+</I>&gt;<i>       +--undefined (amqp_channel_sup) (one-for-all) *
+</I>&gt;<i>          |
+</I>&gt;<i>          +--channel (amqp_channel) (i)
+</I>&gt;<i>          +--framing (rabbit_framing_channel) (i) (N) (def)
+</I>&gt;<i>          +--writer (rabbit_writer) (i) (N) (def)
+</I>&gt;<i>          +--rabbit_channel (rabbit_channel) (t) (D)
+</I>&gt;<i>          +--rabbit_limiter (rabbit_limiter) (t) (D) (def)
+</I>&gt;<i> 
+</I>&gt;<i> Legend:
+</I>&gt;<i> (N) - only in the network case
+</I>&gt;<i> (D) - only in the direct case
+</I>&gt;<i> (i) - intrinsic
+</I>&gt;<i> (t) - transient
+</I>&gt;<i> (def) - started later on
+</I>&gt;<i> * - multiple instances
+</I>&gt;<i> 
+</I>&gt;<i> Thus: a channel is itself multiple processes that sit under a
+</I>&gt;<i> supervisor (amqp_channel_sup). You have many of these under a
+</I>&gt;<i> channel_sup_sup, and you never care about any of them dying, which is
+</I>&gt;<i> why channel_sup_sup is a simple-one-for-one (standard brutal kill).
+</I>&gt;<i> Depending on the type of connection (network or direct), you need
+</I>&gt;<i> different processes which is why we have the connection_type_sup which
+</I>&gt;<i> is parameterised by the connection type.
+</I>&gt;<i> 
+</I>&gt;<i> That's about it really.
+</I>&gt;<i> 
+</I>&gt;<i> Matthew
+</I>&gt;<i> 
+</I>
+Hi Matthew,
+
+Thank you for the very quick and elaborate response. The concept of how you use 
+supervisors to define hierarchy is interesting and now I understand why there is
+no restart ever happening. In my case, I am not using transactions so the 
+stateful nature of channels did not come to mind and I was not taking that into 
+consideration.
+
+I think I have one question regarding connections. So, you explain that an 
+exclusive queue must be deleted when a connection closes. On that same note, 
+however, how do you locate a durable queue after a connection had died (or had 
+been closed) and then you reopened it? If one can locate a durable queue after a 
+disconnect/connect, which my understanding is one must be able to, then why can 
+one not locate an exclusive queue the same way? (Tell me if I just need to dive 
+in the AMQP specs to understand this.)
+
+In my application at startup, I will open a connection and then, each 
+application process wanting to communicate over AMQP, will open a channel. The 
+application will need to know if the amqp_client has crashed and the connection 
+and channels have been lost. So, I thought I would add the process ID returned 
+by amqp_connection:start(network, ...) to my supervision tree. This does not 
+seem to work, though, as the connection PID never shows up under my application 
+supervisor as a child. And, consequently, it never gets restarted in case of a 
+crash. I have the &quot;Type&quot; in the ChildSpec set to 'supervisor' for this child. 
+With that said, how should I go about detecting when/if the amqp client has 
+crashed?
+
+Also, what do you think is the expected time frame before this client library 
+becomes officially supported?
+
+Thanks for your help!
+Erik
+
+
+
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="009031.html">[rabbitmq-discuss] Rabbit Client Supervision Architecture
+</A></li>
+	<LI>Next message: <A HREF="009033.html">[rabbitmq-discuss] Rabbit Client Supervision Architecture
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#9032">[ date ]</a>
+              <a href="thread.html#9032">[ thread ]</a>
+              <a href="subject.html#9032">[ subject ]</a>
+              <a href="author.html#9032">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

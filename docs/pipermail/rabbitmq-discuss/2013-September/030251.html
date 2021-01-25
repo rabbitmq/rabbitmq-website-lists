@@ -1,0 +1,118 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Towards better handling of RabbitMQ	connection/channel failures
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Towards%20better%20handling%20of%20RabbitMQ%0A%09connection/channel%20failures&In-Reply-To=%3C5AD8A245-6878-4403-89A9-26D2DD7378AD%40rabbitmq.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="030239.html">
+   <LINK REL="Next"  HREF="030271.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Towards better handling of RabbitMQ	connection/channel failures</H1>
+    <B>Tim Watson</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Towards%20better%20handling%20of%20RabbitMQ%0A%09connection/channel%20failures&In-Reply-To=%3C5AD8A245-6878-4403-89A9-26D2DD7378AD%40rabbitmq.com%3E"
+       TITLE="[rabbitmq-discuss] Towards better handling of RabbitMQ	connection/channel failures">tim at rabbitmq.com
+       </A><BR>
+    <I>Wed Sep 18 10:59:08 BST 2013</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="030239.html">[rabbitmq-discuss] Towards better handling of RabbitMQ	connection/channel failures
+</A></li>
+        <LI>Next message: <A HREF="030271.html">[rabbitmq-discuss] Towards better handling of RabbitMQ connection/channel failures
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#30251">[ date ]</a>
+              <a href="thread.html#30251">[ thread ]</a>
+              <a href="subject.html#30251">[ subject ]</a>
+              <a href="author.html#30251">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi Jonathan,
+On 17 Sep 2013, at 19:34, Jonathan Halterman wrote:
+&gt;<i> Why are the shutdown listeners for only some of my channels/connections called when a rabbit server shuts down?
+</I>&gt;<i> 
+</I>
+All connection/channel shutdown listeners are triggered when the client detects the shutdown. When the shutdown originates at the server, this activity is mediated on the client side in one of two ways, either (a) the client received a `connection.close' AMQP method from the broker, or (b) the OS networking layer signals to the JVM that the socket has closed, at which point the listening/reading thread handles the relevant exception, tears down any associated local resources and fires the shutdown listeners. In the latter case, there can be a significant time delay before the operating system &quot;notices&quot; that the peer socket has closed/disappeared. Having said all that....
+
+&gt;<i> On Mon, Sep 16, 2013 at 5:13 PM, Jonathan Halterman &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">jhalterman at gmail.com</A>&gt; wrote:
+</I>&gt;<i> I've been experimenting with various sorts of RabbitMQ failures that result in connections and channels being shutdown with the goal of being able to re-establish connections, channels, and consumers whenever a failure occurs. In particular, I've been forcing network partitions on a pause_minority configured cluster with a client connected to what will become the minority node, to see how things behave, and the results are a bit inconsistent.
+</I>&gt;<i> 
+</I>
+How exactly are you forcing network partitions? Are you causing packet loss (using pf or iptables) or doing something else?
+
+&gt;<i> For a simple test, I created 2 connections and 6 channels then partitioned the cluster.
+</I>
+How did you partition the cluster?
+
+&gt;<i> Within a minute or so the minority node (to which my client is connected connected) shuts itself down.
+</I>
+If a RabbitMQ node decides to undertake an orderly shutdown, then all AMQP connections should be explicitly closed (as per method &quot;a&quot; listed above) before the network connection is severed. Where this might not work as expected, is if the network connection between client and server is unavailable and/or subject to packet loss. If the `connection.close' signal the broker sends doesn't make it to the client, then the shutdown listeners won't fire until the client's (OS) network stack detects the problem, which can take up to 30 mins depending on environment configuration.
+
+&gt;<i> What happens next varies a bit which each test run:
+</I>&gt;<i> 
+</I>&gt;<i> Outcome 1: Immediately the shutdown listeners for my 2 connections and all 6 channels are called.
+</I>&gt;<i> 
+</I>
+That is what I'd expect to happen if:
+
+1. both connections are between the client and the broker that is shutting down
+2. the network link between the broker that is shutting down and the client is in good condition (no packet loss, etc) such that the connection.close from the broker arrives at the client as expected 
+
+&gt;<i> Outcome 2: Immediately 2 of my 6 channels' shutdown listeners are called. None of the connection shutdown listeners are called. After waiting a few minutes I heal the partition and the shutdown listeners for the 2 connections and the remaining 4 channels are immediately called.
+</I>&gt;<i> 
+</I>
+That doesn't sound right. If both connections are between the client and the server that is shutting down, and there is a bug in the shutdown listener handling code, then this problem would be showing up all the time (and we'd have fixed it). It is also unnecessary to consider clustering/partitions is the behaviour you describe is happening for two connection between one client and one broker.
+
+Can you share a minimal example of the code you're using please.
+
+&gt;<i> Outcome 3: Immediate 2 of my 6 channels' shutdown listeners are called. None of the connection shutdown listeners are called. After about 30 seconds, with the cluster still partitioned, the shutdown listeners for the 2 connections and the remaining 4 channels are immediately called.
+</I>&gt;<i> 
+</I>
+There are no timing guarantees about when shutdown listeners will fire. As I mentioned, these events are only triggered when either the client &quot;sees&quot; a `connection.close' from the broker or detects a network failure whilst listening/sending. Since both of these factors are entirely dependent on the network between client and server, and on the networking layers of the various participating operating systems, the `connection.close' and/or socket closed exception will be detected when the client's OS delivers the relevant signal to the JVM and up into the client library's application code, at which point it is handled immediately.
+
+In both these two cases, if some channels are being used to `send' data, and the disconnection between client and server involves loss of network connectivity, then the &quot;sending&quot; channels are most likely to &quot;see&quot; IOExceptions before the &quot;listening&quot; channels. Modern OS networking stacks are often configured with lower retry thresholds for sending than they are for receiving, thus detection of network failures will likely vary considerably depending on what you're doing in a particular channel over a particular connection. 
+
+&gt;<i> I'm interested to learn more about when and why certain shutdown listeners might or might not be invoked so I can do a better job of re-establishing resources after a failure. Any input is appreciated.
+</I>&gt;<i> 
+</I>
+If you can share an example of your client code, boiled down to the minimal details, that would help. Please also confirm exactly what your setup looks like, viz 
+
+1. are both connections made between the client and exactly one server
+2. how are you &quot;partitioning&quot; the server from the rest of the cluster
+3. are you sending or receiving on the various channels that we're talking about
+
+Tim
+
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20130918/7f81724a/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20130918/7f81724a/attachment.htm</A>&gt;
+</PRE>
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="030239.html">[rabbitmq-discuss] Towards better handling of RabbitMQ	connection/channel failures
+</A></li>
+	<LI>Next message: <A HREF="030271.html">[rabbitmq-discuss] Towards better handling of RabbitMQ connection/channel failures
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#30251">[ date ]</a>
+              <a href="thread.html#30251">[ thread ]</a>
+              <a href="subject.html#30251">[ subject ]</a>
+              <a href="author.html#30251">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

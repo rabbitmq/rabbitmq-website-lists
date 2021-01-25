@@ -1,0 +1,115 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Issue in Java client while fetching channel
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20Issue%20in%20Java%20client%20while%20fetching%20channel&In-Reply-To=269388e30908050428o29e4e468qdcef39e011c3bdc1%40mail.gmail.com">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="004358.html">
+   <LINK REL="Next"  HREF="004388.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Issue in Java client while fetching channel</H1>
+    <B>Anand Ved</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20Issue%20in%20Java%20client%20while%20fetching%20channel&In-Reply-To=269388e30908050428o29e4e468qdcef39e011c3bdc1%40mail.gmail.com"
+       TITLE="[rabbitmq-discuss] Issue in Java client while fetching channel">anand.ved at Xoriant.Com
+       </A><BR>
+    <I>Thu Aug  6 07:47:21 BST 2009</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="004358.html">[rabbitmq-discuss] Issue in Java client while fetching channel
+</A></li>
+        <LI>Next message: <A HREF="004388.html">[rabbitmq-discuss] Issue in Java client while fetching channel
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#4384">[ date ]</a>
+              <a href="thread.html#4384">[ thread ]</a>
+              <a href="subject.html#4384">[ subject ]</a>
+              <a href="author.html#4384">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Ben,
+
+&gt;&gt;<i> As per the java client documentation, channel is not thread safe and I have multiple threads that would publish messages to the Q. For each publish, I create a new channel and publish the message.
+</I>
+&gt;<i> Yes, this is correct - channels are not thread safe. However, this doesn't mean you have to dispose of them every time you publish a message, all it means is that they shouldn't be shared across threads.
+</I>One way to achieve this is to store the channel in the ThreadLocal.
+
+I am using web application to receive requests from clients. Each request would arrive as a separate thread and hence I cannot reuse the channel so it makes no sense in storing them. However, in case of consumer, I have created only one channel object and I do reuse this channel.
+
+
+&gt;&gt;<i> If you are aware of any other case where we may end up getting a null channel, then please let me know.
+</I>
+&gt;<i> As it turns out, there is actually a bug in the channel number allocation method that under some circumstances leads to a null channel being returned. This appears to be a bug in the HotSpot compiler (as the attached test proves on some JDKs - I was able to reproduce it on 1.6.0_14 on 64 bit Linux, but not on OSX or Windows).
+</I>The simple solution in the Java client is instead of comparing the max channel against Integer.MAX_VALUE, compare against Integer.MAX_VALUE - 1, and then the compiler doesn't seem to bin the loop. So I'll raise a bug for that and push the fix out.
+
+I hope closing the channel as I am doing should suffice here. 
+If this is not the case, I can even close the connection as soon as I detect that the channel being returned is null and reconnect. 
+Please let me know if these are not the cases.
+
+
+Thank you for your quick investigation and reply. Please keep me posted on the status of this bug.
+
+Regards,
+Anand Ved | Xoriant Solutions Pvt. Ltd.&#160;
+Winchester,&#160;Hiranandani Business Park, Powai,&#160;Mumbai 400076, INDIA. 
+Tel: +91 22 30511000 |&#160;+91 22 3051 1058 (Direct) | VOIP: +&#160;1 408 834 4495&#160; 
+Yahoo IM: anandved&#160; | <A HREF="http://www.xoriant.com&#160;">http://www.xoriant.com&#160;</A> 
+Modern technology, Owes ecology, An apology. ~Alan M. Eddison - Go Green!!
+
+
+-----Original Message-----
+From: Ben Hood [mailto:<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">0x6e6562 at gmail.com</A>] 
+Sent: Wednesday, August 05, 2009 4:58 PM
+To: Anand Ved
+Cc: rabbitmq
+Subject: Re: [rabbitmq-discuss] Issue in Java client while fetching channel
+
+Arnand,
+
+On Wed, Aug 5, 2009 at 2:24 AM, Anand Ved&lt;<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">anand.ved at xoriant.com</A>&gt; wrote:
+&gt;<i> As per the java client documentation, channel is not thread safe and I have multiple threads that would publish messages to the Q. For each publish, I create a new channel and publish the message.
+</I>
+Yes, this is correct - channels are not thread safe. However, this doesn't mean you have to dispose of them every time you publish a message, all it means is that they shouldn't be shared across threads.
+One way to achieve this is to store the channel in the ThreadLocal.
+
+&gt;<i> Earlier I was not closing the channel and this lead to connection.createChannel() returning null object. Now as per java client document again, it is stated that if there are no channels available or if the current channel number is currently in use, then it would return null. Hence now I have closed the channel after each publish.
+</I>
+On the server side, there is no maximum number of channels per se.
+This is only limited by the maximum number of processes in the Erlang VM, which is 32768 by default, but this can be raised to any number you like.
+
+&gt;<i> If you are aware of any other case where we may end up getting a null channel, then please let me know.
+</I>
+As it turns out, there is actually a bug in the channel number allocation method that under some circumstances leads to a null channel being returned. This appears to be a bug in the HotSpot compiler (as the attached test proves on some JDKs - I was able to reproduce it on 1.6.0_14 on 64 bit Linux, but not on OSX or Windows).
+The simple solution in the Java client is instead of comparing the max channel against Integer.MAX_VALUE, compare against Integer.MAX_VALUE - 1, and then the compiler doesn't seem to bin the loop. So I'll raise a bug for that and push the fix out.
+
+HTH,
+
+Ben
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="004358.html">[rabbitmq-discuss] Issue in Java client while fetching channel
+</A></li>
+	<LI>Next message: <A HREF="004388.html">[rabbitmq-discuss] Issue in Java client while fetching channel
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#4384">[ date ]</a>
+              <a href="thread.html#4384">[ thread ]</a>
+              <a href="subject.html#4384">[ subject ]</a>
+              <a href="author.html#4384">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

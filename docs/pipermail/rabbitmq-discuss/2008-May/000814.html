@@ -1,0 +1,206 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] More RabbitMQ Erlang client woes
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20More%20RabbitMQ%20Erlang%20client%20woes&In-Reply-To=6c2563b20805081412i446536e3k77ab309513e3ae57%40mail.gmail.com">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000811.html">
+   <LINK REL="Next"  HREF="000815.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] More RabbitMQ Erlang client woes</H1>
+    <B>Ben Hood</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20More%20RabbitMQ%20Erlang%20client%20woes&In-Reply-To=6c2563b20805081412i446536e3k77ab309513e3ae57%40mail.gmail.com"
+       TITLE="[rabbitmq-discuss] More RabbitMQ Erlang client woes">0x6e6562 at gmail.com
+       </A><BR>
+    <I>Fri May  9 10:56:51 BST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000811.html">[rabbitmq-discuss] Fwd: More RabbitMQ Erlang client woes
+</A></li>
+        <LI>Next message: <A HREF="000815.html">[rabbitmq-discuss] More RabbitMQ Erlang client woes
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#814">[ date ]</a>
+              <a href="thread.html#814">[ thread ]</a>
+              <a href="subject.html#814">[ subject ]</a>
+              <a href="author.html#814">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Ed,
+
+Thanks for taking time to look into this so deeply.
+
+You have indeed found a bug in the network client with the fact that  
+it is not shutting the per-channel writer processes down. See below.
+
+On 8 May 2008, at 22:12, Edwin Fine wrote:
+&gt;<i>
+</I>&gt;<i> Sorry for the long email. Trying to get to the bottom of the  
+</I>&gt;<i> problems. I have done a LOT more investigation into the Erlang  
+</I>&gt;<i> network client, and I believe there are two related bugs, one in the  
+</I>&gt;<i> client, and the other I don't know where, or perhaps I am abusing  
+</I>&gt;<i> how AMQP is supposed to work.
+</I>&gt;<i>
+</I>&gt;<i> Bug #1: rabbit_writer not shut down
+</I>&gt;<i>
+</I>&gt;<i> The first (and easier) bug, which I have fixed eventually, is that  
+</I>&gt;<i> every time you start a channel, the network client creates a  
+</I>&gt;<i> rabbit_writer, but never shuts it down. Therefore, each channel that  
+</I>&gt;<i> is created leaves behind a rabbit_writer process.
+</I>&gt;<i> What happens is that in the handshake, the network driver starts a  
+</I>&gt;<i> rabbit_writer on channel 0. I believe this is used for the  
+</I>&gt;<i> connection itself. Its pid is stored in writer_pid in the  
+</I>&gt;<i> connection_state. This writer gets cleaned up properly when the  
+</I>&gt;<i> connection is shut down. There is no problem with this.
+</I>&gt;<i> Thereafter, when a channel is opened and  
+</I>&gt;<i> amqp_network_driver:open_channel is called, another writer is  
+</I>&gt;<i> started (correctly - need one per connection, right?). There is a  
+</I>&gt;<i> singleton reader. Anyway, this writer is never terminated. The  
+</I>&gt;<i> writer is registered as a peer to the channel, using  
+</I>&gt;<i> amqp_channel:register_direct_peer. This causes a bug, because the  
+</I>&gt;<i> registered peer is never shut down, probably because the direct peer  
+</I>&gt;<i> never should be shut down... but this is the NETWORK peer.
+</I>&gt;<i>
+</I>&gt;<i> So what I did (and you may have a better way) is to add another  
+</I>&gt;<i> function, amqp_channel:register_network_peer. This sets a &quot;direct&quot;  
+</I>&gt;<i> flag in the channel_state (which I had to add) to false. Calling  
+</I>&gt;<i> register_direct_peer sets the flag to true. When  
+</I>&gt;<i> amqp_channel:channel_cleanup() is eventually called (and I had to do  
+</I>&gt;<i> something for this, too), it checks to see if direct is false. If  
+</I>&gt;<i> so, it stops the writer in writer_pid, otherwise it leaves it alone.
+</I>&gt;<i>
+</I>
+I can see what the intention is. The main thing is that you have  
+understood how all of the processes hang together which is a little  
+tricky in the network case because the client is using a common  
+codebase with the server to manage socket IO and AMQP channels. This  
+is why it may not be immediately apparent to the naked eye why certain  
+things have been done in the way they are.
+
+To achieve this I think the cleanup should be contained within the  
+network driver either as a callback to allow the network driver to  
+stop the channel writer process or even linking the channel process  
+with the writer process so that when the channel exits, the writer  
+process receives a signal as well. I think I prefer the latter, but  
+this would mean changing the writer module, which is core module of  
+the server and we'd need to look at the implications of this.
+
+So watch this space.
+
+&gt;<i> I also had to add a call to channel_cleanup in the close_ok, because  
+</I>&gt;<i> the cleanup was never getting called.:
+</I>&gt;<i>
+</I>&gt;<i> amqp_channel:handle_method(ChannelCloseOk = #'channel.close_ok'{},  
+</I>&gt;<i> State) -&gt;
+</I>&gt;<i>     {noreply, NewState} = rpc_bottom_half(ChannelCloseOk, State),
+</I>&gt;<i>     NewState2 = channel_cleanup(State),
+</I>&gt;<i>     {stop, normal, NewState2};
+</I>&gt;<i>
+</I>
+That's a good point. I think the cleanup code should go into the  
+gen_server terminate callback to keep it one place.
+
+&gt;<i> Maybe-Bug #2: I believe that multiple concurrent consumers cannot  
+</I>&gt;<i> self-register
+</I>&gt;<i>
+</I>&gt;<i> If all consumers are registered by a single process (which is what I  
+</I>&gt;<i> used to do, and it worked), and not by the consumer process itself,  
+</I>&gt;<i> all consume_ok methods are returned correctly. However, if you start  
+</I>&gt;<i> more than one consumer right after each other, and they try to self- 
+</I>&gt;<i> register, things get mixed up. Take a look at this output below. The  
+</I>&gt;<i> key is this debug print:
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> However, the basic.consume method was called with the consumer's  
+</I>&gt;<i> PID, and my understanding is that providing the pid of the consumer  
+</I>&gt;<i> will ensure that the response gets back to the right one. Here is my  
+</I>&gt;<i> code, where you can see the self():
+</I>&gt;<i>
+</I>&gt;<i>     #'basic.consume_ok'{consumer_tag = NewConsumerTag} =  
+</I>&gt;<i> amqp_channel:call(Channel, BasicConsume, self()),
+</I>&gt;<i>
+</I>&gt;<i> And the corresponding output, showing that the responses are mixed  
+</I>&gt;<i> together.
+</I>&gt;<i>
+</I>&gt;<i> [&lt;0.121.0&gt;] Subscribing consumer &lt;&lt;&quot;EMF_TEST_Q.1&quot;&gt;&gt; to channel  
+</I>&gt;<i> &lt;0.117.0&gt;
+</I>&gt;<i> [&lt;0.122.0&gt;] Subscribing consumer &lt;&lt;&quot;EMF_TEST_Q.2&quot;&gt;&gt; to channel  
+</I>&gt;<i> &lt;0.117.0&gt;
+</I>&gt;<i> [&lt;0.122.0&gt;] subscribing: Response from amqp_channel:call  
+</I>&gt;<i> consumer_tag = &lt;&lt;&quot;EMF_TEST_Q.1&quot;&gt;&gt; from channel &lt;0.117.0&gt;
+</I>&gt;<i> [&lt;0.122.0&gt;] received consume_ok: Actual tag: &lt;&lt;&quot;EMF_TEST_Q.1&quot;&gt;&gt;  
+</I>&gt;<i> Expected Tag: &lt;&lt;&quot;EMF_TEST_Q.2&quot;&gt;&gt;
+</I>&gt;<i>
+</I>
+Yes,  this is a bug. On inspection of the handle_call({basic_consume,  
+Method, Consumer}, From, State) function in amqp_channel, there is a  
+race condition between concurrently subscribing consumers. I will  
+probably address this using the same strategy to serialize all  
+synchronous RPC requests. If the client supplies a unique tag to  
+correlate on, this could be done concurrently by maintaining a map of  
+pending subscriptions rather than just the last pending subscription.
+
+I'll fix this and let you know.
+
+In your patch, you also added an extra method to handle a spurious  
+consume_ok message;
+
+%% Edwin Fine bugfix: This is actually being called wrong from  
+somewhere,
+%% but this will fix it.
+handle_method({'basic.consume_ok', ConsumerTag}, State) -&gt;
+     io:format(&quot;[~p] Got bad handle_method call!~n&quot;, [self()]),
+     handle_method(#'basic.consume_ok'{consumer_tag = ConsumerTag},  
+State);
+
+This method is preceded in the code by the following function:
+
+handle_method(BasicConsumeOk = #'basic.consume_ok'{consumer_tag =  
+ConsumerTag},
+                         State = #channel_state{pending_consumer =  
+Consumer}) -&gt;
+     Consumer ! BasicConsumeOk,
+     NewState = register_consumer(ConsumerTag, Consumer, State),
+     {noreply, NewState2} = rpc_bottom_half(BasicConsumeOk, NewState),
+     {noreply, NewState2#channel_state{pending_consumer = &lt;&lt;&gt;&gt;} };
+
+So I not quite sure why that didn't match first because  
+#'basic.consume_ok'{consumer_tag = ConsumerTag} should match against  
+{'basic.consume_ok', ConsumerTag} and #channel_state{pending_consumer  
+= Consumer} should match even if the pending_consumer was not defined.
+
+This will require some more analysis.
+
+HTH,
+
+Ben
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: <A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20080509/c321541d/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20080509/c321541d/attachment.htm</A> 
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000811.html">[rabbitmq-discuss] Fwd: More RabbitMQ Erlang client woes
+</A></li>
+	<LI>Next message: <A HREF="000815.html">[rabbitmq-discuss] More RabbitMQ Erlang client woes
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#814">[ date ]</a>
+              <a href="thread.html#814">[ thread ]</a>
+              <a href="subject.html#814">[ subject ]</a>
+              <a href="author.html#814">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

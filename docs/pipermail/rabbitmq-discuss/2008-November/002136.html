@@ -1,0 +1,139 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Form Submission - Add A Question
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20Form%20Submission%20-%20Add%20A%20Question&In-Reply-To=269388e30811211554u283a5da6s88e300b9009666bb%40mail.gmail.com">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002124.html">
+   <LINK REL="Next"  HREF="002140.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Form Submission - Add A Question</H1>
+    <B>Sean Treadway</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20Form%20Submission%20-%20Add%20A%20Question&In-Reply-To=269388e30811211554u283a5da6s88e300b9009666bb%40mail.gmail.com"
+       TITLE="[rabbitmq-discuss] Form Submission - Add A Question">sean at soundcloud.com
+       </A><BR>
+    <I>Mon Nov 24 13:09:04 GMT 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002124.html">[rabbitmq-discuss] Form Submission - Add A Question
+</A></li>
+        <LI>Next message: <A HREF="002140.html">[rabbitmq-discuss] Form Submission - Add A Question
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2136">[ date ]</a>
+              <a href="thread.html#2136">[ thread ]</a>
+              <a href="subject.html#2136">[ subject ]</a>
+              <a href="author.html#2136">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Ben,
+
+On Nov 22, 2008, at 00: 54, Ben Hood wrote:
+&gt;&gt;<i> I don't believe I can control any socket options with the library  
+</I>&gt;&gt;<i> I'm using.
+</I>&gt;<i>
+</I>&gt;<i> Exactly my point. If you don't what your client is doing under the
+</I>&gt;<i> covers, you are not in a good position to reason with the behavior of
+</I>&gt;<i> the broker :-(
+</I>
+If I could control the consumer's channel's socket to minimize the  
+number of mid-flight messages, what socket options should I set?
+
+&gt;&gt;<i> The test case that I'm basing my observations on is zipped up with
+</I>&gt;&gt;<i> instructions in the README.  The tests require the EventMachine  
+</I>&gt;&gt;<i> gem, and
+</I>&gt;&gt;<i> amqp 0.5.9 or source to be installed.
+</I>&gt;<i>
+</I>&gt;<i> OK, I'll try to have a look at this.
+</I>
+Matthias answered the question that this test case covered, so there's  
+no need to check the code here.
+
+I understand better how the socket, channel and consumer behave in  
+terms of what I'm thinking of as a &quot;client&quot;.  Quite a bit more  
+involved than a simple FIFO buffer ;)
+
+I had assumed that since these mid-flight, un-acked messages would  
+still exist in the broker, ready to be retried or persisted if they  
+were published with delivery-mode=2, they should should be counted  
+towards the 'message count'.  I assumed that only when the persistence  
+rules would remove the message from the queue the message count would  
+also decrement.
+
+This makes it clearer: <A HREF="http://lettuce.squarespace.com/faq/queues/when-declaring-a-queue-what-does-the-message-count-field-mea.html">http://lettuce.squarespace.com/faq/queues/when-declaring-a-queue-what-does-the-message-count-field-mea.html</A> 
+   But on a practical level, I think it's important to remind  
+explicitly that mid-flight messages for a consumer with no_ack=false  
+are not included in this count.  And the maximum number of messages  
+sent to a consumer is determined by the basic.qos branch which is  
+currently pending QA, so at the moment, it's only limited by the  
+number of bytes buffered by the transport layer.
+
+On small scale testing (0-10 messages like I was using) it wasn't  
+obvious that the message count was 0 because the 10 published, un- 
+acked messages lived in my consumer's socket buffer.  Whereas for  
+larger tests, where the number of mid-flight messages are a smaller  
+proportion of the total messages, this statistic becomes more obvious  
+(and useful).
+
+One our use cases, parallelizing long running jobs, emphasizes  
+reliability and accountability over throughput, so we would like to  
+measure all unacknowledged messages in a queue or limit the number of  
+messages consumed to one at a time.  Our goal is to keep the queue  
+depth around 0-20 un-ack'd messages by controlling the number  
+consumers..
+
+It looks like branch 19684 (rabbitmqctl list_queues messages_ready)  
+gives us the statistic we can use to tune our consumer pools.  Are  
+there any plans of also exposing the 'messages_ready' statistic over  
+AMQP?
+
+Or would branch 18577 (basic.qos) with pre-fetch set to 1 give us the  
+count of un-acknowledged messages we're looking for from a passive  
+queue.declare?
+
+&gt;&gt;<i> I'm sure that Basic.Get can be used, but in my rough tests, I  
+</I>&gt;&gt;<i> couldn't get
+</I>&gt;&gt;<i> un-ack'd messages redelivered.  I believe I was failing to close my  
+</I>&gt;&gt;<i> channel
+</I>&gt;&gt;<i> to get them redelivered.  I'll also take another look at Basic.Get  
+</I>&gt;&gt;<i> with
+</I>&gt;&gt;<i> no_ack=true.
+</I>&gt;<i>
+</I>&gt;<i> <A HREF="http://lettuce.squarespace.com/faq/flow-control/how-long-does-it-take-to-redeliver-an-un-acknowledged-messag.html">http://lettuce.squarespace.com/faq/flow-control/how-long-does-it-take-to-redeliver-an-un-acknowledged-messag.html</A>
+</I>
+:<i>) A question about this answer... When you say &quot;this can be done  
+</I>_manually_ with basic.get&quot;, does this imply that the redelivered  
+message will be prioritized to the channel that issued the basic.get  
+over a channel with a consumer?
+
+Thanks,
+Sean
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002124.html">[rabbitmq-discuss] Form Submission - Add A Question
+</A></li>
+	<LI>Next message: <A HREF="002140.html">[rabbitmq-discuss] Form Submission - Add A Question
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2136">[ date ]</a>
+              <a href="thread.html#2136">[ thread ]</a>
+              <a href="subject.html#2136">[ subject ]</a>
+              <a href="author.html#2136">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,124 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Colocation Ignored, Cluster Resources Moved and Failing
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Colocation%20Ignored%2C%0A%20Cluster%20Resources%20Moved%20and%20Failing&In-Reply-To=%3C20110909173337.GD20977%40rabbitmq.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="015004.html">
+   <LINK REL="Next"  HREF="015007.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Colocation Ignored, Cluster Resources Moved and Failing</H1>
+    <B>Matthew Sackman</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Colocation%20Ignored%2C%0A%20Cluster%20Resources%20Moved%20and%20Failing&In-Reply-To=%3C20110909173337.GD20977%40rabbitmq.com%3E"
+       TITLE="[rabbitmq-discuss] Colocation Ignored, Cluster Resources Moved and Failing">matthew at rabbitmq.com
+       </A><BR>
+    <I>Fri Sep  9 18:33:37 BST 2011</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="015004.html">[rabbitmq-discuss] Colocation Ignored,	Cluster Resources Moved and Failing
+</A></li>
+        <LI>Next message: <A HREF="015007.html">[rabbitmq-discuss] Colocation Ignored, Cluster Resources Moved and Failing
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#15006">[ date ]</a>
+              <a href="thread.html#15006">[ thread ]</a>
+              <a href="subject.html#15006">[ subject ]</a>
+              <a href="author.html#15006">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi,
+
+On Fri, Sep 09, 2011 at 01:13:11PM -0400, Cheyenne T. Greatorex wrote:
+&gt;<i> colocation bunny1_colo1 inf: bunny1 bunny1_ip
+</I>&gt;<i> colocation bunny1_colo2 inf: bunny1 bunny1_fs
+</I>&gt;<i> colocation bunny1_fs_colo inf: bunny1_fs bunny1_drbd_ms:Master
+</I>&gt;<i> order bunny1_fs_order inf: bunny1_drbd_ms:promote bunny1_fs:start
+</I>&gt;<i> order bunny1_order inf: bunny1_fs bunny1_ip bunny1
+</I>&gt;<i> property $id=&quot;cib-bootstrap-options&quot; \
+</I>&gt;<i>        dc-version=&quot;1.0.11-1554a83db0d3c3e546cfd3aaff6af1184f79ee87&quot; \
+</I>&gt;<i>        cluster-infrastructure=&quot;openais&quot; \
+</I>&gt;<i>        expected-quorum-votes=&quot;2&quot; \
+</I>&gt;<i>        stonith-enabled=&quot;false&quot; \
+</I>&gt;<i>        no-quorum-policy=&quot;ignore&quot;
+</I>&gt;<i> rsc_defaults $id=&quot;rsc-options&quot; \
+</I>&gt;<i>        resource-stickiness=&quot;0&quot;
+</I>
+I doubt this will solve it, but I'd definitely encourage a non-0
+stickiness otherwise resources tend to move all over the place too
+easily. I've just brought my cluster up and the configuration I have is:
+
+virt-debian-3:~# crm configure show
+node virt-debian-3
+node virt-debian-4
+primitive bunny ocf:rabbitmq:rabbitmq-server \
+        params mnesia_base=&quot;/media/drbd1&quot; ip=&quot;192.168.122.100&quot; log_base=&quot;/media/drbd1/rabbitmq_logs&quot; config_file=&quot;/etc/rabbitmq/rabbitmq&quot; \
+        meta target-role=&quot;Started&quot; is-managed=&quot;true&quot;
+primitive drbd ocf:linbit:drbd \
+        params drbd_resource=&quot;r0&quot; \
+        op monitor interval=&quot;60s&quot;
+primitive drbd_fs ocf:heartbeat:Filesystem \
+        params device=&quot;/dev/drbd1&quot; directory=&quot;/media/drbd1&quot; fstype=&quot;ext3&quot;
+primitive ip ocf:heartbeat:IPaddr2 \
+        params ip=&quot;192.168.122.100&quot; cidr_netmask=&quot;24&quot;
+ms drbd_ms drbd \
+        meta master-max=&quot;1&quot; master-node-max=&quot;1&quot; clone-max=&quot;2&quot; clone-node-max=&quot;1&quot; notify=&quot;true&quot; target-role=&quot;Started&quot;
+colocation bunny_on_fs inf: bunny drbd_fs
+colocation bunny_on_ip inf: bunny ip
+colocation fs_on_drbd inf: drbd_fs drbd_ms:Master
+order bunny_after_fs inf: drbd_fs bunny
+order bunny_after_ip inf: ip bunny
+order fs_after_drbd inf: drbd_ms:promote drbd_fs:start
+property $id=&quot;cib-bootstrap-options&quot; \
+        dc-version=&quot;1.0.9-74392a28b7f31d7ddc86689598bd23114f58978b&quot; \
+        cluster-infrastructure=&quot;openais&quot; \
+        expected-quorum-votes=&quot;2&quot; \
+        stonith-enabled=&quot;false&quot; \
+        no-quorum-policy=&quot;ignore&quot; \
+        resource-stickiness=&quot;100&quot; \
+        last-lrm-refresh=&quot;1315229678&quot;
+rsc_defaults $id=&quot;rsc-options&quot; \
+        resource-stickiness=&quot;100&quot;
+
+You're not having some issue with not commiting your configuration or
+something are you?
+
+Matthew
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="015004.html">[rabbitmq-discuss] Colocation Ignored,	Cluster Resources Moved and Failing
+</A></li>
+	<LI>Next message: <A HREF="015007.html">[rabbitmq-discuss] Colocation Ignored, Cluster Resources Moved and Failing
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#15006">[ date ]</a>
+              <a href="thread.html#15006">[ thread ]</a>
+              <a href="subject.html#15006">[ subject ]</a>
+              <a href="author.html#15006">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

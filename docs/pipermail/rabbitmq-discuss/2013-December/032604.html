@@ -1,0 +1,183 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Why does the queue drop other messages after the first is consumed?
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Why%20does%20the%20queue%20drop%20other%20messages%20after%0A%20the%20first%20is%20consumed%3F&In-Reply-To=%3C1387210382989-32122.post%40n5.nabble.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="032603.html">
+   <LINK REL="Next"  HREF="032606.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Why does the queue drop other messages after the first is consumed?</H1>
+    <B>kingsmasher1</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Why%20does%20the%20queue%20drop%20other%20messages%20after%0A%20the%20first%20is%20consumed%3F&In-Reply-To=%3C1387210382989-32122.post%40n5.nabble.com%3E"
+       TITLE="[rabbitmq-discuss] Why does the queue drop other messages after the first is consumed?">raj.kumar.sanpui at gmail.com
+       </A><BR>
+    <I>Mon Dec 16 16:13:02 GMT 2013</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="032603.html">[rabbitmq-discuss] Why does the queue drop other messages after the first is consumed?
+</A></li>
+        <LI>Next message: <A HREF="032606.html">[rabbitmq-discuss] Why does the queue drop other messages after the first is consumed?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#32604">[ date ]</a>
+              <a href="thread.html#32604">[ thread ]</a>
+              <a href="subject.html#32604">[ subject ]</a>
+              <a href="author.html#32604">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Dear All,
+
+Thanks for the response, yeah the message count in the GUI as well as the
+rabbitmqctl shows as 0.
+
+This is my consume method: (i just commented all the unbind calls to make
+sure, after one consume the queue is not getting unbinded)
+
+std::string amqConnection::consume() {
+	Debug(&quot;%s - \n&quot;, __FUNCTION__);
+	amqp_basic_consume(conn, 1, m_queuename, amqp_empty_bytes, 0, 1, 0,
+amqp_empty_table);
+	amqp_rpc_reply_t res = amqp_get_rpc_reply(conn);
+	int rc = check_amqp_error(res, &quot;consume&quot;);
+	if (rc != 0) return NULL;
+
+	amqp_frame_t frame;
+	int result;
+
+	amqp_basic_deliver_t *d;
+	amqp_basic_properties_t *p;
+	size_t body_target;
+	size_t body_received;
+
+	amqp_maybe_release_buffers(conn);
+	Debug(&quot;%s - wait frame\n&quot;, __FUNCTION__);
+	result = amqp_simple_wait_frame(conn, &amp;frame);
+	Debug(&quot;%s Result %d\n&quot;,__FUNCTION__, result);
+	if (result &lt; 0)
+		return &quot;&quot;;
+
+	Debug(&quot;%s Frame type %d, channel %d\n&quot;,__FUNCTION__, frame.frame_type,
+frame.channel);
+	if (frame.frame_type != AMQP_FRAME_METHOD)
+		return &quot;&quot;;
+
+	Debug(&quot;%s Method %s\n&quot;, __FUNCTION__,
+amqp_method_name(frame.payload.method.id));
+	if (frame.payload.method.id != AMQP_BASIC_DELIVER_METHOD)
+		return &quot;&quot;;
+
+	d = (amqp_basic_deliver_t *) frame.payload.method.decoded;
+	Debug(&quot;%s Delivery %u, exchange %.*s routingkey %.*s\n&quot;,__FUNCTION__,
+			(unsigned) d-&gt;delivery_tag,
+			(int) d-&gt;exchange.len, (char *) d-&gt;exchange.bytes,
+			(int) d-&gt;routing_key.len, (char *) d-&gt;routing_key.bytes);
+
+	result = amqp_simple_wait_frame(conn, &amp;frame);
+	if (result &lt; 0)
+		return &quot;&quot;;
+
+	if (frame.frame_type != AMQP_FRAME_HEADER) {
+		ErrLog( &quot;%s Expected header!&quot;,__FUNCTION__);
+		return &quot;&quot;;
+	}
+	p = (amqp_basic_properties_t *) frame.payload.properties.decoded;
+	if (p-&gt;_flags &amp; AMQP_BASIC_CONTENT_TYPE_FLAG) {
+		Debug(&quot;%s Content-type: %.*s\n&quot;,__FUNCTION__,
+				(int) p-&gt;content_type.len, (char *) p-&gt;content_type.bytes);
+	}
+	Debug(&quot;%s ----\n&quot;, __FUNCTION__);
+
+	body_target = frame.payload.properties.body_size;
+	body_received = 0;
+        std::string response=&quot;&quot;;
+	while (body_received &lt; body_target) {
+		result = amqp_simple_wait_frame(conn, &amp;frame);
+		if (result &lt; 0)
+			break;
+
+		if (frame.frame_type != AMQP_FRAME_BODY) {
+			ErrLog( &quot; %s Expected body!&quot;, __FUNCTION__);
+			break;
+		}
+
+		body_received += frame.payload.body_fragment.len;
+		//assert(body_received &lt;= body_target);
+
+		//amqp_dump(frame.payload.body_fragment.bytes,
+		//		frame.payload.body_fragment.len);
+	        response += std::string((char *) frame.payload.body_fragment.bytes,
+body_received );
+	}
+
+
+
+	return response;
+}
+
+
+
+--
+View this message in context: <A HREF="http://rabbitmq.1065348.n5.nabble.com/Why-does-the-queue-drop-other-messages-after-the-first-is-consumed-tp32118p32122.html">http://rabbitmq.1065348.n5.nabble.com/Why-does-the-queue-drop-other-messages-after-the-first-is-consumed-tp32118p32122.html</A>
+Sent from the RabbitMQ mailing list archive at Nabble.com.
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="032603.html">[rabbitmq-discuss] Why does the queue drop other messages after the first is consumed?
+</A></li>
+	<LI>Next message: <A HREF="032606.html">[rabbitmq-discuss] Why does the queue drop other messages after the first is consumed?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#32604">[ date ]</a>
+              <a href="thread.html#32604">[ thread ]</a>
+              <a href="subject.html#32604">[ subject ]</a>
+              <a href="author.html#32604">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,156 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] rabbitMQ/Beam only using one core.
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20rabbitMQ/Beam%20only%20using%20one%20core.&In-Reply-To=65AC5638854BD3459DA70DCE4B8FB49005107E986B%40corp-it-exch01.gridpoint.com">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="006457.html">
+   <LINK REL="Next"  HREF="006459.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] rabbitMQ/Beam only using one core.</H1>
+    <B>Davis, Jeremy</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20rabbitMQ/Beam%20only%20using%20one%20core.&In-Reply-To=65AC5638854BD3459DA70DCE4B8FB49005107E986B%40corp-it-exch01.gridpoint.com"
+       TITLE="[rabbitmq-discuss] rabbitMQ/Beam only using one core.">jdavis at gridpoint.com
+       </A><BR>
+    <I>Wed Feb 24 02:58:00 GMT 2010</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="006457.html">[rabbitmq-discuss] rabbitMQ/Beam only using one core.
+</A></li>
+        <LI>Next message: <A HREF="006459.html">[rabbitmq-discuss] Fwd: Point-to-point messaging with AMQP (was Re:	rabbitmq-server failing to start?!)
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#6458">[ date ]</a>
+              <a href="thread.html#6458">[ thread ]</a>
+              <a href="subject.html#6458">[ subject ]</a>
+              <a href="author.html#6458">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>I have the answer. Upgraded erlang vm to R13xx
+
+
+From: <A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss-bounces at lists.rabbitmq.com</A> [mailto:<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss-bounces at lists.rabbitmq.com</A>] On Behalf Of Davis, Jeremy
+Sent: Tuesday, February 23, 2010 5:58 PM
+To: <A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+Subject: [rabbitmq-discuss] rabbitMQ/Beam only using one core.
+
+
+I have put together a simple producer (in java) that tries to push through as much data as possible.
+I create many threads, and each has its own connection, own direct exchange, and own queue.
+No matter how many connections, threads, exchanges, or queues, 'top' shows a single beam process at 100%, with remaining 7 cores idle.
+
+I am running 1.7.2 on ubuntu hardy-heron.
+
+Any thoughts?
+
+------------------------------------------------------------------------------
+//Simplified java below:
+
+    private static ConnectionFactory    factory     = null;
+
+    public RabbitMqProducer()
+    {
+        ConnectionParameters params = new ConnectionParameters();
+        params.setUsername(userName);
+        params.setPassword(password);
+        params.setVirtualHost(virtualHost);
+        params.setRequestedHeartbeat(0);
+        factory = new ConnectionFactory(params);
+    }
+
+    public static String getExchangeName( int id )
+    {
+        return( &quot;rabbitTestExchange-&quot; + id );
+    }
+
+    public static String getQueueName( int id )
+    {
+        return( &quot;rabbitTestQueue-&quot; + id );
+    }
+
+    public void go()
+        throws Exception
+    {
+        List&lt;Writer&gt; writers = new ArrayList&lt;Writer&gt;();
+        for( int x=0;x&lt;numThreads;x++)
+        {
+            writers.add(new Writer(x));
+        }
+        for( int x=0;x&lt;numThreads;x++)
+        {
+            writers.get(x).start();
+        }
+    }
+
+    private final class Writer
+        extends Thread
+    {
+        private final int id;
+        private Connection  connection  = null;
+        private Channel     channel     = null;
+
+        public Writer( int id)
+            throws Exception
+        {
+            this.id = id;
+            connect();
+        }
+
+        public void connect()
+            throws Exception
+        {
+            connection  = factory.newConnection(hostName, portNumber);
+            channel     = connection.createChannel();
+            boolean durable = true;
+            AMQP.Exchange.DeclareOk eok = channel.exchangeDeclare( getExchangeName(id), &quot;direct&quot;, durable );
+            AMQP.Queue.DeclareOk qok = channel.queueDeclare(getQueueName(id), durable);
+            AMQP.Queue.BindOk    bok = channel.queueBind(getQueueName(id), getExchangeName(id), getQueueName(id) );
+        }
+
+
+        public void send()
+            throws Exception
+        {
+            boolean mandatory = true;  //Returns error if can't send to queue. (and persisted for example).
+            boolean immediate = false; //if true, error if can't be consumer immediately.
+            StringBuilder b = new StringBuilder( msg.toString() );
+            b.append(&quot;-&quot;+id);
+            byte[] data = b.toString().getBytes();
+
+            for( int x=0;x&lt;numRecords;x++)
+            {
+                AMQP.BasicProperties props = new AMQP.BasicProperties();
+                props.setDeliveryMode(2); //persistent message.
+                channel.basicPublish(getExchangeName(id), getQueueName(id), mandatory, immediate, props, data);
+            }
+        }
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: <A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20100223/96155008/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20100223/96155008/attachment.htm</A> 
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="006457.html">[rabbitmq-discuss] rabbitMQ/Beam only using one core.
+</A></li>
+	<LI>Next message: <A HREF="006459.html">[rabbitmq-discuss] Fwd: Point-to-point messaging with AMQP (was Re:	rabbitmq-server failing to start?!)
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#6458">[ date ]</a>
+              <a href="thread.html#6458">[ thread ]</a>
+              <a href="subject.html#6458">[ subject ]</a>
+              <a href="author.html#6458">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

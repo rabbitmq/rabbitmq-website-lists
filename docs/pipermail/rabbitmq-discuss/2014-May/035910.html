@@ -1,0 +1,149 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] RabbitMQ queue out-rate settles to in-rate when many messages in queue
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20RabbitMQ%20queue%20out-rate%20settles%20to%20in-rate%0A%20when%20many%20messages%20in%20queue&In-Reply-To=%3C5370CC64.3010403%40rabbitmq.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="035908.html">
+   <LINK REL="Next"  HREF="035913.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] RabbitMQ queue out-rate settles to in-rate when many messages in queue</H1>
+    <B>Simon MacMullen</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20RabbitMQ%20queue%20out-rate%20settles%20to%20in-rate%0A%20when%20many%20messages%20in%20queue&In-Reply-To=%3C5370CC64.3010403%40rabbitmq.com%3E"
+       TITLE="[rabbitmq-discuss] RabbitMQ queue out-rate settles to in-rate when many messages in queue">simon at rabbitmq.com
+       </A><BR>
+    <I>Mon May 12 14:28:04 BST 2014</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="035908.html">[rabbitmq-discuss] RabbitMQ queue out-rate settles to in-rate when many messages in queue
+</A></li>
+        <LI>Next message: <A HREF="035913.html">[rabbitmq-discuss] LDAP SSL Configuration
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#35910">[ date ]</a>
+              <a href="thread.html#35910">[ thread ]</a>
+              <a href="subject.html#35910">[ subject ]</a>
+              <a href="author.html#35910">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>On 12/05/2014 11:26, Jelle Smet wrote:
+&gt;<i> Hi all,
+</I>&gt;<i>
+</I>&gt;<i> RabbitMQ: 3.3.1
+</I>&gt;<i> Erlang: 17
+</I>&gt;<i>
+</I>&gt;<i> We have following situation:
+</I>&gt;<i>
+</I>&gt;<i>   * A queue contains a large amount of messages (5 million because the
+</I>&gt;<i>     consumers are shutdown)
+</I>&gt;<i>   * There's a constant  incoming message flow at a rate of ~2000 msg/s.
+</I>&gt;<i>   * Messages are persistent though diskIO is far from being saturated.
+</I>&gt;<i>   * Consumers have a prefetch value of 1000
+</I>&gt;<i>   * We presume backpressure is applied to the producer in this situation
+</I>&gt;<i>     (difficult to observe).
+</I>
+Check mgmt / ctl - do the producer connections have a state of &quot;flow&quot; 
+(backpressure is applied) or &quot;running&quot; (it's not)?
+
+&gt;<i> What we observe is that out-rate settles to the in-rate, which I don't
+</I>&gt;<i> understand because:
+</I>
+When queues in RabbitMQ 3.3.x are the bottleneck, they will deliver (at 
+least) 10% more messages than they accept:
+
+<A HREF="http://www.rabbitmq.com/blog/2014/04/10/consumer-bias-in-rabbitmq-3-3/">http://www.rabbitmq.com/blog/2014/04/10/consumer-bias-in-rabbitmq-3-3/</A>
+
+[I know you say in-rate == out-rate but do you mean exactly, or to the 
+nearest 10%?]
+
+Note that previous versions of RabbitMQ did not make guarantees about 
+this at all.
+
+You can see whether your queues are the bottleneck as discussed here:
+
+<A HREF="http://www.rabbitmq.com/blog/2014/04/14/finding-bottlenecks-with-rabbitmq-3-3/">http://www.rabbitmq.com/blog/2014/04/14/finding-bottlenecks-with-rabbitmq-3-3/</A>
+
+&gt;<i>   * There a large amount of messages in the queue so plenty to consume.
+</I>&gt;<i>   * We KNOW consumers are able to write at a much higher throughput even
+</I>&gt;<i>     after bumping prefetch value.
+</I>&gt;<i>   * When the queue is empty, in &amp; outgoing rate is again 8000 msg/s
+</I>
+When the queue is empty then you might be hitting an optimisation which 
+can make persistent messaging much faster.
+
+When a persistent message reaches a queue, it is also added to an 
+internal queue to go to the disc. It will not be confirmed to the 
+publisher until it has made it through this queue and on to the disc.
+
+But we *can* deliver it to consumers before it has made it to disc! If a 
+consumer receives it, and acknowledges it (or consumed in autoack mode), 
+and that ack makes it back to the queue before the message has reached 
+disc, then we cancel the write and send the confirm to the producer 
+straight away, since RabbitMQ has already fulfilled all its 
+responsibilities for that message by delivering it.
+
+Obviously this optimisation only works when you have (very) fast 
+consumers, and an empty or near-empty queue.
+
+Could that explain the difference in performance you are seeing?
+
+Cheers, Simon
+
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="035908.html">[rabbitmq-discuss] RabbitMQ queue out-rate settles to in-rate when many messages in queue
+</A></li>
+	<LI>Next message: <A HREF="035913.html">[rabbitmq-discuss] LDAP SSL Configuration
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#35910">[ date ]</a>
+              <a href="thread.html#35910">[ thread ]</a>
+              <a href="subject.html#35910">[ subject ]</a>
+              <a href="author.html#35910">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

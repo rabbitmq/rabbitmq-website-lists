@@ -1,0 +1,224 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] How to shutdown cleanly a Java application using Consumers?
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20How%20to%20shutdown%20cleanly%20a%20Java%20application%0A%20using%20Consumers%3F&In-Reply-To=%3CCAD6m6fE0mufhabnfqoWpNU4CRGRpmeqH06iL_wZhM3DpJXC2fw%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="034953.html">
+   <LINK REL="Next"  HREF="034959.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] How to shutdown cleanly a Java application using Consumers?</H1>
+    <B>Jason McIntosh</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20How%20to%20shutdown%20cleanly%20a%20Java%20application%0A%20using%20Consumers%3F&In-Reply-To=%3CCAD6m6fE0mufhabnfqoWpNU4CRGRpmeqH06iL_wZhM3DpJXC2fw%40mail.gmail.com%3E"
+       TITLE="[rabbitmq-discuss] How to shutdown cleanly a Java application using Consumers?">mcintoshj at gmail.com
+       </A><BR>
+    <I>Wed Apr  2 21:35:09 BST 2014</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="034953.html">[rabbitmq-discuss] How to shutdown cleanly a Java application using Consumers?
+</A></li>
+        <LI>Next message: <A HREF="034959.html">[rabbitmq-discuss] How to shutdown cleanly a Java application using Consumers?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#34954">[ date ]</a>
+              <a href="thread.html#34954">[ thread ]</a>
+              <a href="subject.html#34954">[ subject ]</a>
+              <a href="author.html#34954">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Real quick sample code from the Spring AMQP site:
+
+
+    ConnectionFactory cf = new CachingConnectionFactory();
+
+    // set up the queue, exchange, binding on the broker
+    RabbitAdmin admin = new RabbitAdmin(cf);
+    Queue queue = new Queue(&quot;myQueue&quot;);
+    admin.declareQueue(queue);
+    TopicExchange exchange = new TopicExchange(&quot;myExchange&quot;);
+    admin.declareExchange(exchange);
+    admin.declareBinding(
+        BindingBuilder.bind(queue).to(exchange).with(&quot;foo.*&quot;));
+
+    // set up the listener and container
+    SimpleMessageListenerContainer container =
+            new SimpleMessageListenerContainer(cf);
+    Object listener = new Object() {
+        public void handleMessage(String foo) {
+            System.out.println(foo);
+        }
+    };
+    MessageListenerAdapter adapter = new MessageListenerAdapter(listener);
+    container.setMessageListener(adapter);
+    container.setQueueNames(&quot;myQueue&quot;);
+    container.start();
+
+    // send something
+    RabbitTemplate template = new RabbitTemplate(cf);
+    template.convertAndSend(&quot;myExchange&quot;, &quot;foo.bar&quot;, &quot;Hello, world!&quot;);
+    Thread.sleep(1000);
+    container.stop();
+
+
+ON a war, you add shutdown hooks to the web.xml file.  In a non-web
+environment, there are shutdown hooks through the Runtime:
+<A HREF="http://docs.oracle.com/javase/7/docs/api/java/lang/Runtime.html">http://docs.oracle.com/javase/7/docs/api/java/lang/Runtime.html</A>
+
+In the end, they all call container.shutdown:
+<A HREF="http://docs.spring.io/spring-amqp/docs/1.2.1.RELEASE/api/org/springframework/amqp/rabbit/listener/SimpleMessageListenerContainer.html">http://docs.spring.io/spring-amqp/docs/1.2.1.RELEASE/api/org/springframework/amqp/rabbit/listener/SimpleMessageListenerContainer.html</A>
+
+Code for that I found here:
+<A HREF="http://grepcode.com/file/repo1.maven.org/maven2/org.springframework.amqp/spring-rabbit/1.0.0.RELEASE/org/springframework/amqp/rabbit/listener/SimpleMessageListenerContainer.java">http://grepcode.com/file/repo1.maven.org/maven2/org.springframework.amqp/spring-rabbit/1.0.0.RELEASE/org/springframework/amqp/rabbit/listener/SimpleMessageListenerContainer.java</A>
+
+The spring libraries are fantastic for RabbitMQ work (though sometimes
+there are some headaches on &quot;Which factory is this? Which
+MessageProperties do I use?&quot; kinda stuff, but overall they're not bad
+and they're getting better.  I tend to be very careful on how much
+abstraction I add to my systems (hence why Groovy drives me nuts), but
+overall spring is has been very clean implementation wise.
+
+Jason
+
+
+
+
+
+On Wed, Apr 2, 2014 at 3:17 PM, Bertrand Guay-Paquet &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">bernie at step.polymtl.ca</A>
+&gt;<i> wrote:
+</I>
+&gt;<i>  Hi Jason,
+</I>&gt;<i>
+</I>&gt;<i> Thanks for the hint, but I'm unfortunately not using Spring for this. Do
+</I>&gt;<i> you know how Spring achieves this &quot;shutdown&quot; command? I don't know Spring
+</I>&gt;<i> at all but I'll have a look at their doc.
+</I>&gt;<i>
+</I>&gt;<i> Regards,
+</I>&gt;<i> Bertrand
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> On 02/04/2014 4:10 PM, Jason McIntosh wrote:
+</I>&gt;<i>
+</I>&gt;<i>  We use consumers here with the spring libraries.  If you use them,
+</I>&gt;<i> there's a &quot;Shutdown&quot; command you can call as needed.  We've had pretty good
+</I>&gt;<i> luck with it so far.  The spring consumer stuff manages how many consumers
+</I>&gt;<i> are running, connection threading, etc. - and it has very good shutdown
+</I>&gt;<i> hooks.
+</I>&gt;<i>  Jason
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> On Wed, Apr 2, 2014 at 3:02 PM, Bertrand Guay-Paquet &lt;
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">bernie at step.polymtl.ca</A>&gt; wrote:
+</I>&gt;<i>
+</I>&gt;&gt;<i> Hello,
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> I'm using the RabbitMQ Java client API and need some guidance on the
+</I>&gt;&gt;<i> proper application shutdown procedure.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Here's how I start the application:
+</I>&gt;&gt;<i> 1-Create a Connection
+</I>&gt;&gt;<i> 2-Create different types of consumers, each with its own channel, and
+</I>&gt;&gt;<i> call channel.basicConsume(&quot;queue&quot;, false, consumer)
+</I>&gt;&gt;<i> 3-Let it all run
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> This works great, but I can't figure out how to cleanly shutdown the
+</I>&gt;&gt;<i> application. If I simply close the Connection, each created channel
+</I>&gt;&gt;<i> immediately (or soon enough) becomes invalid and any Consumer currently
+</I>&gt;&gt;<i> doing some work fails when trying to ack their current message or perform
+</I>&gt;&gt;<i> any other action on the channel. I'd like to let the consumers finish
+</I>&gt;&gt;<i> whatever message they're processing and then close everything down. I guess
+</I>&gt;&gt;<i> I need to keep track of the created Consumers and somehow signal them to
+</I>&gt;&gt;<i> stop accepting new messages and after they're all done with their current
+</I>&gt;&gt;<i> job, close the connection? Is that possible or is there another way? I
+</I>&gt;&gt;<i> haven't found any management methods for the consumer classes to control or
+</I>&gt;&gt;<i> query their status.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> The information I found so far is related to manually created threads
+</I>&gt;&gt;<i> that poll the queues to process messages. In that case, it's really easy
+</I>&gt;&gt;<i> because I can just set a flag on each runnable to exit after processing
+</I>&gt;&gt;<i> their current message and join on all the threads before closing the
+</I>&gt;&gt;<i> underlying connection. So this leads me to ask, as a side note: are
+</I>&gt;&gt;<i> Consumers the way to go to use RabbitMQ in real-world scenarios or should I
+</I>&gt;&gt;<i> poll on the queues? It seems to me that Consumers would be the better
+</I>&gt;&gt;<i> choice (polling is bad), but if they're less powerful, perhaps they're not
+</I>&gt;&gt;<i> a silver bullet in my case.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Thank you,
+</I>&gt;&gt;<i> Bertrand
+</I>&gt;&gt;<i> _______________________________________________
+</I>&gt;&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>&gt;&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> --
+</I>&gt;<i> Jason McIntosh
+</I>&gt;<i> <A HREF="https://github.com/jasonmcintosh/">https://github.com/jasonmcintosh/</A>
+</I>&gt;<i> 573-424-7612
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> rabbitmq-discuss mailing <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">listrabbitmq-discuss at lists.rabbitmq.comhttps</A>://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>
+
+-- 
+Jason McIntosh
+<A HREF="https://github.com/jasonmcintosh/">https://github.com/jasonmcintosh/</A>
+573-424-7612
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20140402/317c4754/attachment.html">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20140402/317c4754/attachment.html</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="034953.html">[rabbitmq-discuss] How to shutdown cleanly a Java application using Consumers?
+</A></li>
+	<LI>Next message: <A HREF="034959.html">[rabbitmq-discuss] How to shutdown cleanly a Java application using Consumers?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#34954">[ date ]</a>
+              <a href="thread.html#34954">[ thread ]</a>
+              <a href="subject.html#34954">[ subject ]</a>
+              <a href="author.html#34954">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

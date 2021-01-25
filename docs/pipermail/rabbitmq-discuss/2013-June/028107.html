@@ -1,0 +1,131 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] RabbitMQ's Mirroring results in weird	behavior when slave goes down
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20RabbitMQ%27s%20Mirroring%20results%20in%20weird%0A%09behavior%20when%20slave%20goes%20down&In-Reply-To=%3C2F050250-E7F1-4543-B3C3-239885F7C9CB%40rabbitmq.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="028101.html">
+   <LINK REL="Next"  HREF="028125.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] RabbitMQ's Mirroring results in weird	behavior when slave goes down</H1>
+    <B>Tim Watson</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20RabbitMQ%27s%20Mirroring%20results%20in%20weird%0A%09behavior%20when%20slave%20goes%20down&In-Reply-To=%3C2F050250-E7F1-4543-B3C3-239885F7C9CB%40rabbitmq.com%3E"
+       TITLE="[rabbitmq-discuss] RabbitMQ's Mirroring results in weird	behavior when slave goes down">tim at rabbitmq.com
+       </A><BR>
+    <I>Wed Jun 26 11:38:36 BST 2013</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="028101.html">[rabbitmq-discuss] RabbitMQ's Mirroring results in weird behavior when slave goes down
+</A></li>
+        <LI>Next message: <A HREF="028125.html">[rabbitmq-discuss] RabbitMQ's Mirroring results in weird behavior when slave goes down
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#28107">[ date ]</a>
+              <a href="thread.html#28107">[ thread ]</a>
+              <a href="subject.html#28107">[ subject ]</a>
+              <a href="author.html#28107">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi Thomas,
+
+Here are my thoughts (inline below). I'm not the greatest clustering/HA expert, but from what I can gather, I think what you're seeing might be a result of the combination of a network partition and the `autoheal' mode.
+
+On 26 Jun 2013, at 06:24, thomas wrote:
+
+&gt;<i> Hi Tim, 
+</I>&gt;<i> 
+</I>&gt;<i> Thanks for the reply. I am using rabbitmq 3.1.1 with autoheal for
+</I>&gt;<i> cluster_partition_handling.
+</I>&gt;<i> 
+</I>&gt;<i> My test is just to find out the behavior of rabbitmq master should its slave
+</I>&gt;<i> goes down.
+</I>
+This is clearly documented on the website - RabbitMQ clusters /do not/ handle network partitions well. Things will probably go wrong. If the only issue you're running into is a busy producer getting blocked then that's great - the worst cases could have involved lost messages and all sorts.
+
+Now, the intention with HA is *not* to go belly up in the face of disappearing slaves - quite the opposite. Quite why the master is suddenly blocking the producer I'm not sure - I'll discuss this with the rest of the team but it doesn't sound quite right to me.
+
+&gt;<i> Approximately 10 seconds after I shut down the network connection of
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at B</A>, the sending of messages to <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at A</A> comes to a pause for close to
+</I>&gt;<i> a minute and then continues as per normal.
+</I>&gt;<i> 
+</I>
+Just to be clear, in a RabbitMQ cluster there is no concept of a master node - only mirror queues introduce the master/slave concept, and then only for queues that are mirrored. Each mirrored queue's master can end up on different nodes, depending on which you were connect to when it was declared.
+
+&gt;<i> Trying the same test but with no mirroring does not have any disruption.
+</I>&gt;<i> 
+</I>
+That is not surprising, since the queue you're connected to isn't trying to replicate to any other nodes.
+
+&gt;<i> By the way, I have try out the same test for rabbitmq mirroring except that
+</I>&gt;<i> there will be a delay of 10ms between sending every message and there was no
+</I>&gt;<i> disruption.
+</I>&gt;<i> 
+</I>
+Can you share your test code? I'm surprised there is such a big difference, but still... If you've got a decent automated test that consistently replicates this failure mode and you're able to share it, we might be able to use it to make improvements to partition handling in the future. If not code, a test script (and description of how you're disabling the network link) with precise steps would do.
+
+&gt;<i> From my observation it can be seen that RabbitMQ server will exhibit weird
+</I>&gt;<i> behavior under stress condition when a slave goes down. I presume this weird
+</I>&gt;<i> behavior will only surface under stress condition.
+</I>&gt;<i> 
+</I>
+As I've stated before, clustering is not designed to handle network partitions. In previous versions of rabbit, when a partition occurred it was up to a system administrator to handle it. This usually involved stopping some (or all) of the nodes and restarting them. The 'autoheal' feature simply attempts to replicate what a sysadmin might do, and therefore (whilst cluster nodes are restarting) there can be delays. The intention is not to block the master (or producers), but depending on how the cluster partition is handled, that might be one of the potential side effects.
+
+We will certainly take a look to see if this is avoidable - I can't comment on that right now - and being able to repeat the tests could help with that too.
+
+&gt;<i> Is there a rough estimate for the maximum load that a RabbitMQ server can
+</I>&gt;<i> take per second for mirroring? Thanks. 
+</I>&gt;<i> 
+</I>
+I'm not sure whether mirroring is really the problem here. Mirrored queues can handle plenty of load, although there /is/ some performance slow down due to replication (and esp. so if you're using publisher confirms) but there is a not a specific limit - this is hardware/resource and use-case dependent. I suspect the problem /you/ have could be a combination of network partition and cluster partition resolution (i.e., autoheal) mode.
+
+Based on <A HREF="http://www.rabbitmq.com/partitions.html,">http://www.rabbitmq.com/partitions.html,</A> what I'd suggest is that you change 'autoheal' to 'ignore' and try your test again. That will either confirm or eliminate my suspicion quickly enough. 
+
+Cheers,
+Tim
+
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="028101.html">[rabbitmq-discuss] RabbitMQ's Mirroring results in weird behavior when slave goes down
+</A></li>
+	<LI>Next message: <A HREF="028125.html">[rabbitmq-discuss] RabbitMQ's Mirroring results in weird behavior when slave goes down
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#28107">[ date ]</a>
+              <a href="thread.html#28107">[ thread ]</a>
+              <a href="subject.html#28107">[ subject ]</a>
+              <a href="author.html#28107">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

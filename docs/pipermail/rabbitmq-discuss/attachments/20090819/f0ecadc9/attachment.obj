@@ -1,0 +1,48 @@
+diff -ur rabbitmq-http2-default/src/rabbit_http_channel.erl rabbitmq-http2-default.mine/src/rabbit_http_channel.erl
+--- rabbitmq-http2-default/src/rabbit_http_channel.erl	2009-07-13 18:19:50.000000000 -0700
++++ rabbitmq-http2-default.mine/src/rabbit_http_channel.erl	2009-08-19 13:24:19.000000000 -0700
+@@ -232,20 +232,26 @@
+ 			   build_content(Content, Props)),
+     State.
+ 
+-check_cast(Method, Args, Content, Props, StateBad, StateOk) ->
+-    case catch list_to_existing_atom(binary_to_list(Method)) of
+-	{'EXIT', {badarg, _}} ->
++check_cast(Method, Args, Content, Props, StateBad, StateOk, Reply) ->
++    case {catch list_to_existing_atom(binary_to_list(Method)), Reply} of
++	{{'EXIT', {badarg, _}}, _} ->
+ 	    reply(rfc4627_jsonrpc:error_response(404, "AMQP method not found",
+ 						 {obj, [{"method", Method},
+ 							{"args", Args}]}),
+ 		  StateBad);
+-	'channel.close' ->
++	{'channel.close', _} ->
+ 	    %% Forbid client-originated channel.close. We wrap
+ 	    %% channel.close in our own close method.
+ 	    reply(rfc4627_jsonrpc:error_response(405, "AMQP method not allowed",
+ 						 {obj, [{"method", Method}]}),
+ 		  StateBad);
+-	MethodAtom ->
++        {MethodAtom, true} ->
++            reply({result, null}, cast(MethodAtom,
++                                        Args,
++                                        default_param(Content, none),
++                                        default_param(Props, #'P_basic'{}),
++                                        StateOk));
++	{MethodAtom, false} ->
+ 	    noreply(cast(MethodAtom,
+ 			 Args,
+ 			 default_param(Content, none),
+@@ -293,9 +299,9 @@
+ 	    State = #state{waiting_rpcs = WaitingRpcs}) ->
+     check_cast(Method, Args, none, #'P_basic'{}, State, State#state{waiting_rpcs =
+ 								    queue:in(From,
+-									     WaitingRpcs)});
+-handle_call({jsonrpc, <<"cast">>, _RequestInfo, [Method, Args, Content, Props]}, From, State) ->
+-    check_cast(Method, Args, Content, Props, State, enqueue_waiter(From, State));
++									     WaitingRpcs)}, false);
++handle_call({jsonrpc, <<"cast">>, _RequestInfo, [Method, Args, Content, Props]}, _, State) ->
++    check_cast(Method, Args, Content, Props, State, State, true);
+ handle_call(Request, _From, State) ->
+     error_logger:error_msg("Unhandled call in ~p: ~p", [?MODULE, Request]),
+     reply({result, not_supported}, State).

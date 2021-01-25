@@ -1,0 +1,155 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Federation: global exchange
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Federation%3A%20global%20exchange&In-Reply-To=%3CCC25BD46.3361%25Michael.Laing%40nytimes.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="021301.html">
+   <LINK REL="Next"  HREF="021259.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Federation: global exchange</H1>
+    <B>Laing, Michael P.</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Federation%3A%20global%20exchange&In-Reply-To=%3CCC25BD46.3361%25Michael.Laing%40nytimes.com%3E"
+       TITLE="[rabbitmq-discuss] Federation: global exchange">Michael.Laing at nytimes.com
+       </A><BR>
+    <I>Fri Jul 13 16:55:50 BST 2012</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="021301.html">[rabbitmq-discuss] RabbitMQ SSL
+</A></li>
+        <LI>Next message: <A HREF="021259.html">[rabbitmq-discuss] Bug report for librabbitmq-c client
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#21258">[ date ]</a>
+              <a href="thread.html#21258">[ thread ]</a>
+              <a href="subject.html#21258">[ subject ]</a>
+              <a href="author.html#21258">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>I have been experimenting with federation and thought I would report on the experience as input to development of the capability.
+
+My goal was to create a 'global exchange' that could reside in any or all of the virtual hosts in my rabbitmq clusters. The purpose of the global exchanges is to provide a 'control bus'-like capability wherein messages published to the exchange in any vhost in any cluster appear in the corresponding exchange in every vhost in every cluster. The messages will be relatively small and message rates relatively low, under 100 per second &#8211; probably well under.
+
+To implement this I created a 'reflector' vhost in each cluster. Within the cluster, I use federation to create bidirectional links in a star configuration between 'reflector' and each other participating vhost in the cluster. We segregate products/projects etc into their own vhosts so there can be many of them in each cluster.
+
+The clusters in turn are fully connected (link from each cluster to every other cluster) in a federated network using their 'reflector' vhosts.
+
+For simplicity I use a hop count of 3 for each link. Duplicate messages are ignored.
+
+Here are 2 message paths of the many that occur, one within the cluster and one between clusters:
+
+Message -&gt; exchange:Global/vhost:A/cluster:X
+(hop 1) -&gt; exchange:Global/vhost:Reflector/cluster:X
+(hop 2) -&gt; exchange:Global/vhost:Reflector/cluster:Y
+(hop 3) -&gt; exchange:Global/vhost:B/cluster:Y
+
+Message -&gt; exchange:Global/vhost:A/cluster:X
+(hop 1) -&gt; exchange:Global/vhost:Reflector/cluster:X
+(hop 2) -&gt; exchange:Global/vhost:C/cluster:X
+(hop 3) -&gt; exchange:Global/vhost:Reflector/cluster:X
+
+A useful application is a 'confirm' service: when an object is updated in S3 in a region, is the updated version confirmed to be available from clusters in other regions? There is variable lag in consistency in S3 which can cause problems, yet we want to publish a URL to the object as soon as possible.
+
+To confirm availability, the service publishes a 'poll' message to the global exchange. Agents are listening in an 'admin' vhost in each cluster for this poll and attempt (repetitively if need be) to access the S3 object and check its version. They report back and a consolidated report is returned to the requesting app as JSON.
+
+Here's a sample printed version &#8211; the object was published by me using my mac in NYC to S3 in us-east-1 via the 'confirm' service running in a vhost in my us-east-1 cluster:
+
+Respond Success Tries Elapsed ms Finish/Start
+
+Overall 1385 2012-07-12T19:29:34.488206Z
+2012-07-12T19:29:33.103081Z
+
+Put to s3 227 2012-07-12T19:29:33.330069Z
+2012-07-12T19:29:33.103081Z
+
+Poll/Response 1158 2012-07-12T19:29:34.488206Z
+2012-07-12T19:29:33.330069Z
+
+&#8226;us-east-1 true true 1 122 2012-07-12T19:29:33.460626Z
+2012-07-12T19:29:33.338701Z
+
+&#8226;ap-northeast-1 true true 1 957 2012-07-12T19:29:34.399986Z
+2012-07-12T19:29:33.442609Z
+
+&#8226;sa-east-1 true true 1 736 2012-07-12T19:29:34.200525Z
+2012-07-12T19:29:33.464345Z
+
+&#8226;eu-west-1 true true 1 463 2012-07-12T19:29:33.861053Z
+2012-07-12T19:29:33.398861Z
+
+&#8226;us-west-1 true true 1 404 2012-07-12T19:29:33.788365Z
+2012-07-12T19:29:33.384557Z
+
+An advantage of this approach is that I can run the 'confirm' service in any vhost in any cluster and not have to worry about explicitly federating it across my clusters &#8211; I can use this general purpose capability.
+
+We have many similar low-bandwidth general services in mind, e.g. for monitoring. We'll probably upgrade our hosts to Precision Time Service (PTP) to get more accurate timings.
+
+Opportunities for improvement:
+
+. Static configuration is a pain &#8211; my understanding is that this is being remedied. This is most important.
+. Lots of 'extra' messages are sent in my scenario &#8211; perhaps this could be optimized. Not too important.
+. Federation within a cluster could perhaps be optimized &#8211; actually it is not even documented as a capability. Not too important.
+
+We have some high volume uses as well for which we will use additional, more tailored federated links. However we are finding this general purpose, low volume capability quite useful both in limited practice and as an architectural concept supporting new services.
+
+
+Michael Laing
+NYTimes Media Group
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20120713/e418a70d/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20120713/e418a70d/attachment.htm</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="021301.html">[rabbitmq-discuss] RabbitMQ SSL
+</A></li>
+	<LI>Next message: <A HREF="021259.html">[rabbitmq-discuss] Bug report for librabbitmq-c client
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#21258">[ date ]</a>
+              <a href="thread.html#21258">[ thread ]</a>
+              <a href="subject.html#21258">[ subject ]</a>
+              <a href="author.html#21258">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

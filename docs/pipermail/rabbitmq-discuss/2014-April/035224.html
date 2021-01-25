@@ -1,0 +1,125 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Possible memory leak in the management plugin
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Possible%20memory%20leak%20in%20the%20management%20plugin&In-Reply-To=%3C1397157592459-34779.post%40n5.nabble.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="035184.html">
+   <LINK REL="Next"  HREF="035228.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Possible memory leak in the management plugin</H1>
+    <B>Pavel</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Possible%20memory%20leak%20in%20the%20management%20plugin&In-Reply-To=%3C1397157592459-34779.post%40n5.nabble.com%3E"
+       TITLE="[rabbitmq-discuss] Possible memory leak in the management plugin">pmaisenovich at blizzard.com
+       </A><BR>
+    <I>Thu Apr 10 20:19:52 BST 2014</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="035184.html">[rabbitmq-discuss] Possible memory leak in the management plugin
+</A></li>
+        <LI>Next message: <A HREF="035228.html">[rabbitmq-discuss] Possible memory leak in the management plugin
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#35224">[ date ]</a>
+              <a href="thread.html#35224">[ thread ]</a>
+              <a href="subject.html#35224">[ subject ]</a>
+              <a href="author.html#35224">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>&gt;<i> That table [aggregated_stats] contains one row for every
+</I>&gt;<i> combination of things that can show message rates, and each row contains
+</I>&gt;<i> some history for that thing.
+</I>&gt;<i>
+</I>&gt;<i> The GCing is about deleting old history from each row. This is a
+</I>&gt;<i> relatively expensive operation, so the DB loops round GCing 1% of rows
+</I>&gt;<i> (or 100 rows, whichever is larger) every 5s. That means that we can keep
+</I>&gt;<i> a bit more history around than we're configured to, just because we
+</I>&gt;<i> haven't got round to GCing it yet.
+</I>
+It sounds like 
+
+1) If at least 1 message is published to each channel/exchange/queue within
+retention period (10s by default for detailed stats) - entire history data
+will be kept in memory (aggregated_stats) and solely rely on clean up
+process (&quot;GC-ing&quot;) to remove old records. 
+
+2) Because the GC-ing process has constant rate (100 or 1% rows each 5
+seconds), there is always a possibility that aggregated_stats table growth
+will outpace the clean up efforts. In other words, if (events rate x number
+of data points) is high enough, mgmt_db will grow continuously until Rabbit
+hits high watermark and starts to throttle publishers/consumers.
+
+This is very concerning as while Rabbit might be stable at the moment it
+could begin to explode some time in a future depending on concurrency. 
+
+As far as I can tell, currently rows for GC are selected randomly. Is there
+a way cycle them so that entire aggregated_stats table is guaranteed to get
+a GC pass every 500 seconds (if size is 10000+)? This should increase the
+concurrency required to outpace GC.
+
+Also, would you consider making GC_MIN_ROWS and GC_MIN_RATIO configurable
+externally? It will give some room for tuning, but essentially the best
+solution would be to make the GC-ing process dynamic and memory aware.
+
+Speaking of which, what you think about monitoring the aggregated_stats
+table size and dynamically changing the row count for GC-ing process run up
+to a certain threshold? Since it can't grow forever (supposedly, due to
+performance implications you mentioned), in addition it would be great to
+have some sort of high watermark based throttling for fine grained stats,
+similar to how transient queues begin to page out to disk at certain level.
+So in the event of GC-ing process falling behind aggregated_stats will not
+consume all RAM and force Rabbit to throttle publishers, but instead
+downgrade the monitoring level (and alert!) as a prevention measure.
+
+Thanks!
+
+
+
+--
+View this message in context: <A HREF="http://rabbitmq.1065348.n5.nabble.com/Possible-memory-leak-in-the-management-plugin-tp27414p34779.html">http://rabbitmq.1065348.n5.nabble.com/Possible-memory-leak-in-the-management-plugin-tp27414p34779.html</A>
+Sent from the RabbitMQ mailing list archive at Nabble.com.
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="035184.html">[rabbitmq-discuss] Possible memory leak in the management plugin
+</A></li>
+	<LI>Next message: <A HREF="035228.html">[rabbitmq-discuss] Possible memory leak in the management plugin
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#35224">[ date ]</a>
+              <a href="thread.html#35224">[ thread ]</a>
+              <a href="subject.html#35224">[ subject ]</a>
+              <a href="author.html#35224">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,157 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Long pauses when closing many channels	simultaneously
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Long%20pauses%20when%20closing%20many%20channels%0A%09simultaneously&In-Reply-To=%3C8a7a1859-5ff0-49a3-8ba9-edef63830591%40googlegroups.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="030430.html">
+   <LINK REL="Next"  HREF="030444.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Long pauses when closing many channels	simultaneously</H1>
+    <B>josh</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Long%20pauses%20when%20closing%20many%20channels%0A%09simultaneously&In-Reply-To=%3C8a7a1859-5ff0-49a3-8ba9-edef63830591%40googlegroups.com%3E"
+       TITLE="[rabbitmq-discuss] Long pauses when closing many channels	simultaneously">martin.rogan.inc at gmail.com
+       </A><BR>
+    <I>Thu Sep 26 11:50:31 BST 2013</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="030430.html">[rabbitmq-discuss] how to install amqplib
+</A></li>
+        <LI>Next message: <A HREF="030444.html">[rabbitmq-discuss] Long pauses when closing many channels	simultaneously
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#30434">[ date ]</a>
+              <a href="thread.html#30434">[ thread ]</a>
+              <a href="subject.html#30434">[ subject ]</a>
+              <a href="author.html#30434">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>
+
+I have 1 RabbitMQ Connection, 10K publishing Channels, 10K consuming 
+Channels and 100 Threads. All channels are in rapid publish/consume &quot;loops&quot; 
+using exclusive queues and external synchronization; no possibility of 
+publish, consume or close happening simultaneously on a channel. Closing 
+channels simultaneously on 100 threads incurs a delay of 2.5 seconds for 
+each of the first 100 channels. All subsequent closures are processed in 
+less than 0.5 seconds. If I bump it up to 20K+20K channels the initial 100 
+each take 5 seconds to close. With 30K+30K each takes 10 seconds, where 
+we're pretty much at the channel-max for a connection. Similarly if I 
+reduce the number of threads to 50 then it's the first 50 channels that 
+close slowly.
+
+Let me restate that... *With 30K+30K channels the first 100 each take 10 
+seconds to close using 100 simultaneous threads. The remaining 59,900 each 
+take less than 0.5 seconds.* My feeling is that there's some funky 
+connection-wide synchronization/continuation going on here. Hit the 
+connection up with 100 channel-close requests on 100 threads simultaneously 
+and it baulks. Whatever causes that initial spasm doesn't seem to affect 
+subsequent close operations and everything swims along nicely.
+
+I've tried ramping up the number of connections to relieve the pressure. 
+This certainly works with predictable results. With 30K+30K connections 
+spread evenly over 2 connections the initial 100 channel-close delays are 
+halved from 10 seconds to 5 seconds. Use 10 connections and the delay is 
+imperceptible when compared to the subsequent 59,900 channel closures. Jump 
+to 50K+50K channels (we can do this with 10 connections but not 1 
+connection due to channel-max) and the delays start to creep back in again.
+
+My concerns with this approach are that 1) multiple connections are 
+discouraged in the documentation due to i/o resource overhead and that 2) 
+it's not clear for my application how to sensibly predict the optimum 
+number of channels per connection. If there is a soft limit to the number 
+of channels per connection why is it not documented or made available in 
+the api? If I have to manage a number of connections and allocate channels 
+across those connections in a robust manner I feel like I'm doing the work 
+of a client library!
+
+I've tried my hand at modifying the client library by not waiting for 
+channel-close acknowledgements from the RabbitMQ server. This worked like a 
+charm. Channels were closed instantly with no delay in the client and 
+confirmed as closed on the server. Eight hours later though and I was out 
+of heap space as the channel resources internal to the client library were 
+not being released. I haven't managed to isolate the source of the delay 
+either... is it in the client library or the server itself? To progress 
+further I'd need to trace the wire protocol. I think I'm off track with 
+this approach!
+
+*Questions:*
+
+Before making application changes I'd like to know if this is a known issue 
+with the Java client? Are there better workarounds than multiple 
+connections and application-level channel management? In practise my actual 
+application uses around 20K channels per process, which I don't feel is 
+excessive, and message throughput is actually pretty light as I'm 
+leveraging RabbitMQ more for it's routing capabilities. if you think the 
+number of channels is a problem in itself then please say so! I could 
+refactor to use less channels but then I'd be sharing channels and would 
+either have to synchronize their usage or ignore documentation guidelines. 
+The error handling paradigm makes this cumbersome though; any channel error 
+results in it's termination so it's difficult to isolate errors, prevent 
+them from permeating across unrelated publishers/consumers and recover in a 
+robust manner.
+
+*Detail:*
+
+RabbitMQ server 3.1.5, Java amqp-client 3.1.5. Also tried 3.1.4, 3.1.3 in 
+the same test harness and seen what I assume to be exactly the same 
+behaviour in 3.0 and prior in production application.
+
+My test harness is standalone but a bit obtuse to post here. I create 10K 
+test clients each of which creates an exclusive queue and runs a continuous 
+publish-consume-publish-consume loop. The publisher and consumer each have 
+their own channels. I'm using channel.basicConsume with DefaultConsumers 
+and a default consumer executor service. Also used my own Java executor 
+service, which appears to be the same as the default implementation, with 
+various numbers of threads to no discernible effect.
+
+Messages consumed in handleDelivery spawn a new publish task via a 
+java.concurrent fixed thread pool, so the consumer thread is not tied up or 
+used in any channel operations whatsoever. The channel-close is 
+synchronized so that it cannot happen at the same time as a publish. 
+However there's nothing stopping a consume happening while close is being 
+processed - the consumer is out of my control.
+
+Thanks for any pointers!
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20130926/21ee4ecc/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20130926/21ee4ecc/attachment.htm</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="030430.html">[rabbitmq-discuss] how to install amqplib
+</A></li>
+	<LI>Next message: <A HREF="030444.html">[rabbitmq-discuss] Long pauses when closing many channels	simultaneously
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#30434">[ date ]</a>
+              <a href="thread.html#30434">[ thread ]</a>
+              <a href="subject.html#30434">[ subject ]</a>
+              <a href="author.html#30434">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

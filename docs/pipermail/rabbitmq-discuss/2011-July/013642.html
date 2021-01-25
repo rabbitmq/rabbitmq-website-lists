@@ -1,0 +1,159 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Channel thread safety in Java client
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Channel%20thread%20safety%20in%20Java%20client&In-Reply-To=%3CA7F601B8-1674-4AF2-BA08-4EAEBF0D4E01%40rabbitmq.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="013640.html">
+   <LINK REL="Next"  HREF="013647.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Channel thread safety in Java client</H1>
+    <B>Steve Powell</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Channel%20thread%20safety%20in%20Java%20client&In-Reply-To=%3CA7F601B8-1674-4AF2-BA08-4EAEBF0D4E01%40rabbitmq.com%3E"
+       TITLE="[rabbitmq-discuss] Channel thread safety in Java client">steve at rabbitmq.com
+       </A><BR>
+    <I>Tue Jul  5 12:06:57 BST 2011</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="013640.html">[rabbitmq-discuss] Channel thread safety in Java client
+</A></li>
+        <LI>Next message: <A HREF="013647.html">[rabbitmq-discuss] Channel thread safety in Java client
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#13642">[ date ]</a>
+              <a href="thread.html#13642">[ thread ]</a>
+              <a href="subject.html#13642">[ subject ]</a>
+              <a href="author.html#13642">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Jiri,
+The current implementation of the Java Client calls the Consumer interface on the same thread that the Channel work is done on.  This means that anything done in the Consumer callbacks is synchronised with all the other channel stuff going on, and could potentially block it.  There are notes on the api-guide pages to warn you about this.
+
+The QueueingConsumer class basically makes sure that the Consumer callbacks do not cause any problems, putting the messages on the (dedicated) queue for any (usually the main) thread to access them.
+
+This means that, even though there may be many consumers defined for a Channel, ownership of the Channel is not passed to the 'lib's connection thread', and you can continue to use the Channel from the main thread, or whatever thread you have allocated to run it from.  You can ack messages, and anything else you want, too.
+
+The thing you shouldn't do is to call Channel methods (for the same channel) from more than one thread at a time.  This is because the threading model in the channel is 'challenged'.
+
+We are currently working on the Consumer and Channel threading restrictions -- we want to run all the Consumer callbacks on a thread which is distinct from the Connection thread; and allow channels to be driven from multiple threads.  This would mean it is feasible to do most Channel operations from the Consumer callback itself, and from any other thread.
+
+Incidentally, the way our changes are going at the moment, we will expose the execution thread pool for Consumer callbacks; and allow the user to have control over how many threads are allocated.  For example, it might be thought sensible to have a single thread per channel allocated for Consumer callbacks; but this could mean a large penalty for a large number of channels that may be doing very little work.  Instead we pass work to an Executor (managed so that all the work required by a single channel is serialised) which runs it on a thread from a pool.  The default Executor will use a (fixed) pool of 16 threads, but the interface will allow passing in any Executor implementation for the Connection.
+
+I hope this helps.  Feedback is welcome.
+Steve Powell  (a happy bunny)
+----------some definitions from the SPD----------
+Rigatoni n. A prime-ministerial grin.
+Nigella n. The next bottle-size up from a Nebuchadnezzar.
+Homily adv. Rather like a frenchman.
+
+On 5 Jul 2011, at 09:42, Jiri Krutil wrote:
+
+&gt;<i> Hi
+</I>&gt;<i> 
+</I>&gt;<i> I'm trying to understand the limitations of using a Channel in a
+</I>&gt;<i> multi-threaded application using the Java client. Sorry for this longish
+</I>&gt;<i> post...
+</I>&gt;<i> 
+</I>&gt;<i> I have read <A HREF="http://www.rabbitmq.com/api-guide.html#channel-threads">http://www.rabbitmq.com/api-guide.html#channel-threads</A> but
+</I>&gt;<i> did not find any other, more detailed info.
+</I>&gt;<i> 
+</I>&gt;<i> I want to receive messages by subscription. I create a Channel and
+</I>&gt;<i> invoke basicConsume() on it, passing a QueueingConsumer.
+</I>&gt;<i> 
+</I>&gt;<i> The moment I call basicConsume(), I would imagine the Channel becomes
+</I>&gt;<i> &quot;owned&quot; by the client lib's connection thread, which feeds messages to
+</I>&gt;<i> QueueingConsumer.
+</I>&gt;<i> 
+</I>&gt;<i> My app is retrieving those messages from the QueueingConsumer in the
+</I>&gt;<i> main thread. I would like to know to which extent can I keep using the
+</I>&gt;<i> Channel passed to basicConsume() from the main thread.
+</I>&gt;<i> 
+</I>&gt;<i> I guess I can use it to ack messages, because ack would not work on
+</I>&gt;<i> another channel, correct? Can I also use the channel for other things,
+</I>&gt;<i> such as sending messages, using transactions, or starting another
+</I>&gt;<i> subscription?
+</I>&gt;<i> 
+</I>&gt;<i> JMS specs seem to be quite explicit on this. It says a session with an
+</I>&gt;<i> active subscription is owned by the connection thread and client app
+</I>&gt;<i> threads cannot use the session; they can only shut it down. That's why
+</I>&gt;<i> if I want multiple subscriptiopns on one session, I must set them all up
+</I>&gt;<i> before I call Connection.start(), which passes the session ownership to
+</I>&gt;<i> the client library. Afterwards I can no longer use the session from my
+</I>&gt;<i> threads except closing it.
+</I>&gt;<i> 
+</I>&gt;<i> Could you please elaborate on how exactly this works in the rabbit Java
+</I>&gt;<i> client?
+</I>&gt;<i> 
+</I>&gt;<i> Cheers
+</I>&gt;<i> Jiri
+</I>&gt;<i> 
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20110705/bb23716b/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20110705/bb23716b/attachment.htm</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="013640.html">[rabbitmq-discuss] Channel thread safety in Java client
+</A></li>
+	<LI>Next message: <A HREF="013647.html">[rabbitmq-discuss] Channel thread safety in Java client
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#13642">[ date ]</a>
+              <a href="thread.html#13642">[ thread ]</a>
+              <a href="subject.html#13642">[ subject ]</a>
+              <a href="author.html#13642">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

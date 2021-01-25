@@ -1,0 +1,157 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Pulling RabbitMQ out of service
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Pulling%20RabbitMQ%20out%20of%20service&In-Reply-To=%3C20110204151910.GU15733%40rabbitmq.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="011069.html">
+   <LINK REL="Next"  HREF="011072.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Pulling RabbitMQ out of service</H1>
+    <B>Matthew Sackman</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Pulling%20RabbitMQ%20out%20of%20service&In-Reply-To=%3C20110204151910.GU15733%40rabbitmq.com%3E"
+       TITLE="[rabbitmq-discuss] Pulling RabbitMQ out of service">matthew at rabbitmq.com
+       </A><BR>
+    <I>Fri Feb  4 15:19:11 GMT 2011</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="011069.html">[rabbitmq-discuss] Pulling RabbitMQ out of service
+</A></li>
+        <LI>Next message: <A HREF="011072.html">[rabbitmq-discuss] Pulling RabbitMQ out of service
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#11070">[ date ]</a>
+              <a href="thread.html#11070">[ thread ]</a>
+              <a href="subject.html#11070">[ subject ]</a>
+              <a href="author.html#11070">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>On Fri, Feb 04, 2011 at 07:00:09AM -0800, Bill Moseley wrote:
+&gt;<i> One approach I was considering is having all clients (producers and
+</I>&gt;<i> consumers) connect to a load balancer in front of two independent RabbitMQ
+</I>&gt;<i> brokers.  They would not be in a cluster (although each one could be its own
+</I>&gt;<i> cluster of machines for scaling).   The balancer only uses one RabbitMQ
+</I>&gt;<i> broker and the second is hot-standby.  The consumers connect to a different
+</I>&gt;<i> IP than the producers.   Clients know to reconnect upon loss of a
+</I>&gt;<i> connection.
+</I>&gt;<i> 
+</I>&gt;<i> Then the trick is to use the load balancer to make the producers move to the
+</I>&gt;<i> new broker, move some consumers as well, and leave some other consumers to
+</I>&gt;<i> drain the queues on the old broker before pulling out of service.
+</I>
+Yup, that approach should work well.
+
+&gt;<i> Renaming the queues is only needed if pulling a machine out of cluster (for
+</I>&gt;<i> the queues that were created on that machine), correct?  I would not need
+</I>&gt;<i> that with two separate brokers as I describe above, if I follow what you are
+</I>&gt;<i> saying.
+</I>
+Correct.
+
+&gt;<i> &gt; The &quot;or-else&quot; routing semantics of RabbitMQ's &quot;Alternate Exchanges&quot; may
+</I>&gt;<i> &gt; well be of use here.
+</I>&gt;<i> &gt; <A HREF="http://www.rabbitmq.com/extensions.html#alternate-exchange">http://www.rabbitmq.com/extensions.html#alternate-exchange</A>
+</I>&gt;<i> 
+</I>&gt;<i> Yes, I've been looking at those.  Are you saying that if the queue is not
+</I>&gt;<i> durable then once all the consumers of that queue go away then could use the
+</I>&gt;<i> alternate-exchange as a type of fail-over?
+</I>
+The unfortunate thing about ae is that it can't be dynamically set on an
+exchange.
+
+So in a cluster, if you start with an exchange X with an ae of Y, then
+you could have all your clients create exclusive queues and bind them to
+X.
+
+At the point you want to move over, you create exchange Y, with ae of Z,
+add all the new clients (leave the old running) and the new clients
+create new exclusive queues and bind to Y. At this point, the new
+clients will not be receiving any messages at all.
+
+Then gracefully shut down your old clients. They should remove their
+bindings explicitly to X and then make sure their queues are empty
+before disconnecting. Atomically, as soon as they remove their bindings
+from X, the ae will kick in and messages will be routed now to Y, which
+then shovel them off to the new clients. Provided you do the binding
+deletion and queue drain carefully, you should be able to guarantee no
+message loss.
+
+Then on the next upgrade step, you're just repeating the process but
+with Z for Y. The problem though is that you'll end up with an infinite
+change of exchanges X -&gt; Y -&gt; Z -&gt; ...
+
+If you rethink it all, you'll be able to see that you can ensure there's
+always just 2 hops by using exchange to exchange bindings. I.e. you
+start with A -&gt; X -&gt; [queues]. Then you add Y -&gt; [new queues], then you
+add A -&gt; Y and remove A -&gt; X. The only issue here is that those last two
+steps cannot be done atomically, so there'll be a window where both new
+and old queues can get the same message, or messages can be dropped,
+depending on how you order events. But effectively A is abstracting over
+which version of the underlying routing topology you're using. It's
+really quite powerful, though note that exchange-to-exchange bindings
+are also a rabbit-only feature atm.
+
+<A HREF="http://www.rabbitmq.com/extensions.html#exchange-bindings">http://www.rabbitmq.com/extensions.html#exchange-bindings</A>
+
+&gt;<i> The story from our IT department is we don't like DRBD and NAS/SAN is too
+</I>&gt;<i> expensive. ;)  But, they want to be able to yank the plug on a RabbitMQ box
+</I>&gt;<i> and have the application continue with no disruption.  Basically, no message
+</I>&gt;<i> is ever lost.
+</I>
+Then tell them where to sign ;)
+
+&gt;<i> Yes, the key might be knowing what failures we can withstand.  My current
+</I>&gt;<i> thinking has shifted a bit.  I think that instead of trying to build
+</I>&gt;<i> something that never fails, just assume it's not very likely to fail but
+</I>&gt;<i> design the application to handle a queue failure.  What that means is that
+</I>&gt;<i> for messages (really &quot;jobs&quot; in this case) that must complete, the producer,
+</I>&gt;<i> or some agent of the producer (perhaps a cron job) will see the job was not
+</I>&gt;<i> completed in a timely way and send a new message.
+</I>
+Yup. Idempotency of operations here will make your life easier, as will
+things like publisher confirms and/or transactions.
+
+&gt;<i> Maybe that's not so pretty if the queue has a million messages pending when
+</I>&gt;<i> it fails, but if that's the case then there's other more serious
+</I>&gt;<i> problems....
+</I>
+Exactly.
+
+Matthew
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="011069.html">[rabbitmq-discuss] Pulling RabbitMQ out of service
+</A></li>
+	<LI>Next message: <A HREF="011072.html">[rabbitmq-discuss] Pulling RabbitMQ out of service
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#11070">[ date ]</a>
+              <a href="thread.html#11070">[ thread ]</a>
+              <a href="subject.html#11070">[ subject ]</a>
+              <a href="author.html#11070">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

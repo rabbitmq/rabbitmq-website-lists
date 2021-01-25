@@ -1,0 +1,106 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] distributed cluster questions about	performance
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20distributed%20cluster%20questions%20about%0A%09performance&In-Reply-To=%3C231BA2D8-7098-4BEA-9131-C1E158CB7570%40rabbitmq.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="025894.html">
+   <LINK REL="Next"  HREF="025890.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] distributed cluster questions about	performance</H1>
+    <B>Tim Watson</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20distributed%20cluster%20questions%20about%0A%09performance&In-Reply-To=%3C231BA2D8-7098-4BEA-9131-C1E158CB7570%40rabbitmq.com%3E"
+       TITLE="[rabbitmq-discuss] distributed cluster questions about	performance">tim at rabbitmq.com
+       </A><BR>
+    <I>Fri Mar 15 11:49:49 GMT 2013</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="025894.html">[rabbitmq-discuss] distributed cluster questions about performance
+</A></li>
+        <LI>Next message: <A HREF="025890.html">[rabbitmq-discuss] queue.declare error
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#25941">[ date ]</a>
+              <a href="thread.html#25941">[ thread ]</a>
+              <a href="subject.html#25941">[ subject ]</a>
+              <a href="author.html#25941">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi,
+
+On 13 Mar 2013, at 03:49, &#23002;&#20161;&#25463; wrote:
+&gt;<i> In my scenario, a single server can hold 10k delivery rate and I use 6 node to load balance the pressure. My solution is that I created 2 queues on each node. Each message is with a random routing-key(something like message.0, message.1, etc) to distribute the pressure to every node. 
+</I>&gt;<i> 
+</I>
+I'm a bit confused here. You have two queues on each node - presumably one for hdfs and one for elastic-search - and you're sending messages to all of these. If the messages have a random routing key, how are your queues and bindings set up so that this works? Have I understood that properly? Also, have you looked at the consistent-hash-exchange plugin (<A HREF="https://github.com/rabbitmq/rabbitmq-consistent-hash-exchange">https://github.com/rabbitmq/rabbitmq-consistent-hash-exchange</A>) at all? It might fit your scenario.
+
+&gt;<i> What confused me is:
+</I>&gt;<i> 
+</I>&gt;<i> 	&#8226; All message send to one node. Should I use a HA Proxy to load balance this publish pressure?
+</I>
+A queue always resides on just one node. If you have set up a cluster, then the queue is 'known' by all the nodes, but the actual worker (which enqueues and dequeues messages) still only resides on one node. In the cluster then, you can connect to any node and publish, but the messages you publish will *still* have to arrive at the node on which the queue resides (i.e., the node on which it was created) regardless of where the message originated.
+
+If you use HA Proxy to balance the publishes, but you're also using a random routing key to distribute messages across multiple queues, then isn't there a fairly high change that HA Proxy will route the message to node1, but the routing key will end up requiring that node to forward the message to node2. I'm not entirely convinced that this will result in a more even distribution of work, but I could be wrong.
+
+What might make a lot more sense, would be to divide up the publishing and publish messages directly to each node in parallel, instead of using the routing key to forward some messages to some nodes. Of course that makes publishing a bit harder.
+
+&gt;<i> 	&#8226; Is there any performance difference between Durable Queues and Transient Queues?
+</I>
+Only when declaring them, afaik. Typically a transient queue will not receive persistent messages (remember - a durable queue will survive a restart, but messages delivered to it will not be persisted unless they're marked with delivery-mode=2), and non-persistent messages will yield higher throughput when they're not being written to disk. Even non-persistent messages may be paged to disk when the server is under load (i.e., is experiencing memory pressure).
+
+&gt;<i> 	&#8226; Is there any performance difference between Memory Node and Disk Node? What I know is the difference between memory node and disk node is only about the meta data such as queue configuration.
+</I>
+That's correct. Disk nodes should perform a little better, as they do not have to fsync meta-data. Of course if you're not declaring queues/exchange/bindings very often but are publishing persistent messages, then that benefit may not be noticeable.
+
+&gt;<i> 	&#8226; How can I import the performance in publish and delivery codes? I've researched and I know several methods:
+</I>&gt;<i> 		&#8226; disable the confirm mechanism(in publish codes?)
+</I>
+And disable message persistence. If you don't need persistent messages, then the cost of confirms may seem less onerous.
+
+&gt;<i> 	&#8226; For example, input is 1w mps(message per second), there are two consumers to consume all message. Then the output is 2w mps. If my server can handle 1w mps, I need two server to handle the 2w-mps-pressure. Now a new consumer need to consume all message, too. As a result, output hits 3w mps, so I need another one more server. For a conclusion, one more consumer for all message, one more server?
+</I>
+I'm not quite sure if I've followed this at all and those assumptions don't look right to me. Here are some things to consider though: In general, adding more consumers to a single queue will increase throughput, possibly to the point where they can match publishing rates. Given an initially empty queue however, the consumption rate is not going to exceed the publishing rate. If you have two consumers and one publisher and you want both consumers to receive a copy of each message, then you'll have two queues bound to one exchange and the consumption rate for each queue will never exceed that of a single consumer. If you want to increase the consumption rate for a single queue, you can add more consumers to that queue and process messages in parallel.
+
+If you want to distribute consumers across multiple nodes then as you've realised, the topology needs to change so that different queues reside on different nodes. Distributing the load of publishing across multiple nodes might help a bit, but I suspect that the cost of having to forward messages will reduce the benefits somewhat. Reworking your application design so that messages can be consumed in parallel from each queue will likely increase throughput quite a bit.
+
+Cheers,
+Tim
+
+
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="025894.html">[rabbitmq-discuss] distributed cluster questions about performance
+</A></li>
+	<LI>Next message: <A HREF="025890.html">[rabbitmq-discuss] queue.declare error
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#25941">[ date ]</a>
+              <a href="thread.html#25941">[ thread ]</a>
+              <a href="subject.html#25941">[ subject ]</a>
+              <a href="author.html#25941">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

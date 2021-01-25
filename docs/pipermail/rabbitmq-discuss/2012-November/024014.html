@@ -1,0 +1,156 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] RabbitMQ 3.0 Policy ha-all delete issue
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20RabbitMQ%203.0%20Policy%20ha-all%20delete%20issue&In-Reply-To=%3C1353439797018-23540.post%40n5.nabble.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="024005.html">
+   <LINK REL="Next"  HREF="024020.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] RabbitMQ 3.0 Policy ha-all delete issue</H1>
+    <B>Mark Ward</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20RabbitMQ%203.0%20Policy%20ha-all%20delete%20issue&In-Reply-To=%3C1353439797018-23540.post%40n5.nabble.com%3E"
+       TITLE="[rabbitmq-discuss] RabbitMQ 3.0 Policy ha-all delete issue">ward.mark at gmail.com
+       </A><BR>
+    <I>Tue Nov 20 19:29:57 GMT 2012</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="024005.html">[rabbitmq-discuss] RabbitMQ 3.0 Policy ha-all delete issue
+</A></li>
+        <LI>Next message: <A HREF="024020.html">[rabbitmq-discuss] RabbitMQ 3.0 Policy ha-all delete issue
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#24014">[ date ]</a>
+              <a href="thread.html#24014">[ thread ]</a>
+              <a href="subject.html#24014">[ subject ]</a>
+              <a href="author.html#24014">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi Matthias,
+
+I want to pick up the anti-pattern note as I will put some time into finding
+some more queue anti-patterns.   I'll try to share how I am using the
+queues.
+
+In my framework I have the ability to issue function/result type messages.  
+The framework will also split large messages into smaller packets.
+
+The function request typically always goes into a queue that is static.  For
+example a ping service would have a queue based upon the computer's name. 
+Any ping request to the computer would be put into the queue.  Results of
+the ping would generate a new queue.  Each result will be placed into a
+unique result queue that is created for each result published.  The result
+queue is based upon a name that the server and client both know.  I went
+with this design to eliminate the need to build routing logic to route
+results from a queue to waiting callers.  I also didn't want a caller's
+result be dependent upon another caller's result within a single queue.
+
+Ping is an example. The Framework allows for the development of services for
+other purposes.  AMQP works very well for clients that have to work behind
+firewalls.  This is why I am using rabbitMQ instead of using other tools for
+RPC style development.
+
+I will think about the result queue not being mirrored as this would greatly
+improve performance but does make rabbitMQ server maintenance more
+difficult.  If the node with the queue is shutdown and the client connects
+to a new node the result queue would be recreated.  The framework helps
+manage queues by letting clients declare the queues.
+
+
+Message Split
+I ran into issues with my cluster testing when messages become large enough
+to negatively impact the cluster.  My test cluster only has 1 gig of ram per
+computer (3 servers).  The message size plus slowly draining queues will
+easily destroy this test cluster.  I would run into issues with the erlang
+node heartbeat.  I would also run into issues where erlang would run out of
+ram even with the default high watermark + flow control.  Erlang would crash
+bringing down the rabbitmq node.  To avoid message sizes from destroying the
+cluster I have implemented logic to split messages greater than a known size
+into smaller packets.
+
+If a large message is detected it will be split into smaller packets.  A
+split indicator message will be placed into the original target queue.  The
+actual message will be split into smaller packets and published into a newly
+created queue just for the split.  Each split message will have an equal
+split queue.
+The original target queue may have two or more subscribers.  A subscriber
+will receive a split indicator message.  It will then begin to subscribe and
+drain the message's split queue.  When completed all messages are acked. 
+This allows the split message queue to be processed by a single client while
+the original queue can have any number of subscribers.  When the split queue
+is finished it is disposed of.
+
+I know i am getting a performance hit with the dynamic queues but their use
+made the two scenarios much easier to implement.  Although, I am open to
+alternative methods in implementing the above.
+
+-Mark
+
+
+
+
+--
+View this message in context: <A HREF="http://rabbitmq.1065348.n5.nabble.com/RabbitMQ-3-0-Policy-ha-all-delete-issue-tp23527p23540.html">http://rabbitmq.1065348.n5.nabble.com/RabbitMQ-3-0-Policy-ha-all-delete-issue-tp23527p23540.html</A>
+Sent from the RabbitMQ mailing list archive at Nabble.com.
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="024005.html">[rabbitmq-discuss] RabbitMQ 3.0 Policy ha-all delete issue
+</A></li>
+	<LI>Next message: <A HREF="024020.html">[rabbitmq-discuss] RabbitMQ 3.0 Policy ha-all delete issue
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#24014">[ date ]</a>
+              <a href="thread.html#24014">[ thread ]</a>
+              <a href="subject.html#24014">[ subject ]</a>
+              <a href="author.html#24014">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

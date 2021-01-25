@@ -1,0 +1,190 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Problem with multiple consumers on multiple	servers !
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Problem%20with%20multiple%20consumers%20on%20multiple%0A%09servers%20%21&In-Reply-To=%3CE545C841-72CF-48AC-A49D-C7283282066B%40rabbitmq.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="026273.html">
+   <LINK REL="Next"  HREF="026267.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Problem with multiple consumers on multiple	servers !</H1>
+    <B>Tim Watson</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Problem%20with%20multiple%20consumers%20on%20multiple%0A%09servers%20%21&In-Reply-To=%3CE545C841-72CF-48AC-A49D-C7283282066B%40rabbitmq.com%3E"
+       TITLE="[rabbitmq-discuss] Problem with multiple consumers on multiple	servers !">tim at rabbitmq.com
+       </A><BR>
+    <I>Sun Mar 31 13:48:32 BST 2013</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="026273.html">[rabbitmq-discuss] Problem with multiple consumers on multiple	servers !
+</A></li>
+        <LI>Next message: <A HREF="026267.html">[rabbitmq-discuss] Unable to start direct connection using Erlang	client
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#26281">[ date ]</a>
+              <a href="thread.html#26281">[ thread ]</a>
+              <a href="subject.html#26281">[ subject ]</a>
+              <a href="author.html#26281">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi,
+
+On 30 Mar 2013, at 14:28, tluck wrote:
+&gt;<i> Thanks for your quick answer. Don't you think that if I increase prefetch
+</I>&gt;<i> count then it may cause redundancy of  the same messages to more then one
+</I>&gt;<i> consumer ? I mean the same message/job can be consumed by two or more
+</I>&gt;<i> consumers at a time (I read it somewhere and may be I'm wrong).
+</I>
+That's not correct. A dequeued message will be delivered to exactly one consumer. 
+
+&gt;<i> Suppose, if
+</I>&gt;<i> I increase prefetch count to 10 then broker won't send messages to any of
+</I>&gt;<i> the consumers (which are consuming messages from current queue)  until  all
+</I>&gt;<i> 10 messages are consumed ? right ?
+</I>
+I'm not quite sure what you're asking. RabbitMQ dispatches messages once they
+enter the queue. It doesn't look at the number of unacknowledged messages for a
+consumer, but simply dispatches every n-th message to the n-th consumer. If the
+prefetch count is 1, then 1 message will be delivered to the consumer and any 
+subsequent messages will be dispatched to the next consumer, and so on.
+Only once a consumer starts to send acknowledgements for some (or all) delivered
+messages will it become eligible to receive more.
+
+So if you set the prefetch count to 10, you'll be able to receive a maximum of 10
+messages per consumer before the broker stops delivering to that consumer until some
+acks are received.
+
+If the number of messages in the queue is the same as the prefetch count
+of all consumers then one consumer will get all the messages in the
+queue (until more messages arrive in the queue). This means that other
+consumers will be idle.
+
+&gt;<i> If yes, then how can we tackle the
+</I>&gt;<i> problem which can be caused by all this. If one/two consumer(s) take too
+</I>&gt;<i> long time to consume their messages then others will go idle (as they have
+</I>&gt;<i> to wait others to finish their job).
+</I>
+&gt;&gt;<i> Can anyone please help me to find out, why only one job is being consumed at a time ?
+</I>
+These two points are orthogonal, but really I think the problem boils down to these
+comments you made previously:
+
+&quot;Now I've setup multiple consumers and each consumer is listening to a single
+queue&quot;
+
+... and ...
+
+&quot;The problem which I've
+noticed is that only one message/job from each queue is being consumed at a
+time.
+
+So I'm not quite sure what you're trying to achieve here. If you have one consumer
+on each queue, then this next comment:
+
+&quot;The problem which I've noticed is that only one message/job from each queue is
+being consumed at a time.&quot;
+
+That's how a queue works right, it's giving you FIFO semantics. I'm not really sure
+what else you're expecting to happen.
+
+&gt;<i> 
+</I>&gt;<i> If I have 20K messages and 10 consumers on a single queue then what would be
+</I>&gt;<i> an ideal count for prefetch_count ?
+</I>&gt;<i> 
+</I>
+It really depends on what you want to do. The prefetch count can be used either as
+an optimisation (to make sure that you've received some messages locally that you
+can work on as soon as you're ready) or to create a kind of fair dispatch (based on
+preventing workers from having messages dispatched to them until they've acknowledged
+the previous one(s) already).
+
+Having 10 consumers on a single queue then they'll receive messages in round robin
+fashion (unless you use the prefetch count to override that). If you don't bother
+with the prefetch count then the broker will continue sending messages (regardless of
+acks) to the consumers in this fashion and once it gets an ACK for each message it
+will remove it (fully) from the queue.
+
+&quot;The problem which I've noticed is that only one message/job from each queue is being
+consumed at a time&quot; - what does this even mean? Are you saying you want each consumer
+on a single queue to consume more than one message before messages get delivered to the
+next? That's what prefetch count &gt; 1 will do for you and is why I suggested it... Once
+n messages (where n=prefetchCount) have been delivered to a consumer, messages will start
+getting delivered to other consumers until the original consumer starts sending acks (or
+a single ACK using the multiple flag) at which point it will be included in the round
+robin dispatch again.
+
+Are you saying you want something else to happen? 
+
+Tim
+
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="026273.html">[rabbitmq-discuss] Problem with multiple consumers on multiple	servers !
+</A></li>
+	<LI>Next message: <A HREF="026267.html">[rabbitmq-discuss] Unable to start direct connection using Erlang	client
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#26281">[ date ]</a>
+              <a href="thread.html#26281">[ thread ]</a>
+              <a href="subject.html#26281">[ subject ]</a>
+              <a href="author.html#26281">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

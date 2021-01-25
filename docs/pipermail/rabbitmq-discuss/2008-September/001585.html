@@ -1,0 +1,162 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Publish won't work without transaction?
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20Publish%20won%27t%20work%20without%20transaction%3F&In-Reply-To=84fb38e30809221613r35fac041v4e214efc20d37274%40mail.gmail.com">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001579.html">
+   <LINK REL="Next"  HREF="001588.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Publish won't work without transaction?</H1>
+    <B>Ben Hood</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20Publish%20won%27t%20work%20without%20transaction%3F&In-Reply-To=84fb38e30809221613r35fac041v4e214efc20d37274%40mail.gmail.com"
+       TITLE="[rabbitmq-discuss] Publish won't work without transaction?">0x6e6562 at gmail.com
+       </A><BR>
+    <I>Tue Sep 23 13:20:34 BST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001579.html">[rabbitmq-discuss] Publish won't work without transaction?
+</A></li>
+        <LI>Next message: <A HREF="001588.html">[rabbitmq-discuss] Publish won't work without transaction?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1585">[ date ]</a>
+              <a href="thread.html#1585">[ thread ]</a>
+              <a href="subject.html#1585">[ subject ]</a>
+              <a href="author.html#1585">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Tsuraan,
+
+On Tue, Sep 23, 2008 at 12:13 AM, tsuraan &lt;<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">tsuraan at gmail.com</A>&gt; wrote:
+&gt;&gt;<i> So how do you know whether they're enqueued or not?
+</I>&gt;<i>
+</I>&gt;<i> When the program's done running, I do a passive queue_declare,
+</I>
+Is there a reason why you are passively declaring the queue?
+
+&gt;<i> and the
+</I>&gt;<i> message count has increased by ~400 each time the program has run.
+</I>&gt;<i> It's actually more like 300 the first time and 500 the second time,
+</I>&gt;<i> but it seems like overall, I get about 400 per run.
+</I>
+I still don't see how you are working this out - are you using
+rabbit_amqqueue:stat_all() or are you maintaining a count with your
+consumers?
+
+&gt;<i> Ok, so there isn't a return code from basic_publish that will tell me
+</I>&gt;<i> it was dropped?
+</I>
+basic.publish is an asynchronous command.
+
+If you register a return handler and set the mandatory flag, you will
+get a return if the message can't be delivered.
+
+&gt;&gt;<i> That shouldn't take a minute even with a TX per message and logging to disk.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> I think something may not be quite right with your setup.
+</I>&gt;<i>
+</I>&gt;<i> I'd be willing to believe that.  When running with one transaction per
+</I>&gt;<i> message, my system is almost idle.  python's taking 2-3% of the cpu,
+</I>&gt;<i> beam.smp is taking less than that, and my IO is a few KB/s.  Do you
+</I>&gt;<i> have any advice for figuring out what's going on?  My system is a
+</I>&gt;<i> core2 duo with a pair of raptor10k drives in RAID1 on a 3ware 9650; I
+</I>&gt;<i> shouldn't be too starved for cpu, io, or memory with this setup, so
+</I>&gt;<i> any advice for where to start would be much appreciated.
+</I>
+Hmmm.....that's better than most pizzaboxes I have to deal with :-)
+
+I don't thing your kit is the issue.
+
+&gt;<i> Is the difference then that my queues are persistent?  I'm using a
+</I>&gt;<i> topic exchange with just one persistent, non-autodelete queue.  Does
+</I>&gt;<i> that change things?
+</I>
+No, a persistent queue is one that survives a server restart. Whether
+or nott a message survives a restart depends on the flag that is sent
+with the message header.
+
+Persisting a message obviously has an overhead, but it should be a
+reasonably constant factor.
+
+&gt;<i>
+</I>&gt;&gt;<i> And maybe this is a stupid question, but why are you enqueuing stuff?
+</I>&gt;&gt;<i> Don't you want it to be delivered?
+</I>&gt;<i>
+</I>&gt;<i> Isn't enqueuing a necessary step before delivery?
+</I>
+The main goal of a messaging system is to deliver messages rather than
+queue them up. So Rabbit will only queue if it can't deliver.
+
+In this light, you should be able to see the effect of the immediate
+flag - if a message cannot be delivered immediately, bin it.
+
+So you need to have something reading off the queues to avoid the
+message being turfed. Or don't set the immediate flag.
+
+In any case, it's not a good idea to enforce queueing - you will build
+up an unecessary backlog.
+
+&gt;<i> The system I'm
+</I>&gt;<i> working on processes a lot of files, and as files are processed new
+</I>&gt;<i> files or database rows are created that have to be processed
+</I>&gt;<i> downstream.  Sometimes the programs doing the processing get hung up
+</I>&gt;<i> on invalid data, or get flooded with more data than they can process
+</I>&gt;<i> in a timely manner, so the workloads get really badly backed up.  I've
+</I>&gt;<i> seen programs that have millions of tasks in their job queues more
+</I>&gt;<i> than a few times.
+</I>
+If this is the case, you probably don't want to set the immediate
+flag, unless you catch it using the return handler - but this is
+clunky in itself anyway.
+
+As indicated in a previous thread that Edwin started, there is a
+finite limit as to how much Rabbit can queue things up.
+
+You should calibrate your system and don't overfeed the bunny accordingly.
+
+There is a roadmap item to address this - but no ETA.
+
+&gt;<i> We currently have a &quot;message queue&quot; system that is just files written
+</I>&gt;<i> to the hard drive; different directories are the job queues for
+</I>&gt;<i> different actors, and the files in them are just identifiers for
+</I>&gt;<i> database or file-based workloads.  I want to replace that with real
+</I>&gt;<i> message queue system for all sorts of reasons, so I'm just
+</I>&gt;<i> experimenting with RabbitMQ to see if it does what I need, and to see
+</I>&gt;<i> how good the performance and stability are.
+</I>
+Doesn't sound like an unreasonable use case. I can think of different
+approaches, but Rabbit may provide you with a simple solution.
+
+HTH,
+
+Ben
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001579.html">[rabbitmq-discuss] Publish won't work without transaction?
+</A></li>
+	<LI>Next message: <A HREF="001588.html">[rabbitmq-discuss] Publish won't work without transaction?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1585">[ date ]</a>
+              <a href="thread.html#1585">[ thread ]</a>
+              <a href="subject.html#1585">[ subject ]</a>
+              <a href="author.html#1585">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

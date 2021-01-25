@@ -1,0 +1,143 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] RabbitMQ 3.1.0 lost messages and autoheal failures when recovering from cluster partition
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20RabbitMQ%203.1.0%20lost%20messages%20and%20autoheal%0A%20failures%20when%20recovering%20from%20cluster%20partition&In-Reply-To=%3C7F7BFE76D0F5234F9258D88C37C9EC6B151F0BBA%40VALVCSMBX001PH.val.vlss.local%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="027347.html">
+   <LINK REL="Next"  HREF="027612.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] RabbitMQ 3.1.0 lost messages and autoheal failures when recovering from cluster partition</H1>
+    <B>Maslinski, Ray</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20RabbitMQ%203.1.0%20lost%20messages%20and%20autoheal%0A%20failures%20when%20recovering%20from%20cluster%20partition&In-Reply-To=%3C7F7BFE76D0F5234F9258D88C37C9EC6B151F0BBA%40VALVCSMBX001PH.val.vlss.local%3E"
+       TITLE="[rabbitmq-discuss] RabbitMQ 3.1.0 lost messages and autoheal failures when recovering from cluster partition">MaslinskiR at valassis.com
+       </A><BR>
+    <I>Thu May 30 22:14:33 BST 2013</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="027347.html">[rabbitmq-discuss] RabbitMQ 3.1.0 lost messages and autoheal failures when recovering from cluster partition
+</A></li>
+        <LI>Next message: <A HREF="027612.html">[rabbitmq-discuss] RabbitMQ 3.1.0 lost messages and autoheal failures when recovering from cluster partition
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#27586">[ date ]</a>
+              <a href="thread.html#27586">[ thread ]</a>
+              <a href="subject.html#27586">[ subject ]</a>
+              <a href="author.html#27586">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Follow-up question ...
+
+I tried some experiments to gain some understanding of how the cluster behaved with clients attached during a network partition event.  Essentially, I repeated the previous tests described below for autohealing and automatic queue synchronization, but left the cluster communications port blocked while the client test completed.  One oddity I noticed was that while the consumer connected to the slave appeared to receive an indication that something was amiss (client log showed a consumer cancel exception being handled by the Spring AMQP framework, and other monitoring logs appeared to show the client restarting a connection, which seems to be consistent with documentation), the consumer connected to the master seemed to remain oblivious to any possible issues.  That consumer continued to receive messages, but at an extremely slow rate (test published at 16/sec fixed rate, but the remaining consumer began to receive messages at the rate of about 1 every 14 seconds).
+
+Since the test client waits around for expected message deliveries with a resettable 30 second timeout, it continued to run for an extended period of time (longer than I waited around for).  In addition, the admin console showed a relatively small number of unacked messages on that server, with the unacked count increasing with each actual delivery (client should always be acknowledging in the test setup, and reported no errors).  Eventually unblocking the cluster port released a bunch of messages in a short interval (albeit with some lost, as described previously).
+
+I also saw  producer connections go into flow control during the outage and remain there during the slow consumer delivery (though the test had long since completed delivering all its messages).
+
+Does this sound like expected behavior during a partition?
+
+Ray Maslinski
+Senior Software Developer, Engineering
+Valassis / Digital Media
+Cell: 585.330.2426
+<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">maslinskir at valassis.com</A>
+www.valassis.com
+
+Creating the future of intelligent media delivery to drive your greatest success
+
+_____________________________________________________________________________
+
+This message may include proprietary or protected information. If you are not the intended&#160;
+recipient, please notify me, delete this message and do not further communicate the information&#160;
+contained herein without my express consent.
+
+-----Original Message-----
+From: Simon MacMullen [mailto:<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">simon at rabbitmq.com</A>] 
+Sent: Monday, May 20, 2013 6:30 AM
+To: Discussions about RabbitMQ
+Cc: Maslinski, Ray
+Subject: Re: [rabbitmq-discuss] RabbitMQ 3.1.0 lost messages and autoheal failures when recovering from cluster partition
+
+On 17/05/13 20:38, Maslinski, Ray wrote:
+&gt;<i> Hello,
+</I>
+Hi!
+
+&gt;<i> To simulate a network partition failure, I've been using iptables to 
+</I>&gt;<i> temporarily block inbound and outbound access on one of the nodes to 
+</I>&gt;<i> the single port configured for cluster communications through 
+</I>&gt;<i> inet_dist_listen_min and inet_dist_listen_max settings (min = max).
+</I>&gt;<i> Client access is not blocked during a simulated partition fault.
+</I>
+Sounds reasonable.
+
+&gt;<i> I've observed two anomalies during testing that I wasn't expecting 
+</I>&gt;<i> based on the documentation I've read:
+</I>&gt;<i>
+</I>&gt;<i> -At a sufficiently high message rate, some number of messages will be 
+</I>&gt;<i> lost during the fault sequence, with the number lost tending to 
+</I>&gt;<i> increase with message rate.  No indication of a send error has been 
+</I>&gt;<i> observed by the client program. Based on results obtained from test 
+</I>&gt;<i> logs and an independent monitor listening on trace messages from each 
+</I>&gt;<i> node, it appears that as soon as the port is blocked, both nodes 
+</I>&gt;<i> continue to accept published messages, but (temporarily) stop 
+</I>&gt;<i> delivering messages until the cluster heartbeat failure is detected, 
+</I>&gt;<i> at which point the cluster is partitioned and the slave promotes itself to become master.
+</I>&gt;<i> In the sequences I've looked at, the messages that are lost all appear 
+</I>&gt;<i> to be published to the original master (and final master after a 
+</I>&gt;<i> winner is selected during autoheal).  Neither the start nor the end of 
+</I>&gt;<i> the lost message window appear to line up with any events in the logs, 
+</I>&gt;<i> other than the start occurring sometime after the port connection is 
+</I>&gt;<i> blocked but before the cluster heartbeat failure is detected, and the 
+</I>&gt;<i> end occurring sometime after the detection of the cluster heartbeat 
+</I>&gt;<i> failure and before the detection of the partitioned cluster after the 
+</I>&gt;<i> connection is unblocked.  Is message loss to be expected in this scenario?
+</I>
+I would expect to see message loss in a cluster heal scenario.
+
+It's important to remember that a cluster partition is still a substantial problem, and the healing process involves throwing state away. Autoheal mode just means you get through this process faster, and hopefully spend much less time accepting messages that will end up being lost.
+
+I would expect intuitively that only messages from the losing partitions would be lost. But I am not entirely surprised if messages from the winner are lost too; there is a period after the partitions have come back together but before autoheal kicks in during which we will have multiple masters for a queue, and behaviour can be unpredictable.
+
+&gt;<i> -Occasionally the autoheal loser node fails to rejoin the cluster 
+</I>&gt;<i> after restart.  I don't have a lot of data points on this one since 
+</I>&gt;<i> it's only happened a handful of times during overnight test 
+</I>&gt;<i> iterations.  During one failure, the autoheal winner showed the log 
+</I>&gt;<i> message below during
+</I>&gt;<i> recovery:
+</I>
+Ah, that looks like a bug in autoheal. I think the stack trace you posted should contain enough information to fix it. Thanks.
+
+Cheers, Simon
+
+--
+Simon MacMullen
+RabbitMQ, Pivotal
+</PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="027347.html">[rabbitmq-discuss] RabbitMQ 3.1.0 lost messages and autoheal failures when recovering from cluster partition
+</A></li>
+	<LI>Next message: <A HREF="027612.html">[rabbitmq-discuss] RabbitMQ 3.1.0 lost messages and autoheal failures when recovering from cluster partition
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#27586">[ date ]</a>
+              <a href="thread.html#27586">[ thread ]</a>
+              <a href="subject.html#27586">[ subject ]</a>
+              <a href="author.html#27586">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,185 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Use a mysql databse table as the provider for rabbitmq queue
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Use%20a%20mysql%20databse%20table%20as%20the%20provider%0A%20for%20rabbitmq%20queue&In-Reply-To=%3C507E9064.8090804%40rabbitmq.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="023115.html">
+   <LINK REL="Next"  HREF="023121.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Use a mysql databse table as the provider for rabbitmq queue</H1>
+    <B>Tim Watson</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Use%20a%20mysql%20databse%20table%20as%20the%20provider%0A%20for%20rabbitmq%20queue&In-Reply-To=%3C507E9064.8090804%40rabbitmq.com%3E"
+       TITLE="[rabbitmq-discuss] Use a mysql databse table as the provider for rabbitmq queue">tim at rabbitmq.com
+       </A><BR>
+    <I>Wed Oct 17 12:03:00 BST 2012</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="023115.html">[rabbitmq-discuss] Use a mysql databse table as the provider for rabbitmq queue
+</A></li>
+        <LI>Next message: <A HREF="023121.html">[rabbitmq-discuss] Use a mysql databse table as the provider for rabbitmq queue
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#23117">[ date ]</a>
+              <a href="thread.html#23117">[ thread ]</a>
+              <a href="subject.html#23117">[ subject ]</a>
+              <a href="author.html#23117">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>On 10/17/2012 11:40 AM, Ryan R. wrote:
+&gt;<i> I think I understand what you mean with the shared library.
+</I>&gt;<i> However, in my case, RabbitMQ would only be installed if need be 
+</I>&gt;<i> (meaning more than one of the apps are present, and two of those need 
+</I>&gt;<i> to be synchronised for part of their data).
+</I>&gt;<i>
+</I>
+That actually complicates the picture somewhat - is there a reason why 
+this is the case? In a typical integration architecture, the messaging 
+broker is deployed centrally (on the LAN somewhere) and clients choose 
+whether or not they want to connect to it from whatever machine they're 
+running on. To me, it is sounding like you're describing an architecture 
+where both applications reside on the same machine and assuming that the 
+broker will also need to be co-resident with them, which is not really 
+the case, though there's nothing to prohibit that either.
+
+&gt;<i> That said, using a shared library would require me to &quot;include/import&quot; 
+</I>&gt;<i> said library when I need to, therefore making me change my app code 
+</I>&gt;<i> depending of the situation I'm in.
+</I>&gt;<i>
+</I>
+Well yes, if you're going to add messaging capabilities to your 
+applications that don't currently support it, then you are going to have 
+to write *some* code and integrate it into them! :)
+
+&gt;<i> And said library would only be required when there's a RabbitMQ 
+</I>&gt;<i> available anyway.
+</I>&gt;<i>
+</I>
+I think you're making your life more complicated than it needs to be by 
+thinking about whether the messaging broker is available vs. not. The 
+broker should *always* be available when applications residing on 
+different machines need to communicate with one another, regardless of 
+whether those applications are running or not. Again, it feels like 
+you're trying to deal with applications running on the same machine - 
+have I picked that up correctly? It might help if you explained your 
+architecture in a bit more detail, so I can understand exactly what 
+you're trying to achieve.
+
+&gt;<i> Now a bit further in your message you talk about a listener library.
+</I>&gt;<i> I'd like to know a bit more about this.
+</I>&gt;<i> How would an external library be able to listen to anything happening 
+</I>&gt;<i> within my app ?
+</I>&gt;<i> Would it be listening on the DB queries ?
+</I>&gt;<i>
+</I>
+No, not at all. Let's say you've got two applications, App1 and App2. 
+You'll write some library code that both applications share, that 
+probably looks something like this (with *wide* variations depending on 
+language/platform - I've just written pseudo code to keep things simple):
+
+-------------------------------------
+
+function init = do
+     read_config_file_for_this_app
+     open_connection_to_broker
+     store_connection_somewhere_in_memory
+end
+
+function listen = do
+     get_connection_from_memory
+     read_message_from_broker
+     pass_message_to_application_thread_somehow
+     listen
+end
+
+function publish = do
+     get_connection_from_memory
+     send_message_to_broker
+end
+
+-------------------------------------
+
+Now in your applications, you'll call the shared 'init' library function 
+when you're starting up to bootstrap the connection to the broker. When 
+your application is publishing data, it calls publish and if/when you 
+need to subscribe to data then you'll call 'listen'. The fact is that 
+'how to listen' for incoming messages really depends on how you're going 
+to use them. But the point is that the applications read from and write 
+to the messaging broker, and do so independently of database tables. You 
+*may* decide to do something like write a middle-man application that 
+periodically reads a database table and publishes each row to the 
+messaging broker so it can be read from a queue, or do that with a 
+worker thread instead of a separate application. I would *not* do 
+anything here with the database though. If applications need to share 
+data, then **they should send it to one another via message queues.** If 
+they need to persist data, they should persist their own data in their 
+own tables in the database, but they should **not use the database to 
+communicate with one another.** That is the key thing with using 
+messaging instead shared data(bases).
+
+There is an overhead in sending (and in some cases, duplicating) data 
+between applications of course. This is *more* than compensated for by 
+the reduced coupling that comes from integrating using messaging 
+technology. This approach may not be suited to integrating applications 
+that are running on the same physical machine and are tightly and 
+deliberately coupled however. I can't really elaborate on the 
+suitability of messaging for your project without understanding a good 
+deal more about it I'm afraid.
+
+I hope that clears a few things up at least! :)
+
+Cheers,
+Tim
+
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="023115.html">[rabbitmq-discuss] Use a mysql databse table as the provider for rabbitmq queue
+</A></li>
+	<LI>Next message: <A HREF="023121.html">[rabbitmq-discuss] Use a mysql databse table as the provider for rabbitmq queue
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#23117">[ date ]</a>
+              <a href="thread.html#23117">[ thread ]</a>
+              <a href="subject.html#23117">[ subject ]</a>
+              <a href="author.html#23117">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

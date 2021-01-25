@@ -1,0 +1,194 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] erlang client API: transactions
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20erlang%20client%20API%3A%20transactions&In-Reply-To=136168B9-5739-42D7-9E81-124550828023%40gmail.com">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001587.html">
+   <LINK REL="Next"  HREF="001593.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] erlang client API: transactions</H1>
+    <B>Valentino Volonghi</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20erlang%20client%20API%3A%20transactions&In-Reply-To=136168B9-5739-42D7-9E81-124550828023%40gmail.com"
+       TITLE="[rabbitmq-discuss] erlang client API: transactions">dialtone at gmail.com
+       </A><BR>
+    <I>Tue Sep 23 22:37:37 BST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001587.html">[rabbitmq-discuss] erlang client API: transactions
+</A></li>
+        <LI>Next message: <A HREF="001593.html">[rabbitmq-discuss] erlang client API: transactions
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1590">[ date ]</a>
+              <a href="thread.html#1590">[ thread ]</a>
+              <a href="subject.html#1590">[ subject ]</a>
+              <a href="author.html#1590">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>-----BEGIN PGP SIGNED MESSAGE-----
+Hash: SHA1
+
+
+On Sep 23, 2008, at 12:15 PM, Valentino Volonghi wrote:
+
+&gt;<i> And here: <A HREF="http://github.com/dialtone/shovel/tree/master">http://github.com/dialtone/shovel/tree/master</A>
+</I>
+
+Using all these changes and improvements I managed to write a  
+prototype of what I'll need.
+There are still a few problems though, the first is the fact that  
+tx.commit is synchronous I think.
+
+When I try to load the server with a big number of requests (like 50k  
+with 200 concurrency) I
+see that the tx.commit goes to timeout in shovel and on the other side  
+I see that the persister
+is timing out, I suspect it means that it's simply taking a lot of  
+time and erlang thinks that it's
+a timeout.
+
+Now... I don't have a clear idea of what's the best solution for this  
+problem actually. The good thing
+though is that when after the crash I restarted the webserver with  
+rabbitmq and shovel embedded
+I started receiving lines again on the other side, which means that  
+basically this way of doing things
+is definitely a step in the right direction.
+
+I suspect part of the reason for this timeout is the use of the same  
+machine for running the test and
+receiving log lines from the test web server (using nice avoid the  
+timeout problem). Maybe this
+problem should be dealt with at the supervisor level and it should  
+simply stop and restart shovel
+after a couple of seconds. Does this sound reasonable?
+
+Another good news is that I see about 2700 req/sec handled if I run ab  
+directly on the webserver (
+so it could even be higher).
+
+I have another question though: how do transactions work? Are the  
+messages in a single transaction
+sent together or they are just sent separately? Because if it's the  
+latter then gzip cannot really do
+much if the size of the packet is less than 1500 bytes, it'll be a bit  
+faster but still just a single packet.
+Am I wrong?
+
+- - Shovel:
+
+=CRASH REPORT==== 23-Sep-2008::20:49:12 ===
+   crasher:
+     pid: &lt;0.167.0&gt;
+     registered_name: shovel
+     exception exit: {timeout,
+                         {gen_server,call,[&lt;0.172.0&gt;,{call, 
+{'tx.commit'}}]}}
+       in function  gen_server:terminate/6
+     initial call: gen:init_it(gen_server,&lt;0.166.0&gt;,&lt;0.166.0&gt;,
+                               {local,shovel},
+                               shovel,&quot;192.168.1.133&quot;,[])
+     ancestors: [shovel_supervisor,&lt;0.165.0&gt;]
+
+- - Remote RabbitMQ:
+
+=ERROR REPORT==== 23-Sep-2008::13:49:32 ===
+** Generic server &lt;0.127.0&gt; terminating
+** Last message in was {commit,{{11,&lt;0.288.0&gt;},7028}}
+** When Server state == {q,{amqqueue,
+                                 
+{resource,&lt;&lt;&quot;/&quot;&gt;&gt;,queue,&lt;&lt;&quot;impressions&quot;&gt;&gt;},
+                                true,false,[],
+                                [{binding_spec,
+                                      
+{resource,&lt;&lt;&quot;/&quot;&gt;&gt;,exchange,&lt;&lt;&quot;flow&quot;&gt;&gt;},
+                                     &lt;&lt;&quot;*.impressions&quot;&gt;&gt;,[]}],
+                                &lt;0.127.0&gt;},
+                            none,none,true,28056,
+                            {[],[]},
+                            {[{&lt;0.233.0&gt;,
+                               {consumer,
+                                   &lt;&lt;&quot;amq.ctag- 
+QdWeELvdBEl2V21Hwz1gMg==&quot;&gt;&gt;,
+                                   true}}],
+                             []}}
+** Reason for termination ==
+** {timeout,
+        {gen_server,call,
+            [rabbit_persister,
+             {commit_transaction,
+                 {{{11,&lt;0.288.0&gt;},7028},
+                  {resource,&lt;&lt;&quot;/&quot;&gt;&gt;,queue,&lt;&lt;&quot;impressions&quot;&gt;&gt;}}}]}}
+
+=INFO REPORT==== 23-Sep-2008::13:49:32 ===
+closing TCP connection &lt;0.282.0&gt; from 192.168.1.16:44937
+
+=CRASH REPORT==== 23-Sep-2008::13:49:32 ===
+   crasher:
+     pid: &lt;0.127.0&gt;
+     registered_name: []
+     exception exit: {timeout,
+                         {gen_server,call,
+                             [rabbit_persister,
+                              {commit_transaction,
+                                  {{{11,&lt;0.288.0&gt;},7028},
+                                   {resource,&lt;&lt;&quot;/&quot;&gt;&gt;,queue,
+                                       &lt;&lt;&quot;impressions&quot;&gt;&gt;}}}]}}
+       in function  gen_server:terminate/6
+     initial call: gen:init_it(gen_server,&lt;0.123.0&gt;,&lt;0.123.0&gt;,
+                               rabbit_amqqueue_process,
+                               {amqqueue,
+                                    
+{resource,&lt;&lt;&quot;/&quot;&gt;&gt;,queue,&lt;&lt;&quot;impressions&quot;&gt;&gt;},
+                                   true,false,[],
+                                   [{binding_spec,
+                                         
+{resource,&lt;&lt;&quot;/&quot;&gt;&gt;,exchange,&lt;&lt;&quot;flow&quot;&gt;&gt;},
+                                        &lt;&lt;&quot;*.impressions&quot;&gt;&gt;,[]}],
+                                   &lt;0.127.0&gt;},
+                               [])
+
+
+- --
+Valentino Volonghi aka Dialtone
+Now running MacOS X 10.5
+Home Page: <A HREF="http://www.twisted.it">http://www.twisted.it</A>
+<A HREF="http://www.adroll.com">http://www.adroll.com</A>
+
+-----BEGIN PGP SIGNATURE-----
+Version: GnuPG v1.4.9 (Darwin)
+
+iEYEARECAAYFAkjZYaIACgkQ9Llz28widGXBpQCgledTB+l04gCFifZ2CxlswgdQ
+HnkAn0ILSCDkd4W8Hix3TRQRbvhgoxM2
+=IzHa
+-----END PGP SIGNATURE-----
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001587.html">[rabbitmq-discuss] erlang client API: transactions
+</A></li>
+	<LI>Next message: <A HREF="001593.html">[rabbitmq-discuss] erlang client API: transactions
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1590">[ date ]</a>
+              <a href="thread.html#1590">[ thread ]</a>
+              <a href="subject.html#1590">[ subject ]</a>
+              <a href="author.html#1590">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

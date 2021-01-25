@@ -1,0 +1,113 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Automating a RabbitMQ 3.0 cluster on EC2
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Automating%20a%20RabbitMQ%203.0%20cluster%20on%20EC2&In-Reply-To=%3C9882557829464795BC4C6547C54DDED1%40paperplanes.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="024664.html">
+   <LINK REL="Next"  HREF="024672.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Automating a RabbitMQ 3.0 cluster on EC2</H1>
+    <B>Mathias Meyer</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Automating%20a%20RabbitMQ%203.0%20cluster%20on%20EC2&In-Reply-To=%3C9882557829464795BC4C6547C54DDED1%40paperplanes.de%3E"
+       TITLE="[rabbitmq-discuss] Automating a RabbitMQ 3.0 cluster on EC2">meyer at paperplanes.de
+       </A><BR>
+    <I>Thu Dec 20 14:48:05 GMT 2012</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="024664.html">[rabbitmq-discuss] How amqp-client modify &amp; reject(requeue true) a message back to the original queue in rabbit broker?
+</A></li>
+        <LI>Next message: <A HREF="024672.html">[rabbitmq-discuss] Automating a RabbitMQ 3.0 cluster on EC2
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#24617">[ date ]</a>
+              <a href="thread.html#24617">[ thread ]</a>
+              <a href="subject.html#24617">[ subject ]</a>
+              <a href="author.html#24617">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hey all, 
+
+I spent some quality time automating a cluster setup of 3.0.1 on EC2 over the last couple of days, and came across some things that felt a bit odd to me. Maybe I did it all wrong, happy to be proven that I did. I apologize if this turns out a bit long, there are a couple of questions that boil down to a similar issue. Would be curious to hear how other folks have solved this issue, and mostly focussing on RabbitMQ 3.0, as, from what I've read, clustering behaviour has changed with that release.
+
+First a whee bit about the setup, nothing special really, but required to clarify some of the questions below: every node has a custom CNAME record rabbitmq1.domain.com, rabbitmq2.domain.com, each pointing to the EC2 host name. I do this because I prefer full hostnames over EC2 hostnames because it adds clarity to the whole setup, at least for me :)
+
+The first issue with this setup comes up when you want to change the hostname for the RabbitMQ node. Changing it post-installation is a bit of a hassle because the package already starts up the service. Changing the nodename to the FQDN and trying to restart the service after that leads to errors because the service can't be stopped anymore as the nodenames are now different.
+
+I solved this on EC2 by adding domain.com to the DHCP configuration and restarting the network before installing the RabbitMQ package. It's not a great solution, but acceptable. In the end it boils down to the package starting the service immediately on installation, more on that below.
+
+The next issue is related to clustering. When RabbitMQ starts up, and there's a cluster_nodes section in the config, it seems to try and reach the nodes only once. This behaviour I'm not sure of, hence the question. I noticed that when a node can't look up any of the nodes in the cluster_nodes config, it won't try again at a later point in time, e.g. on restart. Therefore that node will never automatically join the cluster unless rabbitmqctl join_cluster is called.
+
+The DHCP configuration helped solve this issue as well, but I'm still wondering if a) my observation is correct and b) if this is desired behaviour. Should a new node be partitioned from the others only temporarily, when it joins, it requires manual intervention to force it to join the cluster. This somewhat seems to conform to what the documentation says: <A HREF="http://www.rabbitmq.com/clustering.html#auto-config,">http://www.rabbitmq.com/clustering.html#auto-config,</A> but I'm not entirely clear on whether a node just gives up trying to form a cluster once it couldn't reach any of the nodes in the cluster_nodes list.
+
+So the question boils down to whether the automatic configuration is the way to go or if it makes more sense to automate commands (using Chef, btw) around the join_cluster and cluster_status commands.
+
+On top of that, to have a fresh node join the cluster, it needs to be stopped again (stop_app) and reset, which somewhat boils down to the service being started on package installation again. This behaviour seems to also have changed from 2.x where just updating the config and making sure all nodes have the same Erlang cookie is correct, right?
+
+So the biggest question is: how do folks work around the fact that the RabbitMQ node is started up on package installation. There's the option to use policy-rc.d systems, but I'm not quite sure how feasible this is to automate. Given that Chef runs every 30 minutes or so, the consequence would be to install a policy on every run or to check on every run whether or not the desired package is already installed. Currently I'm stopping the service after stop_app and reset, before installing the new Erlang cookie. I'm just not sure, it feels a bit weird to automate to me. I'd love for some input or suggestions on this.
+
+My current setup is working, and I can add nodes that automatically join the cluster, so it's okay. Just want to make sure it's the right approach, or if there are any other experiences on this. From what I understand there are differences to 2.x cluster setup, where updating the config and changing the Erlang cookie apparently were all that's needed, but that's from my reading of the documentation and existing Chef cookbooks (<A HREF="https://github.com/opscode-cookbooks/rabbitmq">https://github.com/opscode-cookbooks/rabbitmq</A>). Overall I feel like there's a bit of a lack of documentation on how setting up a cluster can or should be automated. Happy to help improving that situation, but I'd like to sure that the choices described above are sane or completely bullocks.
+
+Again, apologies for the long email. I hope the setup, issues and questions are somewhat clear. Please let me know if more input is require, happy to dive into more detail.
+
+Thank you for your time, for RabbitMQ clustering, and for any feedback you might have :)
+
+Cheers, Mathias
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20121220/e3f766a1/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20121220/e3f766a1/attachment.htm</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="024664.html">[rabbitmq-discuss] How amqp-client modify &amp; reject(requeue true) a message back to the original queue in rabbit broker?
+</A></li>
+	<LI>Next message: <A HREF="024672.html">[rabbitmq-discuss] Automating a RabbitMQ 3.0 cluster on EC2
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#24617">[ date ]</a>
+              <a href="thread.html#24617">[ thread ]</a>
+              <a href="subject.html#24617">[ subject ]</a>
+              <a href="author.html#24617">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

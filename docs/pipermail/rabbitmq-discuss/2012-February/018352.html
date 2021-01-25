@@ -1,0 +1,247 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] [help] [beginner] server stops sending messages; publish (in transaction) hangs on commit
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20%5Bhelp%5D%20%5Bbeginner%5D%20server%20stops%20sending%20messages%3B%0A%20publish%20%28in%20transaction%29%20hangs%20on%20commit&In-Reply-To=%3CCAKYODbhUWBDy4KJQJO7OW2aRnw9LYkerLiNN8kG8%3DNAnO8FgPQ%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="018546.html">
+   <LINK REL="Next"  HREF="018361.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] [help] [beginner] server stops sending messages; publish (in transaction) hangs on commit</H1>
+    <B>Alistair Bayley</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20%5Bhelp%5D%20%5Bbeginner%5D%20server%20stops%20sending%20messages%3B%0A%20publish%20%28in%20transaction%29%20hangs%20on%20commit&In-Reply-To=%3CCAKYODbhUWBDy4KJQJO7OW2aRnw9LYkerLiNN8kG8%3DNAnO8FgPQ%40mail.gmail.com%3E"
+       TITLE="[rabbitmq-discuss] [help] [beginner] server stops sending messages; publish (in transaction) hangs on commit">alistair at abayley.org
+       </A><BR>
+    <I>Thu Feb 23 02:47:21 GMT 2012</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="018546.html">[rabbitmq-discuss] 2.7.1 mirrored queues leak a lot of memory	on slave nodes
+</A></li>
+        <LI>Next message: <A HREF="018361.html">[rabbitmq-discuss] [help] [beginner] server stops sending messages; publish (in transaction) hangs on commit
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#18352">[ date ]</a>
+              <a href="thread.html#18352">[ thread ]</a>
+              <a href="subject.html#18352">[ subject ]</a>
+              <a href="author.html#18352">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hello,
+
+I'm looking for ways to debug a rabbitmq server that has been running
+since 2010-02-01. Sometime in the last 2 days it stopped delivering
+messages. I've seen this happen before, and restarting fixes it, but
+I'd like to get to the bottom of why it stops delivering messages, so
+I'd prefer to run tests while it is still in this state.
+
+We're using the python amqplib client. The various versions are:
+
+$ uname -srvmpio
+Linux 2.6.32-37-generic-pae #81-Ubuntu SMP Fri Dec 2 22:24:22 UTC 2011
+i686 unknown unknown GNU/Linux
+
+$ sudo rabbitmqctl report
+Reporting server status on {{2012,2,23},{2,18,37}}
+
+Status of node '<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at rabbitmq1</A>' ...
+[{pid,11649},
+ {running_applications,[{rabbit,&quot;RabbitMQ&quot;,&quot;2.7.1&quot;},
+                        {os_mon,&quot;CPO  CXC 138 46&quot;,&quot;2.2.4&quot;},
+                        {sasl,&quot;SASL  CXC 138 11&quot;,&quot;2.1.8&quot;},
+                        {mnesia,&quot;MNESIA  CXC 138 12&quot;,&quot;4.4.12&quot;},
+                        {stdlib,&quot;ERTS  CXC 138 10&quot;,&quot;1.16.4&quot;},
+                        {kernel,&quot;ERTS  CXC 138 10&quot;,&quot;2.13.4&quot;}]},
+ {os,{unix,linux}},
+ {erlang_version,&quot;Erlang R13B03 (erts-5.7.4) [source] [rq:1]
+[async-threads:30] [hipe] [kernel-poll:true]\n&quot;},
+ {memory,[{total,107054896},
+          {processes,72060236},
+          {processes_used,72055268},
+          {system,34994660},
+          {atom,736077},
+          {atom_used,727538},
+          {binary,15125896},
+          {code,6063325},
+          {ets,10643172}]},
+ {vm_memory_high_watermark,0.3999999992195367},
+ {vm_memory_limit,102503219}]
+...
+
+
+Python 2.6.5
+python-amqplib 0.6.1-1
+
+
+I've used this python test program:
+#----------------------------------------------
+&quot;&quot;&quot;
+To setup for this test you must say (on rabbitmq1):
+sudo rabbitmqctl add_user scheduler scheduler
+sudo rabbitmqctl add_vhost /test
+sudo rabbitmqctl set_permissions -p /test scheduler &quot;.*&quot; &quot;.*&quot; &quot;.*&quot;
+&quot;&quot;&quot;
+from amqplib import client_0_8 as amqp
+
+conn = amqp.Connection(host=&quot;rabbitmq1:5672&quot;, userid=&quot;scheduler&quot;,
+password=&quot;scheduler&quot;, virtual_host=&quot;/test&quot;, insist=False)
+chan = conn.channel()
+chan.queue_declare(&quot;alistair_test_q&quot;, durable=True, auto_delete=False)
+chan.exchange_declare(&quot;alistair_test_ex&quot;, type=&quot;direct&quot;, durable=True,
+auto_delete=False)
+chan.queue_bind(&quot;alistair_test_q&quot;, &quot;alistair_test_ex&quot;, routing_key=&quot;alistair&quot;)
+
+msg = amqp.Message(&quot;test&quot;, delivery_mode=2)
+print &quot;tx_select&quot;
+chan.tx_select()
+print &quot;send message&quot;
+chan.basic_publish(msg, &quot;alistair_test_ex&quot;, &quot;alistair&quot;)
+print &quot;tx_commit&quot;
+chan.tx_commit()
+#----------------------------------------------
+
+
+It hangs on the chan.tx_commit().
+
+tcpdump shows this (pruned summary, 172.22.2.53 is the client,
+172.22.2.50 is the rabbitmq server):
+
+23	0.047038	172.22.2.53	172.22.2.50	AMQP	Tx.Select
+24	0.047369	172.22.2.50	172.22.2.53	AMQP	Tx.Select-Ok
+25	0.047607	172.22.2.53	172.22.2.50	AMQP	Basic.Publish
+26	0.086293	172.22.2.50	172.22.2.53	TCP	amqp &gt; 34000 [ACK] Seq=365
+Ack=385 Win=6864 Len=0 TSV=951060977 TSER=951060626
+27	0.086469	172.22.2.53	172.22.2.50	AMQP	Content-Header Content-Body Tx.Commit
+28	0.126293	172.22.2.50	172.22.2.53	TCP	amqp &gt; 34000 [ACK] Seq=365
+Ack=432 Win=6864 Len=0 TSV=951060987 TSER=951060636
+
+You can see the client Tx.Commit (and it gets an ACK) but no
+Tx.Commit-Ok comes back from the server. The client hangs here until I
+ctrl-C it.
+
+$ sudo rabbitmqctl list_queues -p /test name messages
+Listing queues ...
+alistair_test_q 0
+...done.
+
+
+A good session on a different broker shows this (again pruned,
+172.22.3.2 is client, 172.22.3.3 is rabbitmq):
+
+23	0.051783	172.22.3.2	172.22.3.3	AMQP	Tx.Select
+24	0.052205	172.22.3.3	172.22.3.2	AMQP	Tx.Select-Ok
+25	0.052517	172.22.3.2	172.22.3.3	AMQP	Basic.Publish
+26	0.090882	172.22.3.3	172.22.3.2	TCP	amqp &gt; 45215 [ACK] Seq=365
+Ack=385 Win=6864 Len=0 TSV=2487670438 TSER=2160225287
+27	0.091095	172.22.3.2	172.22.3.3	AMQP	Content-Header Content-Body Tx.Commit
+28	0.091288	172.22.3.3	172.22.3.2	TCP	amqp &gt; 45215 [ACK] Seq=365
+Ack=432 Win=6864 Len=0 TSV=2487670438 TSER=2160225297
+29	0.097365	172.22.3.3	172.22.3.2	AMQP	Tx.Commit-Ok
+30	0.097703	172.22.3.2	172.22.3.3	AMQP	Tx.Select
+31	0.097926	172.22.3.3	172.22.3.2	AMQP	Tx.Select-Ok
+32	0.098190	172.22.3.2	172.22.3.3	AMQP	Basic.Get
+33	0.098900	172.22.3.3	172.22.3.2	AMQP	Basic.Get-Ok Content-Header Content-Body
+34	0.099780	172.22.3.2	172.22.3.3	AMQP	Tx.Commit
+35	0.100436	172.22.3.3	172.22.3.2	AMQP	Tx.Commit-Ok
+
+$ sudo rabbitmqctl list_queues -p /test name messages
+Listing queues ...
+alistair_test_q 1
+...done.
+
+
+What else can I do to figure out what is wrong? Is there a way to get
+more verbose logging without restarting the server? Are there some
+other tools that'll help with debugging this?
+
+Thanks,
+Alistair
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="018546.html">[rabbitmq-discuss] 2.7.1 mirrored queues leak a lot of memory	on slave nodes
+</A></li>
+	<LI>Next message: <A HREF="018361.html">[rabbitmq-discuss] [help] [beginner] server stops sending messages; publish (in transaction) hangs on commit
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#18352">[ date ]</a>
+              <a href="thread.html#18352">[ thread ]</a>
+              <a href="subject.html#18352">[ subject ]</a>
+              <a href="author.html#18352">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

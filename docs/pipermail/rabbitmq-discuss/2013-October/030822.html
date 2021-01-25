@@ -1,0 +1,262 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Long timeout if server host becomes	unreachable
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Long%20timeout%20if%20server%20host%20becomes%0A%09unreachable&In-Reply-To=%3CCAOQRttrr7cZiZgYqMX7A6BWdE9mFosBbEi0yn-ueTZydiRMpaQ%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="030784.html">
+   <LINK REL="Next"  HREF="030823.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Long timeout if server host becomes	unreachable</H1>
+    <B>Oleg Lyalikov</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Long%20timeout%20if%20server%20host%20becomes%0A%09unreachable&In-Reply-To=%3CCAOQRttrr7cZiZgYqMX7A6BWdE9mFosBbEi0yn-ueTZydiRMpaQ%40mail.gmail.com%3E"
+       TITLE="[rabbitmq-discuss] Long timeout if server host becomes	unreachable">oleg.lyalikov at gmail.com
+       </A><BR>
+    <I>Tue Oct  8 10:49:11 BST 2013</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="030784.html">[rabbitmq-discuss] Long timeout if server host becomes	unreachable
+</A></li>
+        <LI>Next message: <A HREF="030823.html">[rabbitmq-discuss] Long timeout if server host becomes	unreachable
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#30822">[ date ]</a>
+              <a href="thread.html#30822">[ thread ]</a>
+              <a href="subject.html#30822">[ subject ]</a>
+              <a href="author.html#30822">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Thanks for the answer Michael,
+
+Configuring SO_LINGER didn't help for socketWrite timeout. Also it seems it
+affects only &quot;close&quot; operation and also there is a code in
+SocketFrameHandler which already sets SO_LINGER for socket on close (1
+second default):
+
+    public void close() {
+        try { _socket.setSoLinger(true, SOCKET_CLOSING_TIMEOUT); } catch
+(Exception _) {}
+        try { flush();                                           } catch
+(Exception _) {}
+        try { _socket.close();                                   } catch
+(Exception _) {}
+    }
+
+But I even cannot close connection by myself in a separate thread - it's
+blocked in SocketFrameHandler#writeFrame method:
+
+Thread [Thread-0] (Suspended)
+    owns: CommandAssembler  (id=42)
+    owns: Object  (id=41)
+    waiting for: DataOutputStream  (id=34)
+    SocketFrameHandler.writeFrame(Frame) line: 137
+    AMQConnection.writeFrame(Frame) line: 480
+    AMQCommand.transmit(AMQChannel) line: 102
+    AMQConnection$1(AMQChannel).quiescingTransmit(AMQCommand) line: 316
+    AMQConnection$1(AMQChannel).quiescingTransmit(Method) line: 298
+    AMQConnection$1(AMQChannel).quiescingRpc(Method,
+AMQChannel$RpcContinuation) line: 233
+    AMQConnection.close(int, String, boolean, Throwable, int, boolean)
+line: 800
+    AMQConnection.close(int, String, int) line: 724
+    AMQConnection.close(int) line: 710
+    Send$2.run() line: 118
+    Thread.run() line: 724
+
+I googled a bit again, here someone asks sun to provide socket write
+timeout (1997 year) :
+<A HREF="http://bugs.sun.com/bugdatabase/view_bug.do?bug_id=4031100">http://bugs.sun.com/bugdatabase/view_bug.do?bug_id=4031100</A>
+but the answer is to use nio SocketChannels or workaround with different
+thread for read and write.
+
+Here someone asks ActiveMQ to provide such write timeout:
+<A HREF="https://issues.apache.org/jira/browse/AMQ-1993">https://issues.apache.org/jira/browse/AMQ-1993</A>
+and the answer is to use &quot;transport.soWriteTimeout&quot; parameter which is
+managed by ActiveMQ itself
+<A HREF="http://activemq.apache.org/maven/apidocs/org/apache/activemq/transport/WriteTimeoutFilter.html">http://activemq.apache.org/maven/apidocs/org/apache/activemq/transport/WriteTimeoutFilter.html</A>
+
+As for maximum packet age - the client connection has state &quot;ESTABLISHED&quot;
+during all 15 minutes, not TIME_WAIT.
+
+There is a setting in linux which can configure TCP retransmissions
+timeouts : /proc/sys/net/ipv4/tcp_retries2. By default the value is 15 and
+it's about 900 seconds:
+<A HREF="http://stackoverflow.com/questions/5907527/application-control-of-tcp-retransmission-on-linux">http://stackoverflow.com/questions/5907527/application-control-of-tcp-retransmission-on-linux</A>
+It's not recommended to set the value &lt; 100 seconds and we cannot actually
+change it because there are lots of other applications on the machine and
+we do not know consequences of such changes.
+
+So for me it looks like the RabbitMQ client library should provide
+possibility to set such write timeout - maybe using the same Heartbeat
+thread (for now this thread is blocked on &quot;writeFrame&quot; method like all
+other threads waiting freeing the lock on outputStream object).
+
+By the way I still cannot imagine any workaround for this issue but it's
+really critical for us. Do you think there are some?
+
+Regards,
+Oleg
+
+
+2013/10/7 Michael Klishin [via RabbitMQ] &lt;
+<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">ml-node+s1065348n30283h10 at n5.nabble.com</A>&gt;
+
+&gt;<i> On oct 7, 2013, at 4:26 p.m., Oleg Lyalikov &lt;[hidden email]&lt;<A HREF="http://user/SendEmail.jtp?type=node&amp;node=30283&amp;i=0">http://user/SendEmail.jtp?type=node&amp;node=30283&amp;i=0</A>&gt;&gt;
+</I>&gt;<i> wrote:
+</I>&gt;<i>
+</I>&gt;<i> &gt; &quot;main&quot; prio=10 tid=0xf7505800 nid=0x2c3e runnable [0xf7728000]
+</I>&gt;<i> &gt;   java.lang.Thread.State: RUNNABLE
+</I>&gt;<i> &gt;        at java.net.SocketOutputStream.socketWrite0(Native Method)
+</I>&gt;<i> &gt;        at
+</I>&gt;<i> &gt; java.net.SocketOutputStream.socketWrite(SocketOutputStream.java:109)
+</I>&gt;<i> &gt;        at java.net.SocketOutputStream.write(SocketOutputStream.java:153)
+</I>&gt;<i> &gt;        at
+</I>&gt;<i> &gt; java.io.BufferedOutputStream.flushBuffer(BufferedOutputStream.java:82)
+</I>&gt;<i> &gt;        at
+</I>&gt;<i> java.io.BufferedOutputStream.flush(BufferedOutputStream.java:140)
+</I>&gt;<i> &gt;        - locked &lt;0xb4532608&gt; (a java.io.BufferedOutputStream)
+</I>&gt;<i> &gt;        at java.io.DataOutputStream.flush(DataOutputStream.java:123)
+</I>&gt;<i> &gt;        at
+</I>&gt;<i> &gt;
+</I>&gt;<i> com.rabbitmq.client.impl.SocketFrameHandler.flush(SocketFrameHandler.java:142)
+</I>&gt;<i>
+</I>&gt;<i> &gt;        at
+</I>&gt;<i> &gt; com.rabbitmq.client.impl.AMQConnection.flush(AMQConnection.java:488)
+</I>&gt;<i> &gt;        at
+</I>&gt;<i> com.rabbitmq.client.impl.AMQCommand.transmit(AMQCommand.java:125)
+</I>&gt;<i> &gt;        at
+</I>&gt;<i> &gt;
+</I>&gt;<i> com.rabbitmq.client.impl.AMQChannel.quiescingTransmit(AMQChannel.java:316)
+</I>&gt;<i> &gt;        - locked &lt;0xb4532ee8&gt; (a java.lang.Object)
+</I>&gt;<i> &gt;        at
+</I>&gt;<i> com.rabbitmq.client.impl.AMQChannel.transmit(AMQChannel.java:292)
+</I>&gt;<i> &gt;        - locked &lt;0xb4532ee8&gt; (a java.lang.Object)
+</I>&gt;<i> &gt;        at
+</I>&gt;<i> com.rabbitmq.client.impl.ChannelN.basicPublish(ChannelN.java:634)
+</I>&gt;<i> &gt;        at
+</I>&gt;<i> com.rabbitmq.client.impl.ChannelN.basicPublish(ChannelN.java:617)
+</I>&gt;<i> &gt;        at
+</I>&gt;<i> com.rabbitmq.client.impl.ChannelN.basicPublish(ChannelN.java:608)
+</I>&gt;<i> If SocketOutputStream#socketWrite0 takes minutes to timeout, it may be
+</I>&gt;<i> worth trying setting SO_LINGER on the socket (SO_TIMEOUT sounds like
+</I>&gt;<i> what you want but I believe it only covers read operations):
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> <A HREF="http://docs.oracle.com/javase/7/docs/api/java/net/Socket.html#setSoLinger(boolean,%20int">http://docs.oracle.com/javase/7/docs/api/java/net/Socket.html#setSoLinger(boolean,%20int</A>)
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> To do so, for example, you can subclass default ConnectionFactory and
+</I>&gt;<i> override
+</I>&gt;<i> #configureSocket:
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> <A HREF="http://hg.rabbitmq.com/rabbitmq-java-client/file/46578678645e/src/com/rabbitmq/client/ConnectionFactory.java#l476">http://hg.rabbitmq.com/rabbitmq-java-client/file/46578678645e/src/com/rabbitmq/client/ConnectionFactory.java#l476</A>
+</I>&gt;<i>
+</I>&gt;<i> Note that SO_LINGER is not free of downsides:
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> <A HREF="http://blog.netherlabs.nl/articles/2009/01/18/the-ultimate-so_linger-page-or-why-is-my-tcp-not-reliable">http://blog.netherlabs.nl/articles/2009/01/18/the-ultimate-so_linger-page-or-why-is-my-tcp-not-reliable</A>
+</I>&gt;<i>
+</I>&gt;<i> <A HREF="http://stackoverflow.com/questions/3757289/tcp-option-so-linger-zero-when-its-required">http://stackoverflow.com/questions/3757289/tcp-option-so-linger-zero-when-its-required</A>
+</I>&gt;<i>
+</I>&gt;<i> You can try reducing maximum packet age for the server, this should reduce
+</I>&gt;<i> the amount of
+</I>&gt;<i> time spent in TIME_WAIT.
+</I>&gt;<i>
+</I>&gt;<i> MK
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;<i> [hidden email] &lt;<A HREF="http://user/SendEmail.jtp?type=node&amp;node=30283&amp;i=1">http://user/SendEmail.jtp?type=node&amp;node=30283&amp;i=1</A>&gt;
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>&gt;<i>
+</I>&gt;<i> *signature.asc* (506 bytes) Download Attachment&lt;<A HREF="http://rabbitmq.1065348.n5.nabble.com/attachment/30283/0/signature.asc">http://rabbitmq.1065348.n5.nabble.com/attachment/30283/0/signature.asc</A>&gt;
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> ------------------------------
+</I>&gt;<i>  If you reply to this email, your message will be added to the discussion
+</I>&gt;<i> below:
+</I>&gt;<i>
+</I>&gt;<i> <A HREF="http://rabbitmq.1065348.n5.nabble.com/Long-timeout-if-server-host-becomes-unreachable-tp30275p30283.html">http://rabbitmq.1065348.n5.nabble.com/Long-timeout-if-server-host-becomes-unreachable-tp30275p30283.html</A>
+</I>&gt;<i>  To unsubscribe from Long timeout if server host becomes unreachable, click
+</I>&gt;<i> here&lt;<A HREF="http://rabbitmq.1065348.n5.nabble.com/template/NamlServlet.jtp?macro=unsubscribe_by_code&amp;node=30275&amp;code=b2xlZy5seWFsaWtvdkBnbWFpbC5jb218MzAyNzV8MzI1NzkxMjU5">http://rabbitmq.1065348.n5.nabble.com/template/NamlServlet.jtp?macro=unsubscribe_by_code&amp;node=30275&amp;code=b2xlZy5seWFsaWtvdkBnbWFpbC5jb218MzAyNzV8MzI1NzkxMjU5</A>&gt;
+</I>&gt;<i> .
+</I>&gt;<i> NAML&lt;<A HREF="http://rabbitmq.1065348.n5.nabble.com/template/NamlServlet.jtp?macro=macro_viewer&amp;id=instant_html%21nabble%3Aemail.naml&amp;base=nabble.naml.namespaces.BasicNamespace-nabble.view.web.template.NabbleNamespace-nabble.view.web.template.NodeNamespace&amp;breadcrumbs=notify_subscribers%21nabble%3Aemail.naml-instant_emails%21nabble%3Aemail.naml-send_instant_email%21nabble%3Aemail.naml">http://rabbitmq.1065348.n5.nabble.com/template/NamlServlet.jtp?macro=macro_viewer&amp;id=instant_html%21nabble%3Aemail.naml&amp;base=nabble.naml.namespaces.BasicNamespace-nabble.view.web.template.NabbleNamespace-nabble.view.web.template.NodeNamespace&amp;breadcrumbs=notify_subscribers%21nabble%3Aemail.naml-instant_emails%21nabble%3Aemail.naml-send_instant_email%21nabble%3Aemail.naml</A>&gt;
+</I>&gt;<i>
+</I>
+
+
+
+--
+View this message in context: <A HREF="http://rabbitmq.1065348.n5.nabble.com/Long-timeout-if-server-host-becomes-unreachable-tp30275p30320.html">http://rabbitmq.1065348.n5.nabble.com/Long-timeout-if-server-host-becomes-unreachable-tp30275p30320.html</A>
+Sent from the RabbitMQ mailing list archive at Nabble.com.
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20131008/ed35c9df/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20131008/ed35c9df/attachment.htm</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="030784.html">[rabbitmq-discuss] Long timeout if server host becomes	unreachable
+</A></li>
+	<LI>Next message: <A HREF="030823.html">[rabbitmq-discuss] Long timeout if server host becomes	unreachable
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#30822">[ date ]</a>
+              <a href="thread.html#30822">[ thread ]</a>
+              <a href="subject.html#30822">[ subject ]</a>
+              <a href="author.html#30822">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

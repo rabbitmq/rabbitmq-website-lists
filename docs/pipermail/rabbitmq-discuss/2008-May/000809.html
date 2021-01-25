@@ -1,0 +1,295 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Channel crashes after basic.cancel_ok.
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20Channel%20crashes%20after%20basic.cancel_ok.&In-Reply-To=8407E0BF-8483-412E-88B4-0042EBD77296%40gmail.com">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000808.html">
+   <LINK REL="Next"  HREF="000810.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Channel crashes after basic.cancel_ok.</H1>
+    <B>Edwin Fine</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20Channel%20crashes%20after%20basic.cancel_ok.&In-Reply-To=8407E0BF-8483-412E-88B4-0042EBD77296%40gmail.com"
+       TITLE="[rabbitmq-discuss] Channel crashes after basic.cancel_ok.">rabbitmq-discuss_efine at usa.net
+       </A><BR>
+    <I>Thu May  8 15:04:52 BST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000808.html">[rabbitmq-discuss] Channel crashes after basic.cancel_ok.
+</A></li>
+        <LI>Next message: <A HREF="000810.html">[rabbitmq-discuss] Channel crashes after basic.cancel_ok.
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#809">[ date ]</a>
+              <a href="thread.html#809">[ thread ]</a>
+              <a href="subject.html#809">[ subject ]</a>
+              <a href="author.html#809">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Ben,
+Thanks for looking into this. In the &quot;real&quot; code, all the setup is actually
+done within a single Erlang process, and the only thing the consumers do is
+handle the basic.deliver, as well as any basic.consume_ok  or
+basic.cancel_ok messages that may arise. In the test code, I rearranged some
+things specifically to be done concurrently, which I now see was a mistake.
+However, this is a bug in the test code, not in the production code. I will
+change the test code so that there is no concurrent work being done on a
+channel other than responding with basic.ack to basic.deliver messages.
+
+I note that there is a special version of amqp_channel:send/3, used only for
+a basic.consume method, with the last argument being the pid of the process
+subscribing. Am I correct to assume because of this that the basic.consume
+method can indeed be sent concurrently by different consumers on the same
+channel? But the basic.cancel operation does not have this property
+(specifying a PID in the amqp call) , as far as I can see, which means that
+a consumer cannot cancel its own subscription without potentially clashing
+with other consumers that are canceling.
+
+So I will change the code back so that everything OTHER than basic.consume
+and basic.cancel is done within a single process, and take it from there.
+
+I think this has, however, shed some light on what might have happened in
+the production code. *I am using the consumer process to unsubscribe itself.
+* When there are many consumer processes, this could be a problem because I
+think basic.cancel does not allow you to specify a return pid and maybe this
+is causing upset in the channel.
+
+    #'basic.consume_ok'{consumer_tag = ConsumerTag} =
+amqp_channel:call(Channel, BasicConsume, *self()*), %%% Notice return pid
+    #'basic.cancel_ok'{consumer_tag = ConsumerTag} =
+amqp_channel:call(Channel, BasicCancel), %%% Notice - no return pid
+
+So maybe this should be added to the handling of basic.cancel? Why shouldn't
+a consumer cancel itself? In fact, why can't all client channel calls
+specify which PID is calling?
+
+One other source of confusion for me is this: when sending an
+amqp_channel:basic.consume call, why is there both a synchronous response to
+the call itself and an asynchronous response on the channel?
+
+    #'basic.consume_ok'{consumer_tag = ConsumerTag} =
+amqp_channel:call(Channel, BasicConsume, self()),
+    receive
+        #'basic.consume_ok'{consumer_tag = ConsumerTag} -&gt;
+            io:format(&quot;[~p] ~p got consume_ok~n&quot;, [self(),
+BasicConsume#'basic.consume'.consumer_tag])
+    end.
+
+Thanks for your help again.
+
+Regards,
+Edwin Fine
+On Thu, May 8, 2008 at 7:39 AM, Ben Hood &lt;<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">0x6e6562 at gmail.com</A>&gt; wrote:
+
+&gt;<i> Ed,
+</I>&gt;<i> You may want to hang on a second with implementing any of the described
+</I>&gt;<i> workarounds because I've had thought of how to solve this in the client, but
+</I>&gt;<i> I want to run it past the Rabbit dev list first.
+</I>&gt;<i>
+</I>&gt;<i> HTH,
+</I>&gt;<i>
+</I>&gt;<i> Ben
+</I>&gt;<i>
+</I>&gt;<i> Begin forwarded message:
+</I>&gt;<i>
+</I>&gt;<i> *From: *Ben Hood &lt;<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">0x6e6562 at gmail.com</A>&gt;
+</I>&gt;<i> *Date: *8 May 2008 11:07:05 BST
+</I>&gt;<i> *To: *<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;<i> *Cc: *Edwin Fine &lt;<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss_efine at usa.net</A>&gt;
+</I>&gt;<i> *Subject: **Re: [rabbitmq-discuss] Channel crashes after basic.cancel_ok.*
+</I>&gt;<i>
+</I>&gt;<i> Ed,
+</I>&gt;<i>
+</I>&gt;<i> On 8 May 2008, at 06:13, Edwin Fine wrote:
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> Well, I have put most of the code I am using into a test program (two
+</I>&gt;<i> modules). This code is not for the mailing list's consumption, if that's ok
+</I>&gt;<i> with you. The problem is, I can't even make the code work for more than 1
+</I>&gt;<i> consumer and I don't know why. I think I am too tired. In any case, the two
+</I>&gt;<i> modules included are:
+</I>&gt;<i>
+</I>&gt;<i>    - rabbit_chan_crash.erl - The actual test program, which contains most
+</I>&gt;<i>    of the Rabbit-related working code;
+</I>&gt;<i>
+</I>&gt;<i> I've run you code. The problem that that you are executing synchronous RPCs
+</I>&gt;<i> on the same channel concurrently, which doesn't work, because the protocol
+</I>&gt;<i> flow stipulates that a client performs a blocking receive for synchronous
+</I>&gt;<i> commands within a channel.
+</I>&gt;<i>
+</I>&gt;<i> By doing this though, you have uncovered a bug in the synchronous RPC
+</I>&gt;<i> handling code in the client that doesn't protect against this properly. So
+</I>&gt;<i> I've fixed this bug and will send it down to the repository.
+</I>&gt;<i>
+</I>&gt;<i> This will not solve your problem, it will just make a clearer indication of
+</I>&gt;<i> what went wrong. When designing the client, we deliberated whether the
+</I>&gt;<i> client channel module should contain the intelligence to queue up pending
+</I>&gt;<i> RPC requests in order to accept concurrent requests from user code and
+</I>&gt;<i> essentially serialize their dispatch to the server. Initially, we decided
+</I>&gt;<i> against this approach because of the complexity it introduces. In general,
+</I>&gt;<i> queue declaration and binding is an operation that you don't need to perform
+</I>&gt;<i> concurrently per channel. While I think that this view is still valid, your
+</I>&gt;<i> use case may provide some food for thought. Thoughts anyone?
+</I>&gt;<i>
+</I>&gt;<i> To solve your problem, you can do one of a few things:
+</I>&gt;<i>
+</I>&gt;<i> 1. Refactor your code so that synchronous RPCs are not executed in parallel
+</I>&gt;<i> (e.g. QueueDeclare, QueueBind, etc) within one channel process;
+</I>&gt;<i> 2. Manage by exception - catch an illegal_pending_rpc error (which is the
+</I>&gt;<i> bug fix I just put in) and resend the request;
+</I>&gt;<i> 3. Use more channel processes - this *may* be a bit heavy weight for the
+</I>&gt;<i> TCP client, this is better suited to the direct client.
+</I>&gt;<i>
+</I>&gt;<i> If you want to go down route 2, let me know because we're currently in the
+</I>&gt;<i> process of moving the source code from monotone to mercurial.
+</I>&gt;<i>
+</I>&gt;<i> BTW, I see that you've made a local modification to the amqp_connection
+</I>&gt;<i> module to export the start/4 function which allows the caller to specify a
+</I>&gt;<i> virtual host. This is probably a good idea and we may incorporate this into
+</I>&gt;<i> the API.
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>    - rbmq_admin.erl - An interface to the admin part of Rabbit that I
+</I>&gt;<i>    wrote because I wanted to be able to create exchanges, users, etc from
+</I>&gt;<i>    within Erlang instead of the command line. Feel free to use this if you
+</I>&gt;<i>    think it's of any use, or improve it - feedback welcome. Actually, at some
+</I>&gt;<i>    point I want to write a full Web admin interface for Rabbit. Real Soon Now.
+</I>&gt;<i>
+</I>&gt;<i> Glad you've mentioned this topic. I've done some initial work of doing some
+</I>&gt;<i> remote management of Rabbit, if and when you actually want to get going, it
+</I>&gt;<i> will probably be a good idea to start a separate discussion thread on this
+</I>&gt;<i> one. There are many design issues that would need to be discussed, most
+</I>&gt;<i> importantly dependencies that may arise.
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> To compile you will need all the usual RabbitMQ paths, and the Erlang
+</I>&gt;<i> client of course. You will also need .erlang.cookie or setcookie with your
+</I>&gt;<i> Rabbit's cookie. I am pretty sure there are no external dependencies other
+</I>&gt;<i> than Rabbit and Erlang.
+</I>&gt;<i>
+</I>&gt;<i> To run is simple (but please note that the code will try to create a user
+</I>&gt;<i> named emf_test, and an exchange and a bunch of queues). Feel free to hack
+</I>&gt;<i> into shape if you have the time and interest. Tomorrow I will try to run
+</I>&gt;<i> Rabbit and my code co-located.
+</I>&gt;<i>
+</I>&gt;<i> &gt;rabbit_chan_crash:go(<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at mynode</A>, NumConsumers, NumMsgsPerSec).
+</I>&gt;<i> &gt;rabbit_chan_crash:stop(). % If you can even read the screen to type this
+</I>&gt;<i> in :)
+</I>&gt;<i>
+</I>&gt;<i> When I use rabbit_chan_crash:go(<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at mynode</A>, 1, 10) it's all good.
+</I>&gt;<i> When I use rabbit_chan_crash:go(<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at mynode</A>, 2, 10) it's all bad. I
+</I>&gt;<i> don't know what I am doing wrong, but my other code works (each consumer is
+</I>&gt;<i> in its own gen_event server, which is probably why. I think I am getting
+</I>&gt;<i> messages in the wrong message queues due to my lack of Erlang experience.
+</I>&gt;<i> And I am tired, too).
+</I>&gt;<i>
+</I>&gt;<i> Anyway I have included the &quot;bad&quot; output.
+</I>&gt;<i>
+</I>&gt;<i> If you have any luck please let me know. Feedback welcome, too.
+</I>&gt;<i>
+</I>&gt;<i> Regards,
+</I>&gt;<i> Ed
+</I>&gt;<i>
+</I>&gt;<i> (<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">xhg at ender</A>)3&gt; rabbit_chan_crash:go(<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at ender</A>,2,10).
+</I>&gt;<i> Setting up channel on realm &lt;&lt;&quot;/data&quot;&gt;&gt; for connection {&lt;0.60.0&gt;,network}
+</I>&gt;<i> Access granted for channel &lt;0.65.0&gt; on realm &lt;&lt;&quot;/data&quot;&gt;&gt; for connection
+</I>&gt;<i> {&lt;0.60.0&gt;,
+</I>&gt;<i>
+</I>&gt;<i> network}
+</I>&gt;<i> Declaring exchange &lt;&lt;&quot;emf_test&quot;&gt;&gt; using ticket 101
+</I>&gt;<i> Declared exchange &lt;&lt;&quot;emf_test&quot;&gt;&gt; using ticket 101
+</I>&gt;<i> Declaring queue &lt;&lt;&quot;EMF_TEST_Q.1&quot;&gt;&gt;
+</I>&gt;<i> Declared queue &lt;&lt;&quot;EMF_TEST_Q.1&quot;&gt;&gt;, msgc = 0, cons_c = 0
+</I>&gt;<i> Declaring queue &lt;&lt;&quot;EMF_TEST_Q.2&quot;&gt;&gt;
+</I>&gt;<i> Declared queue &lt;&lt;&quot;EMF_TEST_Q.2&quot;&gt;&gt;, msgc = 0, cons_c = 0
+</I>&gt;<i> Environment setup complete, rmq_state =
+</I>&gt;<i> {rmq_state,&quot;guest&quot;,&quot;guest&quot;,
+</I>&gt;<i>            {&lt;0.60.0&gt;,network},
+</I>&gt;<i>            &lt;0.65.0&gt;,101,&lt;&lt;&quot;emf_test&quot;&gt;&gt;,&lt;&lt;&quot;/data&quot;&gt;&gt;,&lt;&lt;&quot;/emf_test&quot;&gt;&gt;,
+</I>&gt;<i>            <A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at ender</A>,2}
+</I>&gt;<i> Consumers started: [&lt;0.69.0&gt;,&lt;0.70.0&gt;]
+</I>&gt;<i> [&lt;0.69.0&gt;] Started consumer tag &lt;&lt;&quot;EMF_TEST_Q.1&quot;&gt;&gt; for existing
+</I>&gt;<i> channel/ticket/queue &lt;0.65.0&gt;/101/&lt;&lt;&quot;EMF_TEST_Q.1&quot;&gt;&gt;
+</I>&gt;<i> [&lt;0.70.0&gt;] Started consumer tag &lt;&lt;&quot;EMF_TEST_Q.2&quot;&gt;&gt; for existing
+</I>&gt;<i> channel/ticket/queue &lt;0.65.0&gt;/101/&lt;&lt;&quot;EMF_TEST_Q.2&quot;&gt;&gt;
+</I>&gt;<i> &lt;0.68.0&gt;
+</I>&gt;<i> Producer started: &lt;0.71.0&gt;
+</I>&gt;<i> Binding queue &lt;&lt;&quot;EMF_TEST_Q.1&quot;&gt;&gt;, ticket 101, exchange &lt;&lt;&quot;emf_test&quot;&gt;&gt;,
+</I>&gt;<i> routing key &lt;&lt;&quot;EMF_TEST_Q.1&quot;&gt;&gt;
+</I>&gt;<i> Binding queue &lt;&lt;&quot;EMF_TEST_Q.2&quot;&gt;&gt;, ticket 101, exchange &lt;&lt;&quot;emf_test&quot;&gt;&gt;,
+</I>&gt;<i> routing key &lt;&lt;&quot;EMF_TEST_Q.2&quot;&gt;&gt;
+</I>&gt;<i> Bound queue &lt;&lt;&quot;EMF_TEST_Q.2&quot;&gt;&gt; to exchange &lt;&lt;&quot;emf_test&quot;&gt;&gt;
+</I>&gt;<i> Subscribing consumer &lt;&lt;&quot;EMF_TEST_Q.2&quot;&gt;&gt; to channel &lt;0.65.0&gt;
+</I>&gt;<i> (<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">xhg at ender</A>)4&gt;
+</I>&gt;<i> =ERROR REPORT==== 8-May-2008::00:57:23 ===
+</I>&gt;<i> ** Generic server &lt;0.65.0&gt; terminating
+</I>&gt;<i> ** Last message in was
+</I>&gt;<i> {method,{'basic.consume_ok',&lt;&lt;&quot;EMF_TEST_Q.2&quot;&gt;&gt;},none}
+</I>&gt;<i> ** When Server state == {channel_state,1,&lt;0.60.0&gt;,&lt;0.62.0&gt;,&lt;0.66.0&gt;,
+</I>&gt;<i>                             #Fun&lt;amqp_network_driver.do.2&gt;,
+</I>&gt;<i>                             #Fun&lt;amqp_network_driver.do.3&gt;,&lt;&lt;&gt;&gt;,&lt;0.70.0&gt;,
+</I>&gt;<i>                             false,undefined,
+</I>&gt;<i>                             {dict,0,16,16,8,80,48,
+</I>&gt;<i>
+</I>&gt;<i> {[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],
+</I>&gt;<i>                                  []},
+</I>&gt;<i>
+</I>&gt;<i> {{[],[],[],[],[],[],[],[],[],[],[],[],[],[],
+</I>&gt;<i>                                   [],[]}}}}
+</I>&gt;<i> ** Reason for termination ==
+</I>&gt;<i> ** {function_clause,[{gen_server,reply,
+</I>&gt;<i>                                  [&lt;&lt;&gt;&gt;,
+</I>&gt;<i>
+</I>&gt;<i> {'basic.consume_ok',&lt;&lt;&quot;EMF_TEST_Q.2&quot;&gt;&gt;}]},
+</I>&gt;<i>                      {amqp_channel,rpc_bottom_half,2},
+</I>&gt;<i>                      {amqp_channel,handle_method,2},
+</I>&gt;<i>                      {gen_server,handle_msg,5},
+</I>&gt;<i>                      {proc_lib,init_p,5}]}
+</I>&gt;<i>
+</I>&gt;<i> =ERROR REPORT==== 8-May-2008::00:57:23 ===
+</I>&gt;<i> Error in process &lt;0.70.0&gt; on node '<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">xhg at ender</A>' with exit value:
+</I>&gt;<i> {{badmatch,{'queue.bind_ok'}},[{rabbit_chan_crash,subscribe,2},{rabbit_chan_crash,consumer,5}]}
+</I>&gt;<i> ---------
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> HTH,
+</I>&gt;<i>
+</I>&gt;<i> Ben
+</I>&gt;<i>
+</I>&gt;<i> PS I'm attaching your code to the list for reference.
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: <A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20080508/c7e6ab16/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20080508/c7e6ab16/attachment.htm</A> 
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000808.html">[rabbitmq-discuss] Channel crashes after basic.cancel_ok.
+</A></li>
+	<LI>Next message: <A HREF="000810.html">[rabbitmq-discuss] Channel crashes after basic.cancel_ok.
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#809">[ date ]</a>
+              <a href="thread.html#809">[ thread ]</a>
+              <a href="subject.html#809">[ subject ]</a>
+              <a href="author.html#809">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

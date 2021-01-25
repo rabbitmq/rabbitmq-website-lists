@@ -1,0 +1,188 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] how to call a model from rabbitmq php consumer's callback in codeigniter?
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20how%20to%20call%20a%20model%20from%20rabbitmq%20php%20consumer%27s%0A%20callback%20in%20codeigniter%3F&In-Reply-To=%3C9b1ffe8f-6953-4711-87a4-65bfcf3f7a82%40googlegroups.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="026708.html">
+   <LINK REL="Next"  HREF="026757.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] how to call a model from rabbitmq php consumer's callback in codeigniter?</H1>
+    <B>Seshachalam Malisetti</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20how%20to%20call%20a%20model%20from%20rabbitmq%20php%20consumer%27s%0A%20callback%20in%20codeigniter%3F&In-Reply-To=%3C9b1ffe8f-6953-4711-87a4-65bfcf3f7a82%40googlegroups.com%3E"
+       TITLE="[rabbitmq-discuss] how to call a model from rabbitmq php consumer's callback in codeigniter?">abbiya at gmail.com
+       </A><BR>
+    <I>Thu Apr 25 07:30:05 BST 2013</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="026708.html">[rabbitmq-discuss] no next heap size found after crash
+</A></li>
+        <LI>Next message: <A HREF="026757.html">[rabbitmq-discuss] how to call a model from rabbitmq php consumer's callback in codeigniter?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#26693">[ date ]</a>
+              <a href="thread.html#26693">[ thread ]</a>
+              <a href="subject.html#26693">[ subject ]</a>
+              <a href="author.html#26693">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>
+
+I developed an android app where it subscribes to a queue and also 
+publishes to other queues. At a time it publishes the same message to two 
+different queues, one of them is a queue named &quot;Queue&quot; and now from a 
+appfog instance i need to subscribe to the &quot;Queue&quot; and consume messages and 
+insert them in a mysql db.
+
+I created a php standalone app for the above purpose with codeigniter. By 
+some reason the worker app loses its connection to rabbitmq. i would like 
+to know the best way to do this. How can a worker app on appfog can sustain 
+the application restarts.
+
+what of kind of thing i need to use to solve the above problem.
+
+I figured that the problem is not with rabbitmq connection. it is with the 
+code related to mysql inserts. i checked the crash logs of my app and the 
+error is &quot;Mysql gone away&quot;. an example of php rabbitmq consumer has call 
+backs for receive message and register_shutdown. in receive call back i can 
+not use $this of code igniter because its out of scope and i was using 
+get_instance(). i am not sure how to call a method from rabbitmq client 
+receive call back function
+
+The controller is 
+
+
+&lt;?php
+if (!defined('BASEPATH'))
+  exit('No direct script access allowed');
+
+include(__DIR__ . '/php-amqplib/config.php');
+use PhpAmqpLib\Connection\AMQPConnection;
+class Welcome extends CI_Controller {
+public function __construct() {
+    parent::__construct();}
+public function index() {
+    //connect to rabbitmq and consume messages
+    //insert messages to mysql
+    //$this-&gt;messages = array();
+    $exchange = &quot;router&quot;;
+    $queue = &quot;abbiya&quot;;
+
+    $conn = new AMQPConnection(HOST, PORT, USER, PASS, VHOST);
+    $ch = $conn-&gt;channel();
+
+    /*
+      name: $queue
+      passive: false
+      durable: true // the queue will survive server restarts
+      exclusive: false // the queue can be accessed in other channels
+      auto_delete: false //the queue won't be deleted once the channel is closed.
+     */
+    $ch-&gt;queue_declare($queue, false, true, false, false);
+
+    $ch-&gt;queue_bind($queue, $exchange, $queue);
+
+    /*
+      queue: Queue from where to get the messages
+      consumer_tag: Consumer identifier
+      no_local: Don't receive messages published by this consumer.
+      no_ack: Tells the server if the consumer will acknowledge the messages.
+      exclusive: Request exclusive consumer access, meaning only this consumer can access the queue
+      nowait:
+      callback: A PHP Callback
+     */
+    $consumer_tag = &quot;abbiya&quot;;
+
+    $ch-&gt;basic_recover(true);
+    $ch-&gt;basic_consume($queue, $consumer_tag, false, false, false, false, function($msg) {
+                $message_body = json_decode($msg-&gt;body);
+                $msg-&gt;delivery_info['channel']-&gt;
+                        basic_ack($msg-&gt;delivery_info['delivery_tag']);
+
+                // Send a message with the string &quot;quit&quot; to cancel the consumer.
+                if ($msg-&gt;body === 'quit') {
+                    $msg-&gt;delivery_info['channel']-&gt;
+                            basic_cancel($msg-&gt;delivery_info['consumer_tag']);
+                }
+                $data = array(
+                    'sender_id' =&gt; $message_body-&gt;r,
+                    'receiver_id' =&gt; $message_body-&gt;s,
+                    'message_content' =&gt; $message_body-&gt;m,
+                    // 'sent_time' =&gt; $message_body-&gt;t,
+                    'status' =&gt; 0
+                );
+                $ci =&amp; get_instance();
+                $ci-&gt;Message_model-&gt;newMessage($data);
+            }
+    );
+
+    // Loop as long as the channel has callbacks registered
+    while (count($ch-&gt;callbacks)) {
+        $ch-&gt;wait();
+    }
+
+    register_shutdown_function(function() use ($ch, $conn) {
+                $ch-&gt;close();
+                $conn-&gt;close();
+                $this-&gt;index();
+            }
+    );}
+}
+/* End of file welcome.php *//* Location: ./application/controllers/welcome.php */
+
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20130424/5393b3fc/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20130424/5393b3fc/attachment.htm</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="026708.html">[rabbitmq-discuss] no next heap size found after crash
+</A></li>
+	<LI>Next message: <A HREF="026757.html">[rabbitmq-discuss] how to call a model from rabbitmq php consumer's callback in codeigniter?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#26693">[ date ]</a>
+              <a href="thread.html#26693">[ thread ]</a>
+              <a href="subject.html#26693">[ subject ]</a>
+              <a href="author.html#26693">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,183 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] RabbitMQ memory management
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20RabbitMQ%20memory%20management&In-Reply-To=269388e30809140405n641a049du39a04cad4f1a9b9a%40mail.gmail.com">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001487.html">
+   <LINK REL="Next"  HREF="001474.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] RabbitMQ memory management</H1>
+    <B>Edwin Fine</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20RabbitMQ%20memory%20management&In-Reply-To=269388e30809140405n641a049du39a04cad4f1a9b9a%40mail.gmail.com"
+       TITLE="[rabbitmq-discuss] RabbitMQ memory management">rabbitmq-discuss_efine at usa.net
+       </A><BR>
+    <I>Sun Sep 14 12:43:53 BST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001487.html">[rabbitmq-discuss] RabbitMQ memory management
+</A></li>
+        <LI>Next message: <A HREF="001474.html">[rabbitmq-discuss] RabbitMQ memory management
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1488">[ date ]</a>
+              <a href="thread.html#1488">[ thread ]</a>
+              <a href="subject.html#1488">[ subject ]</a>
+              <a href="author.html#1488">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi Ben,
+
+Actually, we have a bit of a different use case. Our company (my client, as
+it were) provides SMS aggregation services. Essentially, we provide a
+unified interface for SMS, MMS, USSD and other types of messages on behalf
+of our customers, who are content providers. The main value add is that they
+only have to deal with us and our interface, and not the interfaces of
+multiple cellular companies. Without disclosing confidential information, I
+can tell you that the way it works is as follows:
+
+   1. SMS and other kinds of messages (MMS, USSD, and others) sent by the
+   content providers (i.e. MT messages, not from cell phones) arrive at a
+   non-Erlang front end where they are captured into a database.
+   2. The messages are forwarded to the appropriate cell phone companies.
+   3. At the same time, MO messages are sent from the cell phone companies
+   which are destined for the content providers (our customers). These MO
+   messages go thought the Erlang portion of the system.
+   4. Status notifications are also sent to the Erlang portion of the system
+   as the messages go through various processing states (e.g. Queued,
+   Acknowledged, Delivered, Failed etc).
+   5. The front-end sends these status notifications as fast as the Erlang
+   back-end can take them. The back end then splits the messages into multiple
+   RabbitMQ queues based on content and provider (e.g. SMS for company X goes
+   to one queue, while MMS for company Y will go to another). Each queue has a
+   consumer that delivers the status messages to a content-provider's web
+   site\URL. The status notifications are essentially the final step in the
+   process, confirming what the content provider initially sent. It is
+   necessary to split the initial transmission from the status messages like
+   this because delivery could take minutes or hours in some cases, and the
+   sender can't wait around for that long to get a response. So the request is
+   sent in one operation to us, and the actual response is sent in a separate
+   operation back to them.
+   6. The rationale behind having queues like this is to avoid a bottleneck
+   where, if there was just one delivery process and a URL choked up, all
+   deliveries would be held back unnecessarily.
+   7. If one of the URLs is offline, or incorrectly specified, the
+   associated queue will build up persistent messages until the situation is
+   rectified. This is where the scenario we discussed could come into play.
+   Where the real problem comes in is that sometimes a client will send a batch
+   of a few hundred thousand messages. Ideally, this batch would be queued up
+   by Rabbit and drained as the system is able to process the load. It may even
+   be kept for off-peak times.
+   8. I was hoping that I could use Rabbit the way I used to use MQ, which
+   is as a database-backed queue. Now that I understand I cannot, I must make
+   other design decisions. The batches, for example, will have to be stored in
+   files or database, and trickled into the system at the correct rate. Now
+   here is the second kicker: without any flow control, it is not trivial to
+   figure out what the optimum rate is. Too slow, and the batch does not
+   compete quickly enough. Too fast, and I risk excessive loading the Rabbit
+   node's memory.
+   9. Distributing the load across multiple Rabbit nodes may solve
+   individual node's memory issues, but will place more pressure on the overall
+   system's memory load. This will have cost implications because additional
+   hardware will need to be purchased, and additional complexity added to
+   distribute traffic to, and manage and monitor, the additional nodes. Sure,
+   we have os-mon and SNMP and all that, but it has to be set up and
+   configured, and ultimately someone has to sit and watch that. With more
+   nodes, it just becomes more of an administrative burden, especially if
+   traffic-wise, a single node would do the job just fine, but because of
+   implementation-specific behavior, it will not be good enough without
+   incurring some risk.
+   10. The bottom line is, having all the persistent data needing to be in
+   memory is a regrettable situation for the reasons outlined above, a
+   situation which I accept, but the consequences of which I wish you, the
+   developers, to be fully aware; not to feel bad or be beaten up, but simply
+   to know and to use in decision-making processes as appropriate.
+
+Thanks for your time. I hope the above information gives you a better feel
+for what I am trying to achieve, and perhaps will generate some more useful
+thoughts about how I can do so using your very excellent product (which I am
+committed to using, by the way).
+
+Best regards,
+Edwin Fine
+
+On Sun, Sep 14, 2008 at 7:05 AM, Ben Hood &lt;<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">0x6e6562 at gmail.com</A>&gt; wrote:
+
+&gt;<i> Alexis,
+</I>&gt;<i>
+</I>&gt;<i> On Sat, Sep 13, 2008 at 10:07 AM, Alexis Richardson
+</I>&gt;<i> &lt;<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">alexis.richardson at cohesiveft.com</A>&gt; wrote:
+</I>&gt;<i> &gt; Note that case (a) is solved by 2 above.  Add more nodes.  How often
+</I>&gt;<i> would you
+</I>&gt;<i> &gt; have to add more nodes?  Due to 1, you can work this out based on your
+</I>&gt;<i> message
+</I>&gt;<i> &gt; size.  For almost all use cases the consumers will have to lag
+</I>&gt;<i> &gt; producers by several
+</I>&gt;<i> &gt; days.  Think about it.  And don't forget you can add more consumers.
+</I>&gt;<i>
+</I>&gt;<i> Good point.
+</I>&gt;<i>
+</I>&gt;<i> The main reason why I asked Edwin about his realsitic expectations
+</I>&gt;<i> surrounding volumetrics was to find out what the breaking point was
+</I>&gt;<i> for a simple OTS Rabbit installation to do a *very* naive reality
+</I>&gt;<i> check.
+</I>&gt;<i>
+</I>&gt;<i> So in the absense of better knowledge, I just thought to myself that
+</I>&gt;<i> an SMS is roughly 160 bytes long (160 chars with an encoding that is
+</I>&gt;<i> something less than 8 bit/char plus some routing headers) and just
+</I>&gt;<i> created an infinite loop to publish them. A sinlge instance of Rabbit
+</I>&gt;<i> got overfed after publishing 2.5 million of these messages (on a
+</I>&gt;<i> simple pizzabox setup).
+</I>&gt;<i>
+</I>&gt;<i> So under the assumption that you may also use more than one logical
+</I>&gt;<i> queue (by way of natural application partitioning), you may be
+</I>&gt;<i> spreading the total system load over multiple queues that reside in
+</I>&gt;<i> memory on different nodes.
+</I>&gt;<i>
+</I>&gt;<i> In the degenerate case that you send 1 million messages per day to a
+</I>&gt;<i> single instance, you still have a day and a bit to find some way to
+</I>&gt;<i> drain the queues. Presumeably, if no SMS's were getting delivered to
+</I>&gt;<i> the downstream consumers over the course of a day, somebody would
+</I>&gt;<i> start to care about the fact that the system wasn't actually doing
+</I>&gt;<i> something. This person would still have a fair amount of time to find
+</I>&gt;<i> out what is going on and drain the queues before resource consumption
+</I>&gt;<i> becomes acute.
+</I>&gt;<i>
+</I>&gt;<i> Ben
+</I>&gt;<i>
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;<i> <A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;<i> <A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: <A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20080914/9f51a35b/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20080914/9f51a35b/attachment.htm</A> 
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001487.html">[rabbitmq-discuss] RabbitMQ memory management
+</A></li>
+	<LI>Next message: <A HREF="001474.html">[rabbitmq-discuss] RabbitMQ memory management
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1488">[ date ]</a>
+              <a href="thread.html#1488">[ thread ]</a>
+              <a href="subject.html#1488">[ subject ]</a>
+              <a href="author.html#1488">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,101 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Connection.createChannel() hangs using	amqp-client 3.1.1
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Connection.createChannel%28%29%20hangs%20using%0A%09amqp-client%203.1.1&In-Reply-To=%3C586A51A8-282D-4091-B849-A89CAC74F272%40rabbitmq.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="027752.html">
+   <LINK REL="Next"  HREF="027769.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Connection.createChannel() hangs using	amqp-client 3.1.1</H1>
+    <B>Tim Watson</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Connection.createChannel%28%29%20hangs%20using%0A%09amqp-client%203.1.1&In-Reply-To=%3C586A51A8-282D-4091-B849-A89CAC74F272%40rabbitmq.com%3E"
+       TITLE="[rabbitmq-discuss] Connection.createChannel() hangs using	amqp-client 3.1.1">tim at rabbitmq.com
+       </A><BR>
+    <I>Fri Jun  7 09:57:43 BST 2013</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="027752.html">[rabbitmq-discuss] Connection.createChannel() hangs using	amqp-client 3.1.1
+</A></li>
+        <LI>Next message: <A HREF="027769.html">[rabbitmq-discuss] Connection.createChannel() hangs using amqp-client 3.1.1
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#27754">[ date ]</a>
+              <a href="thread.html#27754">[ thread ]</a>
+              <a href="subject.html#27754">[ subject ]</a>
+              <a href="author.html#27754">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi Jonathan,
+
+Ok, you can safely ignore what I've written below. What's actually going on (thanks to Matthias for pointing it out) is that the ShutdownListener callbacks run in the connection's thread, so the call to createChannel causes a deadlock since it blocks waiting for a response (whilst the connection's thread is stuck executing the listener). I'm going to add some notes to the API documentation explaining that, so future users don't get caught out in the same way.
+
+The canonical approach to dealing with this is to have the shutdown listener callback signal your own (application) thread, from which you can manage recovery without risking deadlock in this fashion.
+
+Cheers,
+Tim
+
+On 7 Jun 2013, at 09:38, Tim Watson wrote:
+
+&gt;<i> Hi Jonathan,
+</I>&gt;<i> 
+</I>&gt;<i> On 6 Jun 2013, at 23:42, Jonathan Halterman wrote:
+</I>&gt;&gt;<i> I hit on a scenario where connection.createChannel() may hang forever. The scenario: obtain a channel and attempt to publish to a non-existent exchange. The channel will be shutdown. Attempt to establish a new (replacement) channel via Connection.createChannel(), which hangs forever. A simple version of this scenario:
+</I>&gt;&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> This should not be happening. Are you absolutely sure you're using version 3.1.1 of the java client library, since a similar bug (involving accidentally re-used channel ids) was fixed in a previous release: <A HREF="http://hg.rabbitmq.com/rabbitmq-java-client/rev/ea7d68c2154d">http://hg.rabbitmq.com/rabbitmq-java-client/rev/ea7d68c2154d</A>
+</I>&gt;<i> 
+</I>&gt;&gt;<i> From Tracer:
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;<i> 1370554962786: &lt;Tracer-0&gt; ch#1 &lt;- {#method&lt;channel.close&gt;(reply-code=404, reply-text=NOT_FOUND - no exchange 'foo' in vhost '/', class-id=60, method-id=40), null, &quot;&quot;}
+</I>&gt;&gt;<i> 1370554962788: &lt;Tracer-0&gt; ch#1 -&gt; {#method&lt;channel.close-ok&gt;(), null, &quot;&quot;}
+</I>&gt;&gt;<i> 1370554974891: &lt;Tracer-0&gt; ch#1 -&gt; {#method&lt;channel.open&gt;(out-of-band=), null, &quot;&quot;}
+</I>&gt;&gt;<i> 1370554974970: &lt;Tracer-0&gt; ch#1 &lt;- {#method&lt;channel.open-ok&gt;(channel-id=), null, &quot;&quot;}
+</I>&gt;&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> That last line seems very odd - I would've expected to a see a channel id in there, though truth be told I'm not overly familiar with the Tracer tool in the java client. 
+</I>&gt;<i> 
+</I>&gt;&gt;<i> Any ideas why things are hanging?
+</I>&gt;&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> According to the last line of the trace you've supplied, a new channel was opened successfully, though there's no channel id present which is worrying. Please confirm that you are definitely using the right version (i.e., where did you obtain the amqp-client binary from) and we'll take a closer look.
+</I>&gt;<i> 
+</I>&gt;<i> Cheers,
+</I>&gt;<i> Tim
+</I>&gt;<i> 
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>
+</PRE>
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="027752.html">[rabbitmq-discuss] Connection.createChannel() hangs using	amqp-client 3.1.1
+</A></li>
+	<LI>Next message: <A HREF="027769.html">[rabbitmq-discuss] Connection.createChannel() hangs using amqp-client 3.1.1
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#27754">[ date ]</a>
+              <a href="thread.html#27754">[ thread ]</a>
+              <a href="subject.html#27754">[ subject ]</a>
+              <a href="author.html#27754">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

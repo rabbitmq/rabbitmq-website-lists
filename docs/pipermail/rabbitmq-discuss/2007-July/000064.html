@@ -1,0 +1,115 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] FW: Multiple consumers
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20FW%3A%20Multiple%20consumers&In-Reply-To=269388e30707221552u18ddaf6al1b7c9e9831269033%40mail.gmail.com">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000057.html">
+   <LINK REL="Next"  HREF="000065.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] FW: Multiple consumers</H1>
+    <B>Matthias Radestock</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20FW%3A%20Multiple%20consumers&In-Reply-To=269388e30707221552u18ddaf6al1b7c9e9831269033%40mail.gmail.com"
+       TITLE="[rabbitmq-discuss] FW: Multiple consumers">matthias at lshift.net
+       </A><BR>
+    <I>Sat Jul 28 09:00:41 BST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000057.html">[rabbitmq-discuss] FW: Multiple consumers
+</A></li>
+        <LI>Next message: <A HREF="000065.html">[rabbitmq-discuss]  FW: Multiple consumers
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#64">[ date ]</a>
+              <a href="thread.html#64">[ thread ]</a>
+              <a href="subject.html#64">[ subject ]</a>
+              <a href="author.html#64">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Ben,
+
+Apologies for the delay in responding to you - I have been very busy
+this week.
+
+&quot;Ben Hood&quot; &lt;<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">0x6e6562 at gmail.com</A>&gt; writes:
+
+&gt;<i> OK, based on this discussion here's the latest patch.
+</I>
+Looks generally ok, with one caveat: Client channels ought to be
+processes. That way you don't funnel everything through a single
+process.
+
+In the direct API the client channel processes ought to be the same as
+the server channel processes, i.e. the user's client code would interact
+directly with the server channel processes.
+
+&gt;<i> So I opted to handle the reception of a consumer pid as an extra field
+</I>&gt;<i> in the mainloop_without_framing/1 function in the channel.
+</I>
+You appear to be changing the channel's writer pid with every
+basic_consume. That doesn't look right.
+
+think the direct consumer case should actually look like this:
+
+  consumer &lt;-- queue
+
+(which is simpler than what I proposed before)
+
+Queue processes maintain a list of consumer processes. In the direct API
+that's the only mapping you need. In the network API the client channel
+processes maintain a mapping from consumer tags to consumer processes.
+
+The question is what should the writer_pid be set to in the direct API?
+
+One possibility is to set it to the caller's pid when doing rpc. That
+way rpc can be implemented like this:
+
+rpc(ChannelPid, MethodRecord, Content) -&gt;
+  ChannelPid ! {method, MethodRecord, Content, self()},
+  receive
+     {send_command, MethodRecord} -&gt; MethodRecord
+     ...
+  end.
+
+The tricky bit is how to deal with asynchronous non-consumer events,
+i.e. cases where a channel/transaction/queue processes sends messages to
+a writer process as part of something other than an rpc or message
+delivery. Perhaps the writer_pid should be set to the channel pid?  That
+would require some pretty careful coding to avoid deadlock.
+
+
+I reckon it may be easier to tackle the network API first. It is the
+more general case and the refactoring it forces will inform our thinking
+on how to best implement the direct API.
+
+
+Matthias.
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000057.html">[rabbitmq-discuss] FW: Multiple consumers
+</A></li>
+	<LI>Next message: <A HREF="000065.html">[rabbitmq-discuss]  FW: Multiple consumers
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#64">[ date ]</a>
+              <a href="thread.html#64">[ thread ]</a>
+              <a href="subject.html#64">[ subject ]</a>
+              <a href="author.html#64">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

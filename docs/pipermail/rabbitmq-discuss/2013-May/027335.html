@@ -1,0 +1,218 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] More throughput using cluster
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20More%20throughput%20using%20cluster&In-Reply-To=%3C5198ED8A.2080909%40osic.rs%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="027332.html">
+   <LINK REL="Next"  HREF="027336.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] More throughput using cluster</H1>
+    <B>Nikola Savic</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20More%20throughput%20using%20cluster&In-Reply-To=%3C5198ED8A.2080909%40osic.rs%3E"
+       TITLE="[rabbitmq-discuss] More throughput using cluster">niks at osic.rs
+       </A><BR>
+    <I>Sun May 19 16:19:38 BST 2013</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="027332.html">[rabbitmq-discuss] More throughput using cluster
+</A></li>
+        <LI>Next message: <A HREF="027336.html">[rabbitmq-discuss] More throughput using cluster
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#27335">[ date ]</a>
+              <a href="thread.html#27335">[ thread ]</a>
+              <a href="subject.html#27335">[ subject ]</a>
+              <a href="author.html#27335">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>
+php-amqplib was first solution we used. However, we had to switch to 
+AMQP extension because connecting was very slow :( It took minimum 50ms 
+for php-amqplib to establish connection to RabbitMQ. Most of this time 
+was spent on fread call. AMQP extension also uses a lot of time for 
+connection, but much less than php-amqplib (up to 20ms).
+
+We're not using basic_consume, since we must monitor two different 
+channels/exchanges (one direct and one fannout). This is because workers 
+must get messages (task related) by direct queue, and broadcasts over 
+fannout. That's why we used code from one of examples:
+
+/    while (count($ch-&gt;callbacks)) {//
+//        $read   = array($conn-&gt;getSocket()); // add here other sockets 
+that you need to attend//
+//        $write  = null;//
+//        $except = null;//
+//        $num_changed_streams = stream_select($read, $write, $except, 
+rand(10,15));//
+//
+//        ....//
+//    }/
+
+This is where php-amqplib is much better than AMQP extension :( Since 
+AMQP extension doesn't have (or we didn't find example) that can wait on 
+stream for predefined number of seconds, and then return control back to 
+PHP script, like /stream_select /does.
+
+So, on end, we ended up using AMQP extension for producers and 
+php-amqplib for consumers ... crazy isn't it?
+
+On 05/19/2013 04:28 PM, Alvaro Videla wrote:
+&gt;<i> Hi,
+</I>&gt;<i>
+</I>&gt;<i> The php-amqplib from here <A HREF="https://github.com/videlalvaro/php-amqplib">https://github.com/videlalvaro/php-amqplib</A> 
+</I>&gt;<i> can easily publish 4000 msgs in 1.5 seconds and it can consume them in 
+</I>&gt;<i> about the same time, using just 1 producer and 1 consumer.
+</I>&gt;<i>
+</I>&gt;<i> Is worth noting that the consumers in the benchmark code are doing a 
+</I>&gt;<i> basic_consume on the queue and not a basic_get. The benchmark code can 
+</I>&gt;<i> be easily run if you check out the library form Github and run *make 
+</I>&gt;<i> benchmark*.
+</I>&gt;<i>
+</I>&gt;<i> I think the problem you have on the producing side is the way PHP 
+</I>&gt;<i> work, where sharing resources is not so easy due to the script state 
+</I>&gt;<i> being cleaned after every request, thus the need of opening one 
+</I>&gt;<i> connection per request.
+</I>&gt;<i>
+</I>&gt;<i> Regarding persisting connections with PHP, while the socket connection 
+</I>&gt;<i> to RabbitMQ could be persisted across requests, what do we do about 
+</I>&gt;<i> channels and the whole connection state? With PHP this is not so easy 
+</I>&gt;<i> to solve.
+</I>&gt;<i>
+</I>&gt;<i> If you need to achieve max speed from your publishing side I would 
+</I>&gt;<i> consider using a REST endpoint as someone suggested already.
+</I>&gt;<i>
+</I>&gt;<i> On the other hand if your concern regarding publishing speed is to not 
+</I>&gt;<i> make the users wait for the request to finish, then keep in mind that 
+</I>&gt;<i> php-fpm has a function called fastcgi_finish_request. You can call it 
+</I>&gt;<i> at the end of your script and then send the messages to RabbitMQ.
+</I>&gt;<i>
+</I>&gt;<i> Regards,
+</I>&gt;<i>
+</I>&gt;<i> Alvaro
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> On Sun, May 19, 2013 at 4:11 PM, Nikola Savic &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">niks at osic.rs</A> 
+</I>&gt;<i> &lt;mailto:<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">niks at osic.rs</A>&gt;&gt; wrote:
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>     Consumers are not restarting ... producers are. Every page request
+</I>&gt;<i>     is new execution of PHP script, which must open new connection
+</I>&gt;<i>     when trying to send first message, and close it when it finishes.
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>     On 05/19/2013 04:08 PM, Michael Klishin wrote:
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i>     2013/5/19 Nikola Savic &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">niks at osic.rs</A> &lt;mailto:<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">niks at osic.rs</A>&gt;&gt;
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i>         Yes ... it's the same app which postpones execution of some
+</I>&gt;&gt;<i>         actions using MQ.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i>     Then cluster won't solve your problem because the issue is not
+</I>&gt;&gt;<i>     node delivery rate.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i>     You need to avoid constant restarts and reconnections for your
+</I>&gt;&gt;<i>     consumers or simply
+</I>&gt;&gt;<i>     increase their number and/or throughput.
+</I>&gt;&gt;<i>     -- 
+</I>&gt;&gt;<i>     MK
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i>     <A HREF="http://github.com/michaelklishin">http://github.com/michaelklishin</A>
+</I>&gt;&gt;<i>     <A HREF="http://twitter.com/michaelklishin">http://twitter.com/michaelklishin</A>
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i>     _______________________________________________
+</I>&gt;&gt;<i>     rabbitmq-discuss mailing list
+</I>&gt;&gt;<i>     <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>  &lt;mailto:<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>&gt;
+</I>&gt;&gt;<i>     <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>     _______________________________________________
+</I>&gt;<i>     rabbitmq-discuss mailing list
+</I>&gt;<i>     <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;<i>     &lt;mailto:<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>&gt;
+</I>&gt;<i>     <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20130519/744970d2/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20130519/744970d2/attachment.htm</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="027332.html">[rabbitmq-discuss] More throughput using cluster
+</A></li>
+	<LI>Next message: <A HREF="027336.html">[rabbitmq-discuss] More throughput using cluster
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#27335">[ date ]</a>
+              <a href="thread.html#27335">[ thread ]</a>
+              <a href="subject.html#27335">[ subject ]</a>
+              <a href="author.html#27335">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

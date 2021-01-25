@@ -1,0 +1,195 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Java client - com.rabbitmq.client.AlreadyClosedException and Shutdown event
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Java%20client%20-%0A%20com.rabbitmq.client.AlreadyClosedException%20and%20Shutdown%20event&In-Reply-To=%3Cea951568-a9a8-4a6f-9fdd-e7f193513774%40googlegroups.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="030263.html">
+   <LINK REL="Next"  HREF="030262.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Java client - com.rabbitmq.client.AlreadyClosedException and Shutdown event</H1>
+    <B>Francois-Guillaume Ribreau</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Java%20client%20-%0A%20com.rabbitmq.client.AlreadyClosedException%20and%20Shutdown%20event&In-Reply-To=%3Cea951568-a9a8-4a6f-9fdd-e7f193513774%40googlegroups.com%3E"
+       TITLE="[rabbitmq-discuss] Java client - com.rabbitmq.client.AlreadyClosedException and Shutdown event">ggapps at fgribreau.com
+       </A><BR>
+    <I>Wed Sep 18 12:55:21 BST 2013</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="030263.html">[rabbitmq-discuss] Incompatible Erlang bytecode found on nodes
+</A></li>
+        <LI>Next message: <A HREF="030262.html">[rabbitmq-discuss] Java client -	com.rabbitmq.client.AlreadyClosedException and Shutdown event
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#30260">[ date ]</a>
+              <a href="thread.html#30260">[ thread ]</a>
+              <a href="subject.html#30260">[ subject ]</a>
+              <a href="author.html#30260">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hello,
+
+Since a week ago, I was having a lot of 
+&quot;com.rabbitmq.client.AlreadyClosedException: clean connection shutdown; 
+reason: Attempt to use closed channel&quot; the worst part was that the 
+&quot;DefaultExceptionHandler&quot; was caught without being rethrowed, so I was 
+unable to automatically restart my app when this occured. I updated to the 
+last amqp-java client version but nothing changed.
+
+So I extended AMQConnection to specify my own exception handler in order to 
+crash the app (with System.exit()) when this occured.
+
+public ExtendedAMQConnection(ConnectionFactory factory, Integer 
+workerCount) throws Exception {
+        super(factory.getUsername(),
+                factory.getPassword(),
+                new 
+SocketFrameHandler(factory.getSocketFactory().createSocket(factory.getHost(), 
+factory.getPort())),
+                Executors.newFixedThreadPool(workerCount),
+                factory.getVirtualHost(),
+                factory.getClientProperties(),
+                factory.getRequestedFrameMax(),
+                factory.getRequestedChannelMax(),
+                factory.getRequestedHeartbeat(),
+                factory.getSaslConfig(),
+                new DefaultExceptionHandler() {
+                    @Override
+                    public void handleConsumerException(Channel channel,
+                                                        Throwable exception,
+                                                        Consumer consumer,
+                                                        String consumerTag,
+                                                        String methodName) {
+                        try {
+                            // TODO: change this to call 4-parameter close 
+and make 6-parm one private
+                            ((AMQConnection) channel.getConnection())
+                                    .close(AMQP.INTERNAL_ERROR,
+                                            &quot;Internal error in Consumer &quot; + 
+consumerTag,
+                                            false,
+                                            exception,
+                                            -1,
+                                            false);
+                        } catch (Throwable e) {
+                            console.error(&quot;handleConsumerException&quot;, e);
+                            System.exit(1);
+                        }
+                    }
+                });
+        this.start();
+    }
+
+But after some time I understood that it was not the main issue, the app 
+was still throwing the same error without doing anything at all to fix it 
+so I added a listener to channel shutdown event:
+
+Connection conn = new BringrAMQConnection(factory, workerCount);
+Channel channel = conn.createChannel();
+channel.addShutdownListener(new ShutdownListener() {
+            @Override
+            public void shutdownCompleted(ShutdownSignalException e) {
+                console.error(&quot;RabbitMQ[channel] Shutdown. Stopping the 
+server&quot;);
+                System.exit(1);
+            }
+        });
+
+and now I got a lot of restarts. I'm not sure I clearly understood if I 
+should do something when &quot;shutdownCompleted&quot; occurs (I never stopped 
+RabbitMQ and RabbitMQ was always running when this happened), or if 
+amqp-client can handle this by itself.
+
+I use com.rabbitmq:amqp-client:3.1.4 with a cluster of two mirrored 
+RabbitMQ v3.1.1.
+
+# rabbitmqctl status
+Status of node <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at ir</A> ...
+[{pid,19842},
+ {running_applications,
+     [{rabbitmq_management,&quot;RabbitMQ Management Console&quot;,&quot;3.1.1&quot;},
+      {rabbitmq_management_agent,&quot;RabbitMQ Management Agent&quot;,&quot;3.1.1&quot;},
+      {rabbit,&quot;RabbitMQ&quot;,&quot;3.1.1&quot;},
+      {os_mon,&quot;CPO  CXC 138 46&quot;,&quot;2.2.9&quot;},
+      {rabbitmq_web_dispatch,&quot;RabbitMQ Web Dispatcher&quot;,&quot;3.1.1&quot;},
+      {webmachine,&quot;webmachine&quot;,&quot;1.9.1-rmq3.1.1-git52e62bc&quot;},
+      {mochiweb,&quot;MochiMedia Web Server&quot;,&quot;2.3.1-rmq3.1.1-gitd541e9a&quot;},
+      {xmerl,&quot;XML parser&quot;,&quot;1.3.1&quot;},
+      {inets,&quot;INETS  CXC 138 49&quot;,&quot;5.9&quot;},
+      {amqp_client,&quot;RabbitMQ AMQP Client&quot;,&quot;3.1.1&quot;},
+      {mnesia,&quot;MNESIA  CXC 138 12&quot;,&quot;4.7&quot;},
+      {sasl,&quot;SASL  CXC 138 11&quot;,&quot;2.2.1&quot;},
+      {stdlib,&quot;ERTS  CXC 138 10&quot;,&quot;1.18.1&quot;},
+      {kernel,&quot;ERTS  CXC 138 10&quot;,&quot;2.15.1&quot;}]},
+ {os,{unix,linux}},
+ {erlang_version,
+     &quot;Erlang R15B01 (erts-5.9.1) [source] [64-bit] [smp:24:24] 
+[async-threads:30] [hipe] [kernel-poll:true]\n&quot;},
+ {memory,
+     [{total,122151960},
+      {connection_procs,22551824},
+      {queue_procs,9699000},
+      {plugins,415976},
+      {other_proc,9745810},
+      {mnesia,650608},
+      {mgmt_db,10643096},
+      {msg_index,431544},
+      {other_ets,2452056},
+      {binary,35320928},
+      {code,18521111},
+      {atom,2525529},
+      {other_system,9194478}]},
+ {vm_memory_high_watermark,0.4},
+ {vm_memory_limit,27064667340},
+ {disk_free_limit,1000000000},
+ {disk_free,2864417656832},
+ {file_descriptors,
+     [{total_limit,924},
+      {total_used,261},
+      {sockets_limit,829},
+      {sockets_used,227}]},
+ {processes,[{limit,1048576},{used,2804}]},
+ {run_queue,0},
+ {uptime,8096817}]
+
+I'm able send you privately the output of rabbitmqctl report if you need it.
+
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20130918/931452a5/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20130918/931452a5/attachment.htm</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="030263.html">[rabbitmq-discuss] Incompatible Erlang bytecode found on nodes
+</A></li>
+	<LI>Next message: <A HREF="030262.html">[rabbitmq-discuss] Java client -	com.rabbitmq.client.AlreadyClosedException and Shutdown event
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#30260">[ date ]</a>
+              <a href="thread.html#30260">[ thread ]</a>
+              <a href="subject.html#30260">[ subject ]</a>
+              <a href="author.html#30260">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

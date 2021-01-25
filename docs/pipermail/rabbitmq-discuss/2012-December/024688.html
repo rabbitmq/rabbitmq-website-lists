@@ -1,0 +1,172 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Federation and upstream cluster
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Federation%20and%20upstream%20cluster&In-Reply-To=%3C50DCFE32.1080900%40rabbitmq.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="024685.html">
+   <LINK REL="Next"  HREF="024689.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Federation and upstream cluster</H1>
+    <B>Tim Watson</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Federation%20and%20upstream%20cluster&In-Reply-To=%3C50DCFE32.1080900%40rabbitmq.com%3E"
+       TITLE="[rabbitmq-discuss] Federation and upstream cluster">tim at rabbitmq.com
+       </A><BR>
+    <I>Fri Dec 28 02:04:34 GMT 2012</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="024685.html">[rabbitmq-discuss] Federation and upstream cluster
+</A></li>
+        <LI>Next message: <A HREF="024689.html">[rabbitmq-discuss] Federation and upstream cluster
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#24688">[ date ]</a>
+              <a href="thread.html#24688">[ thread ]</a>
+              <a href="subject.html#24688">[ subject ]</a>
+              <a href="author.html#24688">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi
+
+On 27/12/2012 17:02, Vladislav Pernin wrote:
+&gt;<i> Hi,
+</I>&gt;<i>
+</I>&gt;<i> I'm running RabbitMQ 3.0.1 on two cluster of Linux servers.
+</I>&gt;<i>
+</I>&gt;<i> Let's name the two clusters :
+</I>&gt;<i> - downstream cluster running a federation to get messages from upstream
+</I>&gt;<i> cluster
+</I>&gt;<i> - upstream cluster
+</I>&gt;<i>
+</I>&gt;<i> The documentation explains well if a node fails, links to upstream
+</I>&gt;<i> exchanges will be recreated on a surviving node.
+</I>&gt;<i> There is no problem for the &quot;client&quot; side of the federation.
+</I>&gt;<i>
+</I>&gt;<i> I cannot use a load balancer if fail over mode to have high avaibility
+</I>&gt;<i> of the upstream cluster.
+</I>&gt;<i>
+</I>&gt;<i> What would be the recommended solution in this case ?
+</I>&gt;<i>
+</I>
+I'm struggling to understand what the question is here Vladislav. The 
+'failover' that is being described in the federation plugin 
+documentation is applied when using federation in a cluster, so if the 
+node on which the downstream link is running dies, then another 
+downstream node will take over (i.e., re-establish the links). There is 
+a choice between clustering (i.e., ha/mirror queues) and federation - 
+you do not get 'ha of the upstream cluster' in the same sense that 
+mirror queues in a cluster are 'ha'. You have federated exchanges which 
+copy data using AMQP (with ACKs enabled and some other guarantees) and 
+the ability to try and re-establish links and so. Federation however, 
+provides only the Availability and Partition tolerance parts of the CAP 
+theorem, not the same Consistency guarantees as clustering/ha.
+
+&gt;<i> I have tried to set up two upstream and group them in a upstream set,
+</I>
+Can you post the configuration you're using to do that?
+
+&gt;<i> but I have the following problem :
+</I>&gt;<i> - when I shut down one the node, the federation status shows the
+</I>&gt;<i> matching upstream down as expected but after having restarted the first
+</I>&gt;<i> one, if I shut down the other one, both the federation status shows both
+</I>&gt;<i> upstream down
+</I>
+Just to confirm: you're saying that
+
+1. you shut down one of the two upstream nodes
+2. that node shows up dead in the web interface
+3. you re-start that node
+4. that node shows up alive in the web interface
+5. you shut down the other upstream node
+6. both nodes show up as dead in the web interface *but*
+7. one of the upstream nodes *is* alive despite what the web admin says
+
+Have I understood that correctly?
+
+&gt;<i> - so, I tried to add a ha-mode policy to all on the federated queue, it
+</I>&gt;<i> is now possible to shutdown either one or the other node,
+</I>
+I'm not sure I understand this at all. Are you saying it was not 
+possible to shut down one or both of the upstream nodes before? That 
+seems different from your earlier comment.
+
+&gt;<i> but it seems that I'm losing some messages.
+</I>&gt;<i>
+</I>
+When you say 'the federated queue' do you mean the queue created in the 
+upstream exchange's broker? Why would you want to add ha-mode policy 
+that? The upstream queue is internal to the federation mechanism so you 
+should be binding to the downstream exchange only. Or are you saying 
+that you've bound a queue to the downstream exchange and made that 
+ha-enabled? Because in the latter case, that will make no difference to 
+reliability: if both upstream nodes go down before messages are 
+delivered and ack'ed by the downstream for example.
+
+I'd be interested to hear how you've set this ha-mode policy and why and 
+also how you've determined that there was message loss? I suspect that 
+you have assumed expectations about the reliability of federation (in 
+the face of node failures) that do not hold. If your messages sat in an 
+exchange on an upstream node (or pair of exchanges/nodes, etc) and both 
+nodes die before successfully transmitting the messages, then they will 
+not arrive at the downstream exchange. The guarantees about message 
+delivery for ha/mirror queues apply to nodes in *that* cluster only. The 
+federation guarantees are different and orthogonal to ha/clustering.
+
+Hope that makes sense.
+
+Cheers,
+Tim
+
+&gt;<i> --
+</I>&gt;<i> Vladislav
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>&gt;<i>
+</I>
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="024685.html">[rabbitmq-discuss] Federation and upstream cluster
+</A></li>
+	<LI>Next message: <A HREF="024689.html">[rabbitmq-discuss] Federation and upstream cluster
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#24688">[ date ]</a>
+              <a href="thread.html#24688">[ thread ]</a>
+              <a href="subject.html#24688">[ subject ]</a>
+              <a href="author.html#24688">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,151 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Amazon EC2 spurious cluster timeouts
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Amazon%20EC2%20spurious%20cluster%20timeouts&In-Reply-To=%3CCDBD1078.9AE5%25Michael.Laing%40nytimes.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="027301.html">
+   <LINK REL="Next"  HREF="027306.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Amazon EC2 spurious cluster timeouts</H1>
+    <B>Laing, Michael P.</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Amazon%20EC2%20spurious%20cluster%20timeouts&In-Reply-To=%3CCDBD1078.9AE5%25Michael.Laing%40nytimes.com%3E"
+       TITLE="[rabbitmq-discuss] Amazon EC2 spurious cluster timeouts">Michael.Laing at nytimes.com
+       </A><BR>
+    <I>Sat May 18 16:45:26 BST 2013</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="027301.html">[rabbitmq-discuss] Amazon EC2 spurious cluster timeouts
+</A></li>
+        <LI>Next message: <A HREF="027306.html">[rabbitmq-discuss] Expected msg/s per CPU core
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#27304">[ date ]</a>
+              <a href="thread.html#27304">[ thread ]</a>
+              <a href="subject.html#27304">[ subject ]</a>
+              <a href="author.html#27304">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi Ray,
+
+We run several clusters at any one time and have not had problems such as you report &#8211; yet :)
+
+ *   3 nodes in a cluster / 3.04 or 3.10 / instance sizes vary
+ *   Deployed within a VPC and with each node in a different availability zone.
+ *   Amazon Linux and vFabric Erlang/OTP 15B02.
+ *   CloudFormation for automated deployment/autoscaling/DNS (Route53)/etc
+
+Like you, we do not use persistent messages. We persist in Cassandra and S3.
+
+Things I have learned over the years re EC2 that may help:
+
+ *   Avoid us-east-1: crowded, older infrastructure, bigger swings in capacity, meltdowns. My current favorite: us-west-2.
+ *   Watch IO Wait on your instances: It seems to reflect the current network environment in which you are operating &#8211; neighbor instance activity, snapshot activity, and your own IO. The partitions we have had have correlated with high IO Wait.
+ *   If you have a problem with an instance, start a new one to replace it, then diagnose the old.
+ *   Go multi-region. When a zone has big problems usually the regional control plane becomes compromised so resource changes fail. We typically run multi-headed in 3 regions to improve both availability and end user latency.
+
+We also have a 'backup' deployment architecture that uses federation/shovels across zones similar to our multi-region architecture. So far we haven't needed it.
+
+In general, our approach is to ensure that messages are delivered at least once, and that operations are idempotent. Resolvers de-duplicate messages and report message history. History patterns tell us in near real time where problems (missing messages, increased latencies) are occurring.
+
+Michael
+From: &lt;Maslinski&gt;, Ray &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">MaslinskiR at valassis.com</A>&lt;mailto:<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">MaslinskiR at valassis.com</A>&gt;&gt;
+Reply-To: rabbitmq &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>&lt;mailto:<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>&gt;&gt;
+Date: Friday, May 17, 2013 4:03 PM
+To: rabbitmq &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>&lt;mailto:<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>&gt;&gt;
+Subject: [rabbitmq-discuss] Amazon EC2 spurious cluster timeouts
+
+Hello,
+
+I&#8217;ve been working with several two node clusters running various versions of 3.0.x, hosted on m1.small instances on Ubuntu 12.04.2 LTS in EC2.  The setup is essentially as described here <A HREF="http://karlgrz.com/rabbitmq-highly-available-queues-and-clustering-using-amazon-ec2/">http://karlgrz.com/rabbitmq-highly-available-queues-and-clustering-using-amazon-ec2/</A> with the main exception being that both of the RabbitMQ servers are in the same availability zone.  A while back I observed a half dozen or so occurrences over the course of a week where the clusters would become partitioned, accompanied by a messages on each server such as:
+
+=ERROR REPORT==== 17-May-2013::01:56:45 ===
+** Node '<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at oemsg-new-29b15241</A>' not responding **
+** Removing (timedout) connection **
+
+=INFO REPORT==== 17-May-2013::01:56:45 ===
+rabbit on node '<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at oemsg-new-29b15241</A>' down
+
+Looking over the logs and EC2 metrics, I wasn&#8217;t able to identify any other anomalies that coincided with these failures.  In particular, the load balancers in front of the cluster nodes did not report any health check failures connecting to the amqp port (on a 30 second interval), suggesting that network connectivity was otherwise healthy, and there didn&#8217;t appear to be any unexpected spikes in resource consumption (such as excessive cpu/disk/network activity).  The rabbit servers were fairly lightly loaded with messaging traffic at the time, and running some load tests against the same servers afterwards didn&#8217;t induce any further failures over the course of several days.  I tried increasing the net_ticktime to something like 5 or 10 minutes, but still observed a failure with the new value.
+
+I left several clusters running over an extended period, most with little or no load, with one cluster running under an extended load test.  Several of the clusters experienced no failures over the course of a couple of months, while others became partitioned after a while (though they seemed to survive for at least a few weeks before partition).
+
+Anyone experience anything similar in EC2, or have any ideas what else might be done to diagnose what&#8217;s going on?
+
+Ray Maslinski
+Senior Software Developer, Engineering
+Valassis / Digital Media
+Cell: 585.330.2426
+<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">maslinskir at valassis.com</A>&lt;mailto:<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">maslinskir at valassis.com</A>&gt;
+www.valassis.com&lt;<A HREF="http://www.valassis.com/">http://www.valassis.com/</A>&gt;
+
+Creating the future of intelligent media delivery to drive your greatest success
+
+_____________________________________________________________________________
+
+This message may include proprietary or protected information. If you are not the intended
+recipient, please notify me, delete this message and do not further communicate the information
+contained herein without my express consent.
+
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20130518/e88aaa76/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20130518/e88aaa76/attachment.htm</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="027301.html">[rabbitmq-discuss] Amazon EC2 spurious cluster timeouts
+</A></li>
+	<LI>Next message: <A HREF="027306.html">[rabbitmq-discuss] Expected msg/s per CPU core
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#27304">[ date ]</a>
+              <a href="thread.html#27304">[ thread ]</a>
+              <a href="subject.html#27304">[ subject ]</a>
+              <a href="author.html#27304">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

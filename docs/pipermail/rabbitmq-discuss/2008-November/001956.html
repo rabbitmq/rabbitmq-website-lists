@@ -1,0 +1,180 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Exchanges, Routing, and AMQP
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20Exchanges%2C%20Routing%2C%20and%20AMQP&In-Reply-To=4442b4720811091019k5553fcd4g37467f04556c766c%40mail.gmail.com">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001957.html">
+   <LINK REL="Next"  HREF="001961.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Exchanges, Routing, and AMQP</H1>
+    <B>Peter Silva</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20Exchanges%2C%20Routing%2C%20and%20AMQP&In-Reply-To=4442b4720811091019k5553fcd4g37467f04556c766c%40mail.gmail.com"
+       TITLE="[rabbitmq-discuss] Exchanges, Routing, and AMQP">Peter.A.Silva at gmail.com
+       </A><BR>
+    <I>Tue Nov 11 04:42:42 GMT 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001957.html">[rabbitmq-discuss] Stopping
+</A></li>
+        <LI>Next message: <A HREF="001961.html">[rabbitmq-discuss] Exchanges, Routing, and AMQP
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1956">[ date ]</a>
+              <a href="thread.html#1956">[ thread ]</a>
+              <a href="subject.html#1956">[ subject ]</a>
+              <a href="author.html#1956">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>OK, so I have looked over the spec a little more thoroughly now,  thinking
+about my application.  It's still very hypothetical for me at this point.
+I can easily see using it for some of the simpler
+applications, but the most troubling thing I noticed in 0-10, is that
+&quot;header exchange type&quot; support is optional.   Having optional bits in a spec
+is bad, especially when they are the bits I want, and rabbit doesn't
+implement them :-)
+
+I found the FAQ explanation that though fanout/topic/direct are successive
+specializations, having it in the spec permits broker side optimizations
+unconvincing.  If people keep bringing it up, then maybe it's a sign that
+the spec is doing something that violates the principle of least surprise.
+The broker could just perform optimizations on the bindings in place and not
+clutter up the standard.  The really general thing to do is the header type,
+using a matching syntax.
+
+Nor do I grasp why an exchange is anything special.   The exchange name
+could easily be the first element of the routing key to apply the pattern
+to.  One can bind to all exchanges or a pattern of exchanges, rather than
+having to specify each exchange individually.  If you make an exchange name
+part of the binding key, you could even add the queue to the end of it, so
+you get binding patterns that look like:
+
+bind.add &lt;exchange&gt;.&lt;topic&gt;.&lt;sub-topic&gt;....&lt;queue&gt;   to &lt;queue&gt;
+
+and bindings become stand-alone entities, potentially with permissions,
+separate from exchanges and queues. Bindings essentially become entries in a
+global routing table.   All the Exchange types naturally specialize from
+it.  the above example is obviously topic routing, below are the others.
+
+&lt;exchange&gt;.#   &lt;-- fanout
+&lt;exchange&gt;.&lt;random stuff&gt;.   &lt;-- header routing, trailing dot means last
+element not a queue.
+&lt;exchange&gt;.&lt;queue&gt;             &lt;-- direct: note, no trailing dot --&gt; the
+last item is a queue.
+
+Lastly, the pattern matching is a bit too simple. would really prefer the
+ability to use full regular expressions, rather than just word matching.
+of course then '.' becomes a significant symbol and you want to use
+something else as a separator.  ':' is a good choice.   On the other hand,
+going through long lists of regular expression evaluations can kill
+performance.
+
+and now for something completely different...
+
+The switching system I'm used to is actually remarkably similar to the AMQP
+model.  It has exactly the same concept of exchanges (called receivers), and
+queues (called senders)
+but has much more flexible/powerful matching/routing, while retaining
+sufficient (for my application!) performance.   In this other MSS, you
+define, using full regular expressions, a series of key_extraction bindings
+for each exchange.  The first matching extraction derives a routing key for
+the message.  You then look up the derived key in a table (associative array
+in python, quite fast lookup) and it gives you a list of queues to route to
+(what do you call that... multiple direct routing?).  We have a only two
+such tables for a few dozen exchanges, but one can use per exchange tables
+if desired, and regular expressions can be used there as well.   Once the
+messages' queues are selected, the queue specific bindings are applied to
+winnow down further.
+
+The above may sound complicated, but it is the only thing that could achieve
+the generality we needed, and the speed is good enough (if you don't need
+all the various bindings, then just have a null set of them and there should
+be no performance penalty.)
+
+Does anyone else use complicated routing like us?  Does it sound like
+something that AMQP might get to later?
+
+
+
+
+
+On Sun, Nov 9, 2008 at 1:19 PM, Peter Silva &lt;<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">Peter.A.Silva at gmail.com</A>&gt; wrote:
+
+&gt;<i> cool!
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> On Sun, Nov 9, 2008 at 12:55 PM, Barry Pederson &lt;<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">bp at barryp.org</A>&gt; wrote:
+</I>&gt;<i>
+</I>&gt;&gt;<i> Ben Hood wrote:
+</I>&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i> Peter,
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i> On Sat, Nov 8, 2008 at 7:29 PM, Peter Silva &lt;<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">Peter.A.Silva at gmail.com</A>&gt;
+</I>&gt;&gt;&gt;<i> wrote:
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;&gt;<i> That's strange... maybe I'm just getting confused by
+</I>&gt;&gt;&gt;&gt;<i> a client code... Here is an example from the demo in py-amqplib...
+</I>&gt;&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;&gt;<i>  ch.basic_publish(msg, EXCHANGE_NAME, routing_key=topic)
+</I>&gt;&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;&gt;<i> the 'routing_key' in this api, afaict, is one of three keywords: topic,
+</I>&gt;&gt;&gt;&gt;<i> fanout, direct.   what is called exchange_type in the AMQP spec.
+</I>&gt;&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i> Are you referring to amqp_clock.py?
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i> If so, I think that the topic is a the name of a string variable:
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i> TOPIC_PATTERN = '%Y.%m.%d.%w.%H.%M' # Python datetime.strftime() pattern
+</I>&gt;&gt;&gt;<i> .....
+</I>&gt;&gt;&gt;<i> topic = now.strftime(TOPIC_PATTERN)
+</I>&gt;&gt;&gt;<i> ch.basic_publish(msg, EXCHANGE_NAME, routing_key=topic)
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Peter:
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> I can see where that could be a bit confusing to have a variable with the
+</I>&gt;&gt;<i> same name as an exchange type.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> I've updated the example in Mercurial to use a different variable name so
+</I>&gt;&gt;<i> it now says:
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i>  ...
+</I>&gt;&gt;<i>  msg_topic = now.strftime(TOPIC_PATTERN)
+</I>&gt;&gt;<i>  ch.basic_publish(msg, EXCHANGE_NAME, routing_key=msg_topic)
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i>        Barry
+</I>&gt;&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: <A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20081110/58ee4f6f/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20081110/58ee4f6f/attachment.htm</A> 
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001957.html">[rabbitmq-discuss] Stopping
+</A></li>
+	<LI>Next message: <A HREF="001961.html">[rabbitmq-discuss] Exchanges, Routing, and AMQP
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1956">[ date ]</a>
+              <a href="thread.html#1956">[ thread ]</a>
+              <a href="subject.html#1956">[ subject ]</a>
+              <a href="author.html#1956">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

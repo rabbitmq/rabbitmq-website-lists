@@ -1,0 +1,147 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] QueueingConsumer basicPublish safety
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20QueueingConsumer%20basicPublish%20safety&In-Reply-To=%3C4C518B98.2060808%40rabbitmq.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="008188.html">
+   <LINK REL="Next"  HREF="008210.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] QueueingConsumer basicPublish safety</H1>
+    <B>Emile Joubert</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20QueueingConsumer%20basicPublish%20safety&In-Reply-To=%3C4C518B98.2060808%40rabbitmq.com%3E"
+       TITLE="[rabbitmq-discuss] QueueingConsumer basicPublish safety">emile at rabbitmq.com
+       </A><BR>
+    <I>Thu Jul 29 15:09:28 BST 2010</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="008188.html">[rabbitmq-discuss] QueueingConsumer basicPublish safety
+</A></li>
+        <LI>Next message: <A HREF="008210.html">[rabbitmq-discuss] QueueingConsumer basicPublish safety
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#8209">[ date ]</a>
+              <a href="thread.html#8209">[ thread ]</a>
+              <a href="subject.html#8209">[ subject ]</a>
+              <a href="author.html#8209">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>
+Hi Tsuraan,
+
+Channel.flow has been asserted and therefore the basic.publish call has
+blocked. We are aware that our API documentation is incorrect in
+claiming that basic.publish is safe to use in the given context. This
+will be updated.
+
+You need to enable consumption of messages while publishers are
+potentially blocked. This will allow memory pressure on the broker to be
+relieved and publishers to resume eventually. In your example
+consumption and publication happens in the same thread and therefore
+your application gets completely stuck as soon as publication blocks.
+
+You could also consider using separate channels for publishing and
+consuming messages.
+
+Regards
+
+Emile
+
+
+
+
+
+
+
+
+On 27/07/10 21:53, tsuraan wrote:
+&gt;<i> In my program, messages coming from rabbit are handled on different
+</I>&gt;<i> threads, and once the message is handled it is ack'd.  New messages
+</I>&gt;<i> are also sometimes generated, so I need to send them as well.  I know
+</I>&gt;<i> that channels aren't thread-safe, so I wrote a wrapper class around
+</I>&gt;<i> QueueingConsumer that maintains two internal BlockingQueues, one for
+</I>&gt;<i> delivery tags to ack and one for messages to send.  I have public
+</I>&gt;<i> methods ack and publish that take dtags or message representations and
+</I>&gt;<i> enqueue them, and I overrode the nextDelivery(long) method to look
+</I>&gt;<i> like this:
+</I>&gt;<i> 
+</I>&gt;<i>   public QueueingConsumer.Delivery nextDelivery(long timeout)
+</I>&gt;<i>     throws ShutdownSignalException, InterruptedException
+</I>&gt;<i>   {
+</I>&gt;<i>     QueueingConsumer.Delivery delivery = super.nextDelivery(timeout);
+</I>&gt;<i>     this.processAcks();
+</I>&gt;<i>     this.processPublishes();
+</I>&gt;<i>     return delivery;
+</I>&gt;<i>   }
+</I>&gt;<i> 
+</I>&gt;<i> processAcks() iterates through the acks BlockingQueue and calls
+</I>&gt;<i> 
+</I>&gt;<i> this.getChannel().basicAck(l.longValue(), false);
+</I>&gt;<i> 
+</I>&gt;<i> while processPublishes() iterates through the publishes BlockingQueue and calls
+</I>&gt;<i> 
+</I>&gt;<i> this.getChannel().basicPublish(m.exchange, m.key, ...)
+</I>&gt;<i> 
+</I>&gt;<i> The problem I'm having is that, although all these functions are
+</I>&gt;<i> always being called in the thread that the consumer is running in, I'm
+</I>&gt;<i> hanging.  My stack trace looks like this:
+</I>&gt;<i> 
+</I>&gt;<i> Stack trace:
+</I>&gt;<i> java.lang.Object.wait(Native Method)
+</I>&gt;<i> java.lang.Object.wait(Object.java:485)
+</I>&gt;<i> com.rabbitmq.client.impl.AMQChannel.quiescingTransmit(AMQChannel.java:300)
+</I>&gt;<i> com.rabbitmq.client.impl.AMQChannel.transmit(AMQChannel.java:285)
+</I>&gt;<i> com.rabbitmq.client.impl.ChannelN.basicPublish(ChannelN.java:403)
+</I>&gt;<i> com.foo.rabbit.AckingQueueingConsumer.processPublishes(AckingQueueingConsumer.java:136)
+</I>&gt;<i> com.foo.rabbit.AckingQueueingConsumer.nextDelivery(AckingQueueingConsumer.java:40)
+</I>&gt;<i> [handler stuff]
+</I>&gt;<i> java.lang.Thread.run(Thread.java:619)
+</I>&gt;<i> 
+</I>&gt;<i> It seems to have been stuck there for quite a while.  Am I doing
+</I>&gt;<i> something obviously wrong, or is this something complicated?  I'm
+</I>&gt;<i> reasonably sure that the channel is only being used in the thread
+</I>&gt;<i> where the consumer is subscribed, so I'm hoping that I missed some
+</I>&gt;<i> caveat about doing publishes right after a nextDelivery or something.
+</I>&gt;<i> Any tips would be very appreciated.
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="008188.html">[rabbitmq-discuss] QueueingConsumer basicPublish safety
+</A></li>
+	<LI>Next message: <A HREF="008210.html">[rabbitmq-discuss] QueueingConsumer basicPublish safety
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#8209">[ date ]</a>
+              <a href="thread.html#8209">[ thread ]</a>
+              <a href="subject.html#8209">[ subject ]</a>
+              <a href="author.html#8209">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

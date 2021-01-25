@@ -1,0 +1,178 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Create exchanges and queues beforehand
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Create%20exchanges%20and%20queues%20beforehand&In-Reply-To=%3CCABzX%2BqyERYFCBMcHKFpTY2tQr-%3DaVWp1ujw%3D_QQ4xSnJO_GhXA%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="016205.html">
+   <LINK REL="Next"  HREF="016242.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Create exchanges and queues beforehand</H1>
+    <B>Marek Majkowski</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Create%20exchanges%20and%20queues%20beforehand&In-Reply-To=%3CCABzX%2BqyERYFCBMcHKFpTY2tQr-%3DaVWp1ujw%3D_QQ4xSnJO_GhXA%40mail.gmail.com%3E"
+       TITLE="[rabbitmq-discuss] Create exchanges and queues beforehand">majek04 at gmail.com
+       </A><BR>
+    <I>Mon Nov 14 15:34:58 GMT 2011</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="016205.html">[rabbitmq-discuss] Create exchanges and queues beforehand
+</A></li>
+        <LI>Next message: <A HREF="016242.html">[rabbitmq-discuss] Create exchanges and queues beforehand
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#16213">[ date ]</a>
+              <a href="thread.html#16213">[ thread ]</a>
+              <a href="subject.html#16213">[ subject ]</a>
+              <a href="author.html#16213">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>On Mon, Nov 14, 2011 at 12:22, Stefano Ghio &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">steghio at eng.it</A>&gt; wrote:
+&gt;<i> I was fiddling with the Topic examples and I ran into a problem. If I start
+</I>&gt;<i> the client &quot;ReceiveLogsTopic&quot; before the sender &quot;EmitLogTopic&quot; I see
+</I>&gt;<i> everything working fine. Sender sends and client receives and displays
+</I>&gt;<i> right.
+</I>&gt;<i>
+</I>&gt;<i> However, if I start the sender before the client, the message gets sent but
+</I>&gt;<i> then nothing happens, the queue appears to be empty and the client keeps
+</I>&gt;<i> waiting for nothing.
+</I>
+Yes. RabbitMQ doesn't store 'old' messages. After the queue
+is created only 'new' messages will go to it.
+
+If you need to hear about previous messages, you should
+create queue beforehand.
+
+If you can't do it (you don't know about consumers while
+you're sending messages), you probably have it solved
+in an application layer - store data in a database
+and query it after the queue was created.
+(beware race conditions there)
+
+&gt;<i> I think that's correct since the queue is created at runtime and is
+</I>&gt;<i> destroyed when there's nothing more to do with it as explained in the
+</I>&gt;<i> documentation:
+</I>&gt;<i>
+</I>&gt;<i> channel.exchangeDeclare(exchangeName, &quot;direct&quot;, true);
+</I>&gt;<i> String queueName = channel.queueDeclare().getQueue();
+</I>&gt;<i> channel.queueBind(queueName, exchangeName, routingKey);
+</I>&gt;<i>
+</I>&gt;<i> This will actively declare the following objects, both of which can be
+</I>&gt;<i> customised by using additional parameters. Here neither of them have any
+</I>&gt;<i> special arguments.
+</I>&gt;<i>
+</I>&gt;<i> a durable, non-autodelete exchange of &quot;direct&quot; type
+</I>&gt;<i> a non-durable, exclusive, autodelete queue with a generated name
+</I>&gt;<i>
+</I>&gt;<i> What I would like to do instead is (example):
+</I>&gt;<i>
+</I>&gt;<i> 1)
+</I>&gt;<i> create 3 exchanges: EXA, EXB and EXC
+</I>&gt;<i> for every exchange, create 2 queues and bind them to it: Q1 and Q2. All
+</I>&gt;<i> queues have the same name but are not the same object (see attached PNG if
+</I>&gt;<i> needed)
+</I>
+Nope. A queue is identified by a name. The same name= the same
+queue. You can bind multiple exchanges to a queue though,
+and receive data from multiple exchanges on a single queue.
+(also, see some magical properties on received messages,
+you should be able to get routing key and exchange name
+per message)
+
+&gt;<i> 2)
+</I>&gt;<i> send a message to be queued in queue Q1 through EXA
+</I>&gt;<i> send the same message to be queued in queue Q1 through EXB
+</I>&gt;<i> message then is queued in two different queues which happen to have the same
+</I>&gt;<i> name but are binded to different exchanges
+</I>&gt;<i> 3)
+</I>&gt;<i> poll Q1 through EXA to read messages and delete message
+</I>&gt;<i> poll Q1 through EXB to read messages and leave message there
+</I>&gt;<i> message then is no longer in EXA-Q1 but is still available through EXB-Q1
+</I>&gt;<i>
+</I>&gt;<i> I don't and can't know if and when someone will try to send or read
+</I>&gt;<i> messages.
+</I>&gt;<i>
+</I>&gt;<i> I guess it would require me to declare and bind a queue beforehand, maybe by
+</I>&gt;<i> using 3 classes: setUpExchangeAndQueues, sendMessage, pollMessages, but I'm
+</I>&gt;<i> a bit at loss here, could anyone point me in the right direction?
+</I>&gt;<i>
+</I>&gt;<i> I read that:
+</I>&gt;<i>
+</I>&gt;<i> If several clients want to share a queue with a well-known name, this code
+</I>&gt;<i> would be appropriate:
+</I>&gt;<i>
+</I>&gt;<i> channel.exchangeDeclare(exchangeName, &quot;direct&quot;, true);
+</I>&gt;<i> channel.queueDeclare(queueName, true, false, false, null);
+</I>&gt;<i> channel.queueBind(queueName, exchangeName, routingKey);
+</I>&gt;<i>
+</I>&gt;<i> This will actively declare:
+</I>&gt;<i>
+</I>&gt;<i> a durable, non-autodelete exchange of &quot;direct&quot; type
+</I>&gt;<i> a durable, non-exclusive, non-autodelete queue with a well-known name
+</I>&gt;<i>
+</I>&gt;<i> Tried it but failed.
+</I>&gt;<i>
+</I>&gt;<i> Please advise, I'm going crazy on this.
+</I>
+Sorry, I'm not really following the last part.
+
+Marek
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="016205.html">[rabbitmq-discuss] Create exchanges and queues beforehand
+</A></li>
+	<LI>Next message: <A HREF="016242.html">[rabbitmq-discuss] Create exchanges and queues beforehand
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#16213">[ date ]</a>
+              <a href="thread.html#16213">[ thread ]</a>
+              <a href="subject.html#16213">[ subject ]</a>
+              <a href="author.html#16213">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

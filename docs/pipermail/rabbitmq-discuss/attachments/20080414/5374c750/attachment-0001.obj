@@ -1,0 +1,63 @@
+-module(amqp_async_pub).
+
+-include_lib("rabbitmq_server/include/rabbit_framing.hrl").
+-include_lib("rabbitmq_server/include/rabbit.hrl").
+
+-export([message_publish/1]).
+
+message_publish(Payload) ->
+    User = Password = "guest",
+    Host = "127.0.0.1",
+    Realm = <<"/data">>,
+
+    %% Start a connection to the server
+
+    Connection = amqp_connection:start(User, Password, Host),
+    %Connection = amqp_connection:start(User, Password),
+    %io:format("Connection: ~p~n",[Connection]),
+    %% Once you have a connection to the server, you can start an AMQP channel gain access to a realm
+
+    Channel = amqp_connection:open_channel(Connection),
+    Access = #'access.request'{realm = Realm,
+                               exclusive = false,
+                               passive = true,
+                               active = true,
+                               write = true,
+                               read = true},
+    #'access.request_ok'{ticket = Ticket} = amqp_channel:call(Channel, Access),
+    
+    X = <<"x">>,
+    RoutingKey = <<"a.b.c.*">>,
+    %Payload = <<"foobar">>,
+    
+    ExchangeDeclare = #'exchange.declare'{ticket = Ticket, exchange = X,  
+                                          type = <<"topic">>,
+                                          passive = false, 
+                                          durable =  false,
+                                          auto_delete = false,
+                                          internal = false,
+                                          nowait = false, 
+                                          arguments =  []},
+    #'exchange.declare_ok'{} = amqp_channel:call(Channel, ExchangeDeclare), 
+    
+    BasicPublish = #'basic.publish'{ticket = Ticket,
+                                    exchange = X,
+                                    routing_key = RoutingKey,
+                                    mandatory = false,
+                                    immediate = false},
+    Content = #content{class_id = 60,
+         properties = amqp_util:basic_properties(),
+         properties_bin = none,
+         payload_fragments_rev = [Payload]
+        },
+    amqp_channel:cast(Channel, BasicPublish, Content),
+    
+    %% After you've finished with the channel and connection you should close them down
+
+    ChannelClose = #'channel.close'{reply_code = 200, reply_text = <<"Goodbye">>,
+                                    class_id = 0, method_id = 0},
+    #'channel.close_ok'{} = amqp_channel:call(Channel, ChannelClose),
+    ConnectionClose = #'connection.close'{reply_code = 200, reply_text = <<"Goodbye">>,
+                                          class_id = 0, method_id = 0},
+    #'connection.close_ok'{} = amqp_connection:close(Connection, ConnectionClose),
+    ok.

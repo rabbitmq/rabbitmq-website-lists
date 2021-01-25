@@ -1,0 +1,286 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] suspending and resuming a QueueingConsumer
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20suspending%20and%20resuming%20a%20QueueingConsumer&In-Reply-To=20100114112459.GK18681%40mrnibble.lshift.net">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="005884.html">
+   <LINK REL="Next"  HREF="005890.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] suspending and resuming a QueueingConsumer</H1>
+    <B>Jim Irrer</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20suspending%20and%20resuming%20a%20QueueingConsumer&In-Reply-To=20100114112459.GK18681%40mrnibble.lshift.net"
+       TITLE="[rabbitmq-discuss] suspending and resuming a QueueingConsumer">irrer at umich.edu
+       </A><BR>
+    <I>Thu Jan 14 16:19:41 GMT 2010</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="005884.html">[rabbitmq-discuss] suspending and resuming a QueueingConsumer
+</A></li>
+        <LI>Next message: <A HREF="005890.html">[rabbitmq-discuss] suspending and resuming a QueueingConsumer
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#5889">[ date ]</a>
+              <a href="thread.html#5889">[ thread ]</a>
+              <a href="subject.html#5889">[ subject ]</a>
+              <a href="author.html#5889">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Matthew -
+
+Thanks for trying but that does not really help.  I want to interrupt a
+free-running
+process that has already posted the read.  To explore this, I modified
+RabbitMQ's
+SimpleConsumer class (below) to post a read (via the nextDelivery method),
+and
+while it is waiting, have another thread close the channel.
+
+Thanks,
+
+- Jim
+
+//   The contents of this file are subject to the Mozilla Public License
+//   Version 1.1 (the &quot;License&quot;); you may not use this file except in
+//   compliance with the License. You may obtain a copy of the License at
+//   <A HREF="http://www.mozilla.org/MPL/">http://www.mozilla.org/MPL/</A>
+//
+//   Software distributed under the License is distributed on an &quot;AS IS&quot;
+//   basis, WITHOUT WARRANTY OF ANY KIND, either express or implied. See the
+//   License for the specific language governing rights and limitations
+//   under the License.
+//
+//   The Original Code is RabbitMQ.
+//
+//   The Initial Developers of the Original Code are LShift Ltd,
+//   Cohesive Financial Technologies LLC, and Rabbit Technologies Ltd.
+//
+//   Portions created before 22-Nov-2008 00:00:00 GMT by LShift Ltd,
+//   Cohesive Financial Technologies LLC, or Rabbit Technologies Ltd
+//   are Copyright (C) 2007-2008 LShift Ltd, Cohesive Financial
+//   Technologies LLC, and Rabbit Technologies Ltd.
+//
+//   Portions created by LShift Ltd are Copyright (C) 2007-2009 LShift
+//   Ltd. Portions created by Cohesive Financial Technologies LLC are
+//   Copyright (C) 2007-2009 Cohesive Financial Technologies
+//   LLC. Portions created by Rabbit Technologies Ltd are Copyright
+//   (C) 2007-2009 Rabbit Technologies Ltd.
+//
+//   All Rights Reserved.
+//
+//   Contributor(s): ______________________________________.
+//
+
+package com.rabbitmq.examples;
+
+import com.rabbitmq.client.AMQP;
+import com.rabbitmq.client.Channel;
+import com.rabbitmq.client.Connection;
+import com.rabbitmq.client.ConnectionFactory;
+import com.rabbitmq.client.QueueingConsumer;
+
+public class SimpleConsumerCancel implements Runnable {
+
+    private static int count = 0;
+
+    private static Channel channel = null;
+
+    private static String consumerTag = null;
+
+    public static void main(String[] args) {
+        try {
+            String hostName = (args.length &gt; 0) ? args[0] : &quot;172.20.125.34&quot;;
+            int portNumber = (args.length &gt; 1) ? Integer.parseInt(args[1]) :
+AMQP.PROTOCOL.PORT;
+            String queueName = (args.length &gt; 2) ? args[2] : &quot;SimpleQueue&quot;;
+
+            ConnectionFactory connFactory = new ConnectionFactory();
+            Connection conn = connFactory.newConnection(hostName,
+portNumber);
+
+            channel = conn.createChannel();
+
+            channel.queueDeclare(queueName);
+
+            Thread thread = new Thread(new SimpleConsumerCancel());
+            thread.start();
+
+            QueueingConsumer consumer = new QueueingConsumer(channel);
+            consumerTag = channel.basicConsume(queueName, consumer);
+            System.out.println(&quot;consumerTag: &quot; + consumerTag);
+            while (true) {
+                try {
+                    System.out.println(&quot;Waiting for delivery.&quot;);
+                    QueueingConsumer.Delivery delivery =
+consumer.nextDelivery();
+                    System.out.println(&quot;\nGot delivery.&quot;);
+                    count++;
+                    System.out.println(&quot;SimpleConsumerCancel got Message: &quot;
++ new String(delivery.getBody()) + &quot; : &quot; + count);
+
+channel.basicAck(delivery.getEnvelope().getDeliveryTag(), false);
+                }
+                catch (Exception ex) {
+                    System.err.println(&quot;Read thread caught exception: &quot; +
+ex);
+
+                    channel = conn.createChannel();
+                    channel.queueDeclare(queueName);
+                    consumer = new QueueingConsumer(channel);
+                    consumerTag = channel.basicConsume(queueName, consumer);
+                    System.out.println(&quot;consumerTag: &quot; + consumerTag);
+                }
+            }
+        }
+        catch (Exception ex) {
+            System.err.println(&quot;Main thread caught exception: &quot; + ex);
+            //ex.printStackTrace();
+        }
+        System.out.println(&quot;\nMain thread exiting normally.&quot;);
+    }
+
+    @Override
+    public void run() {
+
+        while (true) {
+            try {
+                System.out.println(&quot;Cancel thread is sleeping...&quot;);
+                Thread.sleep(4000);
+                System.out.println(&quot;Going to cancel channel with
+consumerTag: &quot; + consumerTag);
+                // channel.basicCancel(consumerTag);
+                channel.close();
+                // channel.abort();
+                System.out.println(&quot;\nCancelled channel with consumerTag: &quot;
++ consumerTag);
+            }
+            catch (Exception ex) {
+                System.err.println(&quot;SimpleConsumerCancel ex: &quot; + ex);
+                //ex.printStackTrace();
+            }
+        }
+
+    }
+}
+
+
+
+Jim Irrer     <A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">irrer at umich.edu</A>       (734) 647-4409
+University of Michigan Hospital Radiation Oncology
+519 W. William St.             Ann Arbor, MI 48103
+
+
+On Thu, Jan 14, 2010 at 6:24 AM, Matthew Sackman &lt;<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">matthew at lshift.net</A>&gt; wrote:
+
+&gt;<i> Hi Jim,
+</I>&gt;<i>
+</I>&gt;<i> On Wed, Jan 13, 2010 at 02:06:57PM -0500, Jim Irrer wrote:
+</I>&gt;<i> &gt; I have several consumers reading from the same queue.  I would like
+</I>&gt;<i> &gt; to be able to interrupt their pending read to suspend and resume any
+</I>&gt;<i> &gt; one of them.   I've played around with:
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; Channel.basicCancel(consumerTag) : don't know how to resume
+</I>&gt;<i> &gt; Channel.abort()    produces com.rabbitmq.client.ShutdownSignalException
+</I>&gt;<i> &gt; Channel.close()   produces com.rabbitmq.client.ShutdownSignalException
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; The close() and abort() methods seem to act about the same.  I can resume
+</I>&gt;<i> &gt; reading from the queue by creating a new channel and a new
+</I>&gt;<i> QueueingConsumer.
+</I>&gt;<i> &gt; I could not figure out how to resume after a basicCancel.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; Is using close() and then re-constructing the channel and
+</I>&gt;<i> QueueingConsumer
+</I>&gt;<i> &gt; the right way to go?  Will resources be properly taken care of by garbage
+</I>&gt;<i> &gt; collection?
+</I>&gt;<i>
+</I>&gt;<i> What I would do is set QoS prefetch to 1, and make sure that you're
+</I>&gt;<i> doing ack-ing manually (i.e. don't set noAck). Then, when you want to
+</I>&gt;<i> &quot;suspend&quot;, just delay acking the last message you received. That'll
+</I>&gt;<i> prevent further messages being sent to you. Once you want to resume,
+</I>&gt;<i> send the ack and then the next message will be sent down to you. Does
+</I>&gt;<i> that help?
+</I>&gt;<i>
+</I>&gt;<i> &gt; BTW - I use the consumerTag returned by Channel.basicConsume(queueName,
+</I>&gt;<i> &gt; consumer)
+</I>&gt;<i> &gt; for the argument to Channel.basicCancel, eg: *
+</I>&gt;<i> &gt; amq.ctag-1m/H7+SDcZpbzTMgsUyhNg==* .
+</I>&gt;<i> &gt; When called, it prints:
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; Consumer null method handleCancelOk for channel AMQChannel(amqp://
+</I>&gt;<i> &gt; <A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">guest at 172.20.125.34</A>:5672/,1) threw an exception:
+</I>&gt;<i> &gt; java.lang.NullPointerException
+</I>&gt;<i> &gt;     at
+</I>&gt;<i> com.rabbitmq.client.impl.ChannelN$2.transformReply(ChannelN.java:728)
+</I>&gt;<i> &gt;     at
+</I>&gt;<i> com.rabbitmq.client.impl.ChannelN$2.transformReply(ChannelN.java:721)
+</I>&gt;<i> &gt;     at
+</I>&gt;<i> &gt;
+</I>&gt;<i> com.rabbitmq.client.impl.AMQChannel$BlockingRpcContinuation.handleCommand(AMQChannel.java:327)
+</I>&gt;<i> &gt;     at
+</I>&gt;<i> &gt;
+</I>&gt;<i> com.rabbitmq.client.impl.AMQChannel.handleCompleteInboundCommand(AMQChannel.java:162)
+</I>&gt;<i> &gt;     at
+</I>&gt;<i> com.rabbitmq.client.impl.AMQChannel.handleFrame(AMQChannel.java:110)
+</I>&gt;<i> &gt;     at
+</I>&gt;<i> &gt;
+</I>&gt;<i> com.rabbitmq.client.impl.AMQConnection$MainLoop.run(AMQConnection.java:456)
+</I>&gt;<i>
+</I>&gt;<i> The Javadoc says:
+</I>&gt;<i>
+</I>&gt;<i>    /**
+</I>&gt;<i>     * Cancel a consumer. Calls the consumer's {@link
+</I>&gt;<i> Consumer#handleCancelOk}
+</I>&gt;<i>     * method before returning.
+</I>&gt;<i>     * @param consumerTag a client- or server-generated consumer tag to
+</I>&gt;<i> establish context
+</I>&gt;<i>     * @throws java.io.IOException if an error is encountered
+</I>&gt;<i>     * @see com.rabbitmq.client.AMQP.Basic.Cancel
+</I>&gt;<i>     * @see com.rabbitmq.client.AMQP.Basic.CancelOk
+</I>&gt;<i>     */
+</I>&gt;<i>    void basicCancel(String consumerTag) throws IOException;
+</I>&gt;<i>
+</I>&gt;<i> The DefaultConsumer does have the handleCancelOk filled in, and Consumer
+</I>&gt;<i> is an interface, so I'm a little alarmed by the possibility that it
+</I>&gt;<i> can't find the handleCancelOk method. What consumer class are you using?
+</I>&gt;<i> - in short, could you send us a small code example that exhibits this
+</I>&gt;<i> behaviour?
+</I>&gt;<i>
+</I>&gt;<i> Best wishes,
+</I>&gt;<i>
+</I>&gt;<i> Matthew
+</I>&gt;<i>
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;<i> <A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;<i> <A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: <A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20100114/65aa8bcb/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20100114/65aa8bcb/attachment.htm</A> 
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="005884.html">[rabbitmq-discuss] suspending and resuming a QueueingConsumer
+</A></li>
+	<LI>Next message: <A HREF="005890.html">[rabbitmq-discuss] suspending and resuming a QueueingConsumer
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#5889">[ date ]</a>
+              <a href="thread.html#5889">[ thread ]</a>
+              <a href="subject.html#5889">[ subject ]</a>
+              <a href="author.html#5889">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

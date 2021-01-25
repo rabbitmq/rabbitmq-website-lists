@@ -1,0 +1,154 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] channel.basicCancel hangs
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20channel.basicCancel%20hangs&In-Reply-To=%3CEB8A601A-0395-4162-B442-FF9A4CF00AFC%40rabbitmq.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="027396.html">
+   <LINK REL="Next"  HREF="027389.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] channel.basicCancel hangs</H1>
+    <B>Steve Powell</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20channel.basicCancel%20hangs&In-Reply-To=%3CEB8A601A-0395-4162-B442-FF9A4CF00AFC%40rabbitmq.com%3E"
+       TITLE="[rabbitmq-discuss] channel.basicCancel hangs">steve at rabbitmq.com
+       </A><BR>
+    <I>Wed May 22 15:42:22 BST 2013</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="027396.html">[rabbitmq-discuss] channel.basicCancel hangs
+</A></li>
+        <LI>Next message: <A HREF="027389.html">[rabbitmq-discuss] STOMP incompatibility upgrading 2.7 to 3.1:	escaping colons in header values
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#27420">[ date ]</a>
+              <a href="thread.html#27420">[ thread ]</a>
+              <a href="subject.html#27420">[ subject ]</a>
+              <a href="author.html#27420">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi Kristian,
+
+This behaviour seems incorrect: you should not block forever waiting for
+the Basic.CancelOk reply to come back. There could be a number of
+reasons for this but you *shouldn't* have to acknowledge all messages
+before being able to cancel a consumer.
+
+I wonder if the consumer is executing other channel methods in its
+callbacks? Possibly Ack, which should be ok; possibly other methods.
+
+It is entirely possible for consumer callbacks
+(handleDelivery/handleCancel/handleCancelOK etc.) to be called *after*
+you have called the basicCancel() method.
+
+There are two reasons for this -- one is that the communications with the
+server are asynchronous: deliveries might continue to be made after
+sending the Cancel frame and before getting the CancelOk reply.
+
+The other reason is that requests to call the callbacks are queued, and
+executed on their own thread in sequence for each channel. A number of
+callbacks may be queued when the basicCancel() method is called. They
+may not have finished executing even when the reply to the basic.cancel
+is received (Basic.CancelOk). Only when the reply is received is the
+call to handleCancelOk() put on the queue for execution, so that it is
+the last callback to be executed.
+
+For these reasons, you shouldn't consider the Consumer to be stopped
+properly until the last callback (handleCancelOk() or handleCancel())
+has been called.
+
+If one of the callbacks being processed makes a blocking call, even this
+shouldn't block the reply unless it blocks the channel somehow. So what
+could? I don't know, unless you are issuing a channel.close() or
+something in your consumer callback methods. There could be a bug here
+we ought to know about.
+
+If you have a stack dump at the point of the hang (jstack is probably
+the easiest way to get this) we should be able to tell what the other
+threads are doing, and then get a clue as to why you are blocked. The
+main thread that is hung is likely to be uninteresting -- it is probably
+waiting for the Basic.CancelOk frame to be received (on a getReply()
+call).
+
+So please could you tell us a little more about your application? In
+particular, what is your Consumer like? Are the handleDelivery()
+callbacks doing some unusual work with the channel, for instance?
+Anything that would help us get to the bottom of this would be useful.
+
+Steve Powell  [Cell: +44-7815-838-558]
+Links: Pivotal, SpringSource, VMware, Virgo, RabbitMQ.
+-----------------------------------------------------------------------
+Good design:
+   is innovative, useful, aesthetic;
+   is understandable, unobtrusive, honest;
+   is long-lasting, thorough, environmentally friendly;
+   and is as little design as possible.
+Copyright Dieter Rams, amended March 2003; October 2009; and August 2012
+
+On 22 May 2013, at 02:19, Kristian Lind &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">klindp at gmail.com</A>&gt; wrote:
+
+&gt;<i> I found the problem... I had a message that was not ack.. so now before closing the channel I ack the msg._______________________________________________
+</I>&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20130522/0e66de5e/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20130522/0e66de5e/attachment.htm</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="027396.html">[rabbitmq-discuss] channel.basicCancel hangs
+</A></li>
+	<LI>Next message: <A HREF="027389.html">[rabbitmq-discuss] STOMP incompatibility upgrading 2.7 to 3.1:	escaping colons in header values
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#27420">[ date ]</a>
+              <a href="thread.html#27420">[ thread ]</a>
+              <a href="subject.html#27420">[ subject ]</a>
+              <a href="author.html#27420">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

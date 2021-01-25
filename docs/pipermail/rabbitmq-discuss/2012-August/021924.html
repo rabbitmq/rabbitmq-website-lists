@@ -1,0 +1,189 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] rabbitmq cluster manage/ops questions
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20rabbitmq%20cluster%20manage/ops%20questions&In-Reply-To=%3C87pq6rnmoj.wl%25francesco%40rabbitmq.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="021915.html">
+   <LINK REL="Next"  HREF="021926.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] rabbitmq cluster manage/ops questions</H1>
+    <B>Francesco Mazzoli</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20rabbitmq%20cluster%20manage/ops%20questions&In-Reply-To=%3C87pq6rnmoj.wl%25francesco%40rabbitmq.com%3E"
+       TITLE="[rabbitmq-discuss] rabbitmq cluster manage/ops questions">francesco at rabbitmq.com
+       </A><BR>
+    <I>Thu Aug 16 11:41:48 BST 2012</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="021915.html">[rabbitmq-discuss] rabbitmq cluster manage/ops questions
+</A></li>
+        <LI>Next message: <A HREF="021926.html">[rabbitmq-discuss] rabbitmq cluster manage/ops questions
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#21924">[ date ]</a>
+              <a href="thread.html#21924">[ thread ]</a>
+              <a href="subject.html#21924">[ subject ]</a>
+              <a href="author.html#21924">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi Torin,
+
+At Wed, 15 Aug 2012 12:33:08 -0700,
+Torin Sandall wrote:
+&gt;<i> I'm working on a project involving clustered rabbitmq brokers and I would like
+</I>&gt;<i> to gain a better understanding of the operational constraints. I've read the
+</I>&gt;<i> clustering article on the site, but I feel like I don't have a solid
+</I>&gt;<i> understanding of it yet.
+</I>&gt;<i> 
+</I>&gt;<i> Specific questions:
+</I>&gt;<i> 
+</I>&gt;<i> 1) What constraints need to be observed to guarantee the cluster state remains
+</I>&gt;<i> consistent. I.e., the cluster will not fall into a &quot;split brain&quot; state.
+</I>
+There are various situations that will mess up clustering.  In general, problems
+arise when tables change on some node while other cluster nodes are unaware of
+the change.  When something like that happen, mnesia will spit out a &quot;fatal&quot;
+error and rabbit will die.
+
+Common scenarios:
+
+  1. A and B are in a cluster.  The connection between A and B is severed, and
+     some changes are made to the tables in A or/and B.  When the connection is
+     re-established, mnesia will detect that the tables have diverged and die.
+  2. A and B are in a cluster.  A is stopped.  B is stopped, reset, and brought
+     back online.  A is brought back online, it tries to cluster with B but B's
+     schema is now incompatible with A's -&gt; A dies.
+  3. A gets clustered to B as a ram node.  C gets clustered to B as a disc
+     node. A is stopped.  B is stopped, reset and started again.  A is stopped
+     and started again.  A dies because it still thinks that B is in the
+     cluster, given that it is a ram node.
+
+We can't do much about 1.
+
+2 and 3 have many variations, and we are working to make the situation much
+better - the changes should be available in the next feature release.
+
+&gt;<i> 2) Is there anything invalid or problematic about the tests I describe below?
+</I>&gt;<i> 
+</I>&gt;<i> I've been running tests involving 2-3 clustered brokers. All brokers are
+</I>&gt;<i> running 2.7.1. The cookies are synched properly.
+</I>
+Please upgrade to the last version :).
+
+&gt;<i> The cluster can be in one of the following states:
+</I>&gt;<i> 
+</I>&gt;<i> 2 disc
+</I>&gt;<i> 2 disc, 1 ram
+</I>&gt;<i> 3 disc
+</I>&gt;<i> 
+</I>&gt;<i> In any of the states, my test can kill one of the brokers (ram or disc, it
+</I>&gt;<i> doesn't discriminate.) If a broker is killed the next event the test would
+</I>&gt;<i> execute is either a restart of the dead broker or a replacement of the dead
+</I>&gt;<i> broker. Replacement is done by deleting the mnesia database on that node and
+</I>&gt;<i> then service start, stop_app, reset, force_cluster, start_app.
+</I>
+Mhm.  Using `force_cluster' is almost always a bad idea.  However in the current
+state of things it is necessary sometimes.  When the mentioned clustering
+changes will be released `force_cluster' will be removed, since there will be no
+reasonable use cases.
+
+For example your use case is a bad one, since `force_cluster' relies on the node
+you're clustering to already have tables matching the other nodes', but that
+will not be the case since you have just reset it.
+
+In general make sure that you know what you're doing when you're using it.
+
+&gt;<i> In the 2 broker-cluster states, the cluster can be grown to size of 3.
+</I>&gt;<i> 
+</I>&gt;<i> In the 3 broker-cluster states, the cluster can be shrunk to size of 2 with a
+</I>&gt;<i> constraint that it won't ever shrink to 1 disc/1 ram.
+</I>&gt;<i> 
+</I>&gt;<i> Growing and shrinking of the cluster is always done by running rabbitmqctl
+</I>&gt;<i> commands. I.e., there's no cluster configuration in the rabbitmq.config
+</I>&gt;<i> file. For those who will ask, the commands I'm running to grow and shrink the
+</I>&gt;<i> cluster are:
+</I>&gt;<i> 
+</I>&gt;<i> 1) grow cluster by adding a ram node
+</I>&gt;<i> rabbitmqctl stop_app
+</I>&gt;<i> rabbitmqctl reset
+</I>&gt;<i> rabbitmqctl cluster &lt;existing-disc-node&gt;
+</I>&gt;<i> rabbitmqctl start_app
+</I>&gt;<i> 
+</I>&gt;<i> 2) grow cluster by adding a disc node
+</I>&gt;<i> rabbitmqctl stop_app
+</I>&gt;<i> rabbitmqctl reset
+</I>&gt;<i> rabbitmqctl cluster &lt;existing-disc-node&gt; &lt;node-to-be-added&gt;
+</I>&gt;<i> rabbitmqctl stop_app
+</I>&gt;<i> 
+</I>&gt;<i> 3) shrink cluster by removing a node
+</I>&gt;<i> rabbitmqctl stop_app
+</I>&gt;<i> rabbitmqctl reset
+</I>&gt;<i> rabbitmqctl start_app
+</I>
+These all look fine.
+
+&gt;<i> I'm not inserting any delays between execution of events (other than the
+</I>&gt;<i> implicit delay of having to ssh into the server and execute the command.)
+</I>&gt;<i> 
+</I>&gt;<i> One issue I've encountered so far:
+</I>&gt;<i> 
+</I>&gt;<i> 1) rabbit fails to start after shrinking 2 disc/1 ram cluster to 2 disc
+</I>&gt;<i> cluster and then killing a disc node. Here's teh log from the disc node which
+</I>&gt;<i> fails to start. There's also output from my test script at the bottom which
+</I>&gt;<i> shows the cluster status: <A HREF="http://pastebin.com/95McUzkb">http://pastebin.com/95McUzkb</A>
+</I>
+Uhm.  Could you paste the test code or what you're doing in the test in detail?
+My suspicion is that you're using `force_reset' as you described above, and thus
+the schema tables don't match.
+
+--
+Francesco * Often in error, never in doubt
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="021915.html">[rabbitmq-discuss] rabbitmq cluster manage/ops questions
+</A></li>
+	<LI>Next message: <A HREF="021926.html">[rabbitmq-discuss] rabbitmq cluster manage/ops questions
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#21924">[ date ]</a>
+              <a href="thread.html#21924">[ thread ]</a>
+              <a href="subject.html#21924">[ subject ]</a>
+              <a href="author.html#21924">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

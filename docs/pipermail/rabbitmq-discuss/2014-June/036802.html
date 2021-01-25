@@ -1,0 +1,168 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] SocketException when invoking	model.BasicPublish
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20SocketException%20when%20invoking%0A%09model.BasicPublish&In-Reply-To=%3CCAJGQrQDOMbs2HkUk%3DMS8O6a-sVhhFJP9AfYBvdQpHjaw%2BsyfBg%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="036775.html">
+   <LINK REL="Next"  HREF="036726.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] SocketException when invoking	model.BasicPublish</H1>
+    <B>Scott McFadden</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20SocketException%20when%20invoking%0A%09model.BasicPublish&In-Reply-To=%3CCAJGQrQDOMbs2HkUk%3DMS8O6a-sVhhFJP9AfYBvdQpHjaw%2BsyfBg%40mail.gmail.com%3E"
+       TITLE="[rabbitmq-discuss] SocketException when invoking	model.BasicPublish">scott.kendall.mcfadden at gmail.com
+       </A><BR>
+    <I>Fri Jun 20 16:27:28 BST 2014</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="036775.html">[rabbitmq-discuss] SocketException when invoking model.BasicPublish
+</A></li>
+        <LI>Next message: <A HREF="036726.html">[rabbitmq-discuss] SocketException when invoking	model.BasicPublish
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#36802">[ date ]</a>
+              <a href="thread.html#36802">[ thread ]</a>
+              <a href="subject.html#36802">[ subject ]</a>
+              <a href="author.html#36802">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi Michael, had to decompile RabbitMQ.Client assembly and step through to
+find the issue.  Apparently, my code doesn't always pass a non-null
+messageId.  Setting a null messageId on the basicproperties is allowed but
+the writing of a null messageId on the wire will cause an error inside
+of RabbitMQ.Client.  So moral of the story is don't ever set a
+basicproperties property unless it's non null (at least as of
+RabbitMQ.Client 3.3.0).
+
+I put connection and channel logic back in the same method and it works
+great.   Here is new working version.
+
+private void PublishMessage(byte[] message, Type messageType, string
+contentType, string messageId)
+        {
+            if (message == null || message.Length == 0)
+            {
+                throw new ArgumentNullException(&quot;message&quot;);
+            }
+            if (messageType == null)
+            {
+                throw new ArgumentNullException(&quot;messageType&quot;);
+            }
+            if (String.IsNullOrEmpty(contentType))
+            {
+                throw new ArgumentNullException(&quot;contentType&quot;);
+            }
+ //            if (String.IsNullOrEmpty(messageId))
+//            {
+//                throw new ArgumentNullException(&quot;messageId&quot;);
+//            }
+            var factory = new ConnectionFactory() {VirtualHost =
+this.VirtualHost, HostName = this.Host, UserName = this.User, Password =
+this.Password };
+            using (var connection = factory.CreateConnection())
+            using (var channel = connection.CreateModel())
+            {
+                IBasicProperties props = channel.CreateBasicProperties();
+                props.SetPersistent(this.PersistMessages);
+
+                //Mime time
+                props.ContentType = contentType;
+                props.Type = messageType.FullName;
+                if (!String.IsNullOrEmpty(messageId))
+                {
+                    //Must be careful not to set IBasicProperties with
+possible null value as this will cause serialization errors downstream
+(RabbitMQ.Client 3.3.0)
+                    props.MessageId = messageId;
+                }
+                //Note, may get AlreadyClosedException here if publishing
+to a incorrect exchange name
+                channel.BasicPublish(this.ExchangeName, this.RoutingKey,
+props, message);
+            }
+        }
+
+thanks for the help.
+
+scott
+
+
+On Wed, Jun 18, 2014 at 10:05 PM, Michael Klishin &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">mklishin at gopivotal.com</A>&gt;
+wrote:
+
+&gt;<i>  On 19 June 2014 at 07:02:17, Scott McFadden (
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">scott.kendall.mcfadden at gmail.com</A>) wrote:
+</I>&gt;<i> &gt; &gt; It makes me think I screwed up the server side configuration
+</I>&gt;<i> &gt; when reinstalling.
+</I>&gt;<i>
+</I>&gt;<i> There is no configuration that can affect framing/frame interleaving in
+</I>&gt;<i> the client.
+</I>&gt;<i> This is also the kind of issues that we'd see reported constantly if it
+</I>&gt;<i> was a client
+</I>&gt;<i> issue. Finally, it happens on a brand new connection.
+</I>&gt;<i>
+</I>&gt;<i> I'd recommend doing two things:
+</I>&gt;<i>
+</I>&gt;<i>  * Running a tracer proxy in front of RabbitMQ [1] to see what's being
+</I>&gt;<i> sent on the wire
+</I>&gt;<i>  * Open a connection on app start if you can instead of opening a new one
+</I>&gt;<i> per channel
+</I>&gt;<i>
+</I>&gt;<i> If the latter does not change anything, please post the output of the
+</I>&gt;<i> tracer.
+</I>&gt;<i>
+</I>&gt;<i> 1. <A HREF="http://www.rabbitmq.com/java-tools.html,">http://www.rabbitmq.com/java-tools.html,</A> see Tracer
+</I>&gt;<i> --
+</I>&gt;<i> MK
+</I>&gt;<i>
+</I>&gt;<i> Software Engineer, Pivotal/RabbitMQ
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20140620/88e2af97/attachment.html">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20140620/88e2af97/attachment.html</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="036775.html">[rabbitmq-discuss] SocketException when invoking model.BasicPublish
+</A></li>
+	<LI>Next message: <A HREF="036726.html">[rabbitmq-discuss] SocketException when invoking	model.BasicPublish
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#36802">[ date ]</a>
+              <a href="thread.html#36802">[ thread ]</a>
+              <a href="subject.html#36802">[ subject ]</a>
+              <a href="author.html#36802">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,473 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] building chat
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20building%20chat&In-Reply-To=167204d20908091425i58aaad1bi938372f03773ec83%40mail.gmail.com">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="004453.html">
+   <LINK REL="Next"  HREF="004462.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] building chat</H1>
+    <B>Alexis Richardson</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20building%20chat&In-Reply-To=167204d20908091425i58aaad1bi938372f03773ec83%40mail.gmail.com"
+       TITLE="[rabbitmq-discuss] building chat">alexis.richardson at gmail.com
+       </A><BR>
+    <I>Mon Aug 10 09:26:58 BST 2009</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="004453.html">[rabbitmq-discuss] building chat
+</A></li>
+        <LI>Next message: <A HREF="004462.html">[rabbitmq-discuss] simple.publish over the JSON RPC interface
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#4459">[ date ]</a>
+              <a href="thread.html#4459">[ thread ]</a>
+              <a href="subject.html#4459">[ subject ]</a>
+              <a href="author.html#4459">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Ben,
+
+I've had a few more thoughts about your questions and wanted to
+summarise them here:
+
+My understanding is that you are curious about RabbitMQ and AMQP, so
+you are interested in how chat would be implemented using them.
+That's a great idea.
+
+I think the best approach is if you hack up a quick prototype.  Doing
+this will quickly show you what the main moving parts are, and how to
+fit them together.  Because AMQP is designed for general purpose
+messaging including queueing and pubsub, as opposed to 'single use
+special cases' such as IM chat or MUC chat, it is abstract and
+flexible.  This makes it a great tool for building systems but working
+out how to build them in the best way, may not be immediately obvious.
+ So getting your hands dirty with some immediate coding may be the
+best way to make things more concrete.
+
+You asked about using XMPP with RabbitMQ.  I would not recommend using
+this initially.  It will not show you anything useful about how AMQP
+works.  The implementation enables RabbitMQ AMQP messages to be
+exposed through an XMPP IM interface, so that (eg) people can chat
+with RabbitMQ, or with each other through RabbitMQ.  This means you
+can use RabbitMQ as a 'drop in' pubsub server behind an XMPP IM
+facade.  This is very useful.  However note that RabbitMQ's XMPP
+adaptor is for vanilla IM only and does not implement XEP-0045 or
+XEP-0060 or PEP.
+
+Implicit in your question is that you'd be interested in whether AMQP
+and RabbitMQ would be a good tool for implementing a chat system.  In
+my view, the answer to that is yes: you should be able to build your
+own very powerful chat system using RabbitMQ AMQP.  Moreover, RabbitMQ
+is built with erlang which is also used in ejbabberd XMPP, in
+Facebook's chat app, and afaik for parts of 37signals Campfire.
+
+Basically, to build a chat system using RabbitMQ, including presence
+updates, friend requests, etc, you need to think of every action in
+your system as being some sort of message.  Then ask what is the best
+routing model so that the right messages get delivered to the right
+queues and on to the right consumers.
+
+To illustrate my point about AMQP's flexibility, consider the following:
+
+On the one hand, you may see IM as an abstraction of a network
+connection (eg TCP) between two users via a chat server.  In this
+view, the job of an IM client is to send messages that one user types,
+over some network connection, to the other user, and vice versa.  If
+the network connection goes down then the user may still see their
+messages appearing on their own client GUI, but they may not know
+which messages (if any) have been delivered to the chat server or
+indeed to the other user.
+
+So to implement this you could create a client that wrote all of its
+users messages to the GUI screen, and concurrently attempted to send
+them over the wire.  In an AMQP based implementation, these messages
+would be AMQP messages sent to eg a direct exchange on a RabbitMQ
+broker acting as the chat server.  The messages might have the routing
+key &quot;chat_ID_from_user_ID&quot;.  Then, the second user would have a queue,
+which was bound to the exchange, with just that key.
+
+In other words the second user's queue would be used ONLY to buffer
+messages sent in chat chat_ID and from the first user to the second.
+The second user would be the sole consumer from that queue and it
+would contain only those messages from the first user in that chat,
+that had been processed by the broker.  Then, to get messages back
+from the second user to the first, the same exchange would be used,
+but the second user would have their OWN queue and this would be bound
+to the exchange with a different key, e.g.
+&quot;chat_ID_from_seconduser_ID&quot;.
+
+In the above implementation:
+
+* One direct exchange is used for everything
+* There are two queues per chat
+* Each queue contains only messages from one user to another
+* The messages on any given queue may be a subset of what those
+messages' producer created in his or her user GUI, because eg failure
+might have prevented the arrival or processing of a message
+* We have not mentioned lifecycle, but it is implicit that the chat
+queues are bound to the session lifecycle, possibly with some margin
+to allow for temporary disconnection and reconnection, handled by the
+session (just like Google Talk seems to do it)
+
+....
+
+Now consider an alternatives implementation.
+
+You may see IM as an interaction between two users on a shared piece
+of data held eg. on a chat server.  In this view, the job of an IM
+client is to send messages that one user types, over some network
+connection, to the master of the shared data, and communicate updates
+on that shared data to anyone who needs to see them.  If the network
+connection goes down then, in this case, the user cannot complete the
+operation of updating the shared data because it is remote, so that
+*nothing* appears on their GUI screen except an error message.
+
+So to implement this you could create a client that wrote all of its
+users messages straight to AMQP messages sent to eg a direct exchange
+on a RabbitMQ broker acting as the chat server.  The messages might
+have the routing key &quot;chat_ID&quot;.  BOTH chat users would each have a
+queue, which was bound to the exchange, with that key.
+
+Each user's queue would be used to buffer ALL messages in chat
+chat_ID, ie. messages from both users would be in each queue.  The
+users would not see the messages until they had been consumed by the
+clients, which would publish all messages to the appropriate GUI
+screen.
+
+In the above implementation:
+
+* One direct exchange is used for everything
+* There are two queues per chat
+* Each queue contains only the same messages - these are the messages
+that the broker has processed from the users
+* Both users' GUIs will show the same messages but not necessarily at
+the same time
+* Once again the queue and chat are implicitly of session duration
+
+It's worth thinking about things like:
+
+- which implementation is best - and why
+- how one might do logging of the chat, in both cases
+- how each case might be adapted to do MUC
+- what happens if you want to change the lifecycle
+
+Let me know what you think.
+
+alexis
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+On Sun, Aug 9, 2009 at 10:25 PM, Alexis
+Richardson&lt;<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">alexis.richardson at gmail.com</A>&gt; wrote:
+&gt;<i> Ben,
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> On Sat, Aug 8, 2009 at 2:28 PM, Ben Browitt&lt;<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">ben.browitt at gmail.com</A>&gt; wrote:
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i> Do you want to do MUC or IM?
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> I'm not actually building it.
+</I>&gt;&gt;<i> I keep hearing about AMQP and RabbitMQ so I read the spec and the server
+</I>&gt;&gt;<i> docs.
+</I>&gt;&gt;<i> I couldn't find use cases on the web so I thought I'll try to fit the
+</I>&gt;&gt;<i> protocol to a fun application.
+</I>&gt;<i>
+</I>&gt;<i> Cool - understood.
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;&gt;&gt;<i> In fact, you can use a single approach to both.
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i> One approach is to have one queue per consumer 'chat window' and one
+</I>&gt;&gt;&gt;<i> exchange per 'chat room'. &#160;The queue is bound to the exchange when the
+</I>&gt;&gt;&gt;<i> user is in the chatroom. &#160;Then, IM is a special case of MUC - it is a
+</I>&gt;&gt;&gt;<i> chatroom with two participants.
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i> Another approach would be to have one queue per consumer, and have
+</I>&gt;&gt;&gt;<i> that queue bound to the exchange(s) N times, where N is the number of
+</I>&gt;&gt;&gt;<i> chatrooms (or IMs) which the consumer is currently in. &#160;In this
+</I>&gt;&gt;&gt;<i> approach, you will need to identify which message came from which
+</I>&gt;&gt;&gt;<i> room, before you show the messages to the user. &#160;That's easy but it's
+</I>&gt;&gt;&gt;<i> extra work and data to carry around.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> When a client sends a message to another client he usually doesn't create a
+</I>&gt;&gt;<i> chatroom for two,
+</I>&gt;&gt;<i> he just sends the message and the server routes it. With your suggestion the
+</I>&gt;&gt;<i> server will create
+</I>&gt;&gt;<i> the room if it doesn't exists when it needs to route a message.
+</I>&gt;<i>
+</I>&gt;<i> What I am suggesting is that the solution for IM can use queues. &#160;In
+</I>&gt;<i> AMQP you can also think of queues as buffers with configurable
+</I>&gt;<i> properties including routing rules based on AMQP's &quot;bindings&quot; and QoS
+</I>&gt;<i> eg durability. &#160;So, for an IM example you could have each user
+</I>&gt;<i> consuming a message stream of 'what the other user said' through that
+</I>&gt;<i> user's queue. &#160;So, yes, when the queue doesn't exist, and is needed,
+</I>&gt;<i> it should be created. &#160;It can be deleted later, or kept around -
+</I>&gt;<i> depending on what you want to achieve.
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;&gt;<i> When all the users leaves a MUC room if it is not persistent the server
+</I>&gt;&gt;<i> destroys it.
+</I>&gt;<i>
+</I>&gt;<i> You could set up an AMQP MUC system to do that if you liked. &#160;Or, you
+</I>&gt;<i> could set it up to make the queues durable and therefore not destroyed
+</I>&gt;<i> in this case.
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;&gt;<i> What will be the case with a chatroom with two participants?
+</I>&gt;<i>
+</I>&gt;<i> It's up to you.
+</I>&gt;<i>
+</I>&gt;<i> I would suggest deleting the queues used for the IM once the IM has completed.
+</I>&gt;<i>
+</I>&gt;<i> Separately, you might want to add the feature &quot;being able to send
+</I>&gt;<i> messages when the other user is offline. &#160;For this, you would want the
+</I>&gt;<i> queue lifecycle to be independent of the user's connections.
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;&gt;<i> Maybe the server will destroy it when both users are offline?
+</I>&gt;<i>
+</I>&gt;<i> It comes down to how you set up your system. &#160;AMQP is very flexible,
+</I>&gt;<i> eg allowing both the cases (a) destroy queues, (b) keep queues.
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;&gt;<i> Is there a way to destroy an exchange if it is not active for several
+</I>&gt;&gt;<i> minutes to save memory?
+</I>&gt;<i>
+</I>&gt;<i> You can destroy exchanges whenever you like. &#160;How you monitor activity
+</I>&gt;<i> is up to you.
+</I>&gt;<i>
+</I>&gt;<i> There isn't a 'built in' functions for 'delete an unused exchange
+</I>&gt;<i> after time T'. &#160;Some of the ideas Paul was talking about could be
+</I>&gt;<i> helpful here - using presence to manage internal broker lifecycle.
+</I>&gt;<i>
+</I>&gt;<i> Direct and fanout exchanges are 'lightweight' lookup tables so you
+</I>&gt;<i> might want to manage memory by monitoring overall memory use and user
+</I>&gt;<i> activity.
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;&gt;<i> Can you use a standard XMPP client with this setup?
+</I>&gt;<i>
+</I>&gt;<i> You can use an XMPP client if you run RabbitMQ with the XMPP adaptor.
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;&gt;&gt;<i> Let me know if you want more detail on either of the above, eg which
+</I>&gt;&gt;&gt;<i> exchange type to use.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> I thought of a non durable exchange. One exchange per chatroom and one queue
+</I>&gt;&gt;<i> per user.
+</I>&gt;<i>
+</I>&gt;<i> That seems like a good approach. &#160;In this case you would use a
+</I>&gt;<i> 'fanout' exchange.
+</I>&gt;<i>
+</I>&gt;<i> Another approach would be to use just one 'direct' exchange and bind
+</I>&gt;<i> all user queues to it using the routing keys corresponding to the
+</I>&gt;<i> chatrooms the users are in.
+</I>&gt;<i>
+</I>&gt;<i> If you haven't yet seen it, the 'rabbits and warrens' intro article
+</I>&gt;<i> linked to here is good: <A HREF="http://www.rabbitmq.com/how.html">http://www.rabbitmq.com/how.html</A>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;&gt;&gt;<i> &gt; I read the xmpp gateway
+</I>&gt;&gt;&gt;<i> &gt; docs and have some questions.
+</I>&gt;&gt;&gt;<i> &gt;
+</I>&gt;&gt;&gt;<i> &gt; In a chat we want to be able to get presence from users on our
+</I>&gt;&gt;&gt;<i> &gt; friend-list,
+</I>&gt;&gt;&gt;<i> &gt; send them messages
+</I>&gt;&gt;&gt;<i> &gt; and send subscription request and messages to users not yet on our
+</I>&gt;&gt;&gt;<i> &gt; friend-list.
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i> Do you only want to enable chat when both users are online and have a
+</I>&gt;&gt;&gt;<i> 'friend' relationship?
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i> &gt; One possibility is that each user will have an exchange and a queue with
+</I>&gt;&gt;&gt;<i> &gt; binding to his own exchange.
+</I>&gt;&gt;&gt;<i> &gt; When user1 wants to send a message to user2 he send it directly to the
+</I>&gt;&gt;&gt;<i> &gt; exchange of user2.
+</I>&gt;&gt;&gt;<i> &gt; There is a problem with presence updates. If user1 changes his presence,
+</I>&gt;&gt;&gt;<i> &gt; he'll have to&#160;sends the update
+</I>&gt;&gt;&gt;<i> &gt; to the exchange of all the users&#160;on his friend-list. With this design we
+</I>&gt;&gt;&gt;<i> &gt; move the logic to the client rather then use the AMQP features.
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i> One approach to presence is to broadcast changes using the pubsub
+</I>&gt;&gt;&gt;<i> system. &#160;Changes could include:
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i> * User goes online / offline
+</I>&gt;&gt;&gt;<i> * User changes their 'status message'
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> All I know is that there are queues exchanges and bindings.
+</I>&gt;&gt;<i> What do you mean by the pubsub system?
+</I>&gt;<i>
+</I>&gt;<i> By 'the pubsub system' I mean the RabbitMQ broker, and how you have
+</I>&gt;<i> configured the queues by binding them to the exchange(s).
+</I>&gt;<i>
+</I>&gt;<i> For example you can do 'pubsub' by binding queues to a direct
+</I>&gt;<i> exchange. &#160;Take a look at slides 20-22 from the presentation linked to
+</I>&gt;<i> from this page:
+</I>&gt;<i> <A HREF="http://skillsmatter.com/podcast/erlang/alexis-richardson-introduction-to-rabbitmq">http://skillsmatter.com/podcast/erlang/alexis-richardson-introduction-to-rabbitmq</A>
+</I>&gt;<i> &#160;This shows how a queue can use one or more bindings to 'subscribe' to
+</I>&gt;<i> what producers ('publishers') are saying.
+</I>&gt;<i>
+</I>&gt;<i> So there is nothing stopping you using the same mechanism to publish
+</I>&gt;<i> presence information. &#160;Suppose that whenever a user's presence
+</I>&gt;<i> changes, a message is sent to a direct exchange on the broker with key
+</I>&gt;<i> 'username' and content 'presence_update_info'. &#160;Then, anyone who cares
+</I>&gt;<i> about that user's presence just has to bind a queue with the key
+</I>&gt;<i> 'username'. &#160;I suggest you try and implement this pattern - it should
+</I>&gt;<i> be very straightforward.
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;&gt;&gt;<i> &gt; Another option is that when a user logs in he'll create a binding to the
+</I>&gt;&gt;&gt;<i> &gt; exchanges of all the users on his friend-list.
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i> You can do this but it creates quite a lot of churn on the exchange
+</I>&gt;&gt;&gt;<i> layer. &#160;Paul's suggestion is one way to prevent that. &#160;Another is to
+</I>&gt;&gt;&gt;<i> use exchange-exchange bindings, which we are also looking at.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> I meant to create bindings to all your online friends.
+</I>&gt;<i>
+</I>&gt;<i> Yes I understand that.
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;&gt;<i> Can you explain how Paul's suggestion or exchange-exchange bindings solve or
+</I>&gt;&gt;<i> improve it?
+</I>&gt;<i>
+</I>&gt;<i> Mostly they are performance optimisations that I would ignore for now,
+</I>&gt;<i> not least because they are under investigation and not implemented yet
+</I>&gt;<i> :-)
+</I>&gt;<i>
+</I>&gt;<i> When you create a binding, this action adds information to the routing
+</I>&gt;<i> tables (ie the exchange). &#160;This carries a (very small) computational
+</I>&gt;<i> cost that you may not want to pay (if under heavy load, say).
+</I>&gt;<i> Additionally if you are running in a multi-machine cluster, RabbitMQ
+</I>&gt;<i> will copy the bindings to other machines, so that the routing table
+</I>&gt;<i> info is shared across the cluster. &#160;This additional copying carries a
+</I>&gt;<i> (higher) computational cost. &#160;To avoid paying this cost, you might
+</I>&gt;<i> want to optimise how much binding and unbinding takes place. &#160;Using
+</I>&gt;<i> exchange-exchange bindings would mean, for example, that you could
+</I>&gt;<i> store N bindings persistently on one exchange, corresponding to a
+</I>&gt;<i> user's N friends, and have one binding between exchanges which gets
+</I>&gt;<i> destroyed when that user is offline, and recreated whenever they come
+</I>&gt;<i> online. &#160;This would save you from having to make N bindings every time
+</I>&gt;<i> a user came online.
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;&gt;&gt;<i> &gt; When user1 want to send a private message or a presence update to user2
+</I>&gt;&gt;&gt;<i> &gt; he'll send it to his own exchange and it'll be directed to user2. The
+</I>&gt;&gt;&gt;<i> &gt; problem with this design is that users without mutual presence
+</I>&gt;&gt;&gt;<i> &gt; subscription
+</I>&gt;&gt;&gt;<i> &gt; can't send private message to each other and can't send subscription
+</I>&gt;&gt;&gt;<i> &gt; requests.
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i> You can decouple presence, which is about status updates, from
+</I>&gt;&gt;&gt;<i> friendship. &#160;If you like, you could have a set up where one user can
+</I>&gt;&gt;&gt;<i> DM another, provided they are mutual friends, regardless of who is
+</I>&gt;&gt;&gt;<i> online. &#160;Do you want that?
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i> Subscription requests could also be implemented using a queue - one
+</I>&gt;&gt;&gt;<i> per user. &#160;Whenever a new user wishes to request mutual friendship
+</I>&gt;&gt;&gt;<i> with user A, then user A could be notified of this via a queue.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> In that case will the server send the friendship request directly to the
+</I>&gt;&gt;<i> queue?
+</I>&gt;<i>
+</I>&gt;<i> Yes.
+</I>&gt;<i>
+</I>&gt;&gt;<i> Do you need another queue per user just for friendship requests or can you
+</I>&gt;&gt;<i> use the same queue from above?
+</I>&gt;<i>
+</I>&gt;<i> It's up to you, but I would have, for each user, a special queue for
+</I>&gt;<i> messages from people they are not following yet.
+</I>&gt;<i>
+</I>&gt;<i> Is this helping?
+</I>&gt;<i>
+</I>&gt;<i> alexis
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;&gt;&gt;<i> &gt; Can you please share your thoughts on the two options and maybe other
+</I>&gt;&gt;&gt;<i> &gt; design
+</I>&gt;&gt;&gt;<i> &gt; options?
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i> I've tried to shed some light on some of the issues above. &#160;Feel free
+</I>&gt;&gt;&gt;<i> to elaborate on your needs and ask more questions.
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i> alexis
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i> &gt; Thanks
+</I>&gt;&gt;&gt;<i> &gt; _______________________________________________
+</I>&gt;&gt;&gt;<i> &gt; rabbitmq-discuss mailing list
+</I>&gt;&gt;&gt;<i> &gt; <A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;&gt;&gt;<i> &gt; <A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>&gt;&gt;&gt;<i> &gt;
+</I>&gt;&gt;&gt;<i> &gt;
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i>
+</I>&gt;<i>
+</I>
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="004453.html">[rabbitmq-discuss] building chat
+</A></li>
+	<LI>Next message: <A HREF="004462.html">[rabbitmq-discuss] simple.publish over the JSON RPC interface
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#4459">[ date ]</a>
+              <a href="thread.html#4459">[ thread ]</a>
+              <a href="subject.html#4459">[ subject ]</a>
+              <a href="author.html#4459">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

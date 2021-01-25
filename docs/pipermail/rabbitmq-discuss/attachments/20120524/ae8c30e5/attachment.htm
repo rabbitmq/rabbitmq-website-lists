@@ -1,0 +1,76 @@
+<tt>
+Hi&nbsp;Steve,&lt;div&gt;&lt;br&gt;&lt;/div&gt;&lt;div&gt;Many&nbsp;thanks&nbsp;for&nbsp;your&nbsp;prompt&nbsp;response.&nbsp;I&nbsp;have&nbsp;two&nbsp;proposals&nbsp;about&nbsp;improving&nbsp;it,&nbsp;while&nbsp;keeping&nbsp;all&nbsp;parties&nbsp;happy.&nbsp;Here&nbsp;they&nbsp;are:&lt;/div&gt;&lt;div&gt;&lt;br&gt;&lt;/div&gt;&lt;div&gt;1.&nbsp;Add&nbsp;a&nbsp;boolean&nbsp;property&nbsp;&amp;quot;daemonBackgroundThreads&amp;quot;&nbsp;in&nbsp;ConnectionFactory.&nbsp;Based&nbsp;on&nbsp;that&nbsp;property&nbsp;the&nbsp;threads&nbsp;created&nbsp;by client library&nbsp;would&nbsp;be&nbsp;either&nbsp;daemon&nbsp;or&nbsp;not.&nbsp;The&nbsp;default&nbsp;would&nbsp;be&nbsp;false,&nbsp;what&nbsp;wouldn&amp;#39;t&nbsp;occur&nbsp;any&nbsp;changes&nbsp;in behavior of&nbsp;existing applications.&lt;/div&gt;<br>
+&lt;div&gt;&lt;br&gt;&lt;/div&gt;&lt;div&gt;2.&nbsp;Alternatively&nbsp;the&nbsp;library&nbsp;could&nbsp;be&nbsp;rafactored&nbsp;that&nbsp;way&nbsp;that connection/publishing&nbsp;stuff&nbsp;be&nbsp;daemon&nbsp;threads,&nbsp;while&nbsp;listener&nbsp;stuff&nbsp;are&nbsp;non&nbsp;daemon.&nbsp;But&nbsp;as&nbsp;I&nbsp;explain&nbsp;further&nbsp;it&nbsp;is&nbsp;not&nbsp;best&nbsp;solution.&lt;/div&gt;<br>
+&lt;div&gt;&lt;br&gt;&lt;/div&gt;&lt;div&gt;I&nbsp;see&nbsp;this&nbsp;problem&nbsp;in&nbsp;a&nbsp;bit&nbsp;other&nbsp;way,&nbsp;from&nbsp;perspective&nbsp;of&nbsp;developer,&nbsp;who&nbsp;not&nbsp;always&nbsp;can&nbsp;design&nbsp;clean&nbsp;solutions.&nbsp;Sometimes&nbsp;I&nbsp;have&nbsp;to&nbsp;wire&nbsp;and&nbsp;patch&nbsp;legacy&nbsp;systems&nbsp;;).&nbsp;I&nbsp;think&nbsp;it&nbsp;is&nbsp;very&nbsp;common&nbsp;task&nbsp;to&nbsp;rabbitMQ&nbsp;users,&nbsp;who&nbsp;have&nbsp;to&nbsp;wire&nbsp;it&nbsp;into&nbsp;existing&nbsp;ecosystem.&nbsp;My&nbsp;case&nbsp;here&nbsp;is&nbsp;to&nbsp;allow&nbsp;some proprietary&nbsp;web&nbsp;server&nbsp;to&nbsp;send&nbsp;some&nbsp;messages&nbsp;during&nbsp;request&nbsp;processing.&nbsp;So&nbsp;basically&nbsp;I&amp;#39;m&nbsp;restricted&nbsp;to&nbsp;expose&nbsp;a&nbsp;single&nbsp;Java&nbsp;method&nbsp;to&nbsp;be&nbsp;called&nbsp;from&nbsp;the&nbsp;web&nbsp;script.&nbsp;I&nbsp;can&nbsp;create&nbsp;my&nbsp;own&nbsp;threads,&nbsp;connections,&nbsp;bookkeeping,&nbsp;connection&nbsp;failover,&nbsp;reconnect&nbsp;etc...&nbsp;but&nbsp;this&nbsp;all&nbsp;is&nbsp;hidden&nbsp;from&nbsp;the&nbsp;interface&nbsp;(single&nbsp;method&nbsp;&amp;quot;post&amp;quot;)&nbsp;exposed&nbsp;to&nbsp;web&nbsp;scripting.&nbsp;The&nbsp;most&nbsp;ugly&nbsp;thing&nbsp;is&nbsp;that&nbsp;I&nbsp;have&nbsp;no&nbsp;other&nbsp;way&nbsp;of&nbsp;detecting&nbsp;that&nbsp;WebServer&nbsp;is&nbsp;going&nbsp;to&nbsp;die&nbsp;than&nbsp;adding&nbsp;shutdown&nbsp;hook&nbsp;to&nbsp;VM.&nbsp;And&nbsp;shutdown&nbsp;hook&nbsp;is&nbsp;fired,&nbsp;when&nbsp;all&nbsp;normal&nbsp;threads&nbsp;are&nbsp;about&nbsp;to&nbsp;die&nbsp;(along&nbsp;with&nbsp;daemon&nbsp;threads).&nbsp;This&nbsp;scenario&nbsp;is&nbsp;probably&nbsp;quite&nbsp;common&nbsp;for&nbsp;live&nbsp;integration&nbsp;of&nbsp;RabbitMQ&nbsp;into&nbsp;existing&nbsp;systems.&lt;/div&gt;<br>
+&lt;div&gt;&lt;br&gt;&lt;/div&gt;&lt;div&gt;In&nbsp;general&nbsp;when&nbsp;dealing&nbsp;with&nbsp;messages&nbsp;we&nbsp;can&nbsp;have&nbsp;3&nbsp;basic&nbsp;scenarios:&lt;/div&gt;&lt;div&gt;1.&nbsp;Publisher.&lt;/div&gt;&lt;div&gt;2.&nbsp;Synchronous&nbsp;consumer.&lt;/div&gt;&lt;div&gt;3.&nbsp;Asynchronous&nbsp;consumer&nbsp;(listener&nbsp;on&nbsp;messages).&lt;/div&gt;&lt;div&gt;&lt;br&gt;<br>
+&lt;/div&gt;&lt;div&gt;The&nbsp;idea&nbsp;of&nbsp;writing&nbsp;RabbitMQ&nbsp;clients&nbsp;(implied&nbsp;by&nbsp;costly&nbsp;and&nbsp;limited&nbsp;TCP/IP&nbsp;sockets)&nbsp;is&nbsp;to&nbsp;share&nbsp;a connection &amp;quot;per&nbsp;application&amp;quot;&nbsp;and&nbsp;write&nbsp;code&nbsp;that&nbsp;can reconnect in&nbsp;case&nbsp;of&nbsp;RabbitMQ&nbsp;node&nbsp;fail.&nbsp;So&nbsp;as&nbsp;soon&nbsp;as&nbsp;I&nbsp;get&nbsp;the connection,&nbsp;I&nbsp;keep&nbsp;it&nbsp;globally&nbsp;(shared).&nbsp;Usually&nbsp;it&nbsp;is&nbsp;my&nbsp;responsibility&nbsp;to&nbsp;clean&nbsp;on&nbsp;shutdown,&nbsp;but&nbsp;there&nbsp;are&nbsp;cases&nbsp;when&nbsp;I&amp;#39;m&nbsp;unable&nbsp;to&nbsp;do&nbsp;this.&nbsp;The&nbsp;shutdown&nbsp;hooks&nbsp;are&nbsp;handy&nbsp;in&nbsp;those&nbsp;scenarios.&lt;/div&gt;<br>
+&lt;div&gt;&lt;br&gt;&lt;/div&gt;&lt;div&gt;Only&nbsp;the&nbsp;3rd&nbsp;scenario&nbsp;(asynchronous&nbsp;consumer)&nbsp;may&nbsp;require&nbsp;non&nbsp;daemon&nbsp;threads.&nbsp;But&nbsp;it&nbsp;is&nbsp;from&nbsp;my&nbsp;experience&nbsp;not&nbsp;a&nbsp;live&nbsp;scenario.&nbsp;You&nbsp;usually&nbsp;do&nbsp;not&nbsp;write&nbsp;application,&nbsp;relaying&nbsp;on&nbsp;created&nbsp;behind&nbsp;the&nbsp;scene&nbsp;&amp;quot;main&nbsp;loop&amp;quot;.&nbsp;Why?&nbsp;Because&nbsp;even&nbsp;if&nbsp;all&nbsp;what&nbsp;you&nbsp;do&nbsp;is&nbsp;to&nbsp;listen&nbsp;to&nbsp;messages,&nbsp;you&nbsp;still&nbsp;have&nbsp;to&nbsp;control&nbsp;the application state.&nbsp;You&nbsp;must&nbsp;start&nbsp;and&nbsp;stop&nbsp;that&nbsp;application&nbsp;as&nbsp;well&nbsp;as&nbsp;allow&nbsp;user/OS&nbsp;to&nbsp;close&nbsp;it.&nbsp;I&nbsp;personally&nbsp;for&nbsp;such&nbsp;micro-applications&nbsp;use&nbsp;Apache&nbsp;Daemons&nbsp;and&nbsp;run&nbsp;them&nbsp;as&nbsp;Windows&nbsp;services.&nbsp;On&nbsp;Linux&nbsp;you&nbsp;have&nbsp;jsvc&nbsp;to&nbsp;control&nbsp;such&nbsp;application.&nbsp;Surely&nbsp;&amp;quot;main&nbsp;loop&amp;quot;&nbsp;hidden&nbsp;in&nbsp;implementation&nbsp;is&nbsp;bad&nbsp;idea.&lt;/div&gt;<br>
+&lt;br&gt;&lt;div&nbsp;class=&quot;gmail_quote&quot;&gt;On&nbsp;Wed,&nbsp;May&nbsp;23,&nbsp;2012&nbsp;at&nbsp;5:18&nbsp;PM,&nbsp;Steve&nbsp;Powell&nbsp;&lt;span&nbsp;dir=&quot;ltr&quot;&gt;&amp;lt;&lt;a&nbsp;href=&quot;mailto:steve@rabbitmq.com&quot;&nbsp;target=&quot;_blank&quot;&gt;steve@rabbitmq.com&lt;/a&gt;&amp;gt;&lt;/span&gt;&nbsp;wrote:&lt;br&gt;&lt;blockquote&nbsp;class=&quot;gmail_quote&quot;&nbsp;style=&quot;margin:0&nbsp;0&nbsp;0&nbsp;.8ex;border-left:1px&nbsp;#ccc&nbsp;solid;padding-left:1ex&quot;&gt;<br>
+Bartłomiej,&lt;br&gt;<br>
+&lt;br&gt;<br>
+What&nbsp;a&nbsp;very&nbsp;good&nbsp;point.&nbsp;It&nbsp;is&nbsp;clear&nbsp;that&nbsp;the&nbsp;MainLoop&nbsp;thread&nbsp;ought&nbsp;to&nbsp;be&lt;br&gt;<br>
+a&nbsp;daemon&nbsp;thread&nbsp;in&nbsp;your&nbsp;circumstances,&nbsp;thank&nbsp;you&nbsp;for&nbsp;pointing&nbsp;this&nbsp;out.&lt;br&gt;<br>
+The&nbsp;only&nbsp;affect&nbsp;of&nbsp;this&nbsp;will&nbsp;be&nbsp;to&nbsp;allow&nbsp;the&nbsp;JVM&nbsp;to&nbsp;terminate&nbsp;if&nbsp;only&lt;br&gt;<br>
+daemon&nbsp;threads&nbsp;are&nbsp;available.&lt;br&gt;<br>
+&lt;br&gt;<br>
+However,&nbsp;we&nbsp;have&nbsp;considered&nbsp;this&nbsp;problem&nbsp;before&nbsp;(internal&nbsp;bug&nbsp;21110)&nbsp;and&lt;br&gt;<br>
+user&nbsp;apps&nbsp;that&nbsp;create&nbsp;a&nbsp;connection&nbsp;and&nbsp;register&nbsp;some&nbsp;consumers&nbsp;(which&nbsp;do&lt;br&gt;<br>
+all&nbsp;the&nbsp;work)&nbsp;ought&nbsp;to&nbsp;be&nbsp;able&nbsp;to&nbsp;terminate&nbsp;without&nbsp;accidentally&nbsp;killing&lt;br&gt;<br>
+the&nbsp;connection&nbsp;processing.&lt;br&gt;<br>
+&lt;br&gt;<br>
+This&nbsp;means&nbsp;that&nbsp;there&nbsp;are&nbsp;circumstances&nbsp;in&nbsp;which&nbsp;the&nbsp;threads&nbsp;we&nbsp;create&lt;br&gt;<br>
+are&nbsp;required&nbsp;to&nbsp;be&nbsp;non-daemon,&nbsp;and&nbsp;circumstances&nbsp;where&nbsp;you&nbsp;would&nbsp;like&lt;br&gt;<br>
+them&nbsp;to&nbsp;be&nbsp;daemon.&lt;br&gt;<br>
+&lt;br&gt;<br>
+The&nbsp;hook&nbsp;you&nbsp;implemented&nbsp;ought&nbsp;to&nbsp;work&nbsp;correctly&nbsp;even&nbsp;when&nbsp;the&nbsp;MainLoop&lt;br&gt;<br>
+is&nbsp;not&nbsp;a&nbsp;daemon,&nbsp;because&nbsp;closing&nbsp;the&nbsp;connection&nbsp;ought&nbsp;to&nbsp;make&nbsp;the&lt;br&gt;<br>
+MainLoop&nbsp;thread&nbsp;terminate&nbsp;normally.&nbsp;If&nbsp;it&nbsp;doesn&amp;#39;t,&nbsp;there&nbsp;is&nbsp;a&nbsp;bug.&nbsp;Where&lt;br&gt;<br>
+at&nbsp;all&nbsp;possible&nbsp;you&nbsp;should&nbsp;attempt&nbsp;to&nbsp;close&nbsp;an&nbsp;open&nbsp;connection&nbsp;as&nbsp;a&nbsp;part&lt;br&gt;<br>
+of&nbsp;your&nbsp;termination&nbsp;processing&nbsp;as&nbsp;there&nbsp;are&nbsp;system&nbsp;resources&nbsp;that&nbsp;could&lt;br&gt;<br>
+be&nbsp;left&nbsp;high-and-dry&nbsp;if&nbsp;you&nbsp;do&nbsp;not.&lt;br&gt;<br>
+&lt;br&gt;<br>
+There&nbsp;are&nbsp;other&nbsp;threads&nbsp;in&nbsp;the&nbsp;Java&nbsp;Client&nbsp;--&nbsp;the&nbsp;executor&nbsp;worker&lt;br&gt;<br>
+threads&nbsp;used&nbsp;for&nbsp;Consumer&nbsp;callbacks.&nbsp;These&nbsp;are&nbsp;non-daemon,&nbsp;too.&nbsp;The&nbsp;hook&lt;br&gt;<br>
+should&nbsp;still&nbsp;work&nbsp;because&nbsp;shutting&nbsp;down&nbsp;the&nbsp;connection&nbsp;ought&nbsp;to&nbsp;shutdown&lt;br&gt;<br>
+the&nbsp;consumer&nbsp;work&nbsp;service,&nbsp;and&nbsp;in&nbsp;turn&nbsp;the&nbsp;executor&nbsp;(and&nbsp;its&nbsp;worker&lt;br&gt;<br>
+threads).&lt;br&gt;<br>
+&lt;br&gt;<br>
+However,&nbsp;I&nbsp;could&nbsp;make&nbsp;them&nbsp;daemon&nbsp;threads&nbsp;as&nbsp;well,&nbsp;in&nbsp;case&nbsp;the&nbsp;main&nbsp;app&lt;br&gt;<br>
+terminates&nbsp;abruptly&nbsp;and&nbsp;expects&nbsp;to&nbsp;be&nbsp;able&nbsp;to&nbsp;terminate&nbsp;uncleanly&nbsp;as&nbsp;you&lt;br&gt;<br>
+describe.&lt;br&gt;<br>
+&lt;br&gt;<br>
+Thank&nbsp;you&nbsp;for&nbsp;reporting&nbsp;this.&nbsp;I&amp;#39;ll&nbsp;report&nbsp;back&nbsp;here&nbsp;on&nbsp;progress.&lt;br&gt;<br>
+&lt;br&gt;<br>
+Steve&nbsp;Powell&nbsp; (a&nbsp;happy&nbsp;bunny)&lt;br&gt;<br>
+----------yet&nbsp;more&nbsp;definitions&nbsp;from&nbsp;the&nbsp;SPD----------&lt;br&gt;<br>
+corrugate&nbsp;(n.)&nbsp;T.V.&nbsp;soap&nbsp;scandal.&lt;br&gt;<br>
+olympic&nbsp;(n.)&nbsp;A&nbsp;camp&nbsp;road-digger.&lt;br&gt;<br>
+jamboree&nbsp;(n.)&nbsp;A&nbsp;conserve&nbsp;made&nbsp;from&nbsp;French&nbsp;cheese.&lt;br&gt;<br>
+&lt;div&gt;&lt;div&nbsp;class=&quot;h5&quot;&gt;&lt;br&gt;<br>
+On&nbsp;18&nbsp;May&nbsp;2012,&nbsp;at&nbsp;16:27,&nbsp;Bartłomiej&nbsp;Prokop&nbsp;wrote:&lt;br&gt;<br>
+&lt;br&gt;<br>
+&amp;gt;&nbsp;Hi,&lt;br&gt;<br>
+&amp;gt;&lt;br&gt;<br>
+&amp;gt;&nbsp;I&amp;#39;m&nbsp;using&nbsp;JAVA&nbsp;client&nbsp;for&nbsp;RabbitMQ&nbsp;(com.rabbitmq:amqp-client:2.8.1)&nbsp;to&nbsp;write&nbsp;a&nbsp;&amp;quot;jar&nbsp;component&amp;quot;&nbsp;capable&nbsp;of&nbsp;sending&nbsp;messages&nbsp;for&nbsp;some&nbsp;legacy&nbsp;system.&nbsp;The&nbsp;idea&nbsp;is&nbsp;to&nbsp;wrap&nbsp;all&nbsp;code&nbsp;that&nbsp;maintain&nbsp;the&nbsp;connection&nbsp;inside&nbsp;my&nbsp;component.&nbsp;This&nbsp;way,&nbsp;the&nbsp;client&nbsp;software&nbsp;deals&nbsp;only&nbsp;with&nbsp;very&nbsp;simple&nbsp;methods&nbsp;like&nbsp;&amp;quot;post&amp;quot;&nbsp;and&nbsp;is&nbsp;not&nbsp;aware&nbsp;of&nbsp;any&nbsp;connection&nbsp;handling.&nbsp;The&nbsp;connect/reconnect&nbsp;code&nbsp;is&nbsp;written&nbsp;and&nbsp;hidden&nbsp;from&nbsp;the&nbsp;legacy&nbsp;system.&lt;br&gt;<br>
+<br>
+&amp;gt;&lt;br&gt;<br>
+&amp;gt;&nbsp;The&nbsp;problem&nbsp;I&nbsp;have&nbsp;faced&nbsp;is&nbsp;that&nbsp;Java&nbsp;client&nbsp;creates&nbsp;&amp;quot;behind&nbsp;the&nbsp;scene&amp;quot;&nbsp;some&nbsp;threads&nbsp;to&nbsp;manage&nbsp;connection&nbsp;-&nbsp;like:&lt;br&gt;<br>
+&amp;gt;&nbsp; &nbsp; &nbsp; &nbsp; &nbsp; lines&nbsp;299-301&nbsp;of&nbsp;AMQConnection&nbsp;class.&lt;br&gt;<br>
+&amp;gt;&nbsp; &nbsp; &nbsp; &nbsp; &nbsp;//&nbsp;start&nbsp;the&nbsp;main&nbsp;loop&nbsp;going&lt;br&gt;<br>
+&amp;gt;&nbsp; &nbsp; &nbsp; &nbsp; &nbsp;new&nbsp;MainLoop(&amp;quot;AMQP&nbsp;Connection&nbsp;&amp;quot;&nbsp;+&nbsp;getHostAddress()&nbsp;+&nbsp;&amp;quot;:&amp;quot;&nbsp;+&nbsp;getPort()).start();&lt;br&gt;<br>
+&amp;gt;&nbsp; &nbsp; &nbsp; &nbsp; &nbsp;//&nbsp;after&nbsp;this&nbsp;point&nbsp;clear-up&nbsp;of&nbsp;MainLoop&nbsp;is&nbsp;triggered&nbsp;by&nbsp;closing&nbsp;the&nbsp;frameHandler.&lt;br&gt;<br>
+&amp;gt;&lt;br&gt;<br>
+&amp;gt;&nbsp;Unfortunatelly,&nbsp;those&nbsp;threads&nbsp;aren&amp;#39;t&nbsp;&amp;quot;daemon&amp;quot;&nbsp;threads.&nbsp;So,&nbsp;when&nbsp;main&nbsp;application&nbsp;ends&nbsp;and&nbsp;appropriate&nbsp;connection&nbsp;closing&nbsp;not&nbsp;occurs,&nbsp;the&nbsp;VM&nbsp;won&amp;#39;t&nbsp;terminate.&nbsp;My&nbsp;approach&nbsp;was&nbsp;to&nbsp;add&nbsp;some&nbsp;shutdown&nbsp;hook&nbsp;to&nbsp;close&nbsp;RabbitMQ&nbsp;connections&nbsp;if&nbsp;it&nbsp;is&nbsp;live&nbsp;inside&nbsp;my&nbsp;&amp;quot;jar&nbsp;component&amp;quot;.&nbsp;But,&nbsp;due&nbsp;to&nbsp;those&nbsp;non-daemon&nbsp;threads,&nbsp;VM&nbsp;is&nbsp;not&nbsp;going&nbsp;ever&nbsp;to&nbsp;be&nbsp;terminated&nbsp;and&nbsp;shutdown&nbsp;hooks&nbsp;fired.&lt;br&gt;<br>
+<br>
+&amp;gt;&lt;br&gt;<br>
+&amp;gt;&nbsp;It&nbsp;is&nbsp;a&nbsp;question&nbsp;to&nbsp;RabbitMQ&nbsp;driver&nbsp;developers,&nbsp;if&nbsp;the&nbsp;internal&nbsp;threads&nbsp;could&nbsp;be&nbsp;fired&nbsp;as&nbsp;daemon&nbsp;threads,&nbsp;could&nbsp;it&nbsp;be&nbsp;done&nbsp;in&nbsp;future&nbsp;releases?&lt;br&gt;<br>
+&amp;gt;&lt;br&gt;<br>
+&lt;/div&gt;&lt;/div&gt;&amp;gt;&nbsp;_______________________________________________&lt;br&gt;<br>
+&amp;gt;&nbsp;rabbitmq-discuss&nbsp;mailing&nbsp;list&lt;br&gt;<br>
+&amp;gt;&nbsp;&lt;a&nbsp;href=&quot;mailto:rabbitmq-discuss@lists.rabbitmq.com&quot;&gt;rabbitmq-discuss@lists.rabbitmq.com&lt;/a&gt;&lt;br&gt;<br>
+&amp;gt;&nbsp;&lt;a&nbsp;href=&quot;https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss&quot;&nbsp;target=&quot;_blank&quot;&gt;https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss&lt;/a&gt;&lt;br&gt;<br>
+&lt;br&gt;<br>
+&lt;/blockquote&gt;&lt;/div&gt;&lt;br&gt;&lt;br&nbsp;clear=&quot;all&quot;&gt;&lt;div&gt;&lt;br&gt;&lt;/div&gt;--&nbsp;&lt;br&gt;Bart&nbsp;Prokop&lt;br&gt;tel.&nbsp;+48&nbsp;509&nbsp;258&nbsp;502&lt;br&gt;&lt;br&gt;This&nbsp;e-mail&nbsp;is&nbsp;intended&nbsp;solely&nbsp;for&nbsp;the&nbsp;addressee(s)&nbsp;and&nbsp;contains&nbsp;confidential&nbsp;information.&nbsp;Unauthorized&nbsp;distribution,&nbsp;modification&nbsp;or&nbsp;disclosure&nbsp;of&nbsp;its&nbsp;contents&nbsp;is&nbsp;unlawful.&nbsp;If&nbsp;you&nbsp;have&nbsp;received&nbsp;this&nbsp;e-mail&nbsp;in&nbsp;error,&nbsp;please&nbsp;notify&nbsp;the&nbsp;sender&nbsp;immediately&nbsp;by&nbsp;return&nbsp;e-mail.&nbsp;Please&nbsp;then&nbsp;delete&nbsp;the&nbsp;e-mail&nbsp;from&nbsp;your&nbsp;system&nbsp;and&nbsp;do&nbsp;not&nbsp;copy&nbsp;it&nbsp;or&nbsp;disclose&nbsp;its&nbsp;contents&nbsp;to&nbsp;any&nbsp;person.&nbsp;Email&nbsp;transmission&nbsp;cannot&nbsp;be&nbsp;guaranteed&nbsp;to&nbsp;be&nbsp;secure&nbsp;or&nbsp;error&nbsp;free&nbsp;as&nbsp;information&nbsp;could&nbsp;be&nbsp;intercepted,&nbsp;corrupted,&nbsp;lost,&nbsp;destroyed,&nbsp;arrive&nbsp;late&nbsp;or&nbsp;incomplete,&nbsp;or&nbsp;contain&nbsp;viruses.&nbsp;The&nbsp;sender&nbsp;therefore&nbsp;does&nbsp;not&nbsp;accept&nbsp;liability&nbsp;for&nbsp;any&nbsp;errors&nbsp;or&nbsp;omissions&nbsp;in&nbsp;the&nbsp;contents&nbsp;of&nbsp;this&nbsp;message&nbsp;which&nbsp;arise&nbsp;as&nbsp;a&nbsp;result&nbsp;of&nbsp;email&nbsp;transmission.&nbsp;Information,&nbsp;opinions&nbsp;or&nbsp;conclusions&nbsp;contained&nbsp;in&nbsp;this&nbsp;message&nbsp;that&nbsp;do&nbsp;not&nbsp;relate&nbsp;to&nbsp;the&nbsp;official&nbsp;business&nbsp;of&nbsp;the&nbsp;senders&nbsp;employer&nbsp;or&nbsp;principal&nbsp;will&nbsp;be&nbsp;understood&nbsp;as&nbsp;neither&nbsp;given&nbsp;nor&nbsp;endorsed&nbsp;by&nbsp;it.&lt;br&gt;<br>
+<br>
+
+</tt>

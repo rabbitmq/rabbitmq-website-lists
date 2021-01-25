@@ -1,0 +1,210 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] flow control issues
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20flow%20control%20issues&In-Reply-To=%3CAANLkTim6YCQJxx3-GFoWKBuyQonyDgiEnOu0SzzyAWKA%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="008905.html">
+   <LINK REL="Next"  HREF="008949.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] flow control issues</H1>
+    <B>Marek Majkowski</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20flow%20control%20issues&In-Reply-To=%3CAANLkTim6YCQJxx3-GFoWKBuyQonyDgiEnOu0SzzyAWKA%40mail.gmail.com%3E"
+       TITLE="[rabbitmq-discuss] flow control issues">majek04 at gmail.com
+       </A><BR>
+    <I>Wed Sep 15 15:11:36 BST 2010</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="008905.html">[rabbitmq-discuss] flow control issues
+</A></li>
+        <LI>Next message: <A HREF="008949.html">[rabbitmq-discuss] flow control issues
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#8942">[ date ]</a>
+              <a href="thread.html#8942">[ thread ]</a>
+              <a href="subject.html#8942">[ subject ]</a>
+              <a href="author.html#8942">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>On Tue, Sep 14, 2010 at 09:07, <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">romary.kremer at gmail.com</A>
+&lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">romary.kremer at gmail.com</A>&gt; wrote:
+&gt;&gt;<i> The flow control was heavily modified between 1.8.1 and 2.0.0. In summary:
+</I>&gt;&gt;<i> - 1.8.1 - we have send Channel.flow AMQP message to everyone once
+</I>&gt;&gt;<i> &#160;rabbit reached memory limit
+</I>&gt;&gt;<i> - 2.0.0 - once we reach memory limit, the connections from which we hear
+</I>&gt;&gt;<i> &#160;publishes are stopped temporarily. We stop receiving bytes from tcp
+</I>&gt;&gt;<i> sockets.
+</I>&gt;&gt;<i> &#160;That 'stop' shouldn't take too long, as data should be swapped out to
+</I>&gt;&gt;<i> disk
+</I>&gt;&gt;<i> &#160;and memory pressure will drop pretty quickly.
+</I>&gt;<i>
+</I>&gt;<i> Do you mean that in 2.0.0 the Channel.flow AMQP message is no longer sent to
+</I>&gt;<i> the producer that are stopped temporarily ? So that would explain why
+</I>&gt;<i> &#160; &#160; &#160; &#160;1) Channel.publish() can be blocking on the client side when the
+</I>&gt;<i> broker stop
+</I>&gt;<i> &#160; &#160; &#160; &#160;reading from the socket !
+</I>&gt;<i>
+</I>&gt;<i> &#160; &#160; &#160; &#160;2) FlowListener.handleFlow() is no longer invoked on the registered
+</I>&gt;<i> listener when
+</I>&gt;<i> &#160; &#160; &#160; &#160;the alarm handler is set or cleared
+</I>&gt;<i> Are my deduction wright ?
+</I>
+Yes. You will never hear &quot;FlowListener.handleFlow()&quot; and it may be possible for
+channel.publish to block (though I would need to consult the sources
+to be sure).
+
+&gt;<i> Do you have any figures to quantify &quot;should, not take too long&quot; ? Are their
+</I>&gt;<i> some
+</I>&gt;<i> test reports available about that major evolution ?
+</I>
+That's the question we really avoided :) Oh, well. No, we haven't done any
+'real' tests, it's only based on our intuition and experience. In most
+cases the blocking goes away pretty quickly - after 30 seconds usually,
+about two minutes sometimes.
+
+But it is possible to create a very pessimistic environment in which the
+memory usage will not drop - and the connection could be stuck for a long time.
+(though it's pretty unlikely).
+
+&gt;<i> Sorry If I wasn't clear on the previous post ,we are already in 2.0.0 for
+</I>&gt;<i> both broker and
+</I>&gt;<i> client library.
+</I>
+Good.
+
+&gt;&gt;&gt;<i> It looks like any listener is called back &#160;when the alarm handler is set
+</I>&gt;&gt;&gt;<i> or
+</I>&gt;&gt;&gt;<i> cleared, while the producers are still paused / resumed
+</I>&gt;&gt;&gt;<i> like their are to be.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Interesting. Maybe we have a race there? Or maybe you're blocking
+</I>&gt;&gt;<i> the main java client thread? (nothing blocking should be done from
+</I>&gt;&gt;<i> the main thread)
+</I>&gt;<i>
+</I>&gt;<i> I am quite sure I am not blocking the main thread, neither the Connection
+</I>&gt;<i> Thread. All
+</I>&gt;<i> the message-related logic is in a particular thread (Some kind of
+</I>&gt;<i> ProducerGroup
+</I>&gt;<i> pool of threads actually).
+</I>&gt;<i> Consumer call back are running within the Connection thread if I refer to
+</I>&gt;<i> the Javadoc !
+</I>&gt;<i>
+</I>&gt;<i> The same code using the library version 1.8.1, The callback where invoked
+</I>&gt;<i> when
+</I>&gt;<i> alarm handler is set or cleared anyway.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;&gt;&gt;<i> during long running tests, we have encountered strange behaviour due to
+</I>&gt;&gt;&gt;&gt;<i> flow control :
+</I>&gt;&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;&gt;<i> The queue depth starts to increase linearly for about 2 hours, these is
+</I>&gt;&gt;&gt;&gt;<i> coherent since the message throughput of the single consumer
+</I>&gt;&gt;&gt;&gt;<i> is not enough to absorb message ingress. Memory occupation grow faster
+</I>&gt;&gt;&gt;&gt;<i> as
+</I>&gt;&gt;&gt;&gt;<i> well, until the memory watermark is reached on the broker side.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Are you sure your consumer is ACK-ing the messages it received?
+</I>&gt;<i>
+</I>&gt;<i> The Consumer call back does ACK messages upon reception, one at a time
+</I>&gt;<i> (multiple == false).
+</I>&gt;<i> Does the basic.ack() method is eligible to be blocked as well as publish()
+</I>&gt;<i> upon flow control ?
+</I>
+Well, under current implementation of flow control - yes. As it's whole
+tcp/ip connection that gets blocked. It will affect any commands, including
+basic.ack.
+
+What we usually propose is to use different tcp/ip connection for receiving
+and different for publishing. On memory pressure we only block the publishers.
+Using separate connection only for receiving you may be sure it will
+never be blocked.
+
+&gt;&gt;&gt;&gt;<i> From that point, the producers are indeed paused, as flow control
+</I>&gt;&gt;&gt;&gt;<i> request
+</I>&gt;&gt;&gt;&gt;<i> has been issued by the broker, but the consumer seems to be blocked
+</I>&gt;&gt;&gt;&gt;<i> as well. The queue level is flatten at its top value until the end of
+</I>&gt;&gt;&gt;&gt;<i> the
+</I>&gt;&gt;&gt;&gt;<i> test, even when memory occupation lowered under the threshold.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> That's how 1.8.1 behaves. In 2.0.0 we introduced swapping out big queues
+</I>&gt;&gt;<i> to disk, so the memory usage shouldn't be dependent on a queue size.
+</I>&gt;<i>
+</I>&gt;<i> Good new, because we had identified 2 scenarios in wich memory-based channel
+</I>&gt;<i> flow
+</I>&gt;<i> was triggered :
+</I>&gt;<i>
+</I>&gt;<i> &#160; &#160; &#160; &#160;- the use of SSL
+</I>&gt;<i> &#160; &#160; &#160; &#160;- the use of larger message (4kb, same ingress)
+</I>&gt;<i> Now I hope that the message size will not be that much determinant for flow
+</I>&gt;<i> controll,as soon
+</I>&gt;<i> as consumers are able to handle these message regularly.
+</I>&gt;<i>
+</I>&gt;&gt;<i>
+</I>&gt;&gt;&gt;&gt;<i> By registering the FlowListener callback, we have noticed that not all
+</I>&gt;&gt;&gt;&gt;<i> of
+</I>&gt;&gt;&gt;&gt;<i> the producers are notified all the time the alarm handler is set.
+</I>&gt;&gt;&gt;&gt;<i> Does this mean that the broker applies some heuristic to try not to
+</I>&gt;&gt;&gt;&gt;<i> block
+</I>&gt;&gt;&gt;&gt;<i> every body every time ?
+</I>&gt;&gt;&gt;&gt;<i> Or does it mean that some of the channels have been somehow blacklisted
+</I>&gt;&gt;&gt;&gt;<i> by
+</I>&gt;&gt;&gt;&gt;<i> the broker ?
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> No, in 1.8.1 broker should send 'channel.flow' to all the channels.
+</I>&gt;<i>
+</I>&gt;<i> Strange so, their must be some thing very weird.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;&gt;&gt;<i> Could anybody explain how the blocking of consumer is assumed to be
+</I>&gt;&gt;&gt;&gt;<i> implemented ?
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> The best description is probably here:
+</I>&gt;&gt;<i> &#160;<A HREF="http://www.rabbitmq.com/extensions.html#memsup">http://www.rabbitmq.com/extensions.html#memsup</A>
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> But it covers 2.0.0. I'd suggest an upgrade to 2.0.0 and monitoring
+</I>&gt;&gt;<i> not only queue size but also number of unacknowledged messages
+</I>&gt;&gt;<i> ('Msg unack' in status plugin). This number should be near zero.
+</I>&gt;&gt;<i>
+</I>&gt;<i> We are already with 2.0.0.
+</I>&gt;<i> Where can I find some doc about the Status plugin anyway ?
+</I>
+I'm afraid the old blog post is the only source:
+<A HREF="http://www.lshift.net/blog/2009/11/30/introducing-rabbitmq-status-plugin">http://www.lshift.net/blog/2009/11/30/introducing-rabbitmq-status-plugin</A>
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="008905.html">[rabbitmq-discuss] flow control issues
+</A></li>
+	<LI>Next message: <A HREF="008949.html">[rabbitmq-discuss] flow control issues
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#8942">[ date ]</a>
+              <a href="thread.html#8942">[ thread ]</a>
+              <a href="subject.html#8942">[ subject ]</a>
+              <a href="author.html#8942">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

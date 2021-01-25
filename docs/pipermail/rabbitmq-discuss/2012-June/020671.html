@@ -1,0 +1,215 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] rabbitmq 2.8.2 beam process consumes 100% of one cpu in tight epoll_wait loop
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20rabbitmq%202.8.2%20beam%20process%20consumes%20100%25%20of%0A%20one%20cpu%20in%20tight%20epoll_wait%20loop&In-Reply-To=%3CCAKBgs905S44vuJJYJkY0OGfwrmPp%3DiUBBxtM3k%3D7zxut%2BtPSOg%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="020639.html">
+   <LINK REL="Next"  HREF="020726.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] rabbitmq 2.8.2 beam process consumes 100% of one cpu in tight epoll_wait loop</H1>
+    <B>Con Zyor</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20rabbitmq%202.8.2%20beam%20process%20consumes%20100%25%20of%0A%20one%20cpu%20in%20tight%20epoll_wait%20loop&In-Reply-To=%3CCAKBgs905S44vuJJYJkY0OGfwrmPp%3DiUBBxtM3k%3D7zxut%2BtPSOg%40mail.gmail.com%3E"
+       TITLE="[rabbitmq-discuss] rabbitmq 2.8.2 beam process consumes 100% of one cpu in tight epoll_wait loop">conzyor34 at gmail.com
+       </A><BR>
+    <I>Mon Jun 18 18:29:46 BST 2012</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="020639.html">[rabbitmq-discuss] rabbitmq 2.8.2 beam process consumes 100% of one cpu in tight epoll_wait loop
+</A></li>
+        <LI>Next message: <A HREF="020726.html">[rabbitmq-discuss] rabbitmq 2.8.2 beam process consumes 100% of one cpu in tight epoll_wait loop
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#20671">[ date ]</a>
+              <a href="thread.html#20671">[ thread ]</a>
+              <a href="subject.html#20671">[ subject ]</a>
+              <a href="author.html#20671">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi, thanks for your response.
+
+The file descriptor with the EAGAIN looks like the read end of a pipe to
+itself, according to lsof:
+
+beam    1754 rabbitmq    5r     FIFO    0,8      0t0  10971 pipe
+beam    1754 rabbitmq    6w     FIFO    0,8      0t0  10971 pipe
+
+Here is etop output. This system also runs couchdb, which may be showing up
+in the etop report:
+
+========================================================================================
+ <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">etop at xxxxxxxxx01</A>
+12:05:21
+ Load:  cpu         0               Memory:  total        6616
+binary         20
+        procs      34                        processes    1192
+code         3495
+        runq        0                        atom          448
+ets           249
+
+Pid            Name or Initial Func    Time    Reds  Memory    MsgQ Current
+Function
+----------------------------------------------------------------------------------------
+&lt;0.3.0&gt;        erl_prim_loader          '-'    8012   88288       0
+erl_prim_loader:loop
+&lt;0.30.0&gt;       user                     '-'    7339   34312       0
+group:server_loop/3
+&lt;0.40.0&gt;       etop_txt:init/1          '-'    2725   26272       0
+etop:update/1
+&lt;0.25.0&gt;       code_server              '-'    1558  101024       0
+code_server:loop/1
+&lt;0.29.0&gt;       user_drv                 '-'      92   13640       0
+user_drv:server_loop
+&lt;0.0.0&gt;        init                     '-'       0   18456       0
+init:boot_loop/2
+&lt;0.2.0&gt;        etop_server              '-'       0   88288       0
+etop:data_handler/2
+&lt;0.5.0&gt;        error_logger             '-'       0    5704       0
+gen_event:fetch_msg/
+&lt;0.6.0&gt;        application_controll     '-'       0  230080       0
+gen_server:loop/6
+&lt;0.8.0&gt;        proc_lib:init_p/5        '-'       0    6856       0
+application_master:m
+&lt;0.9.0&gt;        application_master:s     '-'       0    2584       0
+application_master:l
+&lt;0.10.0&gt;       kernel_sup               '-'       0    7256       0
+gen_server:loop/6
+&lt;0.11.0&gt;       rex                      '-'       0    2648       0
+gen_server:loop/6
+&lt;0.12.0&gt;       global_name_server       '-'       0    2728       0
+gen_server:loop/6
+&lt;0.13.0&gt;       erlang:apply/2           '-'       0    2544       0
+global:loop_the_lock
+========================================================================================
+
+This tight loop condition was repeatable 100% on the system above. I
+installed the same rpms onto another rhel6.2 system and the problem did not
+occur. I then deleted the contents of /var/lib/rabbitmq and re-created my
+single vhost + user. The tight epoll_wait loop is now gone. Before my
+purge, the rabbitmq process had over 500 open files similar to the
+following:
+
+/var/lib/rabbitmq/mnesia/<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at xxxxxxxxx01</A>
+/queues/5DQOSIVFS7TNVQV0KQGVZYBSL/journal.jif
+
+The queues directory has not yet been re-created by rabbitmq. This
+rabbitmq-server is part of a Chef installation. I will post back if the
+problem reoccurs. After the purge, the ntop output looks like this:
+
+========================================================================================
+ <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">etop at hgspadmna01</A>
+17:29:01
+ Load:  cpu         0               Memory:  total        6564
+binary         20
+        procs      34                        processes    1141
+code         3495
+        runq        0                        atom          448
+ets           249
+
+Pid            Name or Initial Func    Time    Reds  Memory    MsgQ Current
+Function
+----------------------------------------------------------------------------------------
+&lt;0.30.0&gt;       user                     '-'    5798   16656       0
+group:server_loop/3
+&lt;0.40.0&gt;       etop_txt:init/1          '-'    2255   29288       0
+etop:update/1
+&lt;0.29.0&gt;       user_drv                 '-'      72   13640       0
+user_drv:server_loop
+&lt;0.0.0&gt;        init                     '-'       0   26352       0
+init:boot_loop/2
+&lt;0.2.0&gt;        etop_server              '-'       0   88288       0
+etop:data_handler/2
+&lt;0.3.0&gt;        erl_prim_loader          '-'       0   21392       0
+erl_prim_loader:loop
+&lt;0.5.0&gt;        error_logger             '-'       0    5704       0
+gen_event:fetch_msg/
+&lt;0.6.0&gt;        application_controll     '-'       0  230080       0
+gen_server:loop/6
+&lt;0.8.0&gt;        proc_lib:init_p/5        '-'       0    6856       0
+application_master:m
+&lt;0.9.0&gt;        application_master:s     '-'       0    2584       0
+application_master:l
+========================================================================================
+
+Thanks!
+
+Con
+
+On Mon, Jun 18, 2012 at 4:00 AM, Emile Joubert &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">emile at rabbitmq.com</A>&gt; wrote:
+
+&gt;<i> Hi,
+</I>&gt;<i>
+</I>&gt;<i> On 14/06/12 22:10, Con Zyor wrote:
+</I>&gt;<i> &gt; Running strace on the process reveals that beam is in a tight loop, with
+</I>&gt;<i> &gt; the following sequence repeated endlessly:
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; read(5, &quot;00&quot;, 32)                       = 2
+</I>&gt;<i> &gt; read(5, 0x7fffc2213e40, 32)             = -1 EAGAIN (Resource
+</I>&gt;<i> &gt; temporarily unavailable)
+</I>&gt;<i>
+</I>&gt;<i> This is definitely not expected behaviour. Can you determine what that
+</I>&gt;<i> file descriptor corresponds to by looking earlier in the output?
+</I>&gt;<i> What does &quot;etop&quot; output?
+</I>&gt;<i> How repeatable is the problem?
+</I>&gt;<i> Have you observed this on any other servers, or is it only one?
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> -Emile
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20120618/2f86bbad/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20120618/2f86bbad/attachment.htm</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="020639.html">[rabbitmq-discuss] rabbitmq 2.8.2 beam process consumes 100% of one cpu in tight epoll_wait loop
+</A></li>
+	<LI>Next message: <A HREF="020726.html">[rabbitmq-discuss] rabbitmq 2.8.2 beam process consumes 100% of one cpu in tight epoll_wait loop
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#20671">[ date ]</a>
+              <a href="thread.html#20671">[ thread ]</a>
+              <a href="subject.html#20671">[ subject ]</a>
+              <a href="author.html#20671">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

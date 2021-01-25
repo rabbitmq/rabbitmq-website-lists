@@ -1,0 +1,212 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] How Should a Messaging Client Handle Errors?
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20How%20Should%20a%20Messaging%20Client%20Handle%20Errors%3F&In-Reply-To=%3C4E1ED6E7.4090304%40rabbitmq.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="013890.html">
+   <LINK REL="Next"  HREF="013892.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] How Should a Messaging Client Handle Errors?</H1>
+    <B>Rob Harrop</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20How%20Should%20a%20Messaging%20Client%20Handle%20Errors%3F&In-Reply-To=%3C4E1ED6E7.4090304%40rabbitmq.com%3E"
+       TITLE="[rabbitmq-discuss] How Should a Messaging Client Handle Errors?">rob.harrop at gmail.com
+       </A><BR>
+    <I>Thu Jul 14 12:45:43 BST 2011</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="013890.html">[rabbitmq-discuss] How Should a Messaging Client Handle Errors?
+</A></li>
+        <LI>Next message: <A HREF="013892.html">[rabbitmq-discuss] How Should a Messaging Client Handle Errors?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#13891">[ date ]</a>
+              <a href="thread.html#13891">[ thread ]</a>
+              <a href="subject.html#13891">[ subject ]</a>
+              <a href="author.html#13891">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Mike,
+
+The solution you outline in option 2 sounds like the Dead-Letter 
+Exchange support I'm working on at the moment.
+
+Using DLEs, you can declare that a queue routes all dead messages to a 
+specified exchange for later processing. Messages are considered dead when:
+
+* The queue containing the message is deleted
+* The queue containing the message is purged
+* The queue containing is deleted due to lease expiry
+* The message is rejected (basic.reject or basic.nack) with requeue=false
+* The TTL for the message expires
+
+Messages are routed to DLEs using their original routing key. If you 
+make the DLE a fanout exchange then you can easily route all dead 
+messages to all queues bound to the DLE.
+
+When this feature is complete, the DLE code will ensure that persistent 
+messages are routed through the DLE before being removed from the source 
+queue - this should give you the guarantee of safety that you are 
+looking for.
+
+Regards,
+
+Rob
+
+Mike Hadlow wrote:
+&gt;<i> Hi All,
+</I>&gt;<i>
+</I>&gt;<i> This is a copy of a blog post I&#8217;ve just written
+</I>&gt;<i> &lt;<A HREF="http://mikehadlow.blogspot.com/2011/07/easynetq-how-should-messaging-client.html">http://mikehadlow.blogspot.com/2011/07/easynetq-how-should-messaging-client.html</A>&gt;.
+</I>&gt;<i> I was wondering if anyone on the group had any good suggestions for
+</I>&gt;<i> error handling strategies?
+</I>&gt;<i>
+</I>&gt;<i> EasyNetQ &lt;<A HREF="https://github.com/mikehadlow/EasyNetQ">https://github.com/mikehadlow/EasyNetQ</A>&gt; is my simple .NET API
+</I>&gt;<i> for RabbitMQ.
+</I>&gt;<i>
+</I>&gt;<i> I&#8217;ve started thinking about the best patterns for implementing error
+</I>&gt;<i> handling in EasyNetQ. One of the aims of EasyNetQ is to remove as many
+</I>&gt;<i> infrastructure concerns from the application developer as possible. This
+</I>&gt;<i> means that the API should correctly handle any exceptions that bubble up
+</I>&gt;<i> from the application layer.
+</I>&gt;<i>
+</I>&gt;<i> One of the core requirements is that we shouldn&#8217;t lose messages when the
+</I>&gt;<i> application throws. The question then becomes: where should the message,
+</I>&gt;<i> that the application was consuming when it threw, go? There seem to be
+</I>&gt;<i> three choices:
+</I>&gt;<i>
+</I>&gt;<i>    1. Put the failed message back on the queue it was consumed from.
+</I>&gt;<i>    2. Put the failed message on an error queue.
+</I>&gt;<i>    3. A combination of 1 and 2.
+</I>&gt;<i>
+</I>&gt;<i> *Option 1*has the benefit that it&#8217;s the out-of-the-box behaviour of
+</I>&gt;<i> AMQP. In the case of EasyNetQ, I would simply catch any exceptions, log
+</I>&gt;<i> them, and just send a noAck command back to RabbitMQ. Rabbit would put
+</I>&gt;<i> the message at the back of the queue and then resend it when it got to
+</I>&gt;<i> the front.
+</I>&gt;<i>
+</I>&gt;<i> Another advantage of this technique is that it gives competing consumers
+</I>&gt;<i> the opportunity to process the message. If you have more than one
+</I>&gt;<i> consumer on a queue, Rabbit will send the messages to them in turn, so
+</I>&gt;<i> this is out-of-the-box.
+</I>&gt;<i>
+</I>&gt;<i> The drawback of this method is that there&#8217;s the possibility of the queue
+</I>&gt;<i> filling up with failed messages. The consumer would just be cycling
+</I>&gt;<i> around throwing exceptions and any messages that it might be able to to
+</I>&gt;<i> consume would be slowed down by having to wait their turn amongst a long
+</I>&gt;<i> queue of failed messages.
+</I>&gt;<i>
+</I>&gt;<i> Another problem is that it&#8217;s difficult to manually inspect the messages
+</I>&gt;<i> and selectively delete or retry them.
+</I>&gt;<i>
+</I>&gt;<i> *Option 2*is harder to implement. I would have to catch exceptions, log
+</I>&gt;<i> them and then write the message to an error queue. I would need to write
+</I>&gt;<i> an error queue consumer to store the messages in a database. I would
+</I>&gt;<i> then need to provide the user with some way to inspect the messages
+</I>&gt;<i> alongside the error that caused them to arrive in the error queue so
+</I>&gt;<i> that they could make a ignore/retry decision.
+</I>&gt;<i>
+</I>&gt;<i> I could also implement some kind of wait-and-retry function on the error
+</I>&gt;<i> queue, but that would also add additional complexity.
+</I>&gt;<i>
+</I>&gt;<i> It has the advantage that the original queue remains clear of failing
+</I>&gt;<i> messages. Failed messages and the error condition that caused the
+</I>&gt;<i> failure can be inspected together, and failed messages can be manually
+</I>&gt;<i> ignored or retried.
+</I>&gt;<i>
+</I>&gt;<i> With the failed messages sitting in a database, it would also be simple
+</I>&gt;<i> to create a mechanism where those messages could be replayed on a
+</I>&gt;<i> developer machine to aid in debugging.
+</I>&gt;<i>
+</I>&gt;<i> *A combination of 1 and 2*. I&#8217;m moving towards thinking that a
+</I>&gt;<i> combination of 1 &amp; 2 might be the best strategy. When a message fails
+</I>&gt;<i> initially, we simply noAck it and it goes back to the queue. AMQP
+</I>&gt;<i> provides a Redelivered flag, so when the messages is consumed a second
+</I>&gt;<i> time we can be aware that it&#8217;s a retry. Unfortunately there doesn&#8217;t seem
+</I>&gt;<i> to be a retry count in AMQP, so the best we can do is allow for a single
+</I>&gt;<i> retry. This has the benefit that it gives a competing consumer a chance
+</I>&gt;<i> to process the message.
+</I>&gt;<i>
+</I>&gt;<i> After the single retry we fall back to *Option 2*. The message is passed
+</I>&gt;<i> to the error queue on the second failure.
+</I>&gt;<i>
+</I>&gt;<i> I would be very interested in hearing how other people have implemented
+</I>&gt;<i> error handling with AMQP/RabbitMQ.
+</I>&gt;<i>
+</I>&gt;<i> Many thanks
+</I>&gt;<i>
+</I>&gt;<i> Mike
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> 15below Limited: Company registered in England and Wales No 3945289
+</I>&gt;<i> Registered Office: Lyndean House, 43-46 Queens Road, Brighton BN1 3XB,
+</I>&gt;<i> United Kingdom
+</I>&gt;<i>
+</I>&gt;<i> 15below Australia Pty Limited: ABN 25 132 716 379
+</I>&gt;<i> Level 50, 120 Collins Street, Melbourne, Victoria 3000, Australia
+</I>&gt;<i>
+</I>&gt;<i> Please think about the environment before printing this email.
+</I>&gt;<i>
+</I>&gt;<i> ************************************************************************
+</I>&gt;<i> This email and any attachments may be confidential and/or legally
+</I>&gt;<i> privileged and are solely for the use of the intended recipient. If you
+</I>&gt;<i> have received this email in error please contact the sender. Any views
+</I>&gt;<i> or opinions expressed within this e-mail are solely those of the sender,
+</I>&gt;<i> and do not necessarily represent those of 15below unless otherwise
+</I>&gt;<i> specifically stated. Although 15below has taken every reasonable
+</I>&gt;<i> precaution to ensure that any attachment to this e-mail has been checked
+</I>&gt;<i> for viruses, it is strongly recommended that you carry out your own
+</I>&gt;<i> virus check before opening any attachment, as we cannot accept liability
+</I>&gt;<i> for any damage sustained as a result of software virus infection.
+</I>&gt;<i>
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I></PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="013890.html">[rabbitmq-discuss] How Should a Messaging Client Handle Errors?
+</A></li>
+	<LI>Next message: <A HREF="013892.html">[rabbitmq-discuss] How Should a Messaging Client Handle Errors?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#13891">[ date ]</a>
+              <a href="thread.html#13891">[ thread ]</a>
+              <a href="subject.html#13891">[ subject ]</a>
+              <a href="author.html#13891">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

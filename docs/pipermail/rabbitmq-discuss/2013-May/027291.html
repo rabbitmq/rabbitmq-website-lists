@@ -1,0 +1,203 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] RabbitMQ 3.1.0 lost messages and autoheal failures when recovering from cluster partition
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20RabbitMQ%203.1.0%20lost%20messages%20and%20autoheal%0A%20failures%20when%20recovering%20from%20cluster%20partition&In-Reply-To=%3C7F7BFE76D0F5234F9258D88C37C9EC6B151C31EE%40VALVCSMBX001PH.val.vlss.local%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="027350.html">
+   <LINK REL="Next"  HREF="027347.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] RabbitMQ 3.1.0 lost messages and autoheal failures when recovering from cluster partition</H1>
+    <B>Maslinski, Ray</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20RabbitMQ%203.1.0%20lost%20messages%20and%20autoheal%0A%20failures%20when%20recovering%20from%20cluster%20partition&In-Reply-To=%3C7F7BFE76D0F5234F9258D88C37C9EC6B151C31EE%40VALVCSMBX001PH.val.vlss.local%3E"
+       TITLE="[rabbitmq-discuss] RabbitMQ 3.1.0 lost messages and autoheal failures when recovering from cluster partition">MaslinskiR at valassis.com
+       </A><BR>
+    <I>Fri May 17 20:38:05 BST 2013</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="027350.html">[rabbitmq-discuss] Recovering an 3-node cluster after power	failure
+</A></li>
+        <LI>Next message: <A HREF="027347.html">[rabbitmq-discuss] RabbitMQ 3.1.0 lost messages and autoheal failures when recovering from cluster partition
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#27291">[ date ]</a>
+              <a href="thread.html#27291">[ thread ]</a>
+              <a href="subject.html#27291">[ subject ]</a>
+              <a href="author.html#27291">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hello,
+
+I've been experimenting with the new autoheal mode for handling cluster partitions and automatic synchronization for mirrored queues using servers hosted at Amazon EC2.  My test setup is a two node cluster, with queue policy set to ha-mode=all and ha-sync-mode=automatic.  The servers are also configured with cluster_partition_handling set to autoheal, and sit behind an ELB for client access.  The rest of the configuration is essentially the same as describe here <A HREF="http://karlgrz.com/rabbitmq-highly-available-queues-and-clustering-using-amazon-ec2/">http://karlgrz.com/rabbitmq-highly-available-queues-and-clustering-using-amazon-ec2/</A> with the main exception being that both of the RabbitMQ servers are in the same availability zone.  The servers are hosted on m1.small instances running Ubuntu Linux 12.04.2 LTS.
+
+The client load is being generated from JMeter using a tunable number of client threads to send and receive messages at a steady rate to a mirrored queue.  With the load balancer in place, the tests are run with enough threads to ensure that both servers have active connections for both sending and receiving.  The test sequence verifies that all message sent without encountering an error are also received.
+
+To simulate a network partition failure, I've been using iptables to temporarily block inbound and outbound access on one of the nodes to the single port configured for cluster communications through inet_dist_listen_min and inet_dist_listen_max settings (min = max).  Client access is not blocked during a simulated partition fault.
+
+I've observed two anomalies during testing that I wasn't expecting based on the documentation I've read:
+
+
+-          At a sufficiently high message rate, some number of messages will be lost during the fault sequence, with the number lost tending to increase with message rate.  No indication of a send error has been observed by the client program.  Based on results obtained from test logs and an independent monitor listening on trace messages from each node, it appears that as soon as the port is blocked, both nodes continue to accept published messages, but (temporarily) stop delivering messages until the cluster heartbeat failure is detected, at which point the cluster is partitioned and the slave promotes itself to become master.  In the sequences I've looked at, the messages that are lost all appear to be published to the original master (and final master after a winner is selected during autoheal).  Neither the start nor the end of the lost message window appear to line up with any events in the logs, other than the start occurring sometime after the port connection is blocked but before the cluster heartbeat failure is detected, and the end occurring sometime after the detection of the cluster heartbeat failure and before the detection of the partitioned cluster after the connection is unblocked.  Is message loss to be expected in this scenario?
+
+-          Occasionally the autoheal loser node fails to rejoin the cluster after restart.  I don't have a lot of data points on this one since it's only happened a handful of times during overnight test iterations.  During one failure, the autoheal winner showed the log message below during recovery:
+
+
+=ERROR REPORT==== 17-May-2013::02:40:36 ===
+Mnesia('<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at oemsg-new-27b1524f</A>'): ** ERROR ** mnesia_event got {inconsistent_database, running_partitioned_network, '<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at oemsg-new-29b15241</A>'}
+
+=INFO REPORT==== 17-May-2013::02:40:36 ===
+Autoheal request received from '<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at oemsg-new-29b15241</A>'
+
+=ERROR REPORT==== 17-May-2013::02:40:36 ===
+** Generic server rabbit_node_monitor terminating
+** Last message in was {autoheal_msg,
+                           {request_start,'<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at oemsg-new-27b1524f</A>'}}
+** When Server state == {state,
+                            {dict,1,16,16,8,80,48,
+                                {[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],
+                                 []},
+                                {{[],
+                                  [[{rabbit,'<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at oemsg-new-29b15241</A>'}|
+                                    #Ref&lt;0.0.65.255337&gt;]],
+                                  [],[],[],[],[],[],[],[],[],[],[],[],[],[]}}},
+                            ['<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at oemsg-new-29b15241</A>'],
+                            {dict,1,16,16,8,80,48,
+                                {[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],
+                                 []},
+                                {{[],[],
+                                  [[&lt;0.20953.18&gt;|#Ref&lt;0.0.65.232752&gt;]],
+                                  [],[],[],[],[],[],[],[],[],[],[],[],[]}}},
+                            undefined,
+                            {winner_waiting,
+                                ['<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at oemsg-new-29b15241</A>'],
+                                ['<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at oemsg-new-29b15241</A>']}}
+** Reason for termination ==
+** {function_clause,
+       [{rabbit_autoheal,handle_msg,
+            [{request_start,'<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at oemsg-new-27b1524f</A>'},
+             {winner_waiting,
+                 ['<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at oemsg-new-29b15241</A>'],
+                 ['<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at oemsg-new-29b15241</A>']},
+             ['<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at oemsg-new-29b15241</A>']]},
+        {rabbit_node_monitor,handle_info,2},
+        {gen_server,handle_msg,5},
+        {proc_lib,init_p_do_apply,3}]}
+
+=INFO REPORT==== 17-May-2013::02:40:36 ===
+Autoheal decision
+  * Partitions: [['<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at oemsg-new-29b15241</A>'],['<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at oemsg-new-27b1524f</A>']]
+  * Winner:     '<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at oemsg-new-27b1524f</A>'
+  * Losers:     ['<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at oemsg-new-29b15241</A>']
+
+=INFO REPORT==== 17-May-2013::02:40:36 ===
+Autoheal request sent to '<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at oemsg-new-27b1524f</A>'
+
+=INFO REPORT==== 17-May-2013::02:40:36 ===
+Autoheal: I am the winner, waiting for ['<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at oemsg-new-29b15241</A>'] to stop
+
+However,  I've also seen at least one other instance where the message about the node monitor terminating appeared but did not coincide with an autoheal failure.  Comparing the two occurrences shows a somewhat different log sequence around server shutdown and startup:
+
+No autoheal failure:
+
+=WARNING REPORT==== 17-May-2013::01:58:36 ===
+Non-AMQP exit reason 'shutdown'
+
+=ERROR REPORT==== 17-May-2013::01:58:36 ===
+Mnesia('<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at oemsg-new-29b15241</A>'): ** ERROR ** mnesia_event got {inconsistent_database, starting_partitioned_network, '<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at oemsg-new-27b1524f</A>'}
+
+=INFO REPORT==== 17-May-2013::01:58:36 ===
+Starting RabbitMQ 3.1.0 on Erlang R14B04
+Copyright (C) 2007-2013 VMware, Inc.
+Licensed under the MPL.  See <A HREF="http://www.rabbitmq.com/">http://www.rabbitmq.com/</A>
+
+Autoheal failure:
+
+=WARNING REPORT==== 17-May-2013::02:40:36 ===
+Non-AMQP exit reason 'shutdown'
+
+=INFO REPORT==== 17-May-2013::02:44:51 ===
+Starting RabbitMQ 3.1.0 on Erlang R14B04
+Copyright (C) 2007-2013 VMware, Inc.
+Licensed under the MPL.  See <A HREF="http://www.rabbitmq.com/">http://www.rabbitmq.com/</A>
+
+Note that rabbitmq-server is started through an upstart job which attempts to respawn, so the long delay between shutdown and startup message may be related to multiple restart attempts of the process (nothing of interest in the startup/shutdown logs).
+
+Any ideas around possible causes of this autoheal failure?
+
+Ray Maslinski
+Senior Software Developer, Engineering
+Valassis / Digital Media
+Cell: 585.330.2426
+<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">maslinskir at valassis.com</A>
+www.valassis.com&lt;<A HREF="http://www.valassis.com/">http://www.valassis.com/</A>&gt;
+
+Creating the future of intelligent media delivery to drive your greatest success
+
+_____________________________________________________________________________
+
+This message may include proprietary or protected information. If you are not the intended
+recipient, please notify me, delete this message and do not further communicate the information
+contained herein without my express consent.
+
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20130517/ef7df685/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20130517/ef7df685/attachment.htm</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="027350.html">[rabbitmq-discuss] Recovering an 3-node cluster after power	failure
+</A></li>
+	<LI>Next message: <A HREF="027347.html">[rabbitmq-discuss] RabbitMQ 3.1.0 lost messages and autoheal failures when recovering from cluster partition
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#27291">[ date ]</a>
+              <a href="thread.html#27291">[ thread ]</a>
+              <a href="subject.html#27291">[ subject ]</a>
+              <a href="author.html#27291">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

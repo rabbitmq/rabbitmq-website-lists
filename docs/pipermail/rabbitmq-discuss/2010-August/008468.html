@@ -1,0 +1,148 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Concerning cluster failure scenario
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Concerning%20cluster%20failure%20scenario&In-Reply-To=%3CAANLkTimD8T1fVgjf5ZAyXPVVeALhJRJB%3Db58jz7yvSgw%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="008472.html">
+   <LINK REL="Next"  HREF="008519.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Concerning cluster failure scenario</H1>
+    <B>Aaron Westendorf</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Concerning%20cluster%20failure%20scenario&In-Reply-To=%3CAANLkTimD8T1fVgjf5ZAyXPVVeALhJRJB%3Db58jz7yvSgw%40mail.gmail.com%3E"
+       TITLE="[rabbitmq-discuss] Concerning cluster failure scenario">aaron at agoragames.com
+       </A><BR>
+    <I>Tue Aug 17 19:24:22 BST 2010</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="008472.html">[rabbitmq-discuss] rabbitmq-jsonrpc
+</A></li>
+        <LI>Next message: <A HREF="008519.html">[rabbitmq-discuss] Concerning cluster failure scenario
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#8468">[ date ]</a>
+              <a href="thread.html#8468">[ thread ]</a>
+              <a href="subject.html#8468">[ subject ]</a>
+              <a href="author.html#8468">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>We experienced a very odd and disturbing outage yesterday.  I'll do my
+best to explain and can fill in any missing details as needed.
+
+We have a 4 host/node cluster of 1.7.2 rabbits.  One node serves our
+translators that bridge synchronous HTTP traffic to our backend
+services.  Two other nodes handle our services and one is a spare.
+The translators have queues named &quot;$host.$pid&quot; and which are bound to
+the &quot;response&quot; exchange using routing keys of the same name.
+
+One of the application nodes went down, apparently due to an outright
+crash.  Monit caught that rabbit wasn't running and restarted it.  All
+the rabbit hosts and our services saw this as a socket disconnect
+without any closure method.  The only immediate fallout from this was
+a mis-handling in our application stack for socket drops.  Combing
+through the logs yielded nothing; it appears Erlang crashed hard.
+
+The really strange behavior happened at the node which serves our
+translators.  Running `rabbitmqctl list_queues` it was clear that most
+of the queues that should exist did not, including the ones which our
+translators need.  The logs when the other node went down have many
+entries similar to the following:
+
+=ERROR REPORT==== 16-Aug-2010::18:06:54 ===
+connection &lt;0.20615.10&gt; (running), channel 2 - error:
+{amqp_error,internal_error,
+            &quot;commit failed:
+[{exit,{{<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">nodedown,rabbit at jackalope</A>},{gen_server2,call,[&lt;7282.218.0&gt;,{commit,{{11,&lt;0.20706.10&gt;},98789}},infinity]}}}]&quot;,
+            'tx.commit'}
+
+
+Those errors propagated up our application stack where our translators
+re-connected to the broker (fresh socket).  That lead to this error
+which is very common:
+
+=ERROR REPORT==== 16-Aug-2010::18:06:56 ===
+connection &lt;0.22741.65&gt; (running), channel 1 - error:
+{amqp_error,not_found,&quot;no queue 'ogre.28645' in vhost '/hydra'&quot;,'queue.bind'}
+
+We have added a delay to some of our applications so that reconnection
+happens after a second or two to avoid this race condition, and will
+make that change here too.  So both logs and rabbitmqctl were in
+agreement that the queues which should have existed for our
+translators did not exist.  I didn't see any errors about the
+queue.basic_consume calls though.
+
+Our translators have some test endpoints, and one of those is a ping
+which writes directly to the response exchange to effectively test
+that the translator and Rabbit are working together.  The response
+exchange is living on the same node which the translator is connected
+to and consuming from.
+
+When we called this test endpoint, it succeeded!  Though rabbit did
+not report a queue or binding, every single on of our translators was
+receiving responses though they never should have.  When one of our
+services wrote back to the response exchange on other node in the
+cluster, the message was dropped as we would expect.
+
+-Aaron
+
+-- 
+Aaron Westendorf
+Senior Software Engineer
+Agora Games
+359 Broadway
+Troy, NY 12180
+Phone: 518.268.1000
+<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">aaron at agoragames.com</A>
+www.agoragames.com
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="008472.html">[rabbitmq-discuss] rabbitmq-jsonrpc
+</A></li>
+	<LI>Next message: <A HREF="008519.html">[rabbitmq-discuss] Concerning cluster failure scenario
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#8468">[ date ]</a>
+              <a href="thread.html#8468">[ thread ]</a>
+              <a href="subject.html#8468">[ subject ]</a>
+              <a href="author.html#8468">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

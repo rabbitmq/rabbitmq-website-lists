@@ -1,0 +1,155 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] routing threads on a rabbitmq node
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20routing%20threads%20on%20a%20rabbitmq%20node&In-Reply-To=4B68D8C5.3030003%40lshift.net">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="006145.html">
+   <LINK REL="Next"  HREF="006171.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] routing threads on a rabbitmq node</H1>
+    <B>Brian Sullivan</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20routing%20threads%20on%20a%20rabbitmq%20node&In-Reply-To=4B68D8C5.3030003%40lshift.net"
+       TITLE="[rabbitmq-discuss] routing threads on a rabbitmq node">bsullivan at lindenlab.com
+       </A><BR>
+    <I>Wed Feb  3 20:05:23 GMT 2010</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="006145.html">[rabbitmq-discuss] routing threads on a rabbitmq node
+</A></li>
+        <LI>Next message: <A HREF="006171.html">[rabbitmq-discuss] routing threads on a rabbitmq node
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#6166">[ date ]</a>
+              <a href="thread.html#6166">[ thread ]</a>
+              <a href="subject.html#6166">[ subject ]</a>
+              <a href="author.html#6166">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi Matthias,
+
+That's good to know that those numbers look high to you.  Knowing where our
+bounds are will help me readjust out configuration.
+
+We have ~75 bindings, same as the number of queues.  We don't do many
+multiple bindings per queue (if any).  This has increased faster than our
+message volumes (more consuming applications to make use of the data), so I
+believe this is the primary reason things are harder now than they used to
+be.
+
+Unfortunately, moving to a direct exchange is in the works but not a quick
+for us at this point.
+
+What I would like to figure out is how to reorient my cluster to make things
+more stable.  Knowing that the routing time is increasing due to the number
+of bindings, I am not convinced that my plan of adding a rabbitmq node to
+each producer is going to make things all that much better - the routing
+table will still be the same, and it will need to do that cross-routing
+you're talking about avoiding.  Even when we have a single producer catching
+up in our current system, the node can only route at a certain rate, and
+this is definitely not CPU bound.  I am curious why Erlang cannot spend more
+time in that thread, but I don't know much about it - does that seem right
+to you?
+
+I am not sure what I can do to minimize cross-routing, other than to try to
+keep our producers consolidated and keep the heaviest consumers (meaning the
+ones with a binding to the most active topics - remember that all queues
+bind to only one topic expression) separated on their own nodes, to remove
+their queue management processing on the core routing function.  Ironically,
+I was originally trying to keep the heaviest consumers on the routing nodes,
+to minimize forwarding of messages - but if the cost magnifies with the
+number of consumer queues, then it's likely that keeping the larger fanout
+(but smaller throughput) of consumers on the routing nodes might be best.
+
+The thing that concerns me is that my scalability here seems to be limited -
+the only other thing I can think of doing is increasing my number of
+producers to distribute the load even further and possibly do the local node
+thing - then if our routing table keeps growing, I can manage scaling at the
+producer level - not efficient maybe, but at least it can grow past the
+threshold I appear to be running into.
+
+Thanks for the background.  I would love to see more documentation on how
+the process model works.  Let me know if the above triggers any other
+solutions.
+
+Thanks,
+Brian
+
+
+On Tue, Feb 2, 2010 at 6:00 PM, Matthias Radestock &lt;<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">matthias at lshift.net</A>&gt;wrote:
+
+&gt;<i> Brian,
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> Brian Sullivan wrote:
+</I>&gt;<i>
+</I>&gt;&gt;<i> 1) How many msgs/second are being published for this issue to occur?
+</I>&gt;&gt;<i>  From a single producer, about 900 messages/sec during these burst catchup
+</I>&gt;&gt;<i> periods.  Normal volumes then drop down to 300-500 mps throughout the day,
+</I>&gt;&gt;<i> which we can keep up with for the most part.  Note that there are 8-9 such
+</I>&gt;&gt;<i> producers, distributed across 2 nodes.
+</I>&gt;&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> So that's a 900Hz * 9 = 8.1kHz peak inbound rate?
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>  4) How many queues do messages end up in, on average?
+</I>&gt;&gt;<i> About the same number of bindings - 75.  We don't do many multiple
+</I>&gt;&gt;<i> bindings per queue (if any).
+</I>&gt;&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> 8.1kHz inbound with a 75x fan-out ratio would require an outbound rate of
+</I>&gt;<i> &gt;600kHz, which is way more than a two-node rabbit cluster can handle. So
+</I>&gt;<i> some backlog will certainly build up.
+</I>&gt;<i>
+</I>&gt;<i> It will take a while for messages to make it into queues. This isn't helped
+</I>&gt;<i> by lack of optimisation in two areas of the server code:
+</I>&gt;<i>
+</I>&gt;<i> - topic exchanges. As you know, they are currently totally unoptimised and
+</I>&gt;<i> the cost of determining the queues a message should be routed to is linear
+</I>&gt;<i> in the total number of bindings on the exchage. How many bindings are there
+</I>&gt;<i> in total in your case? If you can, please use a direct exchange.
+</I>&gt;<i>
+</I>&gt;<i> - cross-node routing in a cluster. A while ago we had to remove optimised
+</I>&gt;<i> cross-node routing since it turned out to break certain effect visibility
+</I>&gt;<i> guarantees required by AMQP. As a result, routing a message to N queues
+</I>&gt;<i> residing on a different node will result in N network transmissions of the
+</I>&gt;<i> message to that node, and N copies of the message at the node. If you can,
+</I>&gt;<i> don't use clustering or at least avoid configurations where producers and
+</I>&gt;<i> consumers connect to different nodes.
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> Regards,
+</I>&gt;<i>
+</I>&gt;<i> Matthias.
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: <A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20100203/f425fbce/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20100203/f425fbce/attachment.htm</A> 
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="006145.html">[rabbitmq-discuss] routing threads on a rabbitmq node
+</A></li>
+	<LI>Next message: <A HREF="006171.html">[rabbitmq-discuss] routing threads on a rabbitmq node
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#6166">[ date ]</a>
+              <a href="thread.html#6166">[ thread ]</a>
+              <a href="subject.html#6166">[ subject ]</a>
+              <a href="author.html#6166">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

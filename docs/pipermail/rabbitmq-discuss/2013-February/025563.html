@@ -1,0 +1,269 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Understanding a crash report
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Understanding%20a%20crash%20report&In-Reply-To=%3C0055dd45-cad6-432a-844d-2ecf46fa459f%40googlegroups.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="025566.html">
+   <LINK REL="Next"  HREF="025569.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Understanding a crash report</H1>
+    <B>Simone</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Understanding%20a%20crash%20report&In-Reply-To=%3C0055dd45-cad6-432a-844d-2ecf46fa459f%40googlegroups.com%3E"
+       TITLE="[rabbitmq-discuss] Understanding a crash report">s.sciarrati at gmail.com
+       </A><BR>
+    <I>Tue Feb 19 12:02:52 GMT 2013</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="025566.html">[rabbitmq-discuss] Cluster breakage
+</A></li>
+        <LI>Next message: <A HREF="025569.html">[rabbitmq-discuss] Pattern - exclude
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#25563">[ date ]</a>
+              <a href="thread.html#25563">[ thread ]</a>
+              <a href="subject.html#25563">[ subject ]</a>
+              <a href="author.html#25563">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi,
+
+I am relatively new to Rabbitmq and would appreciate help in 
+troubleshooting a recurring issue on a cluster, apologies for the long 
+email.
+
+I run a 3 instances cluster in ec2, 2 disk nodes (A and B) 1 ram node (C), 
+exchanges and queues are static and limited in number (less than 50), the 
+volume of messages can reach a few thousands per second and the queues can 
+occasionally grow up to a few hundred thousands until the processes manage 
+to catch up, but this is well within our memory/disk high watermark. 
+Rabbitmq is v. 2.8.4 on ubuntu 12.
+
+The processes that produce and consume messages are java/scala and use the 
+akka-amqp library driver (akka-amqp-1.3.1).
+
+In normal operations our nodes run on ~ 500MB memory, the limit is set to 
+2.7GB, but in a couple occasions one of the nodes managed to very rapidly 
+(&lt; 1 min) eat &gt; 1GB memory and triggered the high memory watermark (node B, 
+one of the disk nodes last time).
+
+At the moment of the issue most of the memory was held in 'processes', no 
+queue was overgrown (messages or memory), I managed to run a rabbitmqctl 
+report, I found a crash report in the logs (more on this later) and tried 
+to see which process/es was responsible for the memory usage from the 
+erlang shell but I wasn't able to pin a specific one (my erlang is limited 
+and I didn't dump the processes to file to look at it later unfortunately). 
+
+For every issue we have had (3 in 2 months), the logs show a crash report 
+relative to a specific java process (say process D) sending a message to a 
+specific queue (queue D - this is a queue with no consumers atm, if the app 
+fails to process a message it will end up here). Note that there are 
+multiple workers D running on separate instances in ec2 and that queue D is 
+very low traffic so it is unlikely to be a coincidence.
+
+At this point I was pressured to restart rmq on the affected node B, this 
+was a stop_app, then stop the erlang VM and then restart. All looked good, 
+the node was in a nice place and all looked green in the management 
+console. 
+
+Our java processes would connect, they'd do some work, but after a while 
+they'd throw a connection error (sorry this is all the details the logs 
+would show). Specifically a process E was connected to node A and would 
+show this random behaviour (different process and different rmq node from 
+the two involved in the issue). 
+After a while I was forced to restart the whole cluster, this was done 
+stopping app on the ram node C, then on the disk node B, then the other 
+node A. Unfortunately A seemed to hang and failed to stop within a 
+reasonable time (minutes), and I had to kill it (kill -15). I didn't see 
+any indication in the logs on why it was hanging.
+
+When I attempted to start A it would fail as the port was already in use 
+and I found that a process still had an open connection to port 5672:
+
+tcp6       0 164945 10.xx.xx.xx:5672        10.xx.xx.xx:53712      FIN_WAIT1
+
+Note: This is a worker D but running on a different box from the one showed 
+in the crash log.
+
+Once this connection was cleared everything came up nice and happy.
+
+In Summary:
+
+Process D was producing on queue D on node B, something happened and node B 
+managed to consume &gt; 1GB memory in less than a minute. Note that this queue 
+is really low traffic but in every issue I have looked into I can see a 
+similar crash report as below.
+
+After a restart of node B other processes connected to node A started 
+exhibiting connection issues, work a bit then break the connection until 
+the whole cluster is restarted.
+
+I would like to better understand the crash report and perhaps have some 
+ideas on what went wrong and how to more effectively troubleshoot issues 
+(what more info should I collect before restarting the nodes, erlang 
+processes list, mnesia tables, ets tables etc).
+
+
+=CRASH REPORT==== 14-Feb-2013::10:36:54 ===
+  crasher:
+    initial call: rabbit_reader:init/4
+    pid: &lt;*0.29283.387*&gt;
+    registered_name: []
+    exception error: bad argument
+      in function  port_close/1
+         called as port_close(#Port&lt;0.746540&gt;)
+      in call from rabbit_net:maybe_fast_close/1
+      in call from rabbit_reader:start_connection/7
+    ancestors: [&lt;0.29280.387&gt;,rabbit_tcp_client_sup,rabbit_sup,&lt;0.161.0&gt;]
+    messages: []
+    links: [&lt;0.29280.387&gt;]
+    dictionary: [{{channel,10},
+                   {&lt;0.29364.387&gt;,{method,rabbit_framing_amqp_0_9_1}}},
+                  {{ch_pid,&lt;0.29338.387&gt;},{7,#Ref&lt;0.0.2158.60093&gt;}},
+                  {{ch_pid,&lt;0.29333.387&gt;},{6,#Ref&lt;0.0.2158.60085&gt;}},
+                  {{ch_pid,&lt;0.29325.387&gt;},{5,#Ref&lt;0.0.2158.60053&gt;}},
+                  {{channel,3},
+                   {&lt;0.29313.387&gt;,{method,rabbit_framing_amqp_0_9_1}}},
+                  {{ch_pid,&lt;0.29305.387&gt;},{2,#Ref&lt;0.0.2158.60002&gt;}},
+                  {{channel,4},
+                   {&lt;0.29321.387&gt;,{method,rabbit_framing_amqp_0_9_1}}},
+                  {{channel,11},
+                   {&lt;0.29370.387&gt;,{method,rabbit_framing_amqp_0_9_1}}},
+                  {{ch_pid,&lt;0.29313.387&gt;},{3,#Ref&lt;0.0.2158.60017&gt;}},
+                  {{ch_pid,&lt;0.29299.387&gt;},{1,#Ref&lt;0.0.2158.59976&gt;}},
+                  {{ch_pid,&lt;0.29346.387&gt;},{8,#Ref&lt;0.0.2158.60112&gt;}},
+                  {{ch_pid,&lt;0.29370.387&gt;},{11,#Ref&lt;0.0.2158.60189&gt;}},
+                  {{channel,7},
+                   {&lt;0.29338.387&gt;,{method,rabbit_framing_amqp_0_9_1}}},
+                  {{channel,9},
+                   {&lt;0.29356.387&gt;,{method,rabbit_framing_amqp_0_9_1}}},
+                  {{ch_pid,&lt;0.29321.387&gt;},{4,#Ref&lt;0.0.2158.60034&gt;}},
+                  {{ch_pid,&lt;0.29364.387&gt;},{10,#Ref&lt;0.0.2158.60166&gt;}},
+                  {{ch_pid,&lt;0.29356.387&gt;},{9,#Ref&lt;0.0.2158.60140&gt;}},
+                  {{channel,8},
+                   {&lt;0.29346.387&gt;,{method,rabbit_framing_amqp_0_9_1}}},
+                  {{channel,5},
+                   {&lt;0.29325.387&gt;,{method,rabbit_framing_amqp_0_9_1}}},
+                  {{channel,1},
+                   {&lt;0.29299.387&gt;,
+                    {content_body,
+                        {'basic.publish',0,&lt;&lt;&quot;some_exchange&quot;&gt;&gt;,&lt;&lt;&gt;&gt;,false,
+                            false},
+                        1048189,
+                        {content,60,none,
+                            &lt;&lt;BYTES IN HERE&gt;&gt;,   --&gt; this showed which 
+process was sending the message
+                            rabbit_framing_amqp_0_9_1,
+                            [&lt;&lt;MORE BYTES IN HERE&gt;&gt;]  --&gt; This I haven't 
+been able to decode, it is fairly big, is it truncated?
+
+
+And in the logs we can find the pid *0.29283.387 *right before the crash:
+
+=INFO REPORT==== 14-Feb-2013::10:31:46 ===
+accepting AMQP connection &lt;*0.29283.387*&gt; (10.xx.xx.xx:58622 -&gt; 10.xx.xx.xx
+:<i>5672)
+</I>
+=INFO REPORT==== 14-Feb-2013::10:31:46 ===
+accepting AMQP connection &lt;0.29287.387&gt; (10.xx.xx.xx:58623 -&gt; 10.xx.xx.xx
+:<i>5672)
+</I>
+=WARNING REPORT==== 14-Feb-2013::10:32:27 ===
+closing AMQP connection &lt;0.27107.387&gt; (10.xx.xx.xx:50882 -&gt; 10.xx.xx.xx
+:<i>5672):
+</I>connection_closed_abruptly
+
+=WARNING REPORT==== 14-Feb-2013::10:32:27 ===
+closing AMQP connection &lt;0.27111.387&gt; (10.xx.xx.xx:50883 -&gt; 10.xx.xx.xx
+:<i>5672):
+</I>connection_closed_abruptly
+
+=INFO REPORT==== 14-Feb-2013::10:33:35 ===
+accepting AMQP connection &lt;0.30447.387&gt; (10.xx.xx.xx:50187 -&gt; 10.xx.xx.xx
+:<i>5672)
+</I>
+=INFO REPORT==== 14-Feb-2013::10:33:35 ===
+accepting AMQP connection &lt;0.30451.387&gt; (10.xx.xx.xx:50188 -&gt; 10.xx.xx.xx
+:<i>5672)
+</I>
+=WARNING REPORT==== 14-Feb-2013::10:37:34 ===
+closing AMQP connection &lt;*0.29283.387*&gt; (10.xx.xx.xx:58622 -&gt; 10.xx.xx.xx
+:<i>5672):
+</I>connection_closed_abruptly
+
+=WARNING REPORT==== 14-Feb-2013::10:37:34 ===
+closing AMQP connection &lt;0.29287.387&gt; (10.xx.xx.xx:58623 -&gt; 10.xx.xx.xx
+:<i>5672):
+</I>connection_closed_abruptly
+
+=WARNING REPORT==== 14-Feb-2013::10:37:34 ===
+closing AMQP connection &lt;0.30451.387&gt; (10.xx.xx.xx:50188 -&gt; 10.xx.xx.xx
+:<i>5672):
+</I>connection_closed_abruptly
+
+=WARNING REPORT==== 14-Feb-2013::10:37:34 ===
+closing AMQP connection &lt;0.30447.387&gt; (10.xx.xx.xx:50187 -&gt; 10.xx.xx.xx
+:<i>5672):
+</I>connection_closed_abruptly
+
+=INFO REPORT==== 14-Feb-2013::10:37:34 ===
+vm_memory_high_watermark set. Memory used:3384669192 allowed:2914218803
+
+Looking at the rabbitmqctl report I have not been able to map the memory 
+consumption to something specific yet.
+
+Any help appreciated,
+
+S
+
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20130219/fea3fdeb/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20130219/fea3fdeb/attachment.htm</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="025566.html">[rabbitmq-discuss] Cluster breakage
+</A></li>
+	<LI>Next message: <A HREF="025569.html">[rabbitmq-discuss] Pattern - exclude
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#25563">[ date ]</a>
+              <a href="thread.html#25563">[ thread ]</a>
+              <a href="subject.html#25563">[ subject ]</a>
+              <a href="author.html#25563">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

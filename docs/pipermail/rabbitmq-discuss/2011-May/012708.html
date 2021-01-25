@@ -1,0 +1,219 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] difficulties with prefetch count [reposted]
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20difficulties%20with%20prefetch%20count%20%5Breposted%5D&In-Reply-To=%3C934B1801-ECF5-4E10-8DD1-D9B480FED5FA%40setf.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="012845.html">
+   <LINK REL="Next"  HREF="012710.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] difficulties with prefetch count [reposted]</H1>
+    <B>james anderson</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20difficulties%20with%20prefetch%20count%20%5Breposted%5D&In-Reply-To=%3C934B1801-ECF5-4E10-8DD1-D9B480FED5FA%40setf.de%3E"
+       TITLE="[rabbitmq-discuss] difficulties with prefetch count [reposted]">james.anderson at setf.de
+       </A><BR>
+    <I>Fri May  6 19:42:54 BST 2011</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="012845.html">[rabbitmq-discuss] Problems With OCF Script - Race between start and wait
+</A></li>
+        <LI>Next message: <A HREF="012710.html">[rabbitmq-discuss] Showcase app - RabbitMQ Web Chat
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#12708">[ date ]</a>
+              <a href="thread.html#12708">[ thread ]</a>
+              <a href="subject.html#12708">[ subject ]</a>
+              <a href="author.html#12708">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>good evening;
+
+[reposted anew on its own thread]
+
+we find that a qos request with prefetch count of 1 does not reliably  
+achieve &quot;fair dispatch&quot; and seek advice, how to achieve it.
+
+the specification page[1] indicates that rmq supports local prefetch  
+limits, but not global ones. the BasicQosDesign[2] wiki entry  
+describes some restrictions, in particular qos/consume ordering. the  
+work queue tutorial describes how to use prefetch constraints to  
+achieve &quot;fair dispatch&quot;.
+
+despite adhering to these understandings, we observe the following in  
+a running application with rmq 2.1.1 and 2.4.1:
+
+a server process establishes four worker threads, each of which
+  - creates a connection to the rmq broker
+  - creates a shared work queue (which, in this case, remains unused)
+  - registers the work queue to a request exchange
+  - creates a private queue for responses to delegated requests  
+(which, in this case, also remains unused)
+  - creates two channels on its connection;
+    - one channel is for task messages; there it requests qos 
+(prefetch=1), consume(work queue).
+    - one channel is used to delegate tasks; on this one it just  
+consumed (on the private response queue).
+  - accepts delivery of task messages, processes them, publishes  
+results to a task-identified response queue.
+
+a front-end process establishes equivalent threads, each of which  
+supports http requests and mediates them to the server.
+for each front-end request, a thread
+  - creates a connection to the rmq server
+  - creates a task-specific queue (as per routing) for an eventual  
+response
+  - subscribes to the response queue
+  - publishes a task message to the request exchange with routing to  
+the work queue
+  - accepts delivery of task responses
+  - tears down the task response subscription and queue.
+
+in this particular situation, no delegation occurs. that is, no  
+messages pass through the delegated request queue.
+
+we observe that, if a posted task takes an &quot;long&quot; time, not only its  
+front-end thread will wait until that processing completes, but one  
+additional front-end task hangs as well.
+
+while the long task transpires, other front-end requests are  
+processed without delay. that is, their setup, request, subscription,  
+delivery, and tear-down, all complete as normal. their task messages  
+are delivered to one of the three unoccupied server threads which  
+does the work and produces the response.
+
+independent of whether the front-end leaves the hung task to wait for  
+a response or aborts it, by canceling the subscription, deleting the  
+queue, and closing the connection, once the long-running server  
+thread completes its task, the next message delivered to it is that  
+message from the waiting-or-aborted front-end thread.
+
+if we use rabbitmqctl to display the connection/subscription/queue  
+state during the long task processing, we observe that
+- the work queue has one unacknowledged message, but zero ready messages
+- the server task channels have a prefetch window of 1
+- no connection has a send pending
+
+it appears as if one single message is held up until the long task  
+complete, but is no where to be seen. in order to isolate the  
+problem, i enclose simple client and server implementations which can  
+be used to demonstrate the problem. it is intended to be run with  
+de.setf.amqp[4], but the amqp operation sequence is language- 
+independent. when run with a rmq broker @2.1.1 (that is, the version  
+which we have in production), one observes that each time a  
+subscriber delays acknowledgment of one message, one additional  
+message is delayed by being queued for delivery to that subscriber  
+despite a pending unacknowledged message. this although the  
+subscriber has a prefetch limit of 1 and the held message appears  
+nowhere in queue lists produced by rabbitmqctl.
+
+this can be observed in two combinations.
+
+1. with two clients and two servers.
+   a. start a server which runs without delay.
+   b. start two clients
+
+one observes, that the server receives and replies to alternating  
+messages from each client
+
+   c. start a second server, with a delay
+
+one observes, that first one client and then the second hangs until  
+the message to the first client has been acknowledged.
+
+
+2. with three clients and two servers
+   a. start a server which runs without delay.
+   b. start three clients.
+
+one observes, that the server receives and replies to alternating  
+messages from each client in turn.
+
+   c. start a second server, with delay
+
+one observes,  that first one client and then a second hangs until  
+the message to the first client has been acknowledged, but the third  
+client's messages are delivered to the non-waiting server without delay.
+
+
+that is, one gets the distinct impression that rmq does not  
+consistently honor the prefetch count constraint.
+-------------- next part --------------
+A non-text attachment was scrubbed...
+Name: fair-allocation-1-1.lisp
+Type: application/applefile
+Size: 584 bytes
+Desc: not available
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20110506/4c9810ea/attachment-0001.bin">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20110506/4c9810ea/attachment-0001.bin</A>&gt;
+-------------- next part --------------
+A non-text attachment was scrubbed...
+Name: fair-allocation-1-1.lisp
+Type: application/octet-stream
+Size: 6981 bytes
+Desc: not available
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20110506/4c9810ea/attachment-0001.obj">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20110506/4c9810ea/attachment-0001.obj</A>&gt;
+-------------- next part --------------
+
+
+-------
+[1] <A HREF="http://www.rabbitmq.com/specification.html">http://www.rabbitmq.com/specification.html</A>
+[2] <A HREF="https://dev.rabbitmq.com/wiki/BasicQosDesign">https://dev.rabbitmq.com/wiki/BasicQosDesign</A>
+[3] <A HREF="http://www.rabbitmq.com/tutorials/tutorial-two-python.html">http://www.rabbitmq.com/tutorials/tutorial-two-python.html</A>
+[4] <A HREF="https://github.com/lisp/de.setf.amqp">https://github.com/lisp/de.setf.amqp</A>
+
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="012845.html">[rabbitmq-discuss] Problems With OCF Script - Race between start and wait
+</A></li>
+	<LI>Next message: <A HREF="012710.html">[rabbitmq-discuss] Showcase app - RabbitMQ Web Chat
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#12708">[ date ]</a>
+              <a href="thread.html#12708">[ thread ]</a>
+              <a href="subject.html#12708">[ subject ]</a>
+              <a href="author.html#12708">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

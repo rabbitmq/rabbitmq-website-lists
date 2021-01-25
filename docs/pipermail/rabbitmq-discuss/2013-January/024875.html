@@ -1,0 +1,189 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] One Producer, X Consumers where X can change
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20One%20Producer%2C%20X%20Consumers%20where%20X%20can%20change&In-Reply-To=%3C50EFF975.5090108%40rabbitmq.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="024874.html">
+   <LINK REL="Next"  HREF="024905.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] One Producer, X Consumers where X can change</H1>
+    <B>Tim Watson</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20One%20Producer%2C%20X%20Consumers%20where%20X%20can%20change&In-Reply-To=%3C50EFF975.5090108%40rabbitmq.com%3E"
+       TITLE="[rabbitmq-discuss] One Producer, X Consumers where X can change">tim at rabbitmq.com
+       </A><BR>
+    <I>Fri Jan 11 11:37:25 GMT 2013</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="024874.html">[rabbitmq-discuss] One Producer, X Consumers where X can change
+</A></li>
+        <LI>Next message: <A HREF="024905.html">[rabbitmq-discuss] One Producer, X Consumers where X can change
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#24875">[ date ]</a>
+              <a href="thread.html#24875">[ thread ]</a>
+              <a href="subject.html#24875">[ subject ]</a>
+              <a href="author.html#24875">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi
+
+On 01/10/2013 06:22 PM, Shadowalker wrote:
+&gt;<i> Hi,
+</I>&gt;<i> I need to find a solution to a problem of mine and I thought there 
+</I>&gt;<i> might be one within rabbitmq so here it is :
+</I>&gt;<i> I have a manager that, when requested to delete an element from its 
+</I>&gt;<i> DB, needs to notify all other elements that reference the element it 
+</I>&gt;<i> needs to delete also no logner reference it.
+</I>&gt;<i>
+</I>&gt;<i> The main idea to keep in mind is that those references that need be 
+</I>&gt;<i> removed are not necessarily stored in the same DB (nor same server) as 
+</I>&gt;<i> the initial manager.
+</I>&gt;<i>
+</I>&gt;<i> So I thought I could use a queue to notify that references to the 
+</I>&gt;<i> element I want to delete need to be removed. And all element that 
+</I>&gt;<i> could have a reference to that type of element are set to listen on 
+</I>&gt;<i> that queue.
+</I>&gt;<i>
+</I>
+That's fine, but remember that queues will deliver messages in a 
+round-robin fashion when there are multiple consumers. What you'd need 
+for this is a pub-sub model, so a fanout exchange and multiple temporary 
+(exclusive, auto-delete) queues would be the canonical approach. See 
+<A HREF="http://www.rabbitmq.com/tutorials/tutorial-three-python.html">http://www.rabbitmq.com/tutorials/tutorial-three-python.html</A> for example.
+
+&gt;<i> What I'd like to know now is whether I can configure my manager to 
+</I>&gt;<i> wait for a return &quot;from the queue&quot; (or something else) to be notified 
+</I>&gt;<i> that all references have been removed.
+</I>&gt;<i>
+</I>
+This is a very different problem to notifying all the consumers. If you 
+have N consumers and you want to wait for N replies that the reference 
+has been deleted/cleared, how do you know the value of N in the manager? 
+Without knowing the value of N, there's no way to implement this with 
+queues or otherwise.
+
+&gt;<i> say
+</I>&gt;<i> Manager sends a message to queue Q1.
+</I>&gt;<i> I can have 1,2,3,more other managers listening on Q1.
+</I>&gt;<i>
+</I>&gt;<i> Each of them would consume the message and once all of them have 
+</I>&gt;<i> consumed the message
+</I>&gt;<i> I would either send directly a notification to the first manager, or 
+</I>&gt;<i> create a entry in a queue that the manager listens on so that he would 
+</I>&gt;<i> be notified that it can delete the element.
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> Is there anyway to do this ?
+</I>
+Yes, you can set up as many queues and bindings, backwards and forwards 
+between the various publishers and receivers as you like. But what 
+you've described doesn't seem to address the requirement you stated above.
+
+&gt;<i> Note : the fact that the complete removal of the element is not 
+</I>&gt;<i> immediate is not an issue ( ex: I can ask for deletion a 11:00 and the 
+</I>&gt;<i> deletion be effective at 13:00)
+</I>&gt;<i> Note2 : I've seen the documentation about RPC calls but this is not 
+</I>&gt;<i> really what I'm looking for and if avoidable, I'll rather do so.
+</I>
+Well, what you're describing is *inherently* an RPC call from the way 
+you've described it. Of course the 'manager' sending a &quot;Release Ref#1&quot; 
+message might need to get on with other work whilst waiting for the 
+replies to come in, so you'd have a pretty interesting topology here.
+
+Firstly, the manager who sends the 'release' notification needs to know 
+how many replies to expect. In order to know this, the manager needs to 
+*first* receive a message to 'acquire' the resource for each 
+participant. Because the manager responsible for releasing also needs to 
+know about acquisition, I'm going to refer to this manager as the 
+'master' node from now on. Once the master knows about all the acquired 
+references, when it is time to release the resource the manager can 
+transmit a release notification to a fanout exchange as I described 
+earlier. Then the master waits on *another* queue for replies from all 
+the participants holding a reference to say they've released it.
+
+participant(s) =&gt; res.acquire [direct-exchange]   =&gt; master
+participant(s) &lt;= res.release [fanout-exchange] &lt;= master
+participant(s) =&gt; res.released_ok                        =&gt; master
+
+Of course there are some things missing from this topology. For the 
+participants to deal robustly with their references, they might need to 
+wait for the master to respond that it has accepted their 'acquire' 
+request, otherwise what if the master was down? Secondly, and this is 
+*most* important, the master has no way to *know* if one of the 
+participants crashes or if the network between the broker and the 
+clients goes down. This means that that master could get stuck forever 
+waiting for the 'released_ok' message from that participant. Even if the 
+master wasn't blocking on those replies, it would still not correctly 
+release the resource because one (or more) replies was missing. The AMQP 
+protocol doesn't provide any primitives for a connected client to know 
+about the state of other connected clients.
+
+The problem you're describing, distributed resource management (e.g., 
+locking or reference counting) is a fairly complex one. I'm not entirely 
+convinced that a messaging based solution is the right fit for your 
+needs by itself. You could, of course, design a solution using AMQP as 
+the communication protocol between nodes, but there would need to be a 
+significant amount of software running on each node to handle things 
+like member(ship) state in the connected graph as well.
+
+It sounds to me like a distributed database would be a *much* more 
+natural fit to what you're doing. Another approach would be to soft 
+delete the element initially, then only hard delete it once you've seen 
+all the replies. This is a half-and-half solution that doesn't assume 
+the master is able to know about crashing or disconnecting clients on 
+other nodes. If you get into a situation where a node N1 that held a 
+lock/reference dies and becomes unrecoverable (i.e., hdd crashed and 
+database for the node is lost) then an administrator could then go into 
+the database and perform the hard delete providing the lock-count has 
+decremented to [N1] and thus we know no other locks/references exist.
+
+I hope I haven't put you off using Rabbit, but I hope I have pointed out 
+the many general pitfalls in trying to manage distributed locks. Feel 
+free to push back with any further questions.
+
+Cheers,
+Tim
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="024874.html">[rabbitmq-discuss] One Producer, X Consumers where X can change
+</A></li>
+	<LI>Next message: <A HREF="024905.html">[rabbitmq-discuss] One Producer, X Consumers where X can change
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#24875">[ date ]</a>
+              <a href="thread.html#24875">[ thread ]</a>
+              <a href="subject.html#24875">[ subject ]</a>
+              <a href="author.html#24875">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

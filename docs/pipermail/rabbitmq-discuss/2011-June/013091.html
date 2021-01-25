@@ -1,0 +1,369 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] How to handle full exchange history delivery
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20How%20to%20handle%20full%20exchange%20history%20delivery&In-Reply-To=%3C4DE7689A.2020809%40rabbitmq.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="013093.html">
+   <LINK REL="Next"  HREF="013094.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] How to handle full exchange history delivery</H1>
+    <B>Michael Bridgen</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20How%20to%20handle%20full%20exchange%20history%20delivery&In-Reply-To=%3C4DE7689A.2020809%40rabbitmq.com%3E"
+       TITLE="[rabbitmq-discuss] How to handle full exchange history delivery">mikeb at rabbitmq.com
+       </A><BR>
+    <I>Thu Jun  2 11:40:26 BST 2011</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="013093.html">[rabbitmq-discuss] How to handle full exchange history delivery
+</A></li>
+        <LI>Next message: <A HREF="013094.html">[rabbitmq-discuss] How to handle full exchange history delivery
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#13091">[ date ]</a>
+              <a href="thread.html#13091">[ thread ]</a>
+              <a href="subject.html#13091">[ subject ]</a>
+              <a href="author.html#13091">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>&gt;<i> WRT this:
+</I>&gt;<i>
+</I>&gt;<i> /When I was writing it, I thought it would be really easy to, when a new
+</I>&gt;<i> queue is bound to this exchange, go fetch all the messages in that
+</I>&gt;<i> bucket and send them to the queue.///
+</I>&gt;<i>
+</I>&gt;<i> I&#8217;m not sure it is, that was my main question actually. How do you
+</I>&gt;<i> figure out how to join the messages stored in the bucket and those
+</I>&gt;<i> arriving live so that the last message you send to the queue from those
+</I>&gt;<i> picked up from the bucket is followed exactly by its logical successor
+</I>&gt;<i> from those coming live?
+</I>&gt;<i>
+</I>&gt;<i> Say I have messages 1..100 being published to the exchange, each time
+</I>&gt;<i> one arrives it&#8217;s stored. The exchange has received the first 50 messages
+</I>&gt;<i> and a client performs a binding of a queue to the exchange. So you start
+</I>&gt;<i> pulling the messages from the storage and sending them to the queue
+</I>&gt;<i> before forwarding any live messages. While you are pulling them out of
+</I>&gt;<i> the storage messages 51..60 are published to the exchange, how do you
+</I>&gt;<i> deal with them? Do you always pull from the storage? When do you stop
+</I>&gt;<i> pulling from the storage and relay to the queue directly what is being
+</I>&gt;<i> published to the exchange if you don&#8217;t know whether any new messages
+</I>&gt;<i> have arrived while you were pulling from the storage?
+</I>
+My inclination with this and similar use cases* is that they deserve 
+their own content class (alongside 'exchange', 'queue', etc.).
+
+By way of illustration: the last-value-caching exchange, though it was 
+developed as a verification of the exchange type mechanism, is rather 
+awkward; in the main because it is encoded in the existing AMQP 
+operations (bind, consume), and these aren't the right vocabulary for 
+the intended use.  See the &quot;Limitations&quot; section of
+<A HREF="https://github.com/squaremo/rabbitmq-lvc-plugin.">https://github.com/squaremo/rabbitmq-lvc-plugin.</A>
+
+There's two natural generalisations of LVC: one is to keep an arbitrary 
+number of values around, and the other is to make the hold higher-order 
+(i.e., instead of replaying values, replay some aggregate of values). 
+Neither of these really fit in AMQP as it stands, not in the available 
+methods or their semantics.
+
+Anyway.  So that this is helpful and not just me kicking AMQP, here is a 
+suggestion: if the consumers are made to co-operate just slightly you 
+can get your proxy idea to work. Just use different queues for the 
+replay and the live.  Subscribe the live first and note the most recent 
+message you know about at that time; then publish your saved messages 
+through to that message into the replay queue.  The consumer, when it 
+hears back from the proxy, drains the replay queue then starts on the 
+live queue.
+
+
+Michael
+
+*I call the category &quot;value+updates&quot;, and the synchronisation problem 
+you describe above is the essence of it.
+
+&gt;<i> _______________________________________________________________
+</I>&gt;<i>
+</I>&gt;<i> *Simone Busoli*
+</I>&gt;<i> Direzione risorse umane e segreteria generale &#8211; Sistemi informativi
+</I>&gt;<i> gestione sportiva
+</I>&gt;<i> /Collaboratore/
+</I>&gt;<i>
+</I>&gt;<i> *Ferrari S.p.A. * Via Ascari 55/57, 41053, Maranello (MO); Italy
+</I>&gt;<i> *T* (+39) 0536-949.850
+</I>&gt;<i> *E* <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">_simone.busoli at ferrari.com</A> &lt;mailto:<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">simone.busoli at ferrari.com</A>&gt;_
+</I>&gt;<i> _www.ferrari.com &lt;<A HREF="http://www.ferrari.com/">http://www.ferrari.com/</A>&gt;_
+</I>&gt;<i>
+</I>&gt;<i> *From:* Jon Brisbin [mailto:<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">jon at jbrisbin.com</A>]
+</I>&gt;<i> *Sent:* Wednesday, June 01, 2011 4:59 PM
+</I>&gt;<i> *To:* Busoli, Simone
+</I>&gt;<i> *Cc:* <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;<i> *Subject:* Re: [rabbitmq-discuss] How to handle full exchange history
+</I>&gt;<i> delivery
+</I>&gt;<i>
+</I>&gt;<i> Maybe I wasn't being clear:
+</I>&gt;<i>
+</I>&gt;<i> I've already written a custom exchange that stores every message it
+</I>&gt;<i> receives in Riak (<A HREF="http://wiki.basho.com/">http://wiki.basho.com/</A>). I'm going to be talking about
+</I>&gt;<i> it next week at Erlang Factory in London, as a matter of fact. :)
+</I>&gt;<i>
+</I>&gt;<i> <A HREF="https://github.com/jbrisbin/riak-exchange">https://github.com/jbrisbin/riak-exchange</A>
+</I>&gt;<i>
+</I>&gt;<i> When I was writing it, I thought it would be really easy to, when a new
+</I>&gt;<i> queue is bound to this exchange, go fetch all the messages in that
+</I>&gt;<i> bucket and send them to the queue.
+</I>&gt;<i>
+</I>&gt;<i> Since I'm using Riak, the messages themselves are not all stored in memory.
+</I>&gt;<i>
+</I>&gt;<i> Thanks!
+</I>&gt;<i>
+</I>&gt;<i> Jon Brisbin
+</I>&gt;<i> http//jbrisbin.com
+</I>&gt;<i>
+</I>&gt;<i> ------------------------------------------------------------------------
+</I>&gt;<i>
+</I>&gt;<i>     *From: *&quot;Simone Busoli&quot; &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">Simone.Busoli at ferrari.com</A>&gt;
+</I>&gt;<i>     *To: *<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;<i>     *Sent: *Wednesday, June 1, 2011 8:43:58 AM
+</I>&gt;<i>     *Subject: *Re: [rabbitmq-discuss] How to handle full exchange
+</I>&gt;<i>     history delivery
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>     That&#8217;s what I thought as well, although I&#8217;m thinking about a couple
+</I>&gt;<i>     of issues about it:
+</I>&gt;<i>
+</I>&gt;<i>     &#183; Lack of knowledge about Erlang, which is the language I&#8217;d have to
+</I>&gt;<i>     use to build a custom exchange, I guess
+</I>&gt;<i>
+</I>&gt;<i>     &#183; Amount of memory it would require to store the entire history in
+</I>&gt;<i>     memory. It needn&#8217;t be in memory actually, but I&#8217;m not sure what
+</I>&gt;<i>     would be the recommended way if the storage has to be carried out by
+</I>&gt;<i>     exchange itself. Mnesia perhaps, would it make sense?
+</I>&gt;<i>
+</I>&gt;<i>     _______________________________________________________________
+</I>&gt;<i>
+</I>&gt;<i>     *Simone Busoli*
+</I>&gt;<i>     Direzione risorse umane e segreteria generale &#8211; Sistemi informativi
+</I>&gt;<i>     gestione sportiva
+</I>&gt;<i>     /Collaboratore/
+</I>&gt;<i>
+</I>&gt;<i>     *Ferrari S.p.A. * Via Ascari 55/57, 41053, Maranello (MO); Italy
+</I>&gt;<i>     *T* (+39) 0536-949.850
+</I>&gt;<i>     *E* <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">_simone.busoli at ferrari.com</A> &lt;mailto:<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">simone.busoli at ferrari.com</A>&gt;_
+</I>&gt;<i>     _www.ferrari.com &lt;<A HREF="http://www.ferrari.com/">http://www.ferrari.com/</A>&gt;_
+</I>&gt;<i>
+</I>&gt;<i>     *From:* Jon Brisbin [mailto:<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">jon at jbrisbin.com</A>]
+</I>&gt;<i>     *Sent:* Wednesday, June 01, 2011 3:38 PM
+</I>&gt;<i>     *To:* Busoli, Simone
+</I>&gt;<i>     *Cc:* <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;<i>     *Subject:* Re: [rabbitmq-discuss] How to handle full exchange
+</I>&gt;<i>     history delivery
+</I>&gt;<i>
+</I>&gt;<i>     I've been seriously considering adding this functionality to the
+</I>&gt;<i>     Riak-backed custom exchange. It was something I thought I would add
+</I>&gt;<i>     first time through but didn't.
+</I>&gt;<i>
+</I>&gt;<i>     You'd have to use a custom exchange. Not sure if that's an issue in
+</I>&gt;<i>     your scenario or not.
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>     Thanks!
+</I>&gt;<i>
+</I>&gt;<i>     Jon Brisbin
+</I>&gt;<i>     http//jbrisbin.com
+</I>&gt;<i>
+</I>&gt;<i>     ------------------------------------------------------------------------
+</I>&gt;<i>
+</I>&gt;<i>         *From: *&quot;Simone Busoli&quot; &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">Simone.Busoli at ferrari.com</A>&gt;
+</I>&gt;<i>         *To: *<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;<i>         *Sent: *Wednesday, June 1, 2011 5:52:24 AM
+</I>&gt;<i>         *Subject: *[rabbitmq-discuss] How to handle full exchange
+</I>&gt;<i>         history delivery
+</I>&gt;<i>
+</I>&gt;<i>         Hi,
+</I>&gt;<i>
+</I>&gt;<i>         I am trying to achieve a scenario in which messages are
+</I>&gt;<i>         published from some data source into a RabbitMQ exchange and
+</I>&gt;<i>         clients should be able to receive the full history of messages
+</I>&gt;<i>         flown through that exchange, regardless of the exact moment in
+</I>&gt;<i>         time when they connect.
+</I>&gt;<i>
+</I>&gt;<i>         I&#8217;ve been thinking to solve it by setting up a proxy which
+</I>&gt;<i>         subscribes to the exchange where messages are published using
+</I>&gt;<i>         its own queue, keeps an internal storage of the messages and
+</I>&gt;<i>         accepts requests from clients.
+</I>&gt;<i>
+</I>&gt;<i>         When a request from a client arrives it just replays the full
+</I>&gt;<i>         message history to the client by publishing the messages to the
+</I>&gt;<i>         client queue (supplied in the ReplyTo field), *then* binds the
+</I>&gt;<i>         client queue to the messages exchange, so that the client from
+</I>&gt;<i>         this moment onwards starts receiving the &#8220;live&#8221; messages, and is
+</I>&gt;<i>         pretty much unaware of what&#8217;s happened; it simply just receives
+</I>&gt;<i>         the whole history.
+</I>&gt;<i>
+</I>&gt;<i>         Now I am under the impression that there&#8217;s a fundamental flaw in
+</I>&gt;<i>         this reasoning, since the proxy cannot know when the message
+</I>&gt;<i>         history has completed and he can switch the client to the live
+</I>&gt;<i>         stream, because while it is replaying historical messages to the
+</I>&gt;<i>         client other live messages might be arriving on the proxy&#8217;s
+</I>&gt;<i>         queue, thus getting into an endless loop.
+</I>&gt;<i>
+</I>&gt;<i>         I&#8217;m probably missing something obvious, any advice about how
+</I>&gt;<i>         others would approach this scenario is appreciated.
+</I>&gt;<i>
+</I>&gt;<i>         Simone
+</I>&gt;<i>
+</I>&gt;<i>         _________________________________________________________________________________________________________________
+</I>&gt;<i>         Questo messaggio e da intendersi esclusivamente ad uso del
+</I>&gt;<i>         destinatario e puo contenere informazioni che sono di natura
+</I>&gt;<i>         privilegiata, confidenziale
+</I>&gt;<i>         o non divulgabile secondo le leggi vigenti. Se il lettore del
+</I>&gt;<i>         presente messaggio non e il destinatario designato, o il
+</I>&gt;<i>         dipendente/agente responsabile
+</I>&gt;<i>         per la consegna del messaggio al destinatario designato, si
+</I>&gt;<i>         informa che ogni disseminazione, distribuzione o copiatura di
+</I>&gt;<i>         questa comunicazione e
+</I>&gt;<i>         strettamente proibita anche ai sensi del decreto legislativo
+</I>&gt;<i>         196/03 . Se avete ricevuto questo messaggio per errore, vi
+</I>&gt;<i>         preghiamo di notificarcelo
+</I>&gt;<i>         immediatamente a mezzo e-mail di risposta e successivamente di
+</I>&gt;<i>         procedere alla cancellazione di questa e-mail e relativi
+</I>&gt;<i>         allegati dal vostro sistema.
+</I>&gt;<i>         _________________________________________________________________________________________________________________
+</I>&gt;<i>         This message is intended only for the use of the addressee and
+</I>&gt;<i>         may contain information that is privileged, confidential and
+</I>&gt;<i>         exempt from
+</I>&gt;<i>         disclosure under applicable law. If the reader of this message
+</I>&gt;<i>         is not the intended recipient, or the employee or agent
+</I>&gt;<i>         responsible for delivering the
+</I>&gt;<i>         message to the intended recipient, you are hereby notified that
+</I>&gt;<i>         any dissemination, distribution or copying of this communication
+</I>&gt;<i>         is strictly
+</I>&gt;<i>         prohibited. If you have received this e-mail in error, please
+</I>&gt;<i>         notify us immediately by return e-mail and delete this e-mail
+</I>&gt;<i>         and all attachments from
+</I>&gt;<i>         your system.
+</I>&gt;<i>         _________________________________________________________________________________________________________________
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>         _______________________________________________
+</I>&gt;<i>         rabbitmq-discuss mailing list
+</I>&gt;<i>         <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;<i>         &lt;mailto:<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>&gt;
+</I>&gt;<i>         <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>&gt;<i>
+</I>&gt;<i>     _________________________________________________________________________________________________________________
+</I>&gt;<i>     Questo messaggio &#232; da intendersi esclusivamente ad uso del
+</I>&gt;<i>     destinatario e pu&#242; contenere informazioni che sono di natura
+</I>&gt;<i>     privilegiata, confidenziale
+</I>&gt;<i>     o non divulgabile secondo le leggi vigenti. Se il lettore del
+</I>&gt;<i>     presente messaggio non &#232; il destinatario designato, o il
+</I>&gt;<i>     dipendente/agente responsabile
+</I>&gt;<i>     per la consegna del messaggio al destinatario designato, si informa
+</I>&gt;<i>     che ogni disseminazione, distribuzione o copiatura di questa
+</I>&gt;<i>     comunicazione &#232;
+</I>&gt;<i>     strettamente proibita anche ai sensi del decreto legislativo 196/03
+</I>&gt;<i>     . Se avete ricevuto questo messaggio per errore, vi preghiamo di
+</I>&gt;<i>     notificarcelo
+</I>&gt;<i>     immediatamente a mezzo e-mail di risposta e successivamente di
+</I>&gt;<i>     procedere alla cancellazione di questa e-mail e relativi allegati
+</I>&gt;<i>     dal vostro sistema.
+</I>&gt;<i>     _________________________________________________________________________________________________________________
+</I>&gt;<i>     This message is intended only for the use of the addressee and may
+</I>&gt;<i>     contain information that is privileged, confidential and exempt from
+</I>&gt;<i>     disclosure under applicable law. If the reader of this message is
+</I>&gt;<i>     not the intended recipient, or the employee or agent responsible for
+</I>&gt;<i>     delivering the
+</I>&gt;<i>     message to the intended recipient, you are hereby notified that any
+</I>&gt;<i>     dissemination, distribution or copying of this communication is
+</I>&gt;<i>     strictly
+</I>&gt;<i>     prohibited. If you have received this e-mail in error, please notify
+</I>&gt;<i>     us immediately by return e-mail and delete this e-mail and all
+</I>&gt;<i>     attachments from
+</I>&gt;<i>     your system.
+</I>&gt;<i>     _________________________________________________________________________________________________________________
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>     _______________________________________________
+</I>&gt;<i>     rabbitmq-discuss mailing list
+</I>&gt;<i>     <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;<i>     &lt;mailto:<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>&gt;
+</I>&gt;<i>     <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>&gt;<i>
+</I>&gt;<i> _________________________________________________________________________________________________________________
+</I>&gt;<i> Questo messaggio &#232; da intendersi esclusivamente ad uso del destinatario
+</I>&gt;<i> e pu&#242; contenere informazioni che sono di natura privilegiata, confidenziale
+</I>&gt;<i> o non divulgabile secondo le leggi vigenti. Se il lettore del presente
+</I>&gt;<i> messaggio non &#232; il destinatario designato, o il dipendente/agente
+</I>&gt;<i> responsabile
+</I>&gt;<i> per la consegna del messaggio al destinatario designato, si informa che
+</I>&gt;<i> ogni disseminazione, distribuzione o copiatura di questa comunicazione &#232;
+</I>&gt;<i> strettamente proibita anche ai sensi del decreto legislativo 196/03 . Se
+</I>&gt;<i> avete ricevuto questo messaggio per errore, vi preghiamo di notificarcelo
+</I>&gt;<i> immediatamente a mezzo e-mail di risposta e successivamente di procedere
+</I>&gt;<i> alla cancellazione di questa e-mail e relativi allegati dal vostro sistema.
+</I>&gt;<i> _________________________________________________________________________________________________________________
+</I>&gt;<i> This message is intended only for the use of the addressee and may
+</I>&gt;<i> contain information that is privileged, confidential and exempt from
+</I>&gt;<i> disclosure under applicable law. If the reader of this message is not
+</I>&gt;<i> the intended recipient, or the employee or agent responsible for
+</I>&gt;<i> delivering the
+</I>&gt;<i> message to the intended recipient, you are hereby notified that any
+</I>&gt;<i> dissemination, distribution or copying of this communication is strictly
+</I>&gt;<i> prohibited. If you have received this e-mail in error, please notify us
+</I>&gt;<i> immediately by return e-mail and delete this e-mail and all attachments
+</I>&gt;<i> from
+</I>&gt;<i> your system.
+</I>&gt;<i> _________________________________________________________________________________________________________________
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="013093.html">[rabbitmq-discuss] How to handle full exchange history delivery
+</A></li>
+	<LI>Next message: <A HREF="013094.html">[rabbitmq-discuss] How to handle full exchange history delivery
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#13091">[ date ]</a>
+              <a href="thread.html#13091">[ thread ]</a>
+              <a href="subject.html#13091">[ subject ]</a>
+              <a href="author.html#13091">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

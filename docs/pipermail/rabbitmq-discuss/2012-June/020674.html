@@ -1,0 +1,229 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Application architecture question: queue	failure
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Application%20architecture%20question%3A%20queue%0A%09failure&In-Reply-To=%3CCAKhN_m5wZynDeF-ssvn0ahowFy0r1jac2gcjcBw45vnkLzde8g%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="020672.html">
+   <LINK REL="Next"  HREF="020680.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Application architecture question: queue	failure</H1>
+    <B>Bill Moseley</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Application%20architecture%20question%3A%20queue%0A%09failure&In-Reply-To=%3CCAKhN_m5wZynDeF-ssvn0ahowFy0r1jac2gcjcBw45vnkLzde8g%40mail.gmail.com%3E"
+       TITLE="[rabbitmq-discuss] Application architecture question: queue	failure">moseley at hank.org
+       </A><BR>
+    <I>Mon Jun 18 19:02:39 BST 2012</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="020672.html">[rabbitmq-discuss] Application architecture question: queue	failure
+</A></li>
+        <LI>Next message: <A HREF="020680.html">[rabbitmq-discuss] Application architecture question: queue	failure
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#20674">[ date ]</a>
+              <a href="thread.html#20674">[ thread ]</a>
+              <a href="subject.html#20674">[ subject ]</a>
+              <a href="author.html#20674">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>On Mon, Jun 18, 2012 at 12:29 PM, Tim Watson &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">tim at rabbitmq.com</A>&gt; wrote:
+
+&gt;<i>
+</I>&gt;<i> I'm a bit confused now. Where do you set this 'in process' status - on the
+</I>&gt;<i> newly submitted message, or in the database record or in some field in the
+</I>&gt;<i> originally submitted message(s)?
+</I>
+
+The application database.  When the user say &quot;I want a report&quot; then flag
+the start time, and the state (initially &quot;pending&quot;) and send of the
+message.
+
+The idea is the worker picks up the job and atomically sets it from
+&quot;pending&quot; to &quot;in process&quot; -- which means even if the job was queued
+multiple times only one process would pick up the actual work.
+
+Then when the job is completed again the state is changed from &quot;in process&quot;
+to &quot;completed&quot;.
+
+
+
+
+&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>  Maybe you are right that durable queues are the correct solution for
+</I>&gt;&gt;<i> this -- I still need to track state on the web app side to show
+</I>&gt;&gt;<i> &quot;pending&quot; or &quot;in process&quot;.   And maybe just use cron to report/clean up
+</I>&gt;&gt;<i> any stale pending job on the web app side.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> I'm just curious if the above is a common design pattern when using
+</I>&gt;&gt;<i> RabbitMQ in this way.  Obviously, depends on the specifics of the task,
+</I>&gt;&gt;<i> but we seem to have quite a few situations like this.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i>
+</I>&gt;<i> I still don't understand the difference between 'stale' and 'pending'.
+</I>&gt;<i> Whether you do this based on timestamp or uuid or whatever, you need *some*
+</I>&gt;<i> mechanism to avoid duplicating work. Because AMQP cannot reliably do 'only
+</I>&gt;<i> once' delivery without consumer intervention, I would expect that you need
+</I>&gt;<i> to track which jobs have been handled and which have not. What I don't
+</I>&gt;<i> understand is how this pending/stale flag helps you, nor why cron jobs are
+</I>&gt;<i> an attractive choice to deal with expiring messages.
+</I>&gt;<i>
+</I>
+Well, that's essentially my question.  Obviously, if I want the web app to
+know that a report request was made so it can display to the user that the
+report is in the process of being generated.  And I also want to prevent
+multiple submissions by a user for the same thing.  So, the database serves
+this function.
+
+The difficulty is when it gets stuck in pending.   At what point do we give
+up or try again?
+
+Thans for your comments below.  I think the solution with the dead letter
+is the way to go as it avoids using something like cron to handle extra
+processing.   This way the task is always &quot;in the system&quot; in a controlled
+way.
+
+Then not over engineer for the very rare chance of a failure.   May don't
+even really need the durable queues if I can run a utility to resubmit
+stuck &quot;pending&quot; jobs in those rare cases.
+
+
+Thanks very much for your input.
+
+
+It seems to me there are a few separate problem domains here, which are
+&gt;<i> getting tangled up in our discussion. I would posit that you need to deal
+</I>&gt;<i> with
+</I>&gt;<i>
+</I>&gt;<i> 1. Making sure a job/task has definitely been 'registered' with the system.
+</I>&gt;<i>
+</I>&gt;<i> 2. Indicating the outcome of (1) to your users
+</I>&gt;<i>
+</I>&gt;<i> 3. Avoiding 're-submitting' the same job/task many times
+</I>&gt;<i>
+</I>&gt;<i> 4. Dealing with failures in external services
+</I>&gt;<i>
+</I>&gt;<i> Please feel free to correct that list or add to it or whatever.
+</I>&gt;<i>
+</I>&gt;<i> When it comes to (1), as I mentioned durable queues with persistent
+</I>&gt;<i> messages are the way to go. Once a message is 'on disk' then it is
+</I>&gt;<i> reasonable for you to assume that the job is safely 'in the system' now. I
+</I>&gt;<i> won't pretend that this represents a complete disaster recovery solution,
+</I>&gt;<i> because we both know it does not. I do feel, however, that such a solution
+</I>&gt;<i> involves *far* more technology that just your message broker, so I'm going
+</I>&gt;<i> to gently push it out of scope for the purposes of this discussion. :)
+</I>&gt;<i>
+</I>&gt;<i> As for (2), in the absence of queue browsing, you are probably doing the
+</I>&gt;<i> right thing already in terms of storing a record in your web application's
+</I>&gt;<i> database to indicate that the job has indeed been submitted (and is now in
+</I>&gt;<i> a pending state).
+</I>&gt;<i>
+</I>&gt;<i> Your problem with 'duplicate tasks' appears to happen mainly because your
+</I>&gt;<i> cron job 're-submits' the message. With a persistent queue, there would be
+</I>&gt;<i> no need to do this at all, as the message is on disk and will survive a
+</I>&gt;<i> broker crash (though it won't survive if your data centre slips off a cliff
+</I>&gt;<i> into the ocean).
+</I>&gt;<i>
+</I>&gt;<i> What I'd suggest is a slightly different approach. Set up your durable
+</I>&gt;<i> task queue with a 'dead letter exchange' so that expiring messages (or
+</I>&gt;<i> those rejected with `requeue=false`) will be shoved into that exchange. Now
+</I>&gt;<i> set up the target (dead letter) exchange to publish to another (durable)
+</I>&gt;<i> queue, let's call it 'redelivery', and make sure this is configured to stay
+</I>&gt;<i> around even when there are no consumers.
+</I>&gt;<i>
+</I>&gt;<i> Set up a 'permanent subscriber' to the 'redelivery' queue - i.e., have an
+</I>&gt;<i> always running thread consuming these messages and make sure it is
+</I>&gt;<i> restarted if it fails for any reason - and have this subscriber take each
+</I>&gt;<i> arriving message and re-submit it to the original task queue.
+</I>&gt;<i>
+</I>&gt;<i> Finally, when submitting jobs to the task queue, set the TTL to a
+</I>&gt;<i> reasonable value (for your application's needs) and this is what will
+</I>&gt;<i> happen:
+</I>&gt;<i>
+</I>&gt;<i> 1. you submit the task
+</I>&gt;<i> 2. the task TTL expires after the correct time lapse
+</I>&gt;<i> 3. the broker sends the 'expired' message to the 'dead letter exchange'
+</I>&gt;<i> 4. the exchange routes the message to the 'redelivery' queue
+</I>&gt;<i> 5. the redelivery queue re-submits the message (as a new message!) to the
+</I>&gt;<i> task queue
+</I>&gt;<i> 6. a consumer (job) grabs the message before it expires this time
+</I>&gt;<i> 7. the job (process/thread/application) fails (due to an external service
+</I>&gt;<i> error or whatever)
+</I>&gt;<i> 8. the job (process/thread/application) rejects the job with
+</I>&gt;<i> `requeue=false`
+</I>&gt;<i> 9. steps 3, 4 and 5 run again
+</I>&gt;<i> 10. eventually something good happens!?
+</I>&gt;<i>
+</I>&gt;<i> Actually to deal properly with 10, you probably want to keep some kind of
+</I>&gt;<i> timestamp with the message and in the consumer that is reading the
+</I>&gt;<i> 'redelivery' queue and re-submitting jobs, allow the message to time out
+</I>&gt;<i> and set an error flag in the database (or something).
+</I>&gt;<i>
+</I>&gt;<i> If you *do* have some kind of external identity that holds for the
+</I>&gt;<i> (conceptual) lifetime of the task, then you could store this original
+</I>&gt;<i> timestamp in the database and query that against the task id, but obviously
+</I>&gt;<i> you'll need to consider the potential performance (and architectural)
+</I>&gt;<i> implications of doing that for yourself.
+</I>&gt;<i>
+</I>&gt;<i> Step (8) might also be problematic if your tasks take a long time to
+</I>&gt;<i> complete, so you may wish to rework that state in terms of re-submitting
+</I>&gt;<i> instead of rejecting the message. As long as you have heartbeats enabled,
+</I>&gt;<i> your consumer channel shouldn't be closed, but until you've ack'ed the
+</I>&gt;<i> message one way or another, other consumers could 'get' it and therefore
+</I>&gt;<i> you'll need to make them idempotent to deal with this.
+</I>&gt;<i>
+</I>&gt;<i> What ever you choose to do, the database needs to be properly updated when
+</I>&gt;<i> a task does finally succeed. The fact that you *must* do this at some point
+</I>&gt;<i> already (in order for the UI to be consistent) means you already have a
+</I>&gt;<i> thread of identity, and therefore you should be able to use this to create
+</I>&gt;<i> idempotent consumers where duplicate tasks are potentially an issue.
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>  Oh, and with this example of the third-party web service another problem
+</I>&gt;&gt;<i> is knowing if a failure of this service is permanent or temporary.  I
+</I>&gt;&gt;<i> have not done this, but I'm tempted to have my workers pull the jobs off
+</I>&gt;&gt;<i> the queue and if the job fails for an unclear reason then ack the
+</I>&gt;&gt;<i> original job and then send it to a &quot;try again later&quot; queue and have
+</I>&gt;&gt;<i> separate workers handle those.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i>
+</I>&gt;<i> That sounds like a reasonable approach. It is somewhat similar to the
+</I>&gt;<i> approach I describe above.
+</I>&gt;<i>
+</I>
+
+
+-- 
+Bill Moseley
+<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">moseley at hank.org</A>
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20120618/316aae66/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20120618/316aae66/attachment.htm</A>&gt;
+</PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="020672.html">[rabbitmq-discuss] Application architecture question: queue	failure
+</A></li>
+	<LI>Next message: <A HREF="020680.html">[rabbitmq-discuss] Application architecture question: queue	failure
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#20674">[ date ]</a>
+              <a href="thread.html#20674">[ thread ]</a>
+              <a href="subject.html#20674">[ subject ]</a>
+              <a href="author.html#20674">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

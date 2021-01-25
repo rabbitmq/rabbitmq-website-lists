@@ -1,0 +1,178 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Advice needed on new 'feature'
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20Advice%20needed%20on%20new%20%27feature%27&In-Reply-To=49F00D2B.7080904%40lshift.net">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003409.html">
+   <LINK REL="Next"  HREF="003405.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Advice needed on new 'feature'</H1>
+    <B>Nemanja Stefanovic</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20Advice%20needed%20on%20new%20%27feature%27&In-Reply-To=49F00D2B.7080904%40lshift.net"
+       TITLE="[rabbitmq-discuss] Advice needed on new 'feature'">nemik at nemik.net
+       </A><BR>
+    <I>Thu Apr 23 13:50:25 BST 2009</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003409.html">[rabbitmq-discuss] Advice needed on new 'feature'
+</A></li>
+        <LI>Next message: <A HREF="003405.html">[rabbitmq-discuss] RabbitMQ HTTP interface
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3413">[ date ]</a>
+              <a href="thread.html#3413">[ thread ]</a>
+              <a href="subject.html#3413">[ subject ]</a>
+              <a href="author.html#3413">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Matthias,
+
+Exchange-to-exchange bindings sound very interesting, I didn't think about
+that and didn't know it could be implemented easily.
+
+And yes, your assumptions are correct, I would like the messages buffered
+for the first client to connect and then as the others come on they just get
+later ones. With the patch I submitted that is exactly how it works now and
+I love it.
+It also makes STOMP connections (since I'll be using STOMP as protocol for
+client to subscribe and consume) very easy to handle since subscriptions can
+be done easily and mapped directly to the queue. No need to create temporary
+queue's on another exchange.
+
+The second approach you gave about client handling de-dup with hashes and
+feeding from primary and temporary I suppose could work, but would be much
+more complicated in my case than the changes I had made to the server.
+Because I don't plan on using transactional ack's or flow control, it is a
+reasonable compromise for my purposes.
+
+I'm by no means asking for this to get merged in or anything. I realize it
+breaks AMQP specs; breaks all current client implimentations since it's
+adding a new mandatory bit bool-field for broadcast in queue.declare, I had
+to change py-amqplib and the STOMP adapter for this. I mainly sent to to the
+list in case someone else might find it useful.
+I realize this 'feature' isn't exactly welcome because of its effects on
+ack's and flow/network controls (not mention AMQP spec), but I had just
+hoped you guys who made the server to see if my changes make sense IF such a
+feature was to be done; if only because I'm new to both Erlang and RabbitMQ.
+
+Thank you though for all the other suggestions. One concern we have in the
+team is users that don't come back and whose queue's as a result get filled
+with many messages. Since the messages we're sending will not be persisent,
+we're not worried about disk usage but more about memory. I'm not sure if
+the garbage collector would purge old messages from such queues (I assume
+no) and hence the node running out of memory. Some kind of cron-based
+purging could also be possible but not very reliable. In which case we may
+just go with auto_delete queue's per connection duplicating the bindings of
+a 'primary' queue as you suggested in the first reply.
+
+Thank you,
+Nemanja
+
+On Thu, Apr 23, 2009 at 1:39 AM, Matthias Radestock &lt;<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">matthias at lshift.net</A>&gt;wrote:
+
+&gt;<i> Nemanja,
+</I>&gt;<i>
+</I>&gt;<i> Nemanja Stefanovic wrote:
+</I>&gt;<i>
+</I>&gt;&gt;<i> The auto_delete's per connection is a good idea. I had considered it but
+</I>&gt;&gt;<i> it seemed like duplicating many bindings per connection per 'primary' queue
+</I>&gt;&gt;<i> might have unnecessary overhead. I suppose there probably wouldn't be more
+</I>&gt;&gt;<i> than a few per user, but how does creating new queues and ~15 or so bindings
+</I>&gt;&gt;<i> for each affect system performance? The other reason for avoiding
+</I>&gt;&gt;<i> re-creation of bindings each time is that the topics are collected from a
+</I>&gt;&gt;<i> user-profile from a database. I really liked the exchange for this reason
+</I>&gt;&gt;<i> because it allowed for minimizing DB-calls. I realize this is probably a
+</I>&gt;&gt;<i> minor point though.
+</I>&gt;&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> An alternative to duplicating the bindings would be to introduce
+</I>&gt;<i> exchange-to-exchange bindings; something that was originally envisaged in
+</I>&gt;<i> AMQP and wouldn't be too hard to add to RabbitMQ.
+</I>&gt;<i>
+</I>&gt;<i> You would then be able to have a three-level topology:
+</I>&gt;<i>
+</I>&gt;<i> 1) a topic exchange, just as you have now
+</I>&gt;<i> 2) one fanout exchange per user, with your ~15 bindings to the topic
+</I>&gt;<i> exchange
+</I>&gt;<i> 3) the primary and, temporarily, the secondary per-user queues bound with a
+</I>&gt;<i> single binding each to the user's fanout exchange.
+</I>&gt;<i>
+</I>&gt;<i> You end up with one exchange and 15+1(+1 temporarily) bindings per user,
+</I>&gt;<i> which RabbitMQ should cope with fine and efficiently.
+</I>&gt;<i>
+</I>&gt;<i>  Lastly, the current 'primary' queue allows me to store messages/events in
+</I>&gt;&gt;<i> it, so when the first client connects it can consume past messages and
+</I>&gt;&gt;<i> display them in a &quot;here's what you missed while you were away&quot; kind of case.
+</I>&gt;&gt;<i> I wouldn't be able to get this same behaviour with auto_delete queue's since
+</I>&gt;&gt;<i> (as far as I know) there's no way to 'synchronize' their contents with the
+</I>&gt;&gt;<i> ones of the' primary' queue.
+</I>&gt;&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> So, if I understand you correctly ...
+</I>&gt;<i>
+</I>&gt;<i> - when none of the user's clients are connected, messages for that user
+</I>&gt;<i> should be buffered
+</I>&gt;<i>
+</I>&gt;<i> - when a user's client connects it should receive all buffered messages
+</I>&gt;<i> (i.e. messages that have not been sent to *any* of the user's clients),
+</I>&gt;<i> followed by any new messages
+</I>&gt;<i>
+</I>&gt;<i> That's an interesting use case.
+</I>&gt;<i>
+</I>&gt;<i> One possible approach is to have one permanent queue per user and then
+</I>&gt;<i> temporary queues for each client, with all queues having the same bindings
+</I>&gt;<i> (or being bound to the fanout exchange described above). Clients subscribe
+</I>&gt;<i> to to both the permanent queue and temporary queue and maintain state to
+</I>&gt;<i> allow them to spot duplicates, i.e. messages that came from both the
+</I>&gt;<i> permanent and temporary queue.
+</I>&gt;<i>
+</I>&gt;<i> While that is not the most efficient of solutions, the cost is bounded.
+</I>&gt;<i> Each message is sent to a client at most twice. And the de-dup state is
+</I>&gt;<i> bounded too - in the worst case you need to remember the hashes of all
+</I>&gt;<i> messages received from the permanent queue that have not been received (yet,
+</I>&gt;<i> or possibly never) from the temporary queue.
+</I>&gt;<i>
+</I>&gt;<i>  As for acknowledgements, I'm not using them in this case so I'm not too
+</I>&gt;&gt;<i> worried about that.
+</I>&gt;&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> Right, but it stops the broadcast-queue feature from being orthogonal.
+</I>&gt;<i> Other aspects that will break things are transactional acks, network flow
+</I>&gt;<i> control (which blocks consumers) and channel flow control (ditto).
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> Regards,
+</I>&gt;<i>
+</I>&gt;<i> Matthias.
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: <A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20090423/1d1cec38/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20090423/1d1cec38/attachment.htm</A> 
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003409.html">[rabbitmq-discuss] Advice needed on new 'feature'
+</A></li>
+	<LI>Next message: <A HREF="003405.html">[rabbitmq-discuss] RabbitMQ HTTP interface
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3413">[ date ]</a>
+              <a href="thread.html#3413">[ thread ]</a>
+              <a href="subject.html#3413">[ subject ]</a>
+              <a href="author.html#3413">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

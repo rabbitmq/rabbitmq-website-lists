@@ -1,0 +1,134 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Problem with publish confirms
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Problem%20with%20publish%20confirms&In-Reply-To=%3C53427BE3.8000209%40rabbitmq.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="035006.html">
+   <LINK REL="Next"  HREF="035065.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Problem with publish confirms</H1>
+    <B>Simon MacMullen</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Problem%20with%20publish%20confirms&In-Reply-To=%3C53427BE3.8000209%40rabbitmq.com%3E"
+       TITLE="[rabbitmq-discuss] Problem with publish confirms">simon at rabbitmq.com
+       </A><BR>
+    <I>Mon Apr  7 11:20:19 BST 2014</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="035006.html">[rabbitmq-discuss] Problem with publish confirms
+</A></li>
+        <LI>Next message: <A HREF="035065.html">[rabbitmq-discuss] Problem with publish confirms
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#35050">[ date ]</a>
+              <a href="thread.html#35050">[ thread ]</a>
+              <a href="subject.html#35050">[ subject ]</a>
+              <a href="author.html#35050">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>It's going to be hard to debug this without seeing your code, especially 
+since it sounds like it is quite likely to be a general Erlang problem.
+
+Having said that, here are some general pointers:
+
+On 04/04/2014 20:44, Ryan Brown wrote:
+&lt;snip&gt;
+&gt;<i> Then on publish, I select which one to use based
+</I>&gt;<i> on the values passed-down the stack from message intake. Set self() as
+</I>&gt;<i> the confirm handler and respond with a wait so that up the stack I can
+</I>&gt;<i> initiate a receive loop in the message intake which is not a gen_server.
+</I>
+Have you seen amqp_channel:wait_for_confirms/1? That might be easier 
+than handling the confirms yourself if all you are going to do is wait 
+for them anyway.
+
+&gt;<i> I have debug messages throughout and it appears that everything is
+</I>&gt;<i> happening as expected. I trace the message through the publish path. To
+</I>&gt;<i> being published and passing the wait back up to the receiver. I also see
+</I>&gt;<i> where the basic.ack is received and the publish_confirm acknowledgement
+</I>&gt;<i> passed all the way up to the receive loop. However, then things go awry.
+</I>&gt;<i> I get the attached dump.
+</I>
+It's very hard to see what is going wrong here in detail, but the 
+surface issue is that your gen_server took more than 5 seconds to 
+respond to a request - note that gen_server:call/2 will time out after 5 
+seconds.
+
+For this reason we never use gen_server:call/2 (we have a CI task that 
+explodes if we accidentally commit code using it!); we always use call/3 
+with a timeout of 'infinity'. IMO this is a misfeature in Erlang.
+
+&gt;<i> My take-away, although likely I am wrong, is that somewhere, apparently
+</I>&gt;<i> in amqp_balanced_publisher, a gen_server call is timing-out while
+</I>&gt;<i> waiting for a response. But, I seem to be able to trace the responses
+</I>&gt;<i> through the whole stack so I am thoroughly confused.
+</I>
+That's correct. Of course, it should be quite rare / require heavy load 
+for the 5s timeout to fail because the operation simply took too long. 
+It's quite possible that the gen_server you are calling into is 
+deadlocked or stuck in some other way.
+
+I would debug this as follows:
+
+1) Change the call/2 to call/3 with infinity.
+2) If the program now hangs rather than times out, launch 'observer' 
+(<A HREF="http://www.erlang.org/doc/apps/observer/observer_ug.html">http://www.erlang.org/doc/apps/observer/observer_ug.html</A>), go and find 
+the server you are calling into, and see what it's current stacktrace 
+is. You may wish to give this process a registered name temporarily so 
+you can find it more easily.
+
+Cheers, Simon
+
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="035006.html">[rabbitmq-discuss] Problem with publish confirms
+</A></li>
+	<LI>Next message: <A HREF="035065.html">[rabbitmq-discuss] Problem with publish confirms
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#35050">[ date ]</a>
+              <a href="thread.html#35050">[ thread ]</a>
+              <a href="subject.html#35050">[ subject ]</a>
+              <a href="author.html#35050">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

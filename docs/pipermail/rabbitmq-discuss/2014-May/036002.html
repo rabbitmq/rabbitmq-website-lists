@@ -1,0 +1,321 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] |Spam| rabbitmq service dies when a large number of messages expire.
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20%7CSpam%7C%20rabbitmq%20service%20dies%20when%20a%20large%0A%20number%20of%20messages%20expire.&In-Reply-To=%3C5374DCD2.5090203%40rabbitmq.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="036000.html">
+   <LINK REL="Next"  HREF="036004.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] |Spam| rabbitmq service dies when a large number of messages expire.</H1>
+    <B>Simon MacMullen</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20%7CSpam%7C%20rabbitmq%20service%20dies%20when%20a%20large%0A%20number%20of%20messages%20expire.&In-Reply-To=%3C5374DCD2.5090203%40rabbitmq.com%3E"
+       TITLE="[rabbitmq-discuss] |Spam| rabbitmq service dies when a large number of messages expire.">simon at rabbitmq.com
+       </A><BR>
+    <I>Thu May 15 16:27:14 BST 2014</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="036000.html">[rabbitmq-discuss] |Spam| rabbitmq service dies when a large number	of messages expire.
+</A></li>
+        <LI>Next message: <A HREF="036004.html">[rabbitmq-discuss] ANN Important change in RabbitMQ .NET client 3.4
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#36002">[ date ]</a>
+              <a href="thread.html#36002">[ thread ]</a>
+              <a href="subject.html#36002">[ subject ]</a>
+              <a href="author.html#36002">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>No, this should not happen.
+
+It would be expected that dead lettering huge numbers of messages at 
+once could cause excessive memory use as dead-lettering isn't throttled. 
+That's why we don't dead-letter on queue deletion. But you don't appear 
+to be doing anything with DLX.
+
+Assuming there aren't any policies in place to make individual messages 
+expire then the &quot;x-expires&quot; argument will really just do the equivalent 
+of a timed queue.delete - and that really should not cause additional 
+resources to be used.
+
+So is there anything else going on? Any policies set? Does memory use 
+spike before the service dies? Anything interesting in the logs?
+
+Cheers, Simon
+
+On 15/05/14 16:00, Sreyan Sarkar wrote:
+&gt;<i> Hi,
+</I>&gt;<i>
+</I>&gt;<i> While stress testing rabbit mq to resolve a separate performance issue,
+</I>&gt;<i> we noticed that rabbit mq would crash when a queue with a large number
+</I>&gt;<i> of messages expired. When we held the total size of the all of the
+</I>&gt;<i> messages constant, but varied the number of messages we found that more
+</I>&gt;<i> messages meant a higher probability of the node dying.
+</I>&gt;<i>
+</I>&gt;<i> I&#8217;ve attached some standalone test code below that applies this load.
+</I>&gt;<i> I&#8217;ve found that the parameters need to be varied depending on the
+</I>&gt;<i> strength of the machine, but in all cases there is a point where
+</I>&gt;<i> messages can be built up and happily served, but the expiry of the
+</I>&gt;<i> entire queue will fail.
+</I>&gt;<i>
+</I>&gt;<i> I have tested this with Rabbit MQ 3.3.0 and RabbitMQ 3.2.4. Both of
+</I>&gt;<i> these clusters were running Erlang R16B03 on Windows Server 2008 R2.
+</I>&gt;<i>
+</I>&gt;<i> It&#8217;s not clear to me why the nodes will die with this sort of load. Is
+</I>&gt;<i> this a known issue with RabbitMQ or the version of Erlang I am running on?
+</I>&gt;<i>
+</I>&gt;<i> -Sreyan
+</I>&gt;<i>
+</I>&gt;<i> class Program
+</I>&gt;<i>
+</I>&gt;<i>      {
+</I>&gt;<i>
+</I>&gt;<i>          static void Main(string[] args)
+</I>&gt;<i>
+</I>&gt;<i>          {
+</I>&gt;<i>
+</I>&gt;<i>              var host = &quot;127.0.0.1&quot;;
+</I>&gt;<i>
+</I>&gt;<i>              const int loadSize = 1024*1024;
+</I>&gt;<i>
+</I>&gt;<i>              var stressor = new Stressor(1, loadSize, host, &quot;foo&quot;,
+</I>&gt;<i> &quot;bar&quot;, TimeSpan.FromSeconds(10));
+</I>&gt;<i>
+</I>&gt;<i>              stressor.ApplyLoad();
+</I>&gt;<i>
+</I>&gt;<i>              stressor.CancellationTokenSource.Cancel();
+</I>&gt;<i>
+</I>&gt;<i>              Console.WriteLine( &quot;Applied a load of {0} KiB. Press
+</I>&gt;<i> [ENTER] to exit.&quot;, loadSize);
+</I>&gt;<i>
+</I>&gt;<i>              Console.ReadLine();
+</I>&gt;<i>
+</I>&gt;<i>          }
+</I>&gt;<i>
+</I>&gt;<i>      }
+</I>&gt;<i>
+</I>&gt;<i>      public sealed class Stressor
+</I>&gt;<i>
+</I>&gt;<i>      {
+</I>&gt;<i>
+</I>&gt;<i>          private const string QueueName = &quot;TEST&quot;;
+</I>&gt;<i>
+</I>&gt;<i>          private readonly int _messageSizeInKiB;
+</I>&gt;<i>
+</I>&gt;<i>          private readonly int _totalQueueLoadInKiB;
+</I>&gt;<i>
+</I>&gt;<i>          private readonly IConnection _connection;
+</I>&gt;<i>
+</I>&gt;<i>          private readonly CancellationTokenSource
+</I>&gt;<i> _cancellationTokenSource = new CancellationTokenSource();
+</I>&gt;<i>
+</I>&gt;<i>          public CancellationTokenSource CancellationTokenSource { get {
+</I>&gt;<i> return _cancellationTokenSource; } }
+</I>&gt;<i>
+</I>&gt;<i>          private readonly Thread _consumptionThread;
+</I>&gt;<i>
+</I>&gt;<i>          public Stressor(int messageSizeInKiB, int totalQueueLoadInKiB,
+</I>&gt;<i> string hostName, string userName, string password, TimeSpan
+</I>&gt;<i> connectionTimeout)
+</I>&gt;<i>
+</I>&gt;<i>          {
+</I>&gt;<i>
+</I>&gt;<i>              if (hostName == null) throw new
+</I>&gt;<i> ArgumentNullException(&quot;hostName&quot;);
+</I>&gt;<i>
+</I>&gt;<i>              if (userName == null) throw new
+</I>&gt;<i> ArgumentNullException(&quot;userName&quot;);
+</I>&gt;<i>
+</I>&gt;<i>              if (password == null) throw new
+</I>&gt;<i> ArgumentNullException(&quot;password&quot;);
+</I>&gt;<i>
+</I>&gt;<i>              _messageSizeInKiB = messageSizeInKiB;
+</I>&gt;<i>
+</I>&gt;<i>              _totalQueueLoadInKiB = totalQueueLoadInKiB;
+</I>&gt;<i>
+</I>&gt;<i>              _connection = new ConnectionFactory
+</I>&gt;<i>
+</I>&gt;<i>              {
+</I>&gt;<i>
+</I>&gt;<i>                  HostName = hostName,
+</I>&gt;<i>
+</I>&gt;<i>                  UserName = userName,
+</I>&gt;<i>
+</I>&gt;<i>                  Password = password,
+</I>&gt;<i>
+</I>&gt;<i>                  RequestedConnectionTimeout =
+</I>&gt;<i> (ushort)connectionTimeout.TotalMilliseconds
+</I>&gt;<i>
+</I>&gt;<i>              }.CreateConnection();
+</I>&gt;<i>
+</I>&gt;<i>              _junkMessageWrapper = new Lazy&lt;byte[]&gt;(() =&gt;
+</I>&gt;<i>
+</I>&gt;<i>              {
+</I>&gt;<i>
+</I>&gt;<i>                  var random = new Random();
+</I>&gt;<i>
+</I>&gt;<i>                  var message = new byte[_messageSizeInKiB * 1024];
+</I>&gt;<i>
+</I>&gt;<i>                  random.NextBytes(message);
+</I>&gt;<i>
+</I>&gt;<i>                  return message;
+</I>&gt;<i>
+</I>&gt;<i>              });
+</I>&gt;<i>
+</I>&gt;<i>              _consumptionThread = new Thread(Consume) {IsBackground = true};
+</I>&gt;<i>
+</I>&gt;<i>              _consumptionThread.Start();
+</I>&gt;<i>
+</I>&gt;<i>          }
+</I>&gt;<i>
+</I>&gt;<i>          private readonly Lazy&lt;Byte[]&gt; _junkMessageWrapper;
+</I>&gt;<i>
+</I>&gt;<i>          /// &lt;summary&gt;
+</I>&gt;<i>
+</I>&gt;<i>          /// A consumer that doesn't take! We want to build up messagees
+</I>&gt;<i> then have them expire -- That's the behavior in question.
+</I>&gt;<i>
+</I>&gt;<i>          /// &lt;/summary&gt;
+</I>&gt;<i>
+</I>&gt;<i>          private void Consume()
+</I>&gt;<i>
+</I>&gt;<i>          {
+</I>&gt;<i>
+</I>&gt;<i>              using (var channel = _connection.CreateModel())
+</I>&gt;<i>
+</I>&gt;<i>              {
+</I>&gt;<i>
+</I>&gt;<i>                  channel.QueueDeclare(QueueName, false, false, false,
+</I>&gt;<i> new Dictionary&lt;string, object&gt; { { &quot;x-expires&quot;,
+</I>&gt;<i> (int)TimeSpan.FromSeconds(60).TotalMilliseconds } });
+</I>&gt;<i>
+</I>&gt;<i>                  var consumer = new QueueingBasicConsumer(channel, new
+</I>&gt;<i> SharedQueue&lt;BasicDeliverEventArgs&gt;());
+</I>&gt;<i>
+</I>&gt;<i>                  channel.BasicConsume(QueueName, false, consumer);
+</I>&gt;<i>
+</I>&gt;<i>                  while (!_cancellationTokenSource.IsCancellationRequested)
+</I>&gt;<i>
+</I>&gt;<i>                  {
+</I>&gt;<i>
+</I>&gt;<i>                      Thread.Sleep(TimeSpan.FromMilliseconds(100));
+</I>&gt;<i>
+</I>&gt;<i>                  }
+</I>&gt;<i>
+</I>&gt;<i>              }
+</I>&gt;<i>
+</I>&gt;<i>          }
+</I>&gt;<i>
+</I>&gt;<i>          public void ApplyLoad()
+</I>&gt;<i>
+</I>&gt;<i>          {
+</I>&gt;<i>
+</I>&gt;<i>              using (var channel = _connection.CreateModel())
+</I>&gt;<i>
+</I>&gt;<i>              {
+</I>&gt;<i>
+</I>&gt;<i>                  channel.ConfirmSelect();
+</I>&gt;<i>
+</I>&gt;<i>                  var properties = channel.CreateBasicProperties();
+</I>&gt;<i>
+</I>&gt;<i>                  properties.SetPersistent(true);
+</I>&gt;<i>
+</I>&gt;<i>                  var count = _totalQueueLoadInKiB/_messageSizeInKiB + 1;
+</I>&gt;<i>
+</I>&gt;<i>                  Console.WriteLine(&quot;Publishing {0} messages, each {1}
+</I>&gt;<i> bytes in size&quot;, count, _junkMessageWrapper.Value.Length);
+</I>&gt;<i>
+</I>&gt;<i>                  for (int i = 0; i &lt; count; i++)
+</I>&gt;<i>
+</I>&gt;<i>                  {
+</I>&gt;<i>
+</I>&gt;<i>                      channel.BasicPublish(string.Empty, QueueName,
+</I>&gt;<i> properties, _junkMessageWrapper.Value);
+</I>&gt;<i>
+</I>&gt;<i>                  }
+</I>&gt;<i>
+</I>&gt;<i>                  channel.WaitForConfirms();
+</I>&gt;<i>
+</I>&gt;<i>              }
+</I>&gt;<i>
+</I>&gt;<i>          }
+</I>&gt;<i>
+</I>&gt;<i>      }
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>&gt;<i>
+</I>
+
+-- 
+Simon MacMullen
+RabbitMQ, Pivotal
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="036000.html">[rabbitmq-discuss] |Spam| rabbitmq service dies when a large number	of messages expire.
+</A></li>
+	<LI>Next message: <A HREF="036004.html">[rabbitmq-discuss] ANN Important change in RabbitMQ .NET client 3.4
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#36002">[ date ]</a>
+              <a href="thread.html#36002">[ thread ]</a>
+              <a href="subject.html#36002">[ subject ]</a>
+              <a href="author.html#36002">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

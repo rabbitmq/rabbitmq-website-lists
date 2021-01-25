@@ -1,0 +1,168 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Cannot send message with STOMP
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Cannot%20send%20message%20with%20STOMP&In-Reply-To=%3CCAM8fPiT4grNkru%2BaRW%2Bgb9%3DRQkyA-N39G7rnTk35BiUGkJngNQ%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="019565.html">
+   <LINK REL="Next"  HREF="019571.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Cannot send message with STOMP</H1>
+    <B>Tony Garnock-Jones</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Cannot%20send%20message%20with%20STOMP&In-Reply-To=%3CCAM8fPiT4grNkru%2BaRW%2Bgb9%3DRQkyA-N39G7rnTk35BiUGkJngNQ%40mail.gmail.com%3E"
+       TITLE="[rabbitmq-discuss] Cannot send message with STOMP">tonygarnockjones+rabbitmq at gmail.com
+       </A><BR>
+    <I>Mon Apr 16 15:19:26 BST 2012</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="019565.html">[rabbitmq-discuss] Cannot send message with STOMP
+</A></li>
+        <LI>Next message: <A HREF="019571.html">[rabbitmq-discuss] Cannot send message with STOMP
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#19567">[ date ]</a>
+              <a href="thread.html#19567">[ thread ]</a>
+              <a href="subject.html#19567">[ subject ]</a>
+              <a href="author.html#19567">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>It's probably the backslashes in the headers that you're sending. Because
+STOMP's syntax forbids linefeeds and colons not only in header names but
+also in header values (!!), RabbitMQ's STOMP codec uses backslash escaping
+(for the values only, I note), which isn't part of the specification.
+
+Even though you're not sending colons in header values, you're being
+affected by the escaping. STOMP's syntax plus RabbitMQ's ad-hoc escaping
+then are two wrongs that definitely don't make a right :-(
+
+STOMP's syntax, terrible though it is, is set in stone, so I guess the only
+hope left is some tweak to or removal of the backslash escaping mechanism
+in the RabbitMQ codec. I'm at a loss as to what the right thing to do here
+is. (Besides fix STOMP, obviously.)
+
+One option would be to do no escaping, but if a header is about to be
+encoded using some illegal character (i.e. LF or colon), encode it using
+some totally nonstandard but also totally unambiguous format such as a
+colon in the first column of the line followed by two netstrings? It'd
+completely crash any parser that wasn't looking out for it, because it's
+illegal syntax, but then so is including an unescaped colon or LF in the
+first place, so we're already into uncharted territory.
+
+:<i>4:what,17:a terrible design,
+</I>
+A middle ground would be to forbid sending colons in header *names* but
+silently pass them on in header *values* (they're harmless, and it's a
+silly restriction), and if a LF were seen, to encode it as LF-colon. A
+naive parser then would see a pseudo-header with an empty name; parsers
+expecting this convention would understand it to be a header value
+continuation from the previous line.
+
+Any way you slice it, though: yuck.
+
+Regards,
+  Tony
+
+
+On 16 April 2012 09:42, Lionel Cons &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">lionel.cons at cern.ch</A>&gt; wrote:
+
+&gt;<i> It seems I cannot send _some_ messages using STOMP. After investigation,
+</I>&gt;<i> this seems to come from the presence of &quot;exotic&quot; characters in the header.
+</I>&gt;<i>
+</I>&gt;<i> I managed to reproduce the problem with netcat and the attached file.
+</I>&gt;<i>
+</I>&gt;<i> When I try to use the file to send the message, I get nothing back:
+</I>&gt;<i>
+</I>&gt;<i> $ (cat frame; sleep 1) | nc broker 6123
+</I>&gt;<i>
+</I>&gt;<i> If I remove the two header lines starting with rnd-, it does work as
+</I>&gt;<i> expected:
+</I>&gt;<i>
+</I>&gt;<i> $ (cat frame.clean; sleep 1) | nc broker 6123
+</I>&gt;<i> CONNECTED
+</I>&gt;<i> session:session-wUaTaF5qzu7nKZ4TmuaWFM
+</I>&gt;<i> heart-beat:0,0
+</I>&gt;<i> server:RabbitMQ/2.8.0
+</I>&gt;<i> version:1.0
+</I>&gt;<i>
+</I>&gt;<i> RECEIPT
+</I>&gt;<i> receipt-id:abc
+</I>&gt;<i>
+</I>&gt;<i> So it seems that RabbitMQ does not like these header lines... Any idea on
+</I>&gt;<i> what is happening?
+</I>&gt;<i>
+</I>&gt;<i> Cheers,
+</I>&gt;<i>
+</I>&gt;<i> Lionel
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>
+
+-- 
+Tony Garnock-Jones
+<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">tonygarnockjones at gmail.com</A>
+<A HREF="http://homepages.kcbbs.gen.nz/tonyg/">http://homepages.kcbbs.gen.nz/tonyg/</A>
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20120416/a12bbb26/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20120416/a12bbb26/attachment.htm</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="019565.html">[rabbitmq-discuss] Cannot send message with STOMP
+</A></li>
+	<LI>Next message: <A HREF="019571.html">[rabbitmq-discuss] Cannot send message with STOMP
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#19567">[ date ]</a>
+              <a href="thread.html#19567">[ thread ]</a>
+              <a href="subject.html#19567">[ subject ]</a>
+              <a href="author.html#19567">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,168 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Concerning cluster failure scenario
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Concerning%20cluster%20failure%20scenario&In-Reply-To=%3Cyrv4clj803wc5.fsf%40dwragg.eng.vmware.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="008468.html">
+   <LINK REL="Next"  HREF="008534.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Concerning cluster failure scenario</H1>
+    <B>David Wragg</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Concerning%20cluster%20failure%20scenario&In-Reply-To=%3Cyrv4clj803wc5.fsf%40dwragg.eng.vmware.com%3E"
+       TITLE="[rabbitmq-discuss] Concerning cluster failure scenario">david at rabbitmq.com
+       </A><BR>
+    <I>Sat Aug 21 14:54:18 BST 2010</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="008468.html">[rabbitmq-discuss] Concerning cluster failure scenario
+</A></li>
+        <LI>Next message: <A HREF="008534.html">[rabbitmq-discuss] Concerning cluster failure scenario
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#8519">[ date ]</a>
+              <a href="thread.html#8519">[ thread ]</a>
+              <a href="subject.html#8519">[ subject ]</a>
+              <a href="author.html#8519">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi Aaron,
+
+Some questions below.
+
+Aaron Westendorf &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">aaron at agoragames.com</A>&gt; writes:
+&gt;<i> We experienced a very odd and disturbing outage yesterday.  I'll do my
+</I>&gt;<i> best to explain and can fill in any missing details as needed.
+</I>&gt;<i>
+</I>&gt;<i> We have a 4 host/node cluster of 1.7.2 rabbits.  One node serves our
+</I>&gt;<i> translators that bridge synchronous HTTP traffic to our backend
+</I>&gt;<i> services.  Two other nodes handle our services and one is a spare.
+</I>&gt;<i> The translators have queues named &quot;$host.$pid&quot; and which are bound to
+</I>&gt;<i> the &quot;response&quot; exchange using routing keys of the same name.
+</I>&gt;<i>
+</I>&gt;<i> One of the application nodes went down, apparently due to an outright
+</I>&gt;<i> crash.  Monit caught that rabbit wasn't running and restarted it.  All
+</I>&gt;<i> the rabbit hosts and our services saw this as a socket disconnect
+</I>&gt;<i> without any closure method.  The only immediate fallout from this was
+</I>&gt;<i> a mis-handling in our application stack for socket drops.  Combing
+</I>&gt;<i> through the logs yielded nothing; it appears Erlang crashed hard.
+</I>&gt;<i>
+</I>&gt;<i> The really strange behavior happened at the node which serves our
+</I>&gt;<i> translators.  Running `rabbitmqctl list_queues` it was clear that most
+</I>&gt;<i> of the queues that should exist did not, including the ones which our
+</I>&gt;<i> translators need.
+</I>
+You say that an application node went down, and queues disappeared.  Is
+it possible that those queues has been declared on that node?  As out
+clustering guide at &lt;<A HREF="http://www.rabbitmq.com/clustering.html">http://www.rabbitmq.com/clustering.html</A>&gt; mentions,
+queues reside on a single node - the one where they were declared.  So how
+did your translator queues get declared?  Is it possible that they were
+declared on the node that crashed?  Were the queues declared as durable?
+
+&gt;<i> The logs when the other node went down have many entries similar to
+</I>&gt;<i> the following:
+</I>&gt;<i>
+</I>&gt;<i> =ERROR REPORT==== 16-Aug-2010::18:06:54 ===
+</I>&gt;<i> connection &lt;0.20615.10&gt; (running), channel 2 - error:
+</I>&gt;<i> {amqp_error,internal_error,
+</I>&gt;<i>             &quot;commit failed:
+</I>&gt;<i> [{exit,{{<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">nodedown,rabbit at jackalope</A>},{gen_server2,call,[&lt;7282.218.0&gt;,{commit,{{11,&lt;0.20706.10&gt;},98789}},infinity]}}}]&quot;,
+</I>&gt;<i>             'tx.commit'}
+</I>
+My guess is that these are due to the crash itself.
+
+&gt;<i> Those errors propagated up our application stack where our translators
+</I>&gt;<i> re-connected to the broker (fresh socket).  That lead to this error
+</I>&gt;<i> which is very common:
+</I>&gt;<i>
+</I>&gt;<i> =ERROR REPORT==== 16-Aug-2010::18:06:56 ===
+</I>&gt;<i> connection &lt;0.22741.65&gt; (running), channel 1 - error:
+</I>&gt;<i> {amqp_error,not_found,&quot;no queue 'ogre.28645' in vhost
+</I>&gt;<i> '/hydra'&quot;,'queue.bind'}
+</I>
+This is what I would expect if the queues in question resided on the
+crashed node.
+
+AMQP applications often bind queues immediately after declaring them.
+But from your description of this error, it sounds like the binding
+happens quite separately from the declaration.  Is that right?
+
+&gt;<i> We have added a delay to some of our applications so that reconnection
+</I>&gt;<i> happens after a second or two to avoid this race condition, and will
+</I>&gt;<i> make that change here too.  So both logs and rabbitmqctl were in
+</I>&gt;<i> agreement that the queues which should have existed for our
+</I>&gt;<i> translators did not exist.  I didn't see any errors about the
+</I>&gt;<i> queue.basic_consume calls though.
+</I>
+That is indeed surprising.  Do you have the output of 'rabbitmqctl
+list_bindings' from this point?
+
+&gt;<i> Our translators have some test endpoints, and one of those is a ping
+</I>&gt;<i> which writes directly to the response exchange to effectively test
+</I>&gt;<i> that the translator and Rabbit are working together.  The response
+</I>&gt;<i> exchange is living on the same node which the translator is connected
+</I>&gt;<i> to and consuming from.
+</I>
+Note that exchanges do not live on a particular node, unlike queues.
+
+&gt;<i> When we called this test endpoint, it succeeded!  Though rabbit did
+</I>&gt;<i> not report a queue or binding, every single on of our translators was
+</I>&gt;<i> receiving responses though they never should have.  When one of our
+</I>&gt;<i> services wrote back to the response exchange on other node in the
+</I>&gt;<i> cluster, the message was dropped as we would expect.
+</I>
+Again, the output of 'rabbitmqctl list_bindings' would be useful, if you
+have it.
+
+One more general question: This is a fairly elaborate clustering set-up.
+While we intended that clustering works properly, and I hope we can get
+to the bottom of your problem, the non-uniform nature of the current
+RabbitMQ clustering can make it quite complicated to administer.  So I
+wonder what requirements led you to this design?
+
+David
+
+-- 
+David Wragg
+Staff Engineer, RabbitMQ
+SpringSource, a division of VMware
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="008468.html">[rabbitmq-discuss] Concerning cluster failure scenario
+</A></li>
+	<LI>Next message: <A HREF="008534.html">[rabbitmq-discuss] Concerning cluster failure scenario
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#8519">[ date ]</a>
+              <a href="thread.html#8519">[ thread ]</a>
+              <a href="subject.html#8519">[ subject ]</a>
+              <a href="author.html#8519">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

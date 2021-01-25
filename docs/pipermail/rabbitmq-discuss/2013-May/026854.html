@@ -1,0 +1,132 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Proposal: Change consumers Round-Robin behaviour
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Proposal%3A%20Change%20consumers%20Round-Robin%20behaviour&In-Reply-To=%3CCAGrdgiUUMXqOni%2B29xGu8QwcmQjUwg_1dbe25iroPKgB3UKOhQ%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="026853.html">
+   <LINK REL="Next"  HREF="026855.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Proposal: Change consumers Round-Robin behaviour</H1>
+    <B>Jesper Louis Andersen</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Proposal%3A%20Change%20consumers%20Round-Robin%20behaviour&In-Reply-To=%3CCAGrdgiUUMXqOni%2B29xGu8QwcmQjUwg_1dbe25iroPKgB3UKOhQ%40mail.gmail.com%3E"
+       TITLE="[rabbitmq-discuss] Proposal: Change consumers Round-Robin behaviour">jesper.louis.andersen at gmail.com
+       </A><BR>
+    <I>Thu May  2 12:27:37 BST 2013</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="026853.html">[rabbitmq-discuss] Creating an auth plugin (Kerberos)
+</A></li>
+        <LI>Next message: <A HREF="026855.html">[rabbitmq-discuss] Proposal: Change consumers Round-Robin	behaviour
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#26854">[ date ]</a>
+              <a href="thread.html#26854">[ thread ]</a>
+              <a href="subject.html#26854">[ subject ]</a>
+              <a href="author.html#26854">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi,
+
+Assume we have two hosts, red and green, each running 10 consumers on the
+same queue. Inside `rabbit_amqqueue_process` these consumers will be placed
+in a standard Erlang `queue` module and wait for jobs to arrive. If all the
+20 consumers are busy all the time, there is no problems here at all. But
+if there are more consumers than messages in the queue the consumers will
+sit idle and wait.
+
+There are a couple of reasons to have idle workers, the most important
+being you want to handle sudden message spikes for instance. Now, we would
+like the host consumers to be interleaved in the queue:
+
+RGRGRGRG,...
+
+But in practice, since it is a queue, this may not be the case. We could
+have something along the lines of
+
+RRRRRRRGGGGGGG,...
+
+which means that if requests arrive slowly, they will only be processed by
+the Red host for a while and then only be processed by the Green host for a
+while. If the hosts are different in nature, it is very likely that over
+time, there will be clusters formed in the queue like this.
+
+A way to alleviate this is to check for the following conditions whenever
+we have &quot;run&quot; the queue:
+
+1. There are no more messages (queue is empty)
+2. There are active consumers waiting (active_consumers is not empty)
+
+When this happens, we pick a random consumer in the queue and move him to
+the front. Over time, this &quot;shuffles&quot; the queue into a random order. It is
+also not going to cost anything on the critical path since we only do it
+when we have an empty queue and excess workers. And we are going to do very
+little work unless the queue has a behaviour where it empties often in
+which case you get full random distribution on the consumers with this
+scheme.
+
+The background for the proposal is that Round-robin distribution of
+messages often tend to bad behaviour over time. By adding a bit of
+randomness to the process, we automatically alleviate a number of
+determinism-problems and get better distribution of messages over
+consumers. One could also imagine different distribution schemes, but those
+will be more expensive in practice compared to this proposal, which should
+only have a cost when the queue is not under heavy load.
+
+* Did I miss anything?
+* Is this a good or bad idea? And why?
+* Do we break any rules w.r.t. AMQP by implementing this?
+* Is priority on the queue going to be harder to implement? (I don't think
+so, but...)
+
+-- 
+J.
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20130502/3c63c29e/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20130502/3c63c29e/attachment.htm</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="026853.html">[rabbitmq-discuss] Creating an auth plugin (Kerberos)
+</A></li>
+	<LI>Next message: <A HREF="026855.html">[rabbitmq-discuss] Proposal: Change consumers Round-Robin	behaviour
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#26854">[ date ]</a>
+              <a href="thread.html#26854">[ thread ]</a>
+              <a href="subject.html#26854">[ subject ]</a>
+              <a href="author.html#26854">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

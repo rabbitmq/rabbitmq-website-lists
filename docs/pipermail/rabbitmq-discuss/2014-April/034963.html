@@ -1,0 +1,177 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] How to shutdown cleanly a Java application using Consumers?
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20How%20to%20shutdown%20cleanly%20a%20Java%20application%0A%20using%20Consumers%3F&In-Reply-To=%3CCADtU9_tzko4%2B3zKEPk5HSN3bPrsuN44j77c05E1gbOK0TNVLAQ%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="034962.html">
+   <LINK REL="Next"  HREF="034980.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] How to shutdown cleanly a Java application using Consumers?</H1>
+    <B>Gary Russell</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20How%20to%20shutdown%20cleanly%20a%20Java%20application%0A%20using%20Consumers%3F&In-Reply-To=%3CCADtU9_tzko4%2B3zKEPk5HSN3bPrsuN44j77c05E1gbOK0TNVLAQ%40mail.gmail.com%3E"
+       TITLE="[rabbitmq-discuss] How to shutdown cleanly a Java application using Consumers?">grussell at gopivotal.com
+       </A><BR>
+    <I>Wed Apr  2 23:34:42 BST 2014</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="034962.html">[rabbitmq-discuss] How to shutdown cleanly a Java application using Consumers?
+</A></li>
+        <LI>Next message: <A HREF="034980.html">[rabbitmq-discuss] How to shutdown cleanly a Java application using Consumers?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#34963">[ date ]</a>
+              <a href="thread.html#34963">[ thread ]</a>
+              <a href="subject.html#34963">[ subject ]</a>
+              <a href="author.html#34963">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>I just took another look at the client - with the default (internal
+private) ExecutorService, it does an orderly shutdown() which won't
+interrupt the threads.
+
+If you pass in your own ExecutorService to newConnection() you can call
+shutDownNow() which *will* interrupt the dispatcher threads (if they are
+doing something that's interruptible).
+
+See ExecutorService.shutDownNow() for more information.
+
+Gary
+
+
+On Wed, Apr 2, 2014 at 6:23 PM, Gary Russell &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">grussell at gopivotal.com</A>&gt; wrote:
+
+&gt;<i> In Spring-AMQP, we don't asynchronously cancel the consumer, we tell the
+</I>&gt;<i> consumer it needs to cancel itself when it's finished its current work.
+</I>&gt;<i> IIRC, if the consumer is running when you cancel it, its basicAck will fail
+</I>&gt;<i> because you've already cancelled it and the broker has re-queued that
+</I>&gt;<i> message. Effectively we tell the consumer to emit the cancel immediately
+</I>&gt;<i> after the ack.
+</I>&gt;<i>
+</I>&gt;<i> &gt;stop a badly behaving Consumer
+</I>&gt;<i>
+</I>&gt;<i> It depends on how badly behaved it is; if it never executes any
+</I>&gt;<i> interruptible code (say it's stuck in a while() loop), you are out of luck.
+</I>&gt;<i> If it does stuff that's interruptible (acquire locks, etc, etc) then you
+</I>&gt;<i> can interrupt it.
+</I>&gt;<i>
+</I>&gt;<i> I don't know enough about the rabbit client internals as to whether there
+</I>&gt;<i> is a mechanism to force it to interrupt the dispatcher thread (I didn't see
+</I>&gt;<i> anything after a quick look) so you might have to roll your own (capture a
+</I>&gt;<i> reference to the thread in handleDelivery and interrupt it after your
+</I>&gt;<i> timeout).
+</I>&gt;<i>
+</I>&gt;<i> When all else fails, System.exit() is your friend.
+</I>&gt;<i>
+</I>&gt;<i> Gary
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> On Wed, Apr 2, 2014 at 5:52 PM, Bertrand Guay-Paquet &lt;
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">bernie at step.polymtl.ca</A>&gt; wrote:
+</I>&gt;<i>
+</I>&gt;&gt;<i> Thanks Jason and Gary,
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Your replies really helped and I almost got it now. At first, I didn't
+</I>&gt;&gt;<i> know that handleCancelOk only runs when a consumer is not handling anything
+</I>&gt;&gt;<i> else. That is, only a single handle*() method can run at the same time on
+</I>&gt;&gt;<i> any given consumer instance. Thinking about it now, I realize this was
+</I>&gt;&gt;<i> explained in the doc with the phrase &quot;Each Channel has its own dispatch
+</I>&gt;&gt;<i> thread.&quot;
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> So I created my subclass of DefaultConsumer (BasicConsumer) which
+</I>&gt;&gt;<i> implements isCancelled() and handleCancelOk() which sets a &quot;cancelled flag&quot;
+</I>&gt;&gt;<i> to true. Is there already a built-in way to know if a consumer was
+</I>&gt;&gt;<i> cancelled? I couldn't find it myself...
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Here are my start and stop sequences which almost completely work. I
+</I>&gt;&gt;<i> haven't found how to forcefully stop a badly behaving Consumer after a
+</I>&gt;&gt;<i> given timeout at the end of the stop sequence. How can this be achieved?
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Start sequence:
+</I>&gt;&gt;<i> consumers = new ArrayList&lt;BasicConsumer&gt;();
+</I>&gt;&gt;<i> consumers.add(...)
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Stop sequence:
+</I>&gt;&gt;<i> // Cancel all consumers
+</I>&gt;&gt;<i> for (BasicConsumer consumer : consumers) {
+</I>&gt;&gt;<i>   try {
+</I>&gt;&gt;<i>     consumer.getChannel().basicCancel(consumer.getConsumerTag());
+</I>&gt;&gt;<i>   } catch (Exception e) {
+</I>&gt;&gt;<i>     // report
+</I>&gt;&gt;<i>   }
+</I>&gt;&gt;<i> }
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> // Wait for all consumers to be cancelled
+</I>&gt;&gt;<i> Timeout timeout = ...;
+</I>&gt;&gt;<i> while (!consumers.isEmpty() &amp;&amp; !timeout.isElapsed()) {
+</I>&gt;&gt;<i>   // Remove cancelled consumers
+</I>&gt;&gt;<i>   for (Iterator&lt;BasicConsumer&gt; iterator = consumers.iterator();
+</I>&gt;&gt;<i> iterator.hasNext();) {
+</I>&gt;&gt;<i>     if (iterator.next().isCancelled())
+</I>&gt;&gt;<i>       iterator.remove();
+</I>&gt;&gt;<i>   }
+</I>&gt;&gt;<i> }
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> // Force close remaining (timed-out) consumers
+</I>&gt;&gt;<i> for (BasicConsumer consumer : consumers) {
+</I>&gt;&gt;<i>   consumer.getChannel().abort(); // &lt;---- doesn'k kill the consumer
+</I>&gt;&gt;<i>   // &lt;---------------- How do I kill a timed-out consumer?
+</I>&gt;&gt;<i> }
+</I>&gt;&gt;<i> connection.close();
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Regards,
+</I>&gt;&gt;<i> Bertrand
+</I>&gt;&gt;<i> _______________________________________________
+</I>&gt;&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>&gt;&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20140402/86bc7586/attachment.html">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20140402/86bc7586/attachment.html</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="034962.html">[rabbitmq-discuss] How to shutdown cleanly a Java application using Consumers?
+</A></li>
+	<LI>Next message: <A HREF="034980.html">[rabbitmq-discuss] How to shutdown cleanly a Java application using Consumers?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#34963">[ date ]</a>
+              <a href="thread.html#34963">[ thread ]</a>
+              <a href="subject.html#34963">[ subject ]</a>
+              <a href="author.html#34963">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

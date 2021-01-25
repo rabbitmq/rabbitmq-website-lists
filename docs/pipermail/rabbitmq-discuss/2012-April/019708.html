@@ -1,0 +1,180 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Per-Connection Flow Control - RMQ 2.8.1
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Per-Connection%20Flow%20Control%20-%20RMQ%202.8.1&In-Reply-To=%3C4F955F33.9020003%40aol.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="019554.html">
+   <LINK REL="Next"  HREF="019736.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Per-Connection Flow Control - RMQ 2.8.1</H1>
+    <B>DawgTool</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Per-Connection%20Flow%20Control%20-%20RMQ%202.8.1&In-Reply-To=%3C4F955F33.9020003%40aol.com%3E"
+       TITLE="[rabbitmq-discuss] Per-Connection Flow Control - RMQ 2.8.1">dawgtool at aol.com
+       </A><BR>
+    <I>Mon Apr 23 14:54:59 BST 2012</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="019554.html">[rabbitmq-discuss] Per-Connection Flow Control - RMQ 2.8.1
+</A></li>
+        <LI>Next message: <A HREF="019736.html">[rabbitmq-discuss] Per-Connection Flow Control - RMQ 2.8.1
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#19708">[ date ]</a>
+              <a href="thread.html#19708">[ thread ]</a>
+              <a href="subject.html#19708">[ subject ]</a>
+              <a href="author.html#19708">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi Simon,
+
+Here are some stats on a few runs, modifying the flow control limits.
+Attached is some graphs I created to show the memory consumption.
+
+Test 1-5 all on a 16core/96gb server
+
+Publisher(s): 4
+Exchange(s): 1
+Exchange Type(s): Topic
+Topic Wildcards: 1234.#; 2345.#; 3456.#; (etc)
+Queue Binding(s): 15
+Active Queue(s): 2
+Queue Type(s): Durable, TTL: 90,000
+Consumer(s): 0
+
+Modified File(s): (variables: X, Y)
+X: 4000; 8000; 16000; 32000
+Y: 1000; 2000; 4000; 8000
+
+src/credit_flow.erl
+-define(DEFAULT_CREDIT, {&quot;X&quot;, &quot;Y&quot;}).
+
+src/rabbit_amqqueue.erl
+-define(MORE_CONSUMER_CREDIT_AFTER, &quot;Y&quot;).
+
+src/rabbit_amqqueue_process.erl
+-define(UNSENT_MESSAGE_LIMIT,          &quot;X&quot;).
+
+It appears that at some point the non-persistent data is dropped to disk 
+(most cases were ~4GB total memory).
+Locking is occurring before the 4GB mark, usually within a few minutes 
+or seconds (depending on the flow control setting).
+
+Please let me know if you would like to discuss.
+
+Thanks
+
+On 4/16/12 6:55 AM, Simon MacMullen wrote:
+&gt;<i> I would have thought that in your scenario you would be more bound by 
+</I>&gt;<i> disc performance than anything else - aren't you having messages 
+</I>&gt;<i> paging off the disc and being expired?
+</I>&gt;<i>
+</I>&gt;<i> Just to be clear, do you have a message rate for your use case that 
+</I>&gt;<i> leads to *stable* memory use in 2.7.1 but which cannot be maintained 
+</I>&gt;<i> by 2.8.1? I was unable to find one with my attempts at replicating 
+</I>&gt;<i> your scenario.
+</I>&gt;<i>
+</I>&gt;<i> Cheers, Simon
+</I>&gt;<i>
+</I>&gt;<i> On 12/04/12 15:52, DawgTool wrote:
+</I>&gt;&gt;<i> Hi Simon,
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Just a quick update. I have collected some stats, but mostly looking at
+</I>&gt;&gt;<i> the rabbitmqctl list_channels. Anyway, I will get those graphed at some
+</I>&gt;&gt;<i> point.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> I did however build the same setup (2.8.1/R15B) on a 16 core/96GB
+</I>&gt;&gt;<i> machine and I hit the same limits as the 4 core/16GB.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> So right now it doesn't appear to be a 'horse-power' issue, possible its
+</I>&gt;&gt;<i> a logic/functional issue. Let me know what you think.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Thanks
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> On 3/28/12 8:42 AM, Simon MacMullen wrote:
+</I>&gt;&gt;&gt;<i> On 28/03/12 11:32, Simon MacMullen wrote:
+</I>&gt;&gt;&gt;&gt;<i> I will try to reproduce based on the above, but anything else you can
+</I>&gt;&gt;&gt;&gt;<i> tell me would be a great help.
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i> Hmm, I'm struggling with this.
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i> I can certainly get into a state with a combination of x-message-ttl,
+</I>&gt;&gt;&gt;<i> lots of messages expiring, and enough memory pressure to push much of
+</I>&gt;&gt;&gt;<i> the queue onto disc, such that the queue performance fluctuates quite
+</I>&gt;&gt;&gt;<i> a bit (as it switches between accepting new messages / paging messages
+</I>&gt;&gt;&gt;<i> out to disc / paging them back in / expiring them).
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i> But I can't get a message rate that works OK in this scenario with
+</I>&gt;&gt;&gt;<i> flow control disabled but blocks for long periods with it enabled. If
+</I>&gt;&gt;&gt;<i> the message rate is high enough for flow control to kick in, then it's
+</I>&gt;&gt;&gt;<i> also high enough for memory use to go up as messages wait to enter the
+</I>&gt;&gt;&gt;<i> queue if flow control is disabled. Eventually the memory alarm goes
+</I>&gt;&gt;&gt;<i> off instead.
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i> So can you provide more information about your use pattern?
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i> Having said that, if you just want to disable flow control and are
+</I>&gt;&gt;&gt;<i> prepared to build from source, you could apply the following patch:
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i> diff -r f0dafaca6cd1 src/rabbit_reader.erl
+</I>&gt;&gt;&gt;<i> --- a/src/rabbit_reader.erl Mon Mar 26 17:12:41 2012 +0100
+</I>&gt;&gt;&gt;<i> +++ b/src/rabbit_reader.erl Wed Mar 28 13:40:03 2012 +0100
+</I>&gt;&gt;&gt;<i> @@ -360,7 +360,7 @@
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i> control_throttle(State = #v1{connection_state = CS,
+</I>&gt;&gt;&gt;<i> conserve_memory = Mem}) -&gt;
+</I>&gt;&gt;&gt;<i> - case {CS, Mem orelse credit_flow:blocked()} of
+</I>&gt;&gt;&gt;<i> + case {CS, Mem} of
+</I>&gt;&gt;&gt;<i> {running, true} -&gt; State#v1{connection_state = blocking};
+</I>&gt;&gt;&gt;<i> {blocking, false} -&gt; State#v1{connection_state = running};
+</I>&gt;&gt;&gt;<i> {blocked, false} -&gt; ok = rabbit_heartbeat:resume_monitor(
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i> But I would like to understand more about what you're seeing.
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i> Cheers, Simon
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20120423/761a3cc8/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20120423/761a3cc8/attachment.htm</A>&gt;
+-------------- next part --------------
+A non-text attachment was scrubbed...
+Name: RabbitMQ2.8.1Custom.2012-04-23.jpg
+Type: image/jpeg
+Size: 697269 bytes
+Desc: not available
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20120423/761a3cc8/attachment.jpg">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20120423/761a3cc8/attachment.jpg</A>&gt;
+</PRE>
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="019554.html">[rabbitmq-discuss] Per-Connection Flow Control - RMQ 2.8.1
+</A></li>
+	<LI>Next message: <A HREF="019736.html">[rabbitmq-discuss] Per-Connection Flow Control - RMQ 2.8.1
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#19708">[ date ]</a>
+              <a href="thread.html#19708">[ thread ]</a>
+              <a href="subject.html#19708">[ subject ]</a>
+              <a href="author.html#19708">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

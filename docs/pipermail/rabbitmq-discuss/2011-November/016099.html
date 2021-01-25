@@ -1,0 +1,138 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Stuck waiting for frame during amqp_basic_qos?
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Stuck%20waiting%20for%20frame%20during%0A%20amqp_basic_qos%3F&In-Reply-To=%3CCAE0428F.287B2%25pdezwart%40rubiconproject.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="016098.html">
+   <LINK REL="Next"  HREF="016100.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Stuck waiting for frame during amqp_basic_qos?</H1>
+    <B>Pieter de Zwart</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Stuck%20waiting%20for%20frame%20during%0A%20amqp_basic_qos%3F&In-Reply-To=%3CCAE0428F.287B2%25pdezwart%40rubiconproject.com%3E"
+       TITLE="[rabbitmq-discuss] Stuck waiting for frame during amqp_basic_qos?">pdezwart at rubiconproject.com
+       </A><BR>
+    <I>Wed Nov  9 22:46:19 GMT 2011</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="016098.html">[rabbitmq-discuss] Stuck waiting for frame during	amqp_basic_qos?
+</A></li>
+        <LI>Next message: <A HREF="016100.html">[rabbitmq-discuss] Stuck waiting for frame during	amqp_basic_qos?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#16099">[ date ]</a>
+              <a href="thread.html#16099">[ thread ]</a>
+              <a href="subject.html#16099">[ subject ]</a>
+              <a href="author.html#16099">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Awesome! That makes a lot of sense. I will rejigger my code to check all
+RPC calls, there really is no reason I did not do that earlier apart from
+sheer laziness =)
+
+Thanks!
+me
+
+
+
+
+
+On 11/9/11 2:19 PM, &quot;David Wragg&quot; &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">david at rabbitmq.com</A>&gt; wrote:
+
+&gt;<i>Hi Pieter,
+</I>&gt;<i>
+</I>&gt;<i>Pieter de Zwart &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">pdezwart at rubiconproject.com</A>&gt; writes:
+</I>&gt;&gt;<i> I have managed to reproduce it using C code only. Caveat: this code is
+</I>&gt;&gt;<i> really messy and leaks like a sieve.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Let me know what you think. And please don&#185;t judge me =)
+</I>&gt;<i>
+</I>&gt;<i>Thanks.  That was very helpful to work out what is going on here.
+</I>&gt;<i>
+</I>&gt;<i>Here's the tracer output with your program:
+</I>&gt;<i>
+</I>&gt;<i>[...]
+</I>&gt;<i>1320874543711: &lt;Tracer-0&gt; ch#1 -&gt;
+</I>&gt;<i>{#method&lt;basic.ack&gt;(delivery-tag=22,multiple=true),null,&quot;&quot;}
+</I>&gt;<i>1320874543711: &lt;Tracer-0&gt; ch#1 -&gt;
+</I>&gt;<i>{#method&lt;basic.qos&gt;(prefetch-size=0,prefetch-count=3,
+</I>&gt;<i>global=false),null,&quot;&quot;}
+</I>&gt;<i>1320874543752: &lt;Tracer-0&gt; ch#1 &lt;- {#method&lt;channel.close&gt;(reply-code=406,
+</I>&gt;<i>reply-text=PRECONDITION_FAILED - unknown delivery tag 22, class-id=60,
+</I>&gt;<i>method-id=80),null,&quot;&quot;}
+</I>&gt;<i>1320874543791: &lt;Tracer-0&gt; ch#1 -&gt;
+</I>&gt;<i>{#method&lt;basic.qos&gt;(prefetch-size=0,prefetch-count=1,
+</I>&gt;<i>global=false),null,&quot;&quot;}
+</I>&gt;<i>
+</I>&gt;<i>The client sends the bad ack, and immediately follows up with the
+</I>&gt;<i>basic.qos.  That first amqp_basic_qos call after the ack does return
+</I>&gt;<i>NULL to indicate an error, although your program doesn't report that
+</I>&gt;<i>error.
+</I>&gt;<i>
+</I>&gt;<i>Then your program does another basic.qos.  And the server never replies
+</I>&gt;<i>to it.  That's actually what the AMQP spec requires: Once a peer sends a
+</I>&gt;<i>channel.close, it should ignore all frames on that channel except the
+</I>&gt;<i>channel.close-ok indicating that the channel is fully closed.
+</I>&gt;<i>
+</I>&gt;<i>However, librabbitmq never sends a channel.close-ok, and in fact provides
+</I>&gt;<i>no way to do so.
+</I>&gt;<i>
+</I>&gt;<i>That seems like a bug in librabbitmq to me.  But I'll have to have a
+</I>&gt;<i>think about the best way to fix it.
+</I>&gt;<i>
+</I>&gt;<i>In the meanwhile, you should always check for errors from API calls.
+</I>&gt;<i>When you get an error, you should not re-use the relevant channel.  And
+</I>&gt;<i>if your connection is potentially long-lived, that means that you should
+</I>&gt;<i>probably close and re-open it.
+</I>&gt;<i>
+</I>&gt;<i>-- 
+</I>&gt;<i>David Wragg
+</I>&gt;<i>Staff Engineer, RabbitMQ
+</I>&gt;<i>VMware, Inc.
+</I>
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="016098.html">[rabbitmq-discuss] Stuck waiting for frame during	amqp_basic_qos?
+</A></li>
+	<LI>Next message: <A HREF="016100.html">[rabbitmq-discuss] Stuck waiting for frame during	amqp_basic_qos?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#16099">[ date ]</a>
+              <a href="thread.html#16099">[ thread ]</a>
+              <a href="subject.html#16099">[ subject ]</a>
+              <a href="author.html#16099">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

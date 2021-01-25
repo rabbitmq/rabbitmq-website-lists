@@ -1,0 +1,200 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Fully reliable setup impossible?
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Fully%20reliable%20setup%20impossible%3F&In-Reply-To=%3CCAD6m6fFbmmJ%2BPFcyk0szWpFv3DfbahJAmeYXWZyhLvk7uiSv6g%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="036215.html">
+   <LINK REL="Next"  HREF="036218.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Fully reliable setup impossible?</H1>
+    <B>Jason McIntosh</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Fully%20reliable%20setup%20impossible%3F&In-Reply-To=%3CCAD6m6fFbmmJ%2BPFcyk0szWpFv3DfbahJAmeYXWZyhLvk7uiSv6g%40mail.gmail.com%3E"
+       TITLE="[rabbitmq-discuss] Fully reliable setup impossible?">mcintoshj at gmail.com
+       </A><BR>
+    <I>Thu May 22 17:16:58 BST 2014</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="036215.html">[rabbitmq-discuss] Fully reliable setup impossible?
+</A></li>
+        <LI>Next message: <A HREF="036218.html">[rabbitmq-discuss] Fully reliable setup impossible?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#36217">[ date ]</a>
+              <a href="thread.html#36217">[ thread ]</a>
+              <a href="subject.html#36217">[ subject ]</a>
+              <a href="author.html#36217">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>On your clustering and clients connecting transparently - I highly
+recommend a load balancer in front of your Rabbit servers.  With tcp-half
+open monitoring on the rabbit port, you can tell pretty quickly when a
+node/site goes down, and then get failover to one of the other
+nodes/clusters.  With clustering and mirrored queues and by using publisher
+confirms you'll avoid data loss this way.  You CAN get data duplication
+though.  But I'd only recommend clustering over a really reliable link.  If
+you're going across a WAN - use shovel/federations to replicate messages to
+rabbit clusters on the other side, vs. trying to do cross-wan clusters.
+ You could for run a cluster in each site and use federation to send
+messages to the other cluster as needed.  If any given site goes down, your
+load balancer could switch traffic to the other cluster.  There's still a
+chance for downtime, but it's pretty minimal.  We use this to redirect
+traffic to any given node in the cluster right now so if a single node
+fails, the load balancers pull that node out of service automatically.
+
+Regarding question 2 - if you design it right, using confirms (the default
+in most clients as i understand it), and use persistent messages, you'll
+never get message loss with a mirrored queue, unless ALL servers completely
+crash and hard drives die.  At least this is my understanding :)
+
+Last point - you may want to do manual handling of this situation if it's
+that much of concern.  e.g. let the nodes remain partitioned, let all
+messages empty (again, remember there would be duplicates possible), then
+restrict access to the bad nodes to anything but your consumer processes,
+shut down the &quot;bad&quot; nodes and bring them back up.  They'd not have any
+messages, and they'd get their queues/exchanges from  your &quot;master&quot; node
+that was good when they come back up.  In the case of a load balancer in
+front, you could use your load balancer to control this very effectively.
+
+Definitely read through partitioning and reliability documentation and
+actually try these scenarios:
+<A HREF="https://www.rabbitmq.com/partitions.html">https://www.rabbitmq.com/partitions.html</A>
+<A HREF="https://www.rabbitmq.com/reliability.html">https://www.rabbitmq.com/reliability.html</A>
+
+
+Jason
+
+
+
+
+On Thu, May 22, 2014 at 8:04 AM, Steffen Daniel Jensen &lt;
+<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">steffen.daniel.jensen at gmail.com</A>&gt; wrote:
+
+&gt;<i> We have two data centers connected closely by LAN.
+</I>&gt;<i>
+</I>&gt;<i> We are interested in a *reliable cluster* setup. It must be a cluster
+</I>&gt;<i> because we want clients to be able to connect to each node transparently.
+</I>&gt;<i> Federation is not an option.
+</I>&gt;<i> 1. It happens that the firewall/switch is restarted, and maybe a few ping
+</I>&gt;<i> messages are lost.
+</I>&gt;<i> 2. The setup should survive data center crash
+</I>&gt;<i> 3. All queues are durable and mirrored, all messages are persisted, all
+</I>&gt;<i> publishes are confirmed
+</I>&gt;<i>
+</I>&gt;<i> There are 3 cluster-recovery settings
+</I>&gt;<i> a) ignore: A cross data center network break-down would cause message
+</I>&gt;<i> loss on the node that is restarted In order to rejoin.
+</I>&gt;<i> b) pause_minority: If we choose the same number of nodes in each data
+</I>&gt;<i> center, the whole cluster will pause. If we don't, only the data center
+</I>&gt;<i> with the most nodes can survive.
+</I>&gt;<i> c) auto_heal: If the cluster decides network partitioning, there is a
+</I>&gt;<i> potential of message loss, when joining.
+</I>&gt;<i> [I would really like a resync-setting similar to the one described below]
+</I>&gt;<i>
+</I>&gt;<i> Question 1: Is it even possible to have a fully reliable setup in such a
+</I>&gt;<i> setting?
+</I>&gt;<i>
+</I>&gt;<i> In reality we probably won't have actual network partitions, and it will
+</I>&gt;<i> most probably only be a very short network downtime.
+</I>&gt;<i>
+</I>&gt;<i> Question 2: Is it possible to adjust how long it takes rabbitmq to decide
+</I>&gt;<i> &quot;node down&quot;?
+</I>&gt;<i>
+</I>&gt;<i> It is much better to have a halted rabbitmq for some seconds than to have
+</I>&gt;<i> message loss.
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> Question 3: Assume that we are using the ignore setting, and that we have
+</I>&gt;<i> only two nodes in the cluster. Would the following be a full recovery with
+</I>&gt;<i> zero message loss?
+</I>&gt;<i>
+</I>&gt;<i> 0. Decide which node survives, Ns, and which should be restarted, Nr.
+</I>&gt;<i> 1. Refuse all connections to Nr except from a special recovery
+</I>&gt;<i> application. (One could change the ip, so all running services can't
+</I>&gt;<i> connect or similar)
+</I>&gt;<i> 2. Consume and republish all message from Nr to Ns.
+</I>&gt;<i> 3. Restart Nr
+</I>&gt;<i> Then the cluster should be up-and-running again.
+</I>&gt;<i>
+</I>&gt;<i> Since all queues are mirrored, all messages published in the partition
+</I>&gt;<i> time is preserved. If a certain service lives only in the one data center,
+</I>&gt;<i> messages will pile up in the other (if there are any publishes).
+</I>&gt;<i>
+</I>&gt;<i> If you have any other suggestions, I would be very interested to hear them.
+</I>&gt;<i>
+</I>&gt;<i> I would be really sad to find it necessary to choose Tibco ESB over
+</I>&gt;<i> RabbitMQ, for this reason.
+</I>&gt;<i>
+</I>&gt;<i> Thank you,
+</I>&gt;<i> -- Steffen
+</I>&gt;<i>
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>
+
+-- 
+Jason McIntosh
+<A HREF="https://github.com/jasonmcintosh/">https://github.com/jasonmcintosh/</A>
+573-424-7612
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20140522/1da85994/attachment.html">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20140522/1da85994/attachment.html</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="036215.html">[rabbitmq-discuss] Fully reliable setup impossible?
+</A></li>
+	<LI>Next message: <A HREF="036218.html">[rabbitmq-discuss] Fully reliable setup impossible?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#36217">[ date ]</a>
+              <a href="thread.html#36217">[ thread ]</a>
+              <a href="subject.html#36217">[ subject ]</a>
+              <a href="author.html#36217">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

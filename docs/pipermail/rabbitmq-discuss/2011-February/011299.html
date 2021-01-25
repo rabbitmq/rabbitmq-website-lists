@@ -1,0 +1,149 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Multiple rabbitmq servers, one or more consumers (.NET)
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Multiple%20rabbitmq%20servers%2C%0A%20one%20or%20more%20consumers%20%28.NET%29&In-Reply-To=%3C20110217104622.GB2319%40dakota.Home%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="011245.html">
+   <LINK REL="Next"  HREF="011247.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Multiple rabbitmq servers, one or more consumers (.NET)</H1>
+    <B>Alexandru Scvor&#355;ov</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Multiple%20rabbitmq%20servers%2C%0A%20one%20or%20more%20consumers%20%28.NET%29&In-Reply-To=%3C20110217104622.GB2319%40dakota.Home%3E"
+       TITLE="[rabbitmq-discuss] Multiple rabbitmq servers, one or more consumers (.NET)">alexandru at rabbitmq.com
+       </A><BR>
+    <I>Thu Feb 17 10:46:22 GMT 2011</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="011245.html">[rabbitmq-discuss] Multiple rabbitmq servers,	one or more consumers (.NET)
+</A></li>
+        <LI>Next message: <A HREF="011247.html">[rabbitmq-discuss] Message persistence format
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#11299">[ date ]</a>
+              <a href="thread.html#11299">[ thread ]</a>
+              <a href="subject.html#11299">[ subject ]</a>
+              <a href="author.html#11299">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi Bryan,
+
+&gt;<i> I know there are other strategies to do this
+</I>
+In particular, RabbitMQ clustering (which has nothing to do with HA)
+sounds a bit (but not much) like what you're doing.
+
+&gt;<i> What I believe will happen is this (using a
+</I>&gt;<i> BasicQos of prefetchSize=0, prefetchCount=1):
+</I>
+&gt;<i> and consumer 2 (3, 4, 5, etc.) are sitting idle because message 2 has
+</I>&gt;<i> been allocated to consumer 1.
+</I>
+Sounds right.
+
+&gt;<i> So, my basic question, is there a simple way I get message 2 to not
+</I>&gt;<i> block on message 1 and instead get delivered to a different consumer,
+</I>&gt;<i> or am I barking up the wrong tree here?
+</I>
+You could not set prefetchCount to 1.
+
+Otherwise, you might have to send the same message multiple times and
+then ensure that they don't get processed twice.  From the broker's
+perspective, there's no difference between a pre-fetched message and a
+normal message.
+
+If you need a more intelligent prefetchCount (i.e. pre-fetch the
+message, but if it's not processed in a certain amount of time,
+basic.reject{requeue=true} it), you'll need to write your own.  Starting
+from QueueingBasicConsumer sounds like a good idea.
+
+Does this answer your question?
+
+Cheers,
+Alex
+
+On Mon, Feb 14, 2011 at 10:56:34AM -0600, Bryan Murphy wrote:
+&gt;<i> I'm working on some advanced HA strategies for our infrastructure.
+</I>&gt;<i> One thing I'm experimenting with is setting up one or many consumers
+</I>&gt;<i> that can poll from queues on multiple RabbitMQ servers.
+</I>&gt;<i> 
+</I>&gt;<i> The idea is simple, set up multiple redundant servers configured the
+</I>&gt;<i> same.  Send messages round-robin to the various servers, and then poll
+</I>&gt;<i> the servers for messages.  If a server goes off the reservation, pull
+</I>&gt;<i> it from the list until it comes back online or is replaced with a new
+</I>&gt;<i> one and keep processing messages from the remaining servers.
+</I>&gt;<i> 
+</I>&gt;<i> I know there are other strategies to do this, but I wanted to
+</I>&gt;<i> experiment with a few different techniques to see what works best for
+</I>&gt;<i> us and learn a little bit more about how the driver works.
+</I>&gt;<i> 
+</I>&gt;<i> I dug around in the .NET driver code and managed to pull together an
+</I>&gt;<i> implementation that uses a SharedQueue and multiple
+</I>&gt;<i> connections/models.  I had to extend QueueingBasicConsumer and
+</I>&gt;<i> BasicDeliverEventArgs to add a few properties that allow me to map the
+</I>&gt;<i> messages back to the appropriate connection/model for acking.
+</I>&gt;<i> 
+</I>&gt;<i> This appears to work great at first pass, however, I don't believe
+</I>&gt;<i> this will work well for long running jobs in a load balanced scenario
+</I>&gt;<i> (multiple consumers).  What I believe will happen is this (using a
+</I>&gt;<i> BasicQos of prefetchSize=0, prefetchCount=1):
+</I>&gt;<i> 
+</I>&gt;<i> message 1 --&gt; rabbitmq server 1 --&gt; consumer 1 shared local queue
+</I>&gt;<i> message 2 --&gt; rabbitmq server 2 --&gt; consumer 1 shared local queue
+</I>&gt;<i> 
+</I>&gt;<i> (BasicQos of 1 is per model, and there's a model per connection, which
+</I>&gt;<i> means there's a model per rabbitmq server)
+</I>&gt;<i> 
+</I>&gt;<i> locally:
+</I>&gt;<i> 
+</I>&gt;<i> consumer 1 shared local queue --&gt; message 1 --&gt; message 1
+</I>&gt;<i> consumer 1 shared local queue --&gt; message 2 --&gt; blocked on message 1
+</I>&gt;<i> 
+</I>&gt;<i> and consumer 2 (3, 4, 5, etc.) are sitting idle because message 2 has
+</I>&gt;<i> been allocated to consumer 1.
+</I>&gt;<i> 
+</I>&gt;<i> Instead of using model.BasicConsume, I could use model.BasicGet with a
+</I>&gt;<i> timeout to fetch messages, but I've found the performance of this
+</I>&gt;<i> method to be dreadful in the past so I wanted to try this method
+</I>&gt;<i> first.
+</I>&gt;<i> 
+</I>&gt;<i> So, my basic question, is there a simple way I get message 2 to not
+</I>&gt;<i> block on message 1 and instead get delivered to a different consumer,
+</I>&gt;<i> or am I barking up the wrong tree here?
+</I>&gt;<i> 
+</I>&gt;<i> Thanks!
+</I>&gt;<i> Bryan
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I></PRE>
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="011245.html">[rabbitmq-discuss] Multiple rabbitmq servers,	one or more consumers (.NET)
+</A></li>
+	<LI>Next message: <A HREF="011247.html">[rabbitmq-discuss] Message persistence format
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#11299">[ date ]</a>
+              <a href="thread.html#11299">[ thread ]</a>
+              <a href="subject.html#11299">[ subject ]</a>
+              <a href="author.html#11299">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

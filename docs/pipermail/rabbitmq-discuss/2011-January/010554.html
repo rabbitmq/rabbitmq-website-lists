@@ -1,0 +1,114 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] |Spam| Memory usage about java client?
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20%7CSpam%7C%20Memory%20usage%20about%20java%20client%3F&In-Reply-To=%3C126BB34D-0539-4EFC-B9EA-6BFB7E196921%40vmware.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="010553.html">
+   <LINK REL="Next"  HREF="010555.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] |Spam| Memory usage about java client?</H1>
+    <B>Jerry Kuch</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20%7CSpam%7C%20Memory%20usage%20about%20java%20client%3F&In-Reply-To=%3C126BB34D-0539-4EFC-B9EA-6BFB7E196921%40vmware.com%3E"
+       TITLE="[rabbitmq-discuss] |Spam| Memory usage about java client?">jerryk at vmware.com
+       </A><BR>
+    <I>Thu Jan  6 02:43:15 GMT 2011</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="010553.html">[rabbitmq-discuss] Private messages
+</A></li>
+        <LI>Next message: <A HREF="010555.html">[rabbitmq-discuss] Persister logs never getting rolled/cleaned up?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#10554">[ date ]</a>
+              <a href="thread.html#10554">[ thread ]</a>
+              <a href="subject.html#10554">[ subject ]</a>
+              <a href="author.html#10554">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi, Yaohui...  Responses are inline below...
+
+On Dec 30, 2010, at 3:56 AM, yaohui wrote:
+
+   My java client would use memory of JVM that i defined  by -Xms512m -Xmm512m. Is that normal?
+someon tell me the reason. There exist another methode of client not using loop while(true)?
+
+To avoid having your client memory swamped in this way, you need to impose some limits on how much data the server will deliver to your consumer before the server requires an acknowledgment.
+
+You can do this using the basicQos method on the Channel class, which is documented here:
+
+<A HREF="http://www.rabbitmq.com/javadoc/com/rabbitmq/client/Channel.html#basicQos(int,%20int,%20boolean">http://www.rabbitmq.com/javadoc/com/rabbitmq/client/Channel.html#basicQos(int,%20int,%20boolean</A>)
+
+The different forms of basicQos(...) let you specify how many messages or octets of data the server should let itself send before an ack is needed to continue.
+
+Also, in your call to basicConsume(...) you should specify 'false' for the second parameter below.  Passing a t'rue' indicates that the server should consider messages acknowledged as soon as they're delivered to the QueueingConsumer you've created.  Passing a 'false' instead will make the server expect explicit acknowledgments, which you can then provide with a call to basicAck on Channel, something like:
+
+chan.basicAck(delivery.getEnvelope().getDeliveryTag(), false);
+
+after you've done your thing with the message data you obtained with delivery.getBody().
+
+The boolean flag in the second argument to basicAck lets you avoid ack-ing each delivery individually, by letting you ack multiple messages up to and including the delivery tag you specify.  This lets you handle thing in batches if appropriate, which you may find to be more efficient.
+
+With regard to your second question about whether you need to use the &quot;while(true)&quot; idiom employed in your example, the answer is &quot;yes, there is another way to do things.&quot;  You are free to implement the Consumer interface directly.  See its Javadoc at:
+
+<A HREF="http://www.rabbitmq.com/releases/rabbitmq-java-client/v2.1.0/rabbitmq-java-client-javadoc-2.1.0/com/rabbitmq/client/Consumer.html">http://www.rabbitmq.com/releases/rabbitmq-java-client/v2.1.0/rabbitmq-java-client-javadoc-2.1.0/com/rabbitmq/client/Consumer.html</A>
+
+Notice that you'll want to be prudent in what you do in your implementation of Consumer, since its methods are going to be called on the thread that's running your Connection.  Thus, you'll want to avoid blocking, bogging down in long running operations, etc.
+
+Also, the SimpleConsumer example in the 'examples' directory of the RabbitMQ directory might be instructive to look at.  It demonstrates a scenario very close to what you're doing here and comes with a matching SimpleProducer for you to experiment with.  The examples (and the unit tests) can be a treasure trove of examples of RabbitMQ and AMQP usage.
+
+Best regards,
+Jerry
+
+ my code is like this:
+  Connection conn = null;
+  ConnectionFactory factory = new ConnectionFactory();
+  factory.setHost(&quot;localhost&quot;);
+  conn = factory.newConnection();
+  Channel chan = conn.createChannel();
+
+  chan.queueDeclare(&quot;your_queue&quot; , false, false, false, null);
+  QueueingConsumer consumer = new QueueingConsumer(chan);
+  chan.basicConsume(&quot;your_queue&quot;, true, consumer);
+
+  while (true) {
+    try {
+       delivery = consumer.nextDelivery();
+       byte msg[] = delivery.getBody();
+
+     } catch (InterruptedException ie) {
+       System.out.println(&quot;Error: &quot; + ie);
+       continue;
+    }
+ }
+
+
+</PRE>
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="010553.html">[rabbitmq-discuss] Private messages
+</A></li>
+	<LI>Next message: <A HREF="010555.html">[rabbitmq-discuss] Persister logs never getting rolled/cleaned up?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#10554">[ date ]</a>
+              <a href="thread.html#10554">[ thread ]</a>
+              <a href="subject.html#10554">[ subject ]</a>
+              <a href="author.html#10554">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

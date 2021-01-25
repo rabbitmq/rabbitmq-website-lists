@@ -1,0 +1,197 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Creating an auth plugin (Kerberos)
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Creating%20an%20auth%20plugin%20%28Kerberos%29&In-Reply-To=%3C20121211193803.GG754%40kaka.it.su.se%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="024457.html">
+   <LINK REL="Next"  HREF="024460.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Creating an auth plugin (Kerberos)</H1>
+    <B>Simon Lundstr&#246;m</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Creating%20an%20auth%20plugin%20%28Kerberos%29&In-Reply-To=%3C20121211193803.GG754%40kaka.it.su.se%3E"
+       TITLE="[rabbitmq-discuss] Creating an auth plugin (Kerberos)">simlu at su.se
+       </A><BR>
+    <I>Tue Dec 11 19:38:03 GMT 2012</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="024457.html">[rabbitmq-discuss] Creating an auth plugin (Kerberos)
+</A></li>
+        <LI>Next message: <A HREF="024460.html">[rabbitmq-discuss] Creating an auth plugin (Kerberos)
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#24459">[ date ]</a>
+              <a href="thread.html#24459">[ thread ]</a>
+              <a href="subject.html#24459">[ subject ]</a>
+              <a href="author.html#24459">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>On Tue, 2012-12-11 at 17:07:02 +0000, Tim Watson wrote:
+&gt;<i> That's not saying check_user_login is undefined. In fact, check_user_login is not even part of the NIF infrastructure. It looks like it's saying 'connection.start_ok' is undefined. Hmn - doesn't make much sense to me I'm afraid. What happens if you move the NIF part out into another module, using the -on_load attribute there and then just call that utility module from your plugin?
+</I>&gt;<i> 
+</I>&gt;<i> -module(kinit).
+</I>&gt;<i> 
+</I>&gt;<i> -export([init/0, kinit/2]).
+</I>&gt;<i> -on_load(init/0).
+</I>&gt;<i> 
+</I>&gt;<i> init() -&gt;
+</I>&gt;<i>   Kinit = code:priv_dir(?APPLICATION) ++ &quot;/kinit.so&quot;,
+</I>&gt;<i>   erlang:load_nif(Kinit, 0).
+</I>&gt;<i> 
+</I>&gt;<i> kinit(User, Password) -&gt; exit(nif_library_not_loaded).
+</I>
+I just did this &lt;<A HREF="https://github.com/simmel/rabbitmq-auth-backend-kerberos/commit/e645d21439">https://github.com/simmel/rabbitmq-auth-backend-kerberos/commit/e645d21439</A>&gt; (browse here &lt;<A HREF="https://github.com/simmel/rabbitmq-auth-backend-kerberos/tree/e645d21439d1c7d13216a53766918d69c6e7c04a">https://github.com/simmel/rabbitmq-auth-backend-kerberos/tree/e645d21439d1c7d13216a53766918d69c6e7c04a</A>&gt;) and now I get:
+
+=INFO REPORT==== 11-Dec-2012::20:09:32 ===  Management agent started.
+
+=ERROR REPORT==== 11-Dec-2012::20:09:32 ===
+WAT: {error,upgrade,&quot;Upgrade not supported by this NIF library.&quot;}
+
+=ERROR REPORT==== 11-Dec-2012::20:09:32 ===
+WAT: ok
+
+=INFO REPORT==== 11-Dec-2012::20:09:32 ===
+Management plugin started. Port: 443, path: /
+
+=INFO REPORT==== 11-Dec-2012::20:09:32 ===
+Statistics database started.
+
+=INFO REPORT==== 11-Dec-2012::20:09:46 ===
+accepting AMQP connection &lt;0.287.0&gt; (130.237.168.221:48918 -&gt; 77.238.35.76:5671)
+
+=ERROR REPORT==== 11-Dec-2012::20:09:46 ===
+WAT: {error,upgrade,&quot;Upgrade not supported by this NIF library.&quot;}
+
+=ERROR REPORT==== 11-Dec-2012::20:09:49 ===
+closing AMQP connection &lt;0.287.0&gt; (130.237.168.221:48918 -&gt; 77.238.35.76:5671):
+{channel0_error,starting,
+                {error,undef,'connection.start_ok',
+                       [{kinit,kinit,[&lt;&lt;&quot;simlu&quot;&gt;&gt;,&lt;&lt;&quot;not_my_password&quot;&gt;&gt;]},
+                        {rabbit_auth_backend_kerberos,check_user_login,2},
+                        {rabbit_access_control,'-check_user_login/2-fun-0-',4},
+                        {lists,foldl,3},
+                        {rabbit_reader,auth_phase,2},
+                        {rabbit_reader,handle_method0,3},
+                        {rabbit_reader,handle_input,3},
+                        {rabbit_reader,recvloop,2}]}}
+
+when using AMQP login and this when I make an API call:
+
+=CRASH REPORT==== 11-Dec-2012::20:10:27 ===  crasher:
+    initial call: mochiweb_acceptor:init/3
+    pid: &lt;0.252.0&gt;
+    registered_name: []
+    exception error: undefined function kinit:kinit/2
+      in function  rabbit_auth_backend_kerberos:check_user_login/2
+      in call from rabbit_access_control:'-check_user_login/2-fun-0-'/4
+      in call from lists:foldl/3
+      in call from rabbit_mgmt_app:'-make_loop/0-fun-0-'/4
+      in call from mochiweb_http:headers/5
+    ancestors: [rabbit_mochiweb_web_mgmt,rabbit_mochiweb_sup,&lt;0.131.0&gt;]
+    messages: []    links: [&lt;0.251.0&gt;]
+    dictionary: []
+    trap_exit: false
+    status: running
+    heap_size: 4181
+    stack_size: 24
+    reductions: 1488
+  neighbours:
+
+How bad are those upgrade errors?
+AFAIK, I could just add an empty function in kinit.c and use them as
+load, reload, upgrade and unload when doing ERL_NIF_INIT since I don't
+really need to keep any &quot;state&quot;(?).
+
+&gt;<i> Anyway, if you put the NIF part into another module, you *should* be able to test it outside of rabbit my doing something like:
+</I>&gt;<i> 
+</I>&gt;<i> $ erl -sname foo
+</I>&gt;<i> banner. .....
+</I>&gt;<i> % ok = application:start(rabbit_auth_backend_kerberos).
+</I>&gt;<i> ok
+</I>&gt;<i> % X = kinit:kinit(&quot;auser&quot;, &quot;password&quot;).
+</I>&gt;<i> &lt;&lt; a term &gt;&gt;
+</I>&gt;<i> % io:format(&quot;~p~n&quot;, [X]).
+</I>
+I couldn't get that to work = / I'm probably doing it wrong, but here's what I did:
+
+kaka:~/scm/rabbitmq-public-umbrella/rabbitmq-auth-backend-kerberos$ LDFLAGS=&quot;-L/usr/heimdal/lib -undefined dynamic_lookup -dynamiclib&quot; CFLAGS=&quot;-I/usr/heimdal/include -I/usr/local/Cellar/erlang/R15B02/lib/erlang/usr/include/&quot; make dist
+[elided] generate deps
+[elided] fix test deps
+sed -e 's|build/deps.mk|$(DEPS_FILE)|' build/deps.mk &gt; build/deps.mk.tmp &amp;&amp; mv build/deps.mk.tmp build/deps.mk
+ERL_LIBS=./build/dep-apps erlc -Wall +debug_info -I ./include -pa ebin -o ebin  src/kinit.erl
+src/kinit.erl:14: Warning: variable 'Password' is unused
+src/kinit.erl:14: Warning: variable 'User' is unused
+escript ../generate_app src/rabbitmq_auth_backend_kerberos.app.src ebin/rabbitmq_auth_backend_kerberos.app ./src
+sed -e 's|{vsn, *\&quot;[^\&quot;]*\&quot;|{vsn,\&quot;0.0.0\&quot;|' &lt;ebin/rabbitmq_auth_backend_kerberos.app &gt;build/rabbitmq_auth_backend_kerberos.app.0.0.0
+rm -rf build/app
+mkdir -p ./build/app/rabbitmq_auth_backend_kerberos-0.0.0/ebin ./build/app/rabbitmq_auth_backend_kerberos-0.0.0/include
+[elided] copy beams to ebin
+cp -p ./build/rabbitmq_auth_backend_kerberos.app.0.0.0 ./build/app/rabbitmq_auth_backend_kerberos-0.0.0/ebin/rabbitmq_auth_backend_kerberos.app
+mkdir -p ./build/app/rabbitmq_auth_backend_kerberos-0.0.0/priv
+cp ./c_src/kinit.so ./build/app/rabbitmq_auth_backend_kerberos-0.0.0/priv
+touch build/app/.done.0.0.0
+rm -rf dist
+mkdir -p dist
+cd ./build/app/ &amp;&amp; zip -q -r /Users/simlu/scm/rabbitmq-public-umbrella/rabbitmq-auth-backend-kerberos/dist/rabbitmq_auth_backend_kerberos-0.0.0.ez rabbitmq_auth_backend_kerberos-0.0.0
+cp -r build/dep-ezs/amqp_client-0.0.0.ez build/dep-ezs/rabbit_common-0.0.0.ez ./dist
+touch dist/.done.0.0.0
+touch dist/.done
+$ cd ebin
+$ erl -sname `hostname -s`
+Erlang R15B02 (erts-5.9.2) [source] [64-bit] [smp:4:4] [async-threads:0] [hipe] [kernel-poll:false] [dtrace]
+
+Eshell V5.9.2  (abort with ^G)
+(<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">kaka at kaka</A>)1&gt; ok = application:start(rabbitmq_auth_backend_kerberos).
+** exception error: no match of right hand side value {error,{not_started,inets}}
+(<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">kaka at kaka</A>)2&gt; kinit:kinit(&quot;auser&quot;, &quot;password&quot;).
+WAT: ok
+true
+
+This doesn't really test the whole thing since rabbitmq isn't really
+involved or even loaded. Kind of feels like cheating = )
+
+I have had this NIF-code to work outside of RabbitMQ, that's how I wrote
+it originally.
+
+(also, do get it working I changed the hardencoded path to match the
+path on my Mac and I changed &quot;rabbit_log:error&quot; to &quot;io:fwrite&quot; since
+RabbitMQ wasn't loaded correctly in my erl.
+
+&gt;<i> Then if it *still* doesn't work when you're running it inside rabbit we might need to consider other things that could be going wrong (such as the NIF init magic). 
+</I>
+I have no idea, but this seems more and more likely.
+
+Thanks,
+- Simon
+</PRE>
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="024457.html">[rabbitmq-discuss] Creating an auth plugin (Kerberos)
+</A></li>
+	<LI>Next message: <A HREF="024460.html">[rabbitmq-discuss] Creating an auth plugin (Kerberos)
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#24459">[ date ]</a>
+              <a href="thread.html#24459">[ thread ]</a>
+              <a href="subject.html#24459">[ subject ]</a>
+              <a href="author.html#24459">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

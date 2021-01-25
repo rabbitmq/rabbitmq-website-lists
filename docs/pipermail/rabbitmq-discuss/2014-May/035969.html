@@ -1,0 +1,173 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Using Pika and PyQtGraph (Qt event loop and	BlockingConnection)
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Using%20Pika%20and%20PyQtGraph%20%28Qt%20event%20loop%20and%0A%09BlockingConnection%29&In-Reply-To=%3CB96870A2-5300-4E84-BB23-96C268275F66%40rabbitmq.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="035947.html">
+   <LINK REL="Next"  HREF="035896.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Using Pika and PyQtGraph (Qt event loop and	BlockingConnection)</H1>
+    <B>Ask Solem</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Using%20Pika%20and%20PyQtGraph%20%28Qt%20event%20loop%20and%0A%09BlockingConnection%29&In-Reply-To=%3CB96870A2-5300-4E84-BB23-96C268275F66%40rabbitmq.com%3E"
+       TITLE="[rabbitmq-discuss] Using Pika and PyQtGraph (Qt event loop and	BlockingConnection)">ask at rabbitmq.com
+       </A><BR>
+    <I>Wed May 14 15:54:24 BST 2014</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="035947.html">[rabbitmq-discuss] Using Pika and PyQtGraph (Qt event loop and	BlockingConnection)
+</A></li>
+        <LI>Next message: <A HREF="035896.html">[rabbitmq-discuss] Connecting To Rabbitmq Server On Ubuntu 14.04 EC2 Instance From Outside
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#35969">[ date ]</a>
+              <a href="thread.html#35969">[ thread ]</a>
+              <a href="subject.html#35969">[ subject ]</a>
+              <a href="author.html#35969">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>
+On May 13, 2014, at 7:50 PM, Femto Trader &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">femto.trader at gmail.com</A>&gt; wrote:
+
+&gt;<i> Hello,
+</I>&gt;<i> 
+</I>&gt;<i> thanks for your reply.
+</I>&gt;<i> 
+</I>&gt;<i> I don't know Tornado at all.
+</I>&gt;<i> 
+</I>&gt;<i> I'm not a very talented developer....
+</I>&gt;<i> Talking to me of &quot;eventlet on pyqt&quot; or &quot;gevent on pyqt&quot; looks like poetry to me ;-)
+</I>
+Hah! While admitting to your own limitations is a sign of intelligence, resigning from a daunting
+challenge is not a virtue.
+
+It&#8217;s foreign now because you don&#8217;t know the terms, something a quick Google search would resolve.
+
+PyQT uses an event loop to make multiple things happen at once, e.g. playing music while drawing the progress
+bar of a file copy operation.  Your BlockingConnection is blocking this event loop so nothing can happen while you&#8217;re
+reading from the RabbitMQ connection socket.
+
+Every event driven network library like Twisted, Eventlet, Gevent, Tornado etc comes with a different event loop
+implementation, but eventlet and gevent is special: it uses greenlets to yield control back
+to the event loop so you can write normal, imperative style Python code.
+
+Read about eventlet here: <A HREF="http://eventlet.net">http://eventlet.net</A>
+
+So if you can replace eventlet&#8217;s event loop with pyqt, then you can use any existing (eventlet compatible) Python code
+with pyqt.  I did a quick google search and found &#8216;eventlet-pyqt&#8217;[0] that will let you do exactly this, but I don&#8217;t
+know how recent this project is and there could be something better out there now.
+
+In short: Using eventlet you can magically turn your BlockingConnection into a non-blocking one,
+so if you can hook eventlet into pyqt you have solved your problem.
+
+[0] <A HREF="https://code.google.com/p/eventlet-pyqt/">https://code.google.com/p/eventlet-pyqt/</A>
+
+
+
+&gt;<i> 
+</I>&gt;<i> Luke also said me something else:
+</I>&gt;<i> &quot;One solution that will likely work for you is to move your MQ code to a new thread, and send a signal back to the GUI thread whenever a message arrives.&quot;
+</I>&gt;<i> 
+</I>&gt;<i> Can someone from RabbitMQ dev team be in touch with PyQt / PySide dev teams
+</I>&gt;<i> and also PyQtGraph devs in order to have a very basic sample example because displaying realtime
+</I>&gt;<i> data coming from a messaging queue could be useful.
+</I>
+This seems like a fringe use case and I doubt there's a big audience for such a tutorial.
+Doing so using threads would be a bad practice at that, so if there was an audience
+it would make more sense to invest in a proper &#8220;pika on the pyqt event loop&#8221; extension.
+
+&gt;<i> 
+</I>&gt;<i> One basic example could be:
+</I>&gt;<i> one python script connect to RabbitMQ and send a random number
+</I>&gt;<i> an other script receive data and plot them into a PyQtGraph.
+</I>&gt;<i> 
+</I>&gt;<i> I'm not very familiar with threading so I wonder 
+</I>&gt;<i> what will happen if thread that will receive data will take more time to compute data
+</I>&gt;<i> (do some calculations on these data) than task to display them
+</I>
+
+Python has the global interpreter lock (GIL) so you cannot perform CPU bound operations
+on multiple cores unless you drop down to C and unlock the GIL.
+
+It would be the same situation as when you use an Async I/O framework like eventlet/twisted/tornado
+and any CPU bound operation will block the rest of the program.
+
+With eventlet there is a hack to yield control back to the event loop by using
+`time.sleep(0)` (eventlet monkey patches must be applied, yuo did read about eventlet already right?).
+But that means you must find control points in your CPU bound operations and inject sleeps into it,
+which is not exactly pretty.  Usually the solution is to use IPC and start separate OS processes for
+CPU bound calculations, e.g. using Python&#8217;s multiprocessing.
+
+&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> Femto
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> 2014-05-13 16:07 GMT+02:00 Ask Solem &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">ask at rabbitmq.com</A>&gt;:
+</I>&gt;<i> 
+</I>&gt;<i> On May 13, 2014, at 2:54 PM, Michael Klishin &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">mklishin at gopivotal.com</A>&gt; wrote:
+</I>&gt;<i> 
+</I>&gt;<i> &gt;  On 12 May 2014 at 00:34:58, Femto (<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">femto.trader at gmail.com</A>) wrote:
+</I>&gt;<i> &gt;&gt;&gt; maybe you noticed Qt have an event loop
+</I>&gt;<i> &gt;&gt;
+</I>&gt;<i> &gt;&gt; and I think it's doing odd things with pika.BlockingConnection
+</I>&gt;<i> &gt;&gt;
+</I>&gt;<i> &gt;&gt;
+</I>&gt;<i> &gt;&gt; Any help is welcome.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; I doubt that it can, although I know nothing about Qt and little about
+</I>&gt;<i> &gt; Pika implementation.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; Have you tried using a different connect, e.g. Tornado?
+</I>&gt;<i> 
+</I>&gt;<i> If PyQt does indeed use an event loop then you will not be able to use a blocking connection.
+</I>&gt;<i> 
+</I>&gt;<i> You have several choices:
+</I>&gt;<i> 
+</I>&gt;<i> 1) Implement a pika connection implementation using the PyQt event loop.
+</I>&gt;<i> 2) Use a &#8220;eventlet on pyqt&#8221; or &#8220;gevent on pyqt&#8221; implementation like eventlet-pyqt
+</I>&gt;<i>     and use the eventlet or gevent connection in pika.
+</I>&gt;<i> 3) Run pyqt in a separate thread.  This is only an option if pyqt actually supports it, which may
+</I>&gt;<i>     very well not be the case.
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20140514/1162e076/attachment.html">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20140514/1162e076/attachment.html</A>&gt;
+</PRE>
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="035947.html">[rabbitmq-discuss] Using Pika and PyQtGraph (Qt event loop and	BlockingConnection)
+</A></li>
+	<LI>Next message: <A HREF="035896.html">[rabbitmq-discuss] Connecting To Rabbitmq Server On Ubuntu 14.04 EC2 Instance From Outside
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#35969">[ date ]</a>
+              <a href="thread.html#35969">[ thread ]</a>
+              <a href="subject.html#35969">[ subject ]</a>
+              <a href="author.html#35969">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

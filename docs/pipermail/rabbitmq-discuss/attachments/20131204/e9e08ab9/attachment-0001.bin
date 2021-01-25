@@ -1,0 +1,60 @@
+namespace ConsoleApplication1
+{
+	using System;
+	using RabbitMQ.Client;
+	using RabbitMQ.Client.Events;
+	using RabbitMQ.Client.MessagePatterns;
+
+	public class Program
+	{
+		private static void Main()
+		{
+			DanglingSubscription(); // shows how a disposed channel never tears down the subscription
+			// SubscriptionTeardown(); // shows how checking the CloseReason could be used to tear down the subscription
+		}
+
+		private static void DanglingSubscription()
+		{
+			var factory = new ConnectionFactory();
+			using (var connection = factory.CreateConnection())
+			using (var channel = connection.CreateModel())
+			{
+				var subscription = new Subscription(channel, "my-queue", false);
+				channel.Dispose();
+
+				while (true)
+				{
+					BasicDeliverEventArgs delivery;
+					subscription.Next(1000, out delivery);
+					Console.WriteLine("Delivery timeout");
+				}
+			}
+		}
+
+		private static void SubscriptionTeardown()
+		{
+			var factory = new ConnectionFactory();
+			using (var connection = factory.CreateConnection())
+			using (var channel = connection.CreateModel())
+			{
+				var subscription = new Subscription(channel, "my-queue", false);
+				channel.Dispose();
+
+				while (true)
+				{
+					// the checking of CloseReason and throwing of an exception should happen inside of the Subscription class.
+
+					if (channel.CloseReason != null)
+						break; // perhaps subscription.Close() should occur here?
+
+					BasicDeliverEventArgs delivery;
+					subscription.Next(1000, out delivery); // ideally a Next() call on the closed subscription would throw an AlreadyClosedException (or something like it)
+					Console.WriteLine("Delivery timeout");
+
+					// final thought: any reason not to make various public methods within the Subscription class virtual
+					// to facilitate unit testing?
+				}
+			}
+		}
+	}
+}

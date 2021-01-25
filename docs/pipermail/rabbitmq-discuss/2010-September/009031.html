@@ -1,0 +1,229 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Rabbit Client Supervision Architecture
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Rabbit%20Client%20Supervision%20Architecture&In-Reply-To=%3C20100922102722.GG24946%40rabbitmq.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="009029.html">
+   <LINK REL="Next"  HREF="009032.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Rabbit Client Supervision Architecture</H1>
+    <B>Matthew Sackman</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Rabbit%20Client%20Supervision%20Architecture&In-Reply-To=%3C20100922102722.GG24946%40rabbitmq.com%3E"
+       TITLE="[rabbitmq-discuss] Rabbit Client Supervision Architecture">matthew at rabbitmq.com
+       </A><BR>
+    <I>Wed Sep 22 11:27:23 BST 2010</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="009029.html">[rabbitmq-discuss] Rabbit Client Supervision Architecture
+</A></li>
+        <LI>Next message: <A HREF="009032.html">[rabbitmq-discuss] Rabbit Client Supervision Architecture
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#9031">[ date ]</a>
+              <a href="thread.html#9031">[ thread ]</a>
+              <a href="subject.html#9031">[ subject ]</a>
+              <a href="author.html#9031">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi Erik,
+
+On Wed, Sep 22, 2010 at 07:42:46AM +0000, Erik Seres wrote:
+&gt;<i> I have a few questions regarding the RabbitMQ Erlang client library...
+</I>
+Excellent. As you've probably noticed it is still very much experimental
+and in a state of flux. Things should be calming down soon though, and
+it might even become officially supported soon!
+
+&gt;<i> 1) The client now has layers of supervision built in. Apparently, however, the 
+</I>&gt;<i> maximum restart count for the various supervisors is set to 0. This will prevent 
+</I>&gt;<i> the supervisor from trying to restart its children in case of a crash. I have 
+</I>&gt;<i> verified this to be the case by the following:
+</I>&gt;<i>  - created a network type connection to the server,
+</I>&gt;<i>  - opened 2 channels within that connection,
+</I>&gt;<i>  - sent a non-normal exit signal to the newly opened channel process.
+</I>&gt;<i> 
+</I>&gt;<i> The channel process crashed, its supervisor propagated the exit signal to the 
+</I>&gt;<i> other channel and finally, it shut down itself, too. The client has never 
+</I>&gt;<i> started back up again.
+</I>&gt;<i> 
+</I>&gt;<i> Question: What would be the intended use case of a supervisor with MaxRetryCount 
+</I>&gt;<i> set to 0?
+</I>
+This is a very common trick in our codebase and indeed further
+requirements led us to introduce the &quot;intrinsic&quot; restart strategy in our
+supervisor2 module.
+
+In our view, one of the most important properties of supervisors is to
+structure the relationship between different processes and lower
+coupling. The fact that it can do restarting is almost irrelevant in
+many cases.
+
+In the case of the client, restarting the connection in the event of a
+crash of some sort is a bizarre thing to do simply because it would be
+_impossible_ to be sure that you've got the connection and all the
+channels back to the same state. Channels themselves are stateful, but
+the state is _not_ set at channel creation - e.g. channel.qos txn.select
+basic.consume etc etc. Thus even if channel processes did restart, they
+would not be able to get back to the same state they were last in.
+
+It's not even reasonable to restart the connection: queues can be
+declared with exclusive=true which means when the connection closes, for
+whatever reason, the queues must be deleted. Of course, when the
+connection is created, it has no idea what queues are going to be
+declared this way, so if the connection gets automatically restarted, it
+can't possibly get back to the same state.
+
+All in all, this really means that there is just no way of hiding the
+fact the connection / channels have died from the user of the client.
+Also, AMQP is designed to pass errors back to the client by explicitly
+forcing channels or even the connection to be closed. Obviously, if the
+user has done something wrong, you would not want those events to be
+silently papered over.
+
+&gt;<i> 2) There is a channels manager process sitting at the same level in the 
+</I>&gt;<i> supervision tree as the supervisor that supervises the supervisors of the 
+</I>&gt;<i> channels (and writer and framing channel). The channels manager process does not 
+</I>&gt;<i> have any links to the channels it apparently is to manage.
+</I>
+I think you're on the wrong branch - that sounds a lot like branch
+bug23024 which is not through QA yet. Please make sure you're using the
+default branch.
+
+&gt;<i> Question: What is the intended purpose of the channels manager?
+</I>
+Basically, channel number allocation and mapping from channel number &lt;-&gt;
+Pid. Also, don't worry about the lack of links - we use monitoring a lot
+and rely on the supervisor hierarchy to tear down the world if something
+really bad happens.
+
+&gt;<i> 3) I am trying to figure out how the four layers of supervision is supposed to 
+</I>&gt;<i> work and can't really wrap my head around it. The way I conceive it should work 
+</I>&gt;<i> is something like this, from top down:
+</I>&gt;<i>  - Layer 1: supervise the entire client library
+</I>&gt;<i>  - Layer 2: one_for_all supervision per connection. That is, when the 
+</I>&gt;<i> connection, main reader or writer dies, shutdown all channels within that 
+</I>&gt;<i> connection, restart the connection and all previously open channels.
+</I>&gt;<i>  - Layer 3: one_for_one supervision per channel. That is, when a channel dies, 
+</I>&gt;<i> restart the channel only and not affect anything else.
+</I>&gt;<i> 
+</I>&gt;<i> Question: Is this the intended behavior or am I on the wrong track?
+</I>
+Well, no restarting will ever happen. This is by design. From the bug
+that introduced this all, the diagram is roughly:
+
+amqp_sup (amqp_sup) (simple-141-term) (Note, this isn't there yet!)
+|<i>
+</I>+--undefined (amqp_connection_sup) (one-for-all) *
+   |
+   +--connection (amqp_{network,direct}_connection) (i)
+   |
+   +--channels_manager (amqp_channels_manager) (i) (bug23024)
+   |
+   +--connection_type_sup (amqp_connection_specific_sup) (i) (def)
+   |  |
+   |  +--framing (rabbit_framing_channel) (i) (N)
+   |  +--writer (rabbit_writer) (i) (N)
+   |  +--main_reader (amqp_main_reader) (i) (N)
+   |  +--rabbit_hearbeat_sender (rabbit_heartbeat) (i) (N) (def)
+   |  +--rabbit_hearbeat_receiver (rabbit_heartbeat) (i) (N) (def)
+   |  +--collector (rabbit_queue_collector) (i) (D)
+   |
+   +--channel_sup_sup (amqp_channel_sup_sup) (simple-141-kill)
+      |
+      +--undefined (amqp_channel_sup) (one-for-all) *
+         |
+         +--channel (amqp_channel) (i)
+         +--framing (rabbit_framing_channel) (i) (N) (def)
+         +--writer (rabbit_writer) (i) (N) (def)
+         +--rabbit_channel (rabbit_channel) (t) (D)
+         +--rabbit_limiter (rabbit_limiter) (t) (D) (def)
+
+Legend:
+(N) - only in the network case
+(D) - only in the direct case
+(i) - intrinsic
+(t) - transient
+(def) - started later on
+* - multiple instances
+
+Thus: a channel is itself multiple processes that sit under a
+supervisor (amqp_channel_sup). You have many of these under a
+channel_sup_sup, and you never care about any of them dying, which is
+why channel_sup_sup is a simple-one-for-one (standard brutal kill).
+Depending on the type of connection (network or direct), you need
+different processes which is why we have the connection_type_sup which
+is parameterised by the connection type.
+
+That's about it really.
+
+Matthew
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="009029.html">[rabbitmq-discuss] Rabbit Client Supervision Architecture
+</A></li>
+	<LI>Next message: <A HREF="009032.html">[rabbitmq-discuss] Rabbit Client Supervision Architecture
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#9031">[ date ]</a>
+              <a href="thread.html#9031">[ thread ]</a>
+              <a href="subject.html#9031">[ subject ]</a>
+              <a href="author.html#9031">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

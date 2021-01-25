@@ -1,0 +1,208 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] JAVA client / non daemon threads / shutdown	hook
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20JAVA%20client%20/%20non%20daemon%20threads%20/%20shutdown%0A%09hook&In-Reply-To=%3C356ED28B-2062-4ED0-AA53-C1B0B9864C8C%40rabbitmq.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="020300.html">
+   <LINK REL="Next"  HREF="020309.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] JAVA client / non daemon threads / shutdown	hook</H1>
+    <B>Steve Powell</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20JAVA%20client%20/%20non%20daemon%20threads%20/%20shutdown%0A%09hook&In-Reply-To=%3C356ED28B-2062-4ED0-AA53-C1B0B9864C8C%40rabbitmq.com%3E"
+       TITLE="[rabbitmq-discuss] JAVA client / non daemon threads / shutdown	hook">steve at rabbitmq.com
+       </A><BR>
+    <I>Thu May 24 14:25:13 BST 2012</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="020300.html">[rabbitmq-discuss] JAVA client / non daemon threads / shutdown	hook
+</A></li>
+        <LI>Next message: <A HREF="020309.html">[rabbitmq-discuss] JAVA client / non daemon threads / shutdown	hook
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#20306">[ date ]</a>
+              <a href="thread.html#20306">[ thread ]</a>
+              <a href="subject.html#20306">[ subject ]</a>
+              <a href="author.html#20306">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Bart&#322;omiej,
+
+Thank you for your thoughts. Your solution 1. is what is being currently
+proposed, with the (still undecided) feature that it may not apply to
+the Consumer callback threads. However, I dislike options and
+parameters, principally because we have to explain everything to users,
+and it confuses people if there are a lot of obscure parameters -- even
+if most people don't set them.
+
+Therefore, I'm considering proposal number 2. This would be a change in
+behaviour to make the MainLoop thread (this is the connection management
+thread, which receives all the channels' communications) a daemon
+thread, and to leave the Consumer callback threads as non-daemon.
+
+What this means is that the users that never register any Consumers
+(synchronous consumers use basic.get) will not get any Consumer threads
+allocated (unless they do a clean shutdown, in which case there is a
+trivial one which is short-lived). So when they exit (without a clean
+shutdown) everything will disappear when the Jvm terminates.
+
+Users that want to have things remain will register Consumers, which
+means that threads will get allocated, and these will keep everything
+alive, even if the main thread terminates, until shutdown, which can be
+driven off of the Consumer callback or will be precipitated if the
+connection closes. Cleanup will then happen and if the Jvm is waiting to
+terminate it will do so then.
+
+This appears to me to fit the bill for both parties, without anyone
+having to set any options.
+
+In a complex environment, the way to allow these threads to finish
+explicitly is to break the connection. The close mechanisms will then
+get a chance to run, hopefully designed to shut other resources down if
+the Consumers are managing them.
+
+Publishers wouldn't register Consumers, either, and presumably would
+handle receiving of confirms, and so on, in the main thread, so would
+not stop everything until ready to do so. Again, no Consumers: no
+non-daemon threads.
+
+So, it would seem to me that making MainLoop a daemon thread is the best
+of all possible worlds.
+
+Btw, historically the callbacks were executed on the MainLoop thread, so
+making it a daemon was not an option. Recently the threading model
+changed and so we haven't spotted that now the MainLoop thread can be a
+daemon.
+
+Would this meet your requirements?
+
+Steve Powell  (a happy bunny)
+----------yet more definitions from the SPD----------
+corrugate (n.) T.V. soap scandal.
+olympic (n.) A camp road-digger.
+jamboree (n.) A conserve made from French cheese.
+
+On 24 May 2012, at 10:41, Bart Prokop wrote:
+
+&gt;<i> Hi Steve,
+</I>&gt;<i> 
+</I>&gt;<i> Many thanks for your prompt response. I have two proposals about improving it, while keeping all parties happy. Here they are:
+</I>&gt;<i> 
+</I>&gt;<i> 1. Add a boolean property &quot;daemonBackgroundThreads&quot; in ConnectionFactory. Based on that property the threads created by client library would be either daemon or not. The default would be false, what wouldn't occur any changes in behavior of existing applications.
+</I>&gt;<i> 
+</I>&gt;<i> 2. Alternatively the library could be rafactored that way that connection/publishing stuff be daemon threads, while listener stuff are non daemon. But as I explain further it is not best solution.
+</I>&gt;<i> 
+</I>&gt;<i> I see this problem in a bit other way, from perspective of developer, who not always can design clean solutions. Sometimes I have to wire and patch legacy systems ;). I think it is very common task to rabbitMQ users, who have to wire it into existing ecosystem. My case here is to allow some proprietary web server to send some messages during request processing. So basically I'm restricted to expose a single Java method to be called from the web script. I can create my own threads, connections, bookkeeping, connection failover, reconnect etc... but this all is hidden from the interface (single method &quot;post&quot;) exposed to web scripting. The most ugly thing is that I have no other way of detecting that WebServer is going to die than adding shutdown hook to VM. And shutdown hook is fired, when all normal threads are about to die (along with daemon threads). This scenario is probably quite common for live integration of RabbitMQ into existing systems.
+</I>&gt;<i> 
+</I>&gt;<i> In general when dealing with messages we can have 3 basic scenarios:
+</I>&gt;<i> 1. Publisher.
+</I>&gt;<i> 2. Synchronous consumer.
+</I>&gt;<i> 3. Asynchronous consumer (listener on messages).
+</I>&gt;<i> 
+</I>&gt;<i> The idea of writing RabbitMQ clients (implied by costly and limited TCP/IP sockets) is to share a connection &quot;per application&quot; and write code that can reconnect in case of RabbitMQ node fail. So as soon as I get the connection, I keep it globally (shared). Usually it is my responsibility to clean on shutdown, but there are cases when I'm unable to do this. The shutdown hooks are handy in those scenarios.
+</I>&gt;<i> 
+</I>&gt;<i> Only the 3rd scenario (asynchronous consumer) may require non daemon threads. But it is from my experience not a live scenario. You usually do not write application, relaying on created behind the scene &quot;main loop&quot;. Why? Because even if all what you do is to listen to messages, you still have to control the application state. You must start and stop that application as well as allow user/OS to close it. I personally for such micro-applications use Apache Daemons and run them as Windows services. On Linux you have jsvc to control such application. Surely &quot;main loop&quot; hidden in implementation is bad idea.
+</I>&gt;<i> 
+</I>&gt;<i> On Wed, May 23, 2012 at 5:18 PM, Steve Powell &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">steve at rabbitmq.com</A>&gt; wrote:
+</I>&gt;<i> Bart&#322;omiej,
+</I>&gt;<i> 
+</I>&gt;<i> What a very good point. It is clear that the MainLoop thread ought to be
+</I>&gt;<i> a daemon thread in your circumstances, thank you for pointing this out.
+</I>&gt;<i> The only affect of this will be to allow the JVM to terminate if only
+</I>&gt;<i> daemon threads are available.
+</I>&gt;<i> 
+</I>&gt;<i> However, we have considered this problem before (internal bug 21110) and
+</I>&gt;<i> user apps that create a connection and register some consumers (which do
+</I>&gt;<i> all the work) ought to be able to terminate without accidentally killing
+</I>&gt;<i> the connection processing.
+</I>&gt;<i> 
+</I>&gt;<i> This means that there are circumstances in which the threads we create
+</I>&gt;<i> are required to be non-daemon, and circumstances where you would like
+</I>&gt;<i> them to be daemon.
+</I>&gt;<i> 
+</I>&gt;<i> The hook you implemented ought to work correctly even when the MainLoop
+</I>&gt;<i> is not a daemon, because closing the connection ought to make the
+</I>&gt;<i> MainLoop thread terminate normally. If it doesn't, there is a bug. Where
+</I>&gt;<i> at all possible you should attempt to close an open connection as a part
+</I>&gt;<i> of your termination processing as there are system resources that could
+</I>&gt;<i> be left high-and-dry if you do not.
+</I>&gt;<i> 
+</I>&gt;<i> There are other threads in the Java Client -- the executor worker
+</I>&gt;<i> threads used for Consumer callbacks. These are non-daemon, too. The hook
+</I>&gt;<i> should still work because shutting down the connection ought to shutdown
+</I>&gt;<i> the consumer work service, and in turn the executor (and its worker
+</I>&gt;<i> threads).
+</I>&gt;<i> 
+</I>&gt;<i> However, I could make them daemon threads as well, in case the main app
+</I>&gt;<i> terminates abruptly and expects to be able to terminate uncleanly as you
+</I>&gt;<i> describe.
+</I>&gt;<i> 
+</I>&gt;<i> Thank you for reporting this. I'll report back here on progress.
+</I>&gt;<i> 
+</I>&gt;<i> Steve Powell  (a happy bunny)
+</I>&gt;<i> ----------yet more definitions from the SPD----------
+</I>&gt;<i> corrugate (n.) T.V. soap scandal.
+</I>&gt;<i> olympic (n.) A camp road-digger.
+</I>&gt;<i> jamboree (n.) A conserve made from French cheese.
+</I>&gt;<i> 
+</I>&gt;<i> On 18 May 2012, at 16:27, Bart&#322;omiej Prokop wrote:
+</I>&gt;<i> 
+</I>&gt;<i> &gt; Hi,
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; I'm using JAVA client for RabbitMQ (com.rabbitmq:amqp-client:2.8.1) to write a &quot;jar component&quot; capable of sending messages for some legacy system. The idea is to wrap all code that maintain the connection inside my component. This way, the client software deals only with very simple methods like &quot;post&quot; and is not aware of any connection handling. The connect/reconnect code is written and hidden from the legacy system.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; The problem I have faced is that Java client creates &quot;behind the scene&quot; some threads to manage connection - like:
+</I>&gt;<i> &gt;          lines 299-301 of AMQConnection class.
+</I>&gt;<i> &gt;         // start the main loop going
+</I>&gt;<i> &gt;         new MainLoop(&quot;AMQP Connection &quot; + getHostAddress() + &quot;:&quot; + getPort()).start();
+</I>&gt;<i> &gt;         // after this point clear-up of MainLoop is triggered by closing the frameHandler.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; Unfortunatelly, those threads aren't &quot;daemon&quot; threads. So, when main application ends and appropriate connection closing not occurs, the VM won't terminate. My approach was to add some shutdown hook to close RabbitMQ connections if it is live inside my &quot;jar component&quot;. But, due to those non-daemon threads, VM is not going ever to be terminated and shutdown hooks fired.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; It is a question to RabbitMQ driver developers, if the internal threads could be fired as daemon threads, could it be done in future releases?
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; _______________________________________________
+</I>&gt;<i> &gt; rabbitmq-discuss mailing list
+</I>&gt;<i> &gt; <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;<i> &gt; <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> -- 
+</I>&gt;<i> Bart Prokop
+</I>&gt;<i> tel. +48 509 258 502
+</I>&gt;<i> 
+</I>&gt;<i> This e-mail is intended solely for the addressee(s) and contains confidential information. Unauthorized distribution, modification or disclosure of its contents is unlawful. If you have received this e-mail in error, please notify the sender immediately by return e-mail. Please then delete the e-mail from your system and do not copy it or disclose its contents to any person. Email transmission cannot be guaranteed to be secure or error free as information could be intercepted, corrupted, lost, destroyed, arrive late or incomplete, or contain viruses. The sender therefore does not accept liability for any errors or omissions in the contents of this message which arise as a result of email transmission. Information, opinions or conclusions contained in this message that do not relate to the official business of the senders employer or principal will be understood as neither given nor endorsed by it.
+</I>
+</PRE>
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="020300.html">[rabbitmq-discuss] JAVA client / non daemon threads / shutdown	hook
+</A></li>
+	<LI>Next message: <A HREF="020309.html">[rabbitmq-discuss] JAVA client / non daemon threads / shutdown	hook
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#20306">[ date ]</a>
+              <a href="thread.html#20306">[ thread ]</a>
+              <a href="subject.html#20306">[ subject ]</a>
+              <a href="author.html#20306">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

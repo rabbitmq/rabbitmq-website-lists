@@ -1,0 +1,195 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Incorrect number of messages saved to the queue	after RabbitMQ broker failure
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Incorrect%20number%20of%20messages%20saved%20to%20the%20queue%0A%09after%20RabbitMQ%20broker%20failure&In-Reply-To=%3C596397.26474.qm%40web39423.mail.mud.yahoo.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="011724.html">
+   <LINK REL="Next"  HREF="011697.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Incorrect number of messages saved to the queue	after RabbitMQ broker failure</H1>
+    <B>venkat veludandi</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Incorrect%20number%20of%20messages%20saved%20to%20the%20queue%0A%09after%20RabbitMQ%20broker%20failure&In-Reply-To=%3C596397.26474.qm%40web39423.mail.mud.yahoo.com%3E"
+       TITLE="[rabbitmq-discuss] Incorrect number of messages saved to the queue	after RabbitMQ broker failure">venkatveludandi at yahoo.com
+       </A><BR>
+    <I>Wed Mar  9 00:16:48 GMT 2011</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="011724.html">[rabbitmq-discuss] Install error erlang not found but is installed
+</A></li>
+        <LI>Next message: <A HREF="011697.html">[rabbitmq-discuss] Incorrect number of messages saved to the queue	after RabbitMQ broker failure
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#11696">[ date ]</a>
+              <a href="thread.html#11696">[ thread ]</a>
+              <a href="subject.html#11696">[ subject ]</a>
+              <a href="author.html#11696">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Good evening.
+After consuming few published messages, if I bring down the RabbitMQ broker (hard failure) and bring it back, the number of messages saved to queue is incorrect.
+For example, I publish 100 messages. After consuming 10 messages, I bring down the broker and bring it back. Run: rabbitmqctl list_queues messages_ready, I see the count of messages_ready as 100 instead of 90. 
+Could you please let me know if there is&#160;anything wrong with the following Producer and consumer code:
+&#160;
+Thanks
+Venkat
+===========================
+TestProducer.java
+-------------------------
+public class TestProducer {
+
+public static void main(String[] args) {
+for(int i=0; i &lt; 100; i++) {
+String msg = &quot;M&quot; + i;
+try {
+RabbitMQProducer.INSTANCE.run(msg);
+} catch(Exception e) {
+System.out.println(&quot;exception occurred&quot;);
+break;
+}
+}
+}
+}
+=============================================================
+RabbitMQProducer.java:
+--------------------------------
+public class RabbitMQProducer {
+
+public static final RabbitMQProducer INSTANCE = new RabbitMQProducer();
+
+private RabbitMQProducer() {}
+
+public void run(String msg) {
+String hostName = &quot;localhost&quot;;
+String port = &quot;5672&quot;;
+int portNumber = Integer.valueOf(port);;
+Connection conn = null;
+try {
+
+ConnectionFactory cf = new ConnectionFactory(); 
+cf.setHost(hostName);
+cf.setPort(portNumber);
+cf.setUsername(&quot;guest&quot;);
+cf.setPassword(&quot;guest&quot;);
+conn = cf.newConnection();
+Channel ch = conn.createChannel();
+ch.exchangeDeclare(&quot;mdb.testq.exchange&quot;, &quot;topic&quot;, true);
+ch.queueDeclare(&quot;mdb.testq.queue&quot;, true, false, false, null);
+ch.txSelect();
+ch.basicPublish(&quot;mdb.testq.exchange&quot;, &quot;mdb.testq.queue&quot;, MessageProperties.PERSISTENT_BASIC, msg.getBytes());
+ch.txCommit();
+ch.close();
+conn.close();
+
+} catch (IOException e) {
+e.printStackTrace();
+}
+
+}
+
+}
+=================================================================
+public class RabbitConsumer {
+private int count = 0;
+
+private void runConsumer() {
+Connection conn = null;
+try {
+
+String hostName = &quot;localhost&quot;;
+String port = &quot;5672&quot;;
+int portNumber = Integer.valueOf(port);
+ConnectionFactory cf = new ConnectionFactory(); 
+cf.setHost(hostName);
+cf.setPort(portNumber);
+cf.setUsername(&quot;guest&quot;);
+cf.setPassword(&quot;guest&quot;);
+conn = cf.newConnection();
+Channel channel = conn.createChannel();
+channel.exchangeDeclare(&quot;mdb.testq.exchange&quot;, &quot;topic&quot;, true);
+channel.queueBind(&quot;mdb.testq.queue&quot;, &quot;mdb.testq.exchange&quot;, &quot;#&quot;);
+Consumer consumer = new QueueingConsumer(channel);
+channel.basicQos(1);
+channel.basicConsume(&quot;mdb.testq.queue&quot;, false, consumer);
+boolean running = true;
+while(running) {
+
+QueueingConsumer.Delivery delivery;
+try {
+delivery = ((QueueingConsumer) consumer).nextDelivery();
+Thread.currentThread().sleep(500);
+count++;
+System.out.println(&quot;count: &quot;+count);
+channel.basicAck(delivery.getEnvelope().getDeliveryTag(), false);
+} catch (Exception e) {
+e.printStackTrace();
+break;
+} 
+}
+} catch (IOException e) {
+e.printStackTrace();
+}
+
+}
+
+public static void main(String[] args) {
+RabbitConsumer rc = new RabbitConsumer();
+rc.runConsumer();
+}
+}
+
+
+      
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20110308/a194e5d8/attachment-0001.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20110308/a194e5d8/attachment-0001.htm</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="011724.html">[rabbitmq-discuss] Install error erlang not found but is installed
+</A></li>
+	<LI>Next message: <A HREF="011697.html">[rabbitmq-discuss] Incorrect number of messages saved to the queue	after RabbitMQ broker failure
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#11696">[ date ]</a>
+              <a href="thread.html#11696">[ thread ]</a>
+              <a href="subject.html#11696">[ subject ]</a>
+              <a href="author.html#11696">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

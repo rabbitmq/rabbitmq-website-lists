@@ -1,0 +1,135 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Cluster capability?
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Cluster%20capability%3F&In-Reply-To=%3C919BB847-9102-4616-8F4B-C1152B8037CE%40gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="032156.html">
+   <LINK REL="Next"  HREF="032203.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Cluster capability?</H1>
+    <B>Paul</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Cluster%20capability%3F&In-Reply-To=%3C919BB847-9102-4616-8F4B-C1152B8037CE%40gmail.com%3E"
+       TITLE="[rabbitmq-discuss] Cluster capability?">arachweb at gmail.com
+       </A><BR>
+    <I>Thu Nov 28 13:36:31 GMT 2013</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="032156.html">[rabbitmq-discuss] Cluster capability?
+</A></li>
+        <LI>Next message: <A HREF="032203.html">[rabbitmq-discuss] Cluster capability?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#32199">[ date ]</a>
+              <a href="thread.html#32199">[ thread ]</a>
+              <a href="subject.html#32199">[ subject ]</a>
+              <a href="author.html#32199">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi Simon,
+
+Before I get too much deeper into this, let me do two things: ask a fundamental question, and then try to explain some of the project design.
+
+The question: I seem to recall that a queue can be construed as an outbound route from an exchange. In RabbitMQ we publish to an exchange and we consume from a queue. If a message arrives at an exchange and there is no outbound route for it, then the broker discards the message (I think). But what if there is no component that reads from the queue? A queue can come to be by static configuration or programmatically. It can be mirrored to other nodes via HA queues; but if it's mirrored from computer A to computer B and yet there is no consuming software on B, then what happens to messages sent to the (queue owning) exchange?
+
+As to the design of this project: I like the cluster idea because it seems to offer a way for &quot;control&quot; components on every node to share a unified view of their world. Computers and my services thereon can join (and leave) the cluster, and by publishing to their LOCAL broker keep each other informed about themselves and the services they offer. 
+
+But some of the applications (as opposed to the control components) in this architecture need to share what I'll call a &quot;task queue.&quot; The applications write to this queue (to its exchange), messages that represent work that needs to be done. The same applications, in a kind of recursive decomposition, read from the same queue and execute the work indicated by these messages. Now, with many such applications spread over several computers, the workload is nicely parallelized. 
+
+My concern is that in an HA Queue implementation, a given message could be consumed more than once, i.e., once on computer A and once on B. Consequently, the same unit of work will be executed twice, and that's no good.
+
+I'm not sure if I've fully conveyed why I find this aspect troublesome. But please give me your thoughts on it, and we can always dig deeper.
+
+Thank you.
+
+Cordially,
+
+Paul
+
+&gt;<i> On Nov 26, 2013, at 4:55 AM, Simon MacMullen &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">simon at rabbitmq.com</A>&gt; wrote:
+</I>&gt;<i> 
+</I>&gt;&gt;<i> On 25/11/2013 18:10, Paul Bell wrote:
+</I>&gt;&gt;<i> &quot;Virtual hosts, exchanges, users, and permissions are automatically
+</I>&gt;&gt;<i> mirrored across all nodes in a cluster. Queues may be located on a
+</I>&gt;&gt;<i> single node, or mirrored across multiple nodes
+</I>&gt;&gt;<i> &lt;<A HREF="http://www.rabbitmq.com/ha.html">http://www.rabbitmq.com/ha.html</A>&gt;. A client connecting to any node in a
+</I>&gt;&gt;<i> cluster can see all queues in the cluster, even if they are not located
+</I>&gt;&gt;<i> on that node.&quot;
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;<i> Question: does the last sentence apply to both queues located on a
+</I>&gt;&gt;<i> single node and to mirrored (HA) queues?
+</I>&gt;<i> 
+</I>&gt;<i> Yes.
+</I>&gt;<i> 
+</I>&gt;&gt;<i> The last clause of that
+</I>&gt;&gt;<i> sentence, e.g., &quot;..even if they are not located on that node&quot; suggests
+</I>&gt;&gt;<i> that whether or not the queues are mirrored shouldn't matter, i.e.,
+</I>&gt;&gt;<i> client will see the queues regardless of the cluster it connects to.
+</I>&gt;<i> 
+</I>&gt;<i> Yes. And of course just because a queue is mirrored doesn't mean it has to be on *every* node in the cluster - you don't have to use ha-mode: all.
+</I>&gt;<i> 
+</I>&gt;&gt;<i> The cluster approach &quot;feels&quot; complex to me but that is, at least in
+</I>&gt;&gt;<i> part, due to the fact that my once modest Rabbit skills have atrophied
+</I>&gt;&gt;<i> over the last couple of year. So, here's some thinking out loud with
+</I>&gt;&gt;<i> attendant questions:
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;<i> 1. Let's see, so, the several computers on which my (Java) RabbitMQ
+</I>&gt;&gt;<i> component runs will be joined together in a cluster.
+</I>&gt;&gt;<i> 2. What happens if Computer A creates some exchanges and then computer
+</I>&gt;&gt;<i> B, either before or after joining the cluster, creates the same
+</I>&gt;&gt;<i> exchanges? Maybe the usual Rabbit idempotency holds here; i.e., if
+</I>&gt;&gt;<i> exchange exists within the cluster, it's not going to be re-created...?
+</I>&gt;<i> 
+</I>&gt;<i> Yes, the exchange (along with other metadata) is held in a distributed database and created atomically.
+</I>&gt;<i> 
+</I>&gt;&gt;<i> 3. And if the component publishes to an exchange that message should (I
+</I>&gt;&gt;<i> think) be visible on the mirrored exchanges on all of the other nodes in
+</I>&gt;&gt;<i> the cluster, right?
+</I>&gt;<i> 
+</I>&gt;<i> Yes. We don't normally talk about &quot;mirrored exchanges&quot; since all exchanges are inherently mirrored.
+</I>&gt;<i> 
+</I>&gt;&gt;<i> 4. And, moreover, once a consumer on any cluster node reads that
+</I>&gt;&gt;<i> message, no other consumer will be able to read it. I sure hope this is
+</I>&gt;&gt;<i> true.
+</I>&gt;<i> 
+</I>&gt;<i> If it only got routed to one queue. Obviously if it was routed to two queues it can be read twice, and so on.
+</I>&gt;<i> 
+</I>&gt;<i> Also the message can be seen by two consumers if one consumer is consuming in ack mode, then sees the message and either rejects it or crashes before acknowledging it. That's true on a single node though, nothing to do with clustering.
+</I>&gt;<i> 
+</I>&gt;<i> Cheers, Simon
+</I>&gt;<i> 
+</I></PRE>
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="032156.html">[rabbitmq-discuss] Cluster capability?
+</A></li>
+	<LI>Next message: <A HREF="032203.html">[rabbitmq-discuss] Cluster capability?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#32199">[ date ]</a>
+              <a href="thread.html#32199">[ thread ]</a>
+              <a href="subject.html#32199">[ subject ]</a>
+              <a href="author.html#32199">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,380 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Someone else with a nodedown error
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Someone%20else%20with%20a%20nodedown%20error&In-Reply-To=%3CEBF95E66-C42B-40D7-85DB-A7E21C436454%40rabbitmq.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="027265.html">
+   <LINK REL="Next"  HREF="027276.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Someone else with a nodedown error</H1>
+    <B>Tim Watson</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Someone%20else%20with%20a%20nodedown%20error&In-Reply-To=%3CEBF95E66-C42B-40D7-85DB-A7E21C436454%40rabbitmq.com%3E"
+       TITLE="[rabbitmq-discuss] Someone else with a nodedown error">tim at rabbitmq.com
+       </A><BR>
+    <I>Thu May 16 21:54:13 BST 2013</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="027265.html">[rabbitmq-discuss] Someone else with a nodedown error
+</A></li>
+        <LI>Next message: <A HREF="027276.html">[rabbitmq-discuss] Someone else with a nodedown error
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#27271">[ date ]</a>
+              <a href="thread.html#27271">[ thread ]</a>
+              <a href="subject.html#27271">[ subject ]</a>
+              <a href="author.html#27271">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi Eric,
+
+&gt;<i> Thanks for the insight Tim. I ended up killing the the process before receiving your email so I was unable to take advantage of your pro tips. We subsequently upgraded our cluster to 3.1.0 on Erlang R15B03, and have run into a slightly different problem. This appears to be unrelated, but I did use your tips to gather as much information as possible.
+</I>&gt;<i> 
+</I>&gt;<i> Scenario:
+</I>&gt;<i> A producer is sending messages to rabbit faster than they can be routed so the connection goes under flow control. The flow control lasts long enough so that our load balancer severs the connection. Before we understood that the LB was our problem we would just retry socket write up to 10 times before throwing an exception. In the end, our cluster now has 0 connections yet it still has nearly 4000 channels (screen grab attached). Also, now I am unable to stop_app on any node in the cluster without it hanging for, at this point, over an hour.
+</I>
+
+That looks and sounds like a seriously unhappy Rabbit - I'm very concerned, especially about those open channels, but it's quite late, so I'll need to get into this properly in the morning. For the time being though, it looks a lot like something has gone horribly wrong with your Erlang installation. What happens if you start up Erlang by itself, using `erl -sname test` - do you still see all those screwy warnings? It seems as though the emulator's code server is unable to read from the file system - this could be due to a change in permissions somewhere on the host's file system, *or* it could be that you're running the `erl -sname debug -remsh <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at rabbit-box</A>` command from a user account with insufficient permissions.
+
+Can you run `lsof` and let us know what the hosts use of file descriptors looks like please. A Rabbit should never have open channels that aren't tied to a connection. It looks to me like your rabbit is stuck either starting up or shutting down - that's why the application controller isn't responding to calls (or is timing out). In fact, general stats about the state of your OS would be really useful - file descriptor usage, current disk io, cpu and memory use would all help. If you've got historic data about these too, especially around the time of your traffic spike, all the better.
+
+It would be *very* helpful if you'd be able to grant us ssh access to this machine - we might be able to sign some legal stuff if that helps. Without access to the machine, the diagnostic process is going to involve a fair bit of to-ing and fro-ing. We could make use of IM/IRC if that helps too. Drop me a note and let me know what's likely to work best for you.
+
+To clarify
+
+&gt;<i> Questions:
+</I>&gt;<i> 1. Should rabbit maintain channels without active connections? If not, has anyone run into this before?
+</I>
+No, never. I've not seen this one before, but I'll do some archeology in our bug tracker and the mailing list to see if there's anything that might help.
+
+&gt;<i> 2. Is there any way to force kill these channels?
+</I>
+We might be able to find a way to do that, but TBH the state your rabbit is in, I think it'll need to be killed. BUT PLEASE don't do that. It's really important that we understand how your system got into this state, because it represents a really nasty bug that we should fix asap, and having a running Rabbit in this state represents our best chance at understanding what's going on..
+
+&gt;<i> 3. Is it a good practice for consumers to connect to rabbit via a load balancer, or should that be for producers only? Are there any recommended timeout settings?
+</I>
+
+You should be able to use a LB for either kind of client, the choice of timeout should be application and infrastructure dependent - i.e., whatever makes sense for your use case - and doing so should *not* get you into this state, ever. We *will* find out what's gone on here and fix it, asap. The *only* caveat here is that, if something catastrophic has gone wrong with our host machine (e.g., the file system has bombed out, or something like that) then it might be that no application would stand any chance of surviving intact, but we need to understand what's gone on here either way. 
+
+Cheers,
+Tim
+
+On 16 May 2013, at 20:09, Eric Berg wrote:
+
+&gt;<i> 
+</I>&gt;<i> Here are the results of some commands on the shell to the broker:
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> bash-4.1$ erl -sname debug -remsh <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at rabbit-box</A>
+</I>&gt;<i> {error_logger,{{2013,5,16},{14,44,36}},std_error,&quot;File operation error: eacces. Target: .. Function: read_file_info. Process: code_server.&quot;}
+</I>&gt;<i> {error_logger,{{2013,5,16},{14,44,37}},std_error,&quot;File operation error: eacces. Target: ./beam_lib.beam. Function: get_file. Process: code_server.&quot;}
+</I>&gt;<i> {error_logger,{{2013,5,16},{14,44,37}},std_error,&quot;File operation error: eacces. Target: ./ram_file.beam. Function: get_file. Process: code_server.&quot;}
+</I>&gt;<i> {error_logger,{{2013,5,16},{14,44,37}},std_error,&quot;File operation error: eacces. Target: ./standard_error.beam. Function: get_file. Process: code_server.&quot;}
+</I>&gt;<i> {error_logger,{{2013,5,16},{14,44,37}},std_error,&quot;File operation error: eacces. Target: ./supervisor_bridge.beam. Function: get_file. Process: code_server.&quot;}
+</I>&gt;<i> {error_logger,{{2013,5,16},{14,44,37}},std_error,&quot;File operation error: eacces. Target: ./user_sup.beam. Function: get_file. Process: code_server.&quot;}
+</I>&gt;<i> {error_logger,{{2013,5,16},{14,44,37}},std_error,&quot;File operation error: eacces. Target: ./user_drv.beam. Function: get_file. Process: code_server.&quot;}
+</I>&gt;<i> {error_logger,{{2013,5,16},{14,44,37}},std_error,&quot;File operation error: eacces. Target: ./group.beam. Function: get_file. Process: code_server.&quot;}
+</I>&gt;<i> {error_logger,{{2013,5,16},{14,44,37}},std_error,&quot;File operation error: eacces. Target: ./edlin.beam. Function: get_file. Process: code_server.&quot;}
+</I>&gt;<i> {error_logger,{{2013,5,16},{14,44,37}},std_error,&quot;File operation error: eacces. Target: ./io_lib.beam. Function: get_file. Process: code_server.&quot;}
+</I>&gt;<i> {error_logger,{{2013,5,16},{14,44,37}},std_error,&quot;File operation error: eacces. Target: ./proplists.beam. Function: get_file. Process: code_server.&quot;}
+</I>&gt;<i> {error_logger,{{2013,5,16},{14,44,37}},std_error,&quot;File operation error: eacces. Target: ./io_lib_format.beam. Function: get_file. Process: code_server.&quot;}
+</I>&gt;<i> Erlang R15B03 (erts-5.9.3.1) [source] [64-bit] [smp:16:16] [async-threads:0] [hipe] [kernel-poll:false]
+</I>&gt;<i> 
+</I>&gt;<i> {error_logger,{{2013,5,16},{14,44,37}},std_error,&quot;File operation error: eacces. Target: ./net.beam. Function: get_file. Process: code_server.&quot;}
+</I>&gt;<i> {error_logger,{{2013,5,16},{14,44,37}},std_error,&quot;File operation error: eacces. Target: ./inet_gethost_native.beam. Function: get_file. Process: code_server.&quot;}
+</I>&gt;<i> {error_logger,{{2013,5,16},{14,44,37}},std_error,&quot;File operation error: eacces. Target: ./kernel_config.beam. Function: get_file. Process: code_server.&quot;}
+</I>&gt;<i> 
+</I>&gt;<i> =ERROR REPORT==== 16-May-2013::10:44:36 ===
+</I>&gt;<i> File operation error: eacces. Target: .. Function: read_file_info. Process: code_server.
+</I>&gt;<i> 
+</I>&gt;<i> =ERROR REPORT==== 16-May-2013::10:44:37 ===
+</I>&gt;<i> File operation error: eacces. Target: ./beam_lib.beam. Function: get_file. Process: code_server.
+</I>&gt;<i> 
+</I>&gt;<i> =ERROR REPORT==== 16-May-2013::10:44:37 ===
+</I>&gt;<i> File operation error: eacces. Target: ./ram_file.beam. Function: get_file. Process: code_server.
+</I>&gt;<i> 
+</I>&gt;<i> =ERROR REPORT==== 16-May-2013::10:44:37 ===
+</I>&gt;<i> File operation error: eacces. Target: ./standard_error.beam. Function: get_file. Process: code_server.
+</I>&gt;<i> 
+</I>&gt;<i> =ERROR REPORT==== 16-May-2013::10:44:37 ===
+</I>&gt;<i> File operation error: eacces. Target: ./supervisor_bridge.beam. Function: get_file. Process: code_server.
+</I>&gt;<i> 
+</I>&gt;<i> =ERROR REPORT==== 16-May-2013::10:44:37 ===
+</I>&gt;<i> File operation error: eacces. Target: ./user_sup.beam. Function: get_file. Process: code_server.
+</I>&gt;<i> 
+</I>&gt;<i> =ERROR REPORT==== 16-May-2013::10:44:37 ===
+</I>&gt;<i> File operation error: eacces. Target: ./user_drv.beam. Function: get_file. Process: code_server.
+</I>&gt;<i> 
+</I>&gt;<i> =ERROR REPORT==== 16-May-2013::10:44:37 ===
+</I>&gt;<i> File operation error: eacces. Target: ./group.beam. Function: get_file. Process: code_server.
+</I>&gt;<i> 
+</I>&gt;<i> =ERROR REPORT==== 16-May-2013::10:44:37 ===
+</I>&gt;<i> File operation error: eacces. Target: ./edlin.beam. Function: get_file. Process: code_server.
+</I>&gt;<i> 
+</I>&gt;<i> =ERROR REPORT==== 16-May-2013::10:44:37 ===
+</I>&gt;<i> {lost_messages,6}
+</I>&gt;<i> 
+</I>&gt;<i> =ERROR REPORT==== 16-May-2013::14:44:37 ===
+</I>&gt;<i> File operation error: eacces. Target: ./error_logger_tty_h.beam. Function: get_file. Process: code_server.
+</I>&gt;<i> 
+</I>&gt;<i> =ERROR REPORT==== 16-May-2013::14:44:37 ===
+</I>&gt;<i> File operation error: eacces. Target: ./calendar.beam. Function: get_file. Process: code_server.
+</I>&gt;<i> 
+</I>&gt;<i> =ERROR REPORT==== 16-May-2013::14:44:37 ===
+</I>&gt;<i> File operation error: eacces. Target: ./io_lib_pretty.beam. Function: get_file. Process: code_server.
+</I>&gt;<i> 
+</I>&gt;<i> =ERROR REPORT==== 16-May-2013::14:44:37 ===
+</I>&gt;<i> File operation error: eacces. Target: ./io.beam. Function: get_file. Process: code_server.
+</I>&gt;<i> 
+</I>&gt;<i> =ERROR REPORT==== 16-May-2013::14:44:37 ===
+</I>&gt;<i> File operation error: eacces. Target: ./erl_scan.beam. Function: get_file. Process: code_server.
+</I>&gt;<i> 
+</I>&gt;<i> =ERROR REPORT==== 16-May-2013::14:44:37 ===
+</I>&gt;<i> File operation error: eacces. Target: ./c.beam. Function: get_file. Process: code_server.
+</I>&gt;<i> 
+</I>&gt;<i> =ERROR REPORT==== 16-May-2013::14:44:37 ===
+</I>&gt;<i> File operation error: eacces. Target: ./erl_eval.beam. Function: get_file. Process: code_server.
+</I>&gt;<i> 
+</I>&gt;<i> =ERROR REPORT==== 16-May-2013::14:44:37 ===
+</I>&gt;<i> File operation error: eacces. Target: ./orddict.beam. Function: get_file. Process: code_server.
+</I>&gt;<i> 
+</I>&gt;<i> =ERROR REPORT==== 16-May-2013::14:44:37 ===
+</I>&gt;<i> File operation error: eacces. Target: ./file_io_server.beam. Function: get_file. Process: code_server.
+</I>&gt;<i> 
+</I>&gt;<i> =ERROR REPORT==== 16-May-2013::14:44:37 ===
+</I>&gt;<i> File operation error: eacces. Target: ./erl_posix_msg.beam. Function: get_file. Process: code_server.
+</I>&gt;<i> 
+</I>&gt;<i> =ERROR REPORT==== 16-May-2013::14:44:37 ===
+</I>&gt;<i> file:path_eval([&quot;.&quot;,&quot;/var/lib/rabbitmq&quot;],&quot;.erlang&quot;): permission denied
+</I>&gt;<i> 
+</I>&gt;<i> =ERROR REPORT==== 16-May-2013::14:44:37 ===
+</I>&gt;<i> File operation error: eacces. Target: ./dist_util.beam. Function: get_file. Process: code_server.
+</I>&gt;<i> Eshell V5.9.3.1  (abort with ^G)
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> -------------------------------------------------
+</I>&gt;<i> 
+</I>&gt;<i> (<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at rabbit-box</A>)1&gt; whereis(rabbit).
+</I>&gt;<i> &lt;0.251.0&gt;
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> -------------------------------------------------
+</I>&gt;<i> 
+</I>&gt;<i> (<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at rabbit-box</A>)2&gt; application:loaded_applications().
+</I>&gt;<i> [{public_key,&quot;Public key infrastructure&quot;,&quot;0.17&quot;},
+</I>&gt;<i>  {rabbitmq_management_agent,&quot;RabbitMQ Management Agent&quot;,
+</I>&gt;<i>                             &quot;3.1.0&quot;},
+</I>&gt;<i>  {os_mon,&quot;CPO  CXC 138 46&quot;,&quot;2.2.10&quot;},
+</I>&gt;<i>  {amqp_client,&quot;RabbitMQ AMQP Client&quot;,&quot;3.1.0&quot;},
+</I>&gt;<i>  {mnesia,&quot;MNESIA  CXC 138 12&quot;,&quot;4.7.1&quot;},
+</I>&gt;<i>  {rabbitmq_shovel,&quot;Data Shovel for RabbitMQ&quot;,&quot;3.1.0&quot;},
+</I>&gt;<i>  {inets,&quot;INETS  CXC 138 49&quot;,&quot;5.9.2&quot;},
+</I>&gt;<i>  {rabbitmq_federation,&quot;RabbitMQ Federation&quot;,&quot;3.1.0&quot;},
+</I>&gt;<i>  {rabbitmq_web_dispatch,&quot;RabbitMQ Web Dispatcher&quot;,&quot;3.1.0&quot;},
+</I>&gt;<i>  {rabbitmq_federation_management,&quot;RabbitMQ Federation Management&quot;,
+</I>&gt;<i>                                  &quot;3.1.0&quot;},
+</I>&gt;<i>  {rabbitmq_management_visualiser,&quot;RabbitMQ Visualiser&quot;,
+</I>&gt;<i>                                  &quot;3.1.0&quot;},
+</I>&gt;<i>  {kernel,&quot;ERTS  CXC 138 10&quot;,&quot;2.15.3&quot;},
+</I>&gt;<i>  {crypto,&quot;CRYPTO version 2&quot;,&quot;2.2&quot;},
+</I>&gt;<i>  {ssl,&quot;Erlang/OTP SSL application&quot;,&quot;5.1.2&quot;},
+</I>&gt;<i>  {sasl,&quot;SASL  CXC 138 11&quot;,&quot;2.2.1&quot;},
+</I>&gt;<i>  {rabbitmq_management,&quot;RabbitMQ Management Console&quot;,&quot;3.1.0&quot;},
+</I>&gt;<i>  {mochiweb,&quot;MochiMedia Web Server&quot;,
+</I>&gt;<i>            &quot;2.3.1-rmq3.1.0-gitd541e9a&quot;},
+</I>&gt;<i>  {xmerl,&quot;XML parser&quot;,&quot;1.3.2&quot;},
+</I>&gt;<i>  {rabbit,&quot;RabbitMQ&quot;,&quot;3.1.0&quot;},
+</I>&gt;<i>  {stdlib,&quot;ERTS  CXC 138 10&quot;,&quot;1.18.3&quot;},
+</I>&gt;<i>  {webmachine,&quot;webmachine&quot;,&quot;1.9.1-rmq3.1.0-git52e62bc&quot;}]
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> ------------------------------------------------------------------------------------
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> (<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at rabbit-box</A>)3&gt; application:which_applications(). 
+</I>&gt;<i> ** exception exit: {timeout,{gen_server,call,
+</I>&gt;<i>                                         [application_controller,which_applications]}}
+</I>&gt;<i>      in function  gen_server:call/2 (gen_server.erl, line 180)
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> -----------------------------------------------------------------------------------
+</I>&gt;<i> 
+</I>&gt;<i> (<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at rabbit-box</A>)4&gt; rabbit:stop().
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> -- This hangs indefinitely 
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> ------------------------------------------------------------------------------------
+</I>&gt;<i> 
+</I>&gt;<i> Perms on /var/lib/rabbitmq
+</I>&gt;<i> drwxr-xr-x  3 rabbitmq rabbitmq 4096 May  1 07:15 rabbitmq
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> Thanks Tim et al.
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> On Thu, May 9, 2013 at 10:00 AM, Tim Watson &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">tim at rabbitmq.com</A>&gt; wrote:
+</I>&gt;<i> Hi,
+</I>&gt;<i> 
+</I>&gt;<i> On 8 May 2013, at 18:22, Eric Berg wrote:
+</I>&gt;<i> 
+</I>&gt;&gt;<i> I have ready through many of these nodedown error emails and of course none of them seem to be exactly what I am experiencing.
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;<i> I have a 4 node cluster, and one of the nodes went offline according to the cluster. This box has the following in the sasl log:
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;<i> =SUPERVISOR REPORT==== 7-May-2013::14:37:22 ===
+</I>&gt;&gt;<i>      Supervisor: {&lt;0.11197.1096&gt;,
+</I>&gt;&gt;<i>                                            rabbit_channel_sup_sup}
+</I>&gt;&gt;<i>      Context:    shutdown_error
+</I>&gt;&gt;<i>      Reason:     noproc
+</I>&gt;&gt;<i>      Offender:   [{pid,&lt;0.11199.1096&gt;},
+</I>&gt;&gt;<i>                   {name,channel_sup},
+</I>&gt;&gt;<i>                   {mfa,{rabbit_channel_sup,start_link,[]}},
+</I>&gt;&gt;<i>                   {restart_type,temporary},
+</I>&gt;&gt;<i>                   {shutdown,infinity},
+</I>&gt;&gt;<i>                   {child_type,supervisor}]
+</I>&gt;&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> This simply indicates that and error occurred whilst a supervised process was shutting down. It's not indicative of the whole node going down - Erlang allows processes to crash and be restarted whilst the system is running.
+</I>&gt;<i> 
+</I>&gt;&gt;<i> Yet in the regular rabbit log i can see that it was still accepting connections up until 2:22AM the next day:
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;<i> (last log entry)
+</I>&gt;&gt;<i> =INFO REPORT==== 8-May-2013::02:22:26 ===
+</I>&gt;&gt;<i> closing AMQP connection &lt;0.18267.1145&gt; (IPADDRESS:PORT -&gt; IPADDRESS:PORT)
+</I>&gt;&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> So clearly that node didn't actually go offline. The 'nodedown' message in the other clustered broker's logs does not necessarily mean that the node in question crashed; This could, for example, be indicative of a net-split or other connectivity failure. 
+</I>&gt;<i> 
+</I>&gt;&gt;<i> Running rabbitmqctl status returns:
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;<i> [<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">root at rabbit-box</A> rabbitmq]# rabbitmqctl status
+</I>&gt;&gt;<i> Status of node '<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at rabbit-box</A>' ...
+</I>&gt;&gt;<i> Error: unable to connect to node '<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at rabbit-box</A>': nodedown
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;<i> DIAGNOSTICS
+</I>&gt;&gt;<i> ===========
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;<i> nodes in question: ['<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at rabbit-box</A>']
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;<i> hosts, their running nodes and ports:
+</I>&gt;&gt;<i> - rabbit-box: [{rabbit,13957},{rabbitmqctl2301,16508}]
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;<i> current node details:
+</I>&gt;&gt;<i> - node name: '<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmqctl2301 at rabbit-box</A>'
+</I>&gt;&gt;<i> - home dir: /var/lib/rabbitmq
+</I>&gt;&gt;<i> - cookie hash: qQwyFW90ZNbbrFvX1AtrxQ==
+</I>&gt;<i> 
+</I>&gt;<i> Have you tried running this using `sudo' instead of as root? Is the rabbitmq user's account and home folder in a consistent state? The security cookie used for inter-node communications, which includes communication between the temporary `rabbitmqctl' node and the broker, has to be the same for all the peers.
+</I>&gt;<i> 
+</I>&gt;&gt;<i> A couple of notes:
+</I>&gt;&gt;<i> - Looking for a process run by rabbit show that it appears to still be running
+</I>&gt;<i> 
+</I>&gt;<i> Yes - as I said, there's no indication that this node actually died from what you've said. However `rabbitmqctl` should be able to connect to <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at rabbit-box</A> at the very least. 
+</I>&gt;<i> 
+</I>&gt;&gt;<i> - Erlang cookie is the same on all nodes of the cluster, the cookie hash is the same as well
+</I>&gt;<i> 
+</I>&gt;<i> If it's not the cookies then....
+</I>&gt;<i> 
+</I>&gt;&gt;<i> - A traffic spike occurred right around the time of the last entry in the rabbit log
+</I>&gt;<i> 
+</I>&gt;<i> It sounds like this could be a potential culprit. Can you provide any more information about what happened? It could be that whilst the network was saturated, the node in question got disconnected from the other nodes in the cluster because it exceeded the &quot;net tick time&quot; and subsequently things have started to go wrong. That shouldn't happen, viz the node should be able to re-establish connectivity, but it's possible that something's gone wrong here.
+</I>&gt;<i> 
+</I>&gt;<i> What that doesn't explain is why you can't connect from rabbitmqctl. If you `su rabbitmq', can you then run `erl -sname debug -remsh <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at rabbit-box</A>' to establish a shell into the running broker? If that does work, then you can stop the rabbit application and then the node, as follows:
+</I>&gt;<i> 
+</I>&gt;<i> &gt; rabbit:stop().
+</I>&gt;<i> ok
+</I>&gt;<i> &gt; init:stop().
+</I>&gt;<i> 
+</I>&gt;<i> But before you do, it might be worth evaluating a couple of other things that might help us identify what's going on:
+</I>&gt;<i> 
+</I>&gt;<i> (<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at iske</A>)1&gt; whereis(rabbit).
+</I>&gt;<i> &lt;0.152.0&gt;
+</I>&gt;<i> (<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at iske</A>)2&gt; application:loaded_applications().
+</I>&gt;<i> [{os_mon,&quot;CPO  CXC 138 46&quot;,&quot;2.2.9&quot;},
+</I>&gt;<i>  {rabbitmq_management_agent,&quot;RabbitMQ Management Agent&quot;,
+</I>&gt;<i>                             &quot;0.0.0&quot;},
+</I>&gt;<i>  {amqp_client,&quot;RabbitMQ AMQP Client&quot;,&quot;0.0.0&quot;},
+</I>&gt;<i>  etc ...
+</I>&gt;<i>  ]
+</I>&gt;<i> (<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at iske</A>)3&gt; application:which_applications(). 
+</I>&gt;<i> [{rabbitmq_shovel_management,&quot;Shovel Status&quot;,&quot;0.0.0&quot;},
+</I>&gt;<i>  etc ...
+</I>&gt;<i> ]
+</I>&gt;<i>  
+</I>&gt;<i> If during any of these you get stuck, CTRL-C (and press the key for 'abort') should get you back out again without incident.
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;&gt;<i> - I can find no other errors in any logs that relate to rabbit or erlang
+</I>&gt;&gt;<i> - Up until this point the cluster has been running fine for over 40 days.
+</I>&gt;&gt;<i> - telnet IP_ADDRESS 5672 times out
+</I>&gt;<i> 
+</I>&gt;<i> So the broker is no longer accepting new AMQP connections then. Something's clearly quite wrong with this node.
+</I>&gt;<i> 
+</I>&gt;&gt;<i> - I have not restarted the box, erlang node, or entire rabbitmq-server
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;<i> Is there anywhere else I can go looking for errors? I am about to start killing processs, but Im not sure that will solve anything.
+</I>&gt;&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> Did you do that in the end? If not, I would really like to get to the bottom of what's wrong with this node. I don't suppose it would be possible for you to give us access to this machine would it? If necessary, we may be able to get some kind of confidentiality agreement signed if that'd help.
+</I>&gt;<i> 
+</I>&gt;<i> Cheers,
+</I>&gt;<i> 
+</I>&gt;<i> Tim Watson
+</I>&gt;<i> Staff Engineer
+</I>&gt;<i> RabbitMQ
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> &lt;rabbit-manychannels.png&gt;_______________________________________________
+</I>&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20130516/1fdcc244/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20130516/1fdcc244/attachment.htm</A>&gt;
+</PRE>
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="027265.html">[rabbitmq-discuss] Someone else with a nodedown error
+</A></li>
+	<LI>Next message: <A HREF="027276.html">[rabbitmq-discuss] Someone else with a nodedown error
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#27271">[ date ]</a>
+              <a href="thread.html#27271">[ thread ]</a>
+              <a href="subject.html#27271">[ subject ]</a>
+              <a href="author.html#27271">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

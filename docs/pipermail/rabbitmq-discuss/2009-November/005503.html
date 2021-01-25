@@ -1,0 +1,129 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Reliable way to get number of messages in a queue
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20Reliable%20way%20to%20get%20number%20of%20messages%20in%20a%0A%20queue&In-Reply-To=407fa4640911190808s407ccdc6vef08563f50f2367f%40mail.gmail.com">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="005494.html">
+   <LINK REL="Next"  HREF="005478.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Reliable way to get number of messages in a queue</H1>
+    <B>Matthew Sackman</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20Reliable%20way%20to%20get%20number%20of%20messages%20in%20a%0A%20queue&In-Reply-To=407fa4640911190808s407ccdc6vef08563f50f2367f%40mail.gmail.com"
+       TITLE="[rabbitmq-discuss] Reliable way to get number of messages in a queue">matthew at lshift.net
+       </A><BR>
+    <I>Fri Nov 20 13:25:38 GMT 2009</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="005494.html">[rabbitmq-discuss] Reliable way to get number of messages in a	queue
+</A></li>
+        <LI>Next message: <A HREF="005478.html">[rabbitmq-discuss]  What are the System Requirements?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#5503">[ date ]</a>
+              <a href="thread.html#5503">[ thread ]</a>
+              <a href="subject.html#5503">[ subject ]</a>
+              <a href="author.html#5503">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi Michael,
+
+On Thu, Nov 19, 2009 at 04:08:52PM +0000, Michael Nacos wrote:
+&gt;<i> I have changed our polling strategy to read the message count from
+</I>&gt;<i> queue.declare, it makes more sense, obviously. I am using the Erlang client
+</I>&gt;<i> for the polling process. Previous answers such as 'not supported by the
+</I>&gt;<i> protocol' had put me in a 'dirty'-solution mindset, which explains the
+</I>&gt;<i> initial polling strategy (I used the first thing I had seen which gave me
+</I>&gt;<i> that sort of information).
+</I>
+That's fair enough. The erlang client has got a lot better in recent
+months and is continuing to improve. It is our next target to move into
+a fully supported client mode, but there's still some work to do to get
+it to that stage.
+
+&gt;<i> The problem, as you have guessed already, is the number we really want is
+</I>&gt;<i> messages_unacknowledged. The number I get from the message count is
+</I>&gt;<i> messages_ready. I have been trying to make a producer process self-regulate
+</I>&gt;<i> its firing rate in case the consumers are not keeping up (to avoid ram
+</I>&gt;<i> exhaustion until the new persister comes along -- sorry Matthew :-)
+</I>
+Heh, that's fine - the persister is entering QA and code review stages
+now so progress is being made, but as ever, no ETA!
+
+Right, I would suggest that what you do is in the consumers, set QoS to
+1. That way consumers won't get flooded with messages and will only get
+new messages when they ack the previous one. As a result, if the
+messages_ready count on the queue &gt; 0, then the number of consumers is
+equal to the number of unacked messages.
+
+&gt;<i> Our Java consumers re-use their channels and consume messages 'by
+</I>&gt;<i> subscription' (it's obviously a better approach) without disconnecting at
+</I>&gt;<i> any point while the system is running. When even a single consumer connects
+</I>&gt;<i> to the queue in question (it's a multiple consumers for a single queue
+</I>&gt;<i> round-robin scenario) in this mode, all 'ready' messages become
+</I>&gt;<i> 'unacknowledged' messages, even though there is no way our Java threads have
+</I>&gt;<i> processed them this fast (do the messages go into an internal Java client
+</I>&gt;<i> buffer perhaps? or is this more of a responsibility transfer case?
+</I>
+Yeah, without QoS set, they all will get sent down to consumers who will
+buffer them.
+
+&gt;<i> ). So our
+</I>&gt;<i> polling process constantly gets zero (messages_ready), unless all consumers
+</I>&gt;<i> disconnect, in which case messages_ready shoots up to whatever
+</I>&gt;<i> messages_unacknowledged is when this happens. Is this what you would expect?
+</I>
+Yup. QoS is your friend here ;)
+
+&gt;<i> For our purposes, anything less than an ack means our consumers are not
+</I>&gt;<i> keeping up, so we have enforced a qos setting of 1 for each consumer. This
+</I>&gt;<i> way, the message_ready value returned to the polling process will, of
+</I>&gt;<i> course, be off by a few messages each time but, at least, its order of
+</I>&gt;<i> magnitude indicates if our consumers are keeping up.
+</I>
+Yes, that's the right thing to do. Some other users do something very
+similar - set QoS to 1 and then if the messages_ready count is non zero,
+start up a new consumer process, thus allowing you to grow your
+parallelism on the consuming side dynamically with load, which is fairly
+neat. I'm not sure whether you're able to do that - I get the impression
+that you have a static number of consumers and are trying to throttle at
+the producers.
+
+One other idea you could play with is to set the
+system_memory_high_watermark configuration value (see the bottom of
+<A HREF="http://www.rabbitmq.com/extensions.html">http://www.rabbitmq.com/extensions.html</A>) to a very low value, and then
+as soon as there's any buildup in Rabbit, it'll raise the channel.flow
+flag to the producers, thus stopping them from sending anything in. This
+may be sufficient, but it depends somewhat on your platform, resources
+etc. Might be worth investigating though.
+
+Matthew
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="005494.html">[rabbitmq-discuss] Reliable way to get number of messages in a	queue
+</A></li>
+	<LI>Next message: <A HREF="005478.html">[rabbitmq-discuss]  What are the System Requirements?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#5503">[ date ]</a>
+              <a href="thread.html#5503">[ thread ]</a>
+              <a href="subject.html#5503">[ subject ]</a>
+              <a href="author.html#5503">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

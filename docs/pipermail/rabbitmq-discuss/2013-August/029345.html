@@ -1,0 +1,531 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Tornado Consumer example problem
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Tornado%20Consumer%20example%20problem&In-Reply-To=%3CCA%2B0nT8D7P1dUuy-p8c69O%3DHBfG2p9B6-gMPYC75-3WRUa2M_NQ%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="029344.html">
+   <LINK REL="Next"  HREF="029347.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Tornado Consumer example problem</H1>
+    <B>Priyanki Vashi</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Tornado%20Consumer%20example%20problem&In-Reply-To=%3CCA%2B0nT8D7P1dUuy-p8c69O%3DHBfG2p9B6-gMPYC75-3WRUa2M_NQ%40mail.gmail.com%3E"
+       TITLE="[rabbitmq-discuss] Tornado Consumer example problem">vashi.priyanki at gmail.com
+       </A><BR>
+    <I>Thu Aug 15 14:51:50 BST 2013</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="029344.html">[rabbitmq-discuss] Tornado Consumer example problem
+</A></li>
+        <LI>Next message: <A HREF="029347.html">[rabbitmq-discuss] Tornado Consumer example problem
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#29345">[ date ]</a>
+              <a href="thread.html#29345">[ thread ]</a>
+              <a href="subject.html#29345">[ subject ]</a>
+              <a href="author.html#29345">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi ,
+
+on_connection_open, is a callback method, which will be called when
+connection is opened with rabbitmq. It opens channel inturn. So it's little
+unlikely that it has 'None' value but I am not 100% sure.
+
+Here is my code. Could you quickly have a look.
+It's the same example from pika site for tornado consumer except that I
+have tried to use connection parameters instead of URL.
+
+
+from pika import adapters
+import pika
+import logging
+
+LOG_FORMAT = ('%(levelname) -10s %(asctime)s %(name) -30s %(funcName) '
+              '-35s %(lineno) -5d: %(message)s')
+LOGGER = logging.getLogger(__name__)
+
+
+class ExampleConsumer(object):
+    &quot;&quot;&quot;This is an example consumer that will handle unexpected interactions
+    with RabbitMQ such as channel and connection closures.
+
+    If RabbitMQ closes the connection, it will reopen it. You should
+    look at the output, as there are limited reasons why the connection may
+    be closed, which usually are tied to permission related issues or
+    socket timeouts.
+
+    If the channel is closed, it will indicate a problem with one of the
+    commands that were issued and that should surface in the output as well.
+
+    &quot;&quot;&quot;
+    EXCHANGE = 'message'
+    EXCHANGE_TYPE = 'topic'
+    QUEUE = 'text'
+    ROUTING_KEY = 'example.text'
+
+
+
+
+    def __init__(self, host, port, username, password):
+        &quot;&quot;&quot;Setup the example publisher object, passing in the URL we will
+use
+        to connect to RabbitMQ.
+
+        :param str amqp_url: The URL for connecting to RabbitMQ
+
+        &quot;&quot;&quot;
+
+        self._connection = None
+        self._channel = None
+        self._closing = False
+        self._consumer_tag = None
+        #self._url = amqp_url
+
+        self.credentials = pika.PlainCredentials(username=username,
+password=password)
+        self.parameters = pika.ConnectionParameters(host=host, port=port,
+credentials=self.credentials)
+
+
+
+    def connect(self):
+        &quot;&quot;&quot;This method connects to RabbitMQ, returning the connection
+handle.
+        When the connection is established, the on_connection_open method
+        will be invoked by pika.
+
+        :rtype: pika.SelectConnection
+
+        &quot;&quot;&quot;
+        #LOGGER.info('Connecting to %s', self._url)
+        adapters.TornadoConnection(self.parameters,
+on_open_callback=self.on_connection_open, stop_ioloop_on_close=False)
+        #return
+adapters.TornadoConnection(pika.URLParameters(self._url),self.on_connection_open)
+
+    def close_connection(self):
+        &quot;&quot;&quot;This method closes the connection to RabbitMQ.&quot;&quot;&quot;
+        LOGGER.info('Closing connection')
+        self._connection.close()
+
+    def add_on_connection_close_callback(self):
+        &quot;&quot;&quot;This method adds an on close callback that will be invoked by
+pika
+        when RabbitMQ closes the connection to the publisher unexpectedly.
+
+        &quot;&quot;&quot;
+        LOGGER.info('Adding connection close callback')
+        self._connection.add_on_close_callback(self.on_connection_closed)
+
+    def on_connection_closed(self, connection, reply_code, reply_text):
+        &quot;&quot;&quot;This method is invoked by pika when the connection to RabbitMQ is
+        closed unexpectedly. Since it is unexpected, we will reconnect to
+        RabbitMQ if it disconnects.
+
+        :param pika.connection.Connection connection: The closed connection
+obj
+        :param int reply_code: The server provided reply_code if given
+        :param str reply_text: The server provided reply_text if given
+
+        &quot;&quot;&quot;
+        self._channel = None
+        if self._closing:
+            self._connection.ioloop.stop()
+        else:
+            LOGGER.warning('Connection closed, reopening in 5 seconds: (%s)
+%s',
+                           reply_code, reply_text)
+            self._connection.add_timeout(5, self.reconnect)
+
+    def on_connection_open(self, unused_connection):
+        &quot;&quot;&quot;This method is called by pika once the connection to RabbitMQ has
+        been established. It passes the handle to the connection object in
+        case we need it, but in this case, we'll just mark it unused.
+
+        :type unused_connection: pika.SelectConnection
+
+        &quot;&quot;&quot;
+        LOGGER.info('Connection opened')
+        self.add_on_connection_close_callback()
+        self.open_channel()
+
+    def reconnect(self):
+        &quot;&quot;&quot;Will be invoked by the IOLoop timer if the connection is
+        closed. See the on_connection_closed method.
+
+        &quot;&quot;&quot;
+        # This is the old connection IOLoop instance, stop its ioloop
+        self._connection.ioloop.stop()
+
+        if not self._closing:
+
+            # Create a new connection
+            self._connection = self.connect()
+
+            # There is now a new connection, needs a new ioloop to run
+            self._connection.ioloop.start()
+
+    def add_on_channel_close_callback(self):
+        &quot;&quot;&quot;This method tells pika to call the on_channel_closed method if
+        RabbitMQ unexpectedly closes the channel.
+
+        &quot;&quot;&quot;
+        LOGGER.info('Adding channel close callback')
+        self._channel.add_on_close_callback(self.on_channel_closed)
+
+    def on_channel_closed(self, channel, reply_code, reply_text):
+        &quot;&quot;&quot;Invoked by pika when RabbitMQ unexpectedly closes the channel.
+        Channels are usually closed if you attempt to do something that
+        violates the protocol, such as re-declare an exchange or queue with
+        different parameters. In this case, we'll close the connection
+        to shutdown the object.
+
+        :param pika.channel.Channel: The closed channel
+        :param int reply_code: The numeric reason the channel was closed
+        :param str reply_text: The text reason the channel was closed
+
+        &quot;&quot;&quot;
+        LOGGER.warning('Channel %i was closed: (%s) %s',
+                       channel, reply_code, reply_text)
+        self._connection.close()
+
+    def on_channel_open(self, channel):
+        &quot;&quot;&quot;This method is invoked by pika when the channel has been opened.
+        The channel object is passed in so we can make use of it.
+
+        Since the channel is now open, we'll declare the exchange to use.
+
+        :param pika.channel.Channel channel: The channel object
+
+        &quot;&quot;&quot;
+        LOGGER.info('Channel opened')
+        self._channel = channel
+        self.add_on_channel_close_callback()
+        self.setup_exchange(self.EXCHANGE)
+
+    def setup_exchange(self, exchange_name):
+        &quot;&quot;&quot;Setup the exchange on RabbitMQ by invoking the Exchange.Declare
+RPC
+        command. When it is complete, the on_exchange_declareok method will
+        be invoked by pika.
+
+        :param str|unicode exchange_name: The name of the exchange to
+declare
+
+        &quot;&quot;&quot;
+        LOGGER.info('Declaring exchange %s', exchange_name)
+        self._channel.exchange_declare(self.on_exchange_declareok,
+                                       exchange_name,
+                                       self.EXCHANGE_TYPE)
+
+    def on_exchange_declareok(self, unused_frame):
+        &quot;&quot;&quot;Invoked by pika when RabbitMQ has finished the Exchange.Declare
+RPC
+        command.
+
+        :param pika.Frame.Method unused_frame: Exchange.DeclareOk response
+frame
+
+        &quot;&quot;&quot;
+        LOGGER.info('Exchange declared')
+        self.setup_queue(self.QUEUE)
+
+    def setup_queue(self, queue_name):
+        &quot;&quot;&quot;Setup the queue on RabbitMQ by invoking the Queue.Declare RPC
+        command. When it is complete, the on_queue_declareok method will
+        be invoked by pika.
+
+        :param str|unicode queue_name: The name of the queue to declare.
+
+        &quot;&quot;&quot;
+        LOGGER.info('Declaring queue %s', queue_name)
+        self._channel.queue_declare(self.on_queue_declareok, queue_name)
+
+    def on_queue_declareok(self, method_frame):
+        &quot;&quot;&quot;Method invoked by pika when the Queue.Declare RPC call made in
+        setup_queue has completed. In this method we will bind the queue
+        and exchange together with the routing key by issuing the Queue.Bind
+        RPC command. When this command is complete, the on_bindok method
+will
+        be invoked by pika.
+
+        :param pika.frame.Method method_frame: The Queue.DeclareOk frame
+
+        &quot;&quot;&quot;
+        LOGGER.info('Binding %s to %s with %s',
+                    self.EXCHANGE, self.QUEUE, self.ROUTING_KEY)
+        self._channel.queue_bind(self.on_bindok, self.QUEUE,
+                                 self.EXCHANGE, self.ROUTING_KEY)
+
+    def add_on_cancel_callback(self):
+        &quot;&quot;&quot;Add a callback that will be invoked if RabbitMQ cancels the
+consumer
+        for some reason. If RabbitMQ does cancel the consumer,
+        on_consumer_cancelled will be invoked by pika.
+
+        &quot;&quot;&quot;
+        LOGGER.info('Adding consumer cancellation callback')
+        self._channel.add_on_cancel_callback(self.on_consumer_cancelled)
+
+    def on_consumer_cancelled(self, method_frame):
+        &quot;&quot;&quot;Invoked by pika when RabbitMQ sends a Basic.Cancel for a consumer
+        receiving messages.
+
+        :param pika.frame.Method method_frame: The Basic.Cancel frame
+
+        &quot;&quot;&quot;
+        LOGGER.info('Consumer was cancelled remotely, shutting down: %r',
+                    method_frame)
+        if self._channel:
+            self._channel.close()
+
+    def acknowledge_message(self, delivery_tag):
+        &quot;&quot;&quot;Acknowledge the message delivery from RabbitMQ by sending a
+        Basic.Ack RPC method for the delivery tag.
+
+        :param int delivery_tag: The delivery tag from the Basic.Deliver
+frame
+
+        &quot;&quot;&quot;
+        LOGGER.info('Acknowledging message %s', delivery_tag)
+        self._channel.basic_ack(delivery_tag)
+
+    def on_message(self, unused_channel, basic_deliver, properties, body):
+        &quot;&quot;&quot;Invoked by pika when a message is delivered from RabbitMQ. The
+        channel is passed for your convenience. The basic_deliver object
+that
+        is passed in carries the exchange, routing key, delivery tag and
+        a redelivered flag for the message. The properties passed in is an
+        instance of BasicProperties with the message properties and the body
+        is the message that was sent.
+
+        :param pika.channel.Channel unused_channel: The channel object
+        :param pika.Spec.Basic.Deliver: basic_deliver method
+        :param pika.Spec.BasicProperties: properties
+        :param str|unicode body: The message body
+
+        &quot;&quot;&quot;
+        LOGGER.info('Received message # %s from %s: %s',
+                    basic_deliver.delivery_tag, properties.app_id, body)
+        self.acknowledge_message(basic_deliver.delivery_tag)
+
+    def on_cancelok(self, unused_frame):
+        &quot;&quot;&quot;This method is invoked by pika when RabbitMQ acknowledges the
+        cancellation of a consumer. At this point we will close the channel.
+        This will invoke the on_channel_closed method once the channel has
+been
+        closed, which will in-turn close the connection.
+
+        :param pika.frame.Method unused_frame: The Basic.CancelOk frame
+
+        &quot;&quot;&quot;
+        LOGGER.info('RabbitMQ acknowledged the cancellation of the
+consumer')
+        self.close_channel()
+
+    def stop_consuming(self):
+        &quot;&quot;&quot;Tell RabbitMQ that you would like to stop consuming by sending
+the
+        Basic.Cancel RPC command.
+
+        &quot;&quot;&quot;
+        if self._channel:
+            LOGGER.info('Sending a Basic.Cancel RPC command to RabbitMQ')
+            self._channel.basic_cancel(self.on_cancelok, self._consumer_tag)
+
+    def start_consuming(self):
+        &quot;&quot;&quot;This method sets up the consumer by first calling
+        add_on_cancel_callback so that the object is notified if RabbitMQ
+        cancels the consumer. It then issues the Basic.Consume RPC command
+        which returns the consumer tag that is used to uniquely identify the
+        consumer with RabbitMQ. We keep the value to use it when we want to
+        cancel consuming. The on_message method is passed in as a callback
+pika
+        will invoke when a message is fully received.
+
+        &quot;&quot;&quot;
+        LOGGER.info('Issuing consumer related RPC commands')
+        self.add_on_cancel_callback()
+        self._consumer_tag = self._channel.basic_consume(self.on_message,
+                                                         self.QUEUE)
+
+    def on_bindok(self, unused_frame):
+        &quot;&quot;&quot;Invoked by pika when the Queue.Bind method has completed. At this
+        point we will start consuming messages by calling start_consuming
+        which will invoke the needed RPC commands to start the process.
+
+        :param pika.frame.Method unused_frame: The Queue.BindOk response
+frame
+
+        &quot;&quot;&quot;
+        LOGGER.info('Queue bound')
+        self.start_consuming()
+
+    def close_channel(self):
+        &quot;&quot;&quot;Call to close the channel with RabbitMQ cleanly by issuing the
+        Channel.Close RPC command.
+
+        &quot;&quot;&quot;
+        LOGGER.info('Closing the channel')
+        self._channel.close()
+
+    def open_channel(self):
+        &quot;&quot;&quot;Open a new channel with RabbitMQ by issuing the Channel.Open RPC
+        command. When RabbitMQ responds that the channel is open, the
+        on_channel_open callback will be invoked by pika.
+
+        &quot;&quot;&quot;
+        LOGGER.info('Creating a new channel')
+        self._connection.channel(on_open_callback=self.on_channel_open)
+
+    def run(self):
+        &quot;&quot;&quot;Run the example consumer by connecting to RabbitMQ and then
+        starting the IOLoop to block and allow the SelectConnection to
+operate.
+
+        &quot;&quot;&quot;
+        self._connection = self.connect()
+        self._connection.ioloop.start()
+
+    def stop(self):
+        &quot;&quot;&quot;Cleanly shutdown the connection to RabbitMQ by stopping the
+consumer
+        with RabbitMQ. When RabbitMQ confirms the cancellation, on_cancelok
+        will be invoked by pika, which will then closing the channel and
+        connection. The IOLoop is started again because this method is
+invoked
+        when CTRL-C is pressed raising a KeyboardInterrupt exception. This
+        exception stops the IOLoop which needs to be running for pika to
+        communicate with RabbitMQ. All of the commands issued prior to
+starting
+        the IOLoop will be buffered but not processed.
+
+        &quot;&quot;&quot;
+        LOGGER.info('Stopping')
+        self._closing = True
+        self.stop_consuming()
+        self._connection.ioloop.start()
+        LOGGER.info('Stopped')
+
+
+def main():
+    logging.basicConfig(level=logging.INFO, format=LOG_FORMAT)
+    example = ExampleConsumer('mqserver10', 5672, 'guest', 'guest')
+    try:
+        example.run()
+    except KeyboardInterrupt:
+        example.stop()
+
+
+if __name__ == '__main__':
+    main()
+
+
+On Thu, Aug 15, 2013 at 3:25 PM, Ask Solem &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">ask at rabbitmq.com</A>&gt; wrote:
+
+&gt;<i>
+</I>&gt;<i> On Aug 15, 2013, at 1:20 PM, Priyanki Vashi &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">vashi.priyanki at gmail.com</A>&gt;
+</I>&gt;<i> wrote:
+</I>&gt;<i>
+</I>&gt;<i> &gt; Hi There ,
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; This might be very basic error but since I am trying to use Tornado
+</I>&gt;<i> connection for the first time, help on this would be appreciated.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; I was trying to use Tornado consumer example given on following pika
+</I>&gt;<i> site.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; <A HREF="https://pika.readthedocs.org/en/0.9.13/examples/tornado_consumer.html">https://pika.readthedocs.org/en/0.9.13/examples/tornado_consumer.html</A>
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; I am running into following error. The example is with URL connection
+</I>&gt;<i> method.
+</I>&gt;<i> &gt; But I also tried to use hostname and port method as well as tried
+</I>&gt;<i> changing to IP address instead of hostname but still it's the same error.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; I have pika 0.9.13 library installed. My consumer &amp; Producer works fine
+</I>&gt;<i> with select.connection method so I believe library is correctly installed.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; Do I need to do something additional to get tornado connection working
+</I>&gt;<i> for both producer and consumer with pika?
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; Please suggest.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">mq1 at mqserver1</A>:~/Producer_Receiver/Latest$ python tornedo_c_1.py
+</I>&gt;<i> &gt; Traceback (most recent call last):
+</I>&gt;<i> &gt;   File &quot;tornedo_c_1.py&quot;, line 357, in &lt;module&gt;
+</I>&gt;<i> &gt;     main()
+</I>&gt;<i> &gt;   File &quot;tornedo_c_1.py&quot;, line 351, in main
+</I>&gt;<i> &gt;     example.run()
+</I>&gt;<i> &gt;   File &quot;tornedo_c_1.py&quot;, line 326, in run
+</I>&gt;<i> &gt;     self._connection = self.connect()
+</I>&gt;<i> &gt;   File &quot;tornedo_c_1.py&quot;, line 59, in connect
+</I>&gt;<i> &gt;     adapters.TornadoConnection(self.parameters, self.on_connection_open,
+</I>&gt;<i> stop_ioloop_on_close=False)
+</I>&gt;<i> &gt; TypeError: 'NoneType' object is not callable
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> Maybe you passed None as a callback somewhere?  What is the value of
+</I>&gt;<i> on_connection_open for example?
+</I>&gt;<i>
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20130815/86381480/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20130815/86381480/attachment.htm</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="029344.html">[rabbitmq-discuss] Tornado Consumer example problem
+</A></li>
+	<LI>Next message: <A HREF="029347.html">[rabbitmq-discuss] Tornado Consumer example problem
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#29345">[ date ]</a>
+              <a href="thread.html#29345">[ thread ]</a>
+              <a href="subject.html#29345">[ subject ]</a>
+              <a href="author.html#29345">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

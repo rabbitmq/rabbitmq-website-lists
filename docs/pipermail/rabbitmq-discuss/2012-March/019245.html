@@ -1,0 +1,229 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] RMQ Java Client - ChannelN.waitForConfirm randomly throwing exceptions
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20RMQ%20Java%20Client%20-%20ChannelN.waitForConfirm%0A%20randomly%20throwing%20exceptions&In-Reply-To=%3CDUB106-W341ADB565A484B3381F98C90480%40phx.gbl%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="019225.html">
+   <LINK REL="Next"  HREF="019264.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] RMQ Java Client - ChannelN.waitForConfirm randomly throwing exceptions</H1>
+    <B>Emanuele G</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20RMQ%20Java%20Client%20-%20ChannelN.waitForConfirm%0A%20randomly%20throwing%20exceptions&In-Reply-To=%3CDUB106-W341ADB565A484B3381F98C90480%40phx.gbl%3E"
+       TITLE="[rabbitmq-discuss] RMQ Java Client - ChannelN.waitForConfirm randomly throwing exceptions">ghepardo_1982 at hotmail.com
+       </A><BR>
+    <I>Thu Mar 29 09:43:58 BST 2012</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="019225.html">[rabbitmq-discuss] RMQ Java Client - ChannelN.waitForConfirm	randomly throwing exceptions
+</A></li>
+        <LI>Next message: <A HREF="019264.html">[rabbitmq-discuss] RMQ Java Client - ChannelN.waitForConfirm	randomly throwing exceptions
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#19245">[ date ]</a>
+              <a href="thread.html#19245">[ thread ]</a>
+              <a href="subject.html#19245">[ subject ]</a>
+              <a href="author.html#19245">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>
+Hello Steve,
+thanks a lot for answering, I really hope we can solve the issue. First of all let's state that I am using RabbitMQ 2.8.1 (and the 2.8.1 java client)
+
+Now, I tried the AtomicInteger thing because, drilling down into the cause of the exception, I've found this comment in your source code:
+Class: com.rabbitmq.client.impl.ChannelManager
+Method: releaseChannelNumber(ChannelN channel)
+        // Warning, here be dragons. Not great big ones, but little baby ones
+        // which will nibble on your toes and occasionally trip you up when
+        // you least expect it. (Pixies? HP2)
+        // Basically, there's a race that can end us up here. It almost never
+        // happens, but it's easier to repair it when it does than prevent it
+        // from happening in the first place.
+        // If we end up doing a Channel.close in one thread and a Channel.open
+        // with the same channel number in another, the two can overlap in such
+        // a way as to cause disconnectChannel on the old channel to try to
+        // remove the new one. Ideally we would fix this race at the source,
+        // but it's much easier to just catch it here.
+
+This is exactly what I believe is happening.
+
+Anyway here are the additional information:
+this is the code that uses the channel (called mainChannel)
+            mainChannel.addShutdownListener(this);
+            mainChannel.basicQos(1);
+            mainChannel.queueDeclare(endpoint.getQueueName(), endpoint.isDurable(),
+                    !EXCLUSIVE, !AUTO_DELETE, args);
+
+            // Ensure Exchange
+            mainChannel.exchangeDeclare(endpoint.getExchangeName(),
+                    endpoint.getExchangeTypeName(), endpoint.isDurable(),
+                    !EXCLUSIVE, !AUTO_DELETE, args);
+
+            // Bind Queue-Exchange
+            mainChannel.queueBind(endpoint.getQueueName(),
+                    endpoint.getExchangeName(), endpoint.getRoutingKey());
+
+
+This is the complete stacktrace:
+2012-03-28 15:05:46,057 DEBUG [main] c.b.g.r.u.RabbitLinker [RabbitLinker.java:217] Error while building channel, retrying.
+com.rabbitmq.client.ShutdownSignalException : connection error; reason: {#method&lt;connection.close&gt;(reply-code=503, reply-text=COMMAND_INVALID - second 'channel.open' seen, class-id=20, method-id=10), null, &quot;&quot;}
+       at com.rabbitmq.client.impl.ChannelN.waitForConfirms( ChannelN.java:182)
+       at com.rabbitmq.client.impl.ChannelN.waitForConfirms( ChannelN.java:170)
+       at myapplication.rabbitmq.util.RabbitLinker.send(RabbitLinker.java:262)
+       at myapplication.rabbitmq.producer.AbstractRabbitProducer.send(AbstractRabbitProducer.java:69)
+       at myapplication.rabbitmq.producer.AbstractCamelProducer.process(AbstractCamelProducer.java:64)
+       at org.apache.camel.util.AsyncProcessorConverterHelper$ProcessorToAsyncProcessorBridge.process(AsyncProcessorConverterHelper.java:61)
+       at org.apache.camel.util.AsyncProcessorHelper.process(AsyncProcessorHelper.java:73)
+       at org.apache.camel.processor.SendProcessor$2.doInAsyncProducer(SendProcessor.java:115)
+       at org.apache.camel.impl.ProducerCache.doInAsyncProducer(ProducerCache.java:285)
+       at org.apache.camel.processor.SendProcessor.process(SendProcessor.java:110)
+       at org.apache.camel.util.AsyncProcessorHelper.process(AsyncProcessorHelper.java:73)
+       at org.apache.camel.processor.DelegateAsyncProcessor.processNext(DelegateAsyncProcessor.java:99)
+       at org.apache.camel.processor.DelegateAsyncProcessor.process(DelegateAsyncProcessor.java:90)
+       at org.apache.camel.processor.interceptor.TraceInterceptor.process(TraceInterceptor.java:91)
+       at org.apache.camel.util.AsyncProcessorHelper.process(AsyncProcessorHelper.java:73)
+       at org.apache.camel.processor.RedeliveryErrorHandler.processErrorHandler(RedeliveryErrorHandler.java:322)
+       at org.apache.camel.processor.RedeliveryErrorHandler.process(RedeliveryErrorHandler.java:213)
+       at org.apache.camel.processor.RouteContextProcessor.processNext(RouteContextProcessor.java:45)
+       at org.apache.camel.processor.DelegateAsyncProcessor.process(DelegateAsyncProcessor.java:90)
+       at org.apache.camel.processor.interceptor.DefaultChannel.process(DefaultChannel.java:303)
+       at org.apache.camel.processor.RouteContextProcessor.processNext(RouteContextProcessor.java:45)
+       at org.apache.camel.processor.DelegateAsyncProcessor.process(DelegateAsyncProcessor.java:90)
+       at org.apache.camel.processor.UnitOfWorkProcessor.processAsync(UnitOfWorkProcessor.java:150)
+       at org.apache.camel.processor.UnitOfWorkProcessor.process(UnitOfWorkProcessor.java:117)
+       at org.apache.camel.util.AsyncProcessorHelper.process(AsyncProcessorHelper.java:73)
+       at org.apache.camel.processor.DelegateAsyncProcessor.processNext(DelegateAsyncProcessor.java:99)
+       at org.apache.camel.processor.DelegateAsyncProcessor.process(DelegateAsyncProcessor.java:90)
+       at org.apache.camel.management.InstrumentationProcessor.process(InstrumentationProcessor.java:71)
+       at org.apache.camel.util.AsyncProcessorHelper.process(AsyncProcessorHelper.java:99)
+       at org.apache.camel.processor.DelegateAsyncProcessor.process(DelegateAsyncProcessor.java:86)2012-03-28 15:05:46,060 DEBUG [AMQP Connection 127.0.0.1:5672] c.b.g.r.u.RabbitFactory$ConnectionSaver [RabbitFactory.java:119] shutdownComplete:
+com.rabbitmq.client.ShutdownSignalException : connection error; reason: {#method&lt;connection.close&gt;(reply-code=503, reply-text=COMMAND_INVALID - second 'channel.open' seen, class-id=20, method-id=10), null, &quot;&quot;}
+       at com.rabbitmq.client.impl.AMQConnection.shutdown(AMQConnection.java:654) ~[amqp-client-2.8.1.jar:na]
+       at com.rabbitmq.client.impl.AMQConnection.handleConnectionClose(AMQConnection.java:610) ~[amqp-client-2.8.1.jar:na]
+       at com.rabbitmq.client.impl.AMQConnection.processControlCommand(AMQConnection.java:584) ~[amqp-client-2.8.1.jar:na]
+       at com.rabbitmq.client.impl.AMQConnection$1.processAsync(AMQConnection.java:89) ~[amqp-client-2.8.1.jar:na]
+       at com.rabbitmq.client.impl.AMQChannel.handleCompleteInboundCommand(AMQChannel.java:144) ~[amqp-client-2.8.1.jar:na]
+       at com.rabbitmq.client.impl.AMQChannel.handleFrame( AMQChannel.java:91) ~[amqp-client-2.8.1.jar:na]
+       at com.rabbitmq.client.impl.AMQConnection$MainLoop.run(AMQConnection.java:509) ~[amqp-client-2.8.1.jar:na]
+2012-03-28 15:05:46,061 DEBUG [pool-18-thread-2] c.b.g.r.u.RabbitLinker [RabbitLinker.java:322] Internal RabbitMQ Exception while ACK-ing a message,
+
+
+I hope you can help me figuring out what is happening.
+
+Thanks
+
+
+&gt;<i> Subject: Re: [rabbitmq-discuss] RMQ Java Client - ChannelN.waitForConfirm randomly throwing exceptions
+</I>&gt;<i> From: <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">steve at rabbitmq.com</A>
+</I>&gt;<i> Date: Wed, 28 Mar 2012 18:17:57 +0100
+</I>&gt;<i> CC: <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;<i> To: <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">ghepardo_1982 at hotmail.com</A>
+</I>&gt;<i> 
+</I>&gt;<i> Emanuele,
+</I>&gt;<i> 
+</I>&gt;<i> There should be no need to use AtomicInteger to guarantee a new channel
+</I>&gt;<i> number; createChannel should guarantee this for you.
+</I>&gt;<i> 
+</I>&gt;<i> You have shown me the stack trace -- and I can see that your application
+</I>&gt;<i> threads are issuing waitForConfirms().
+</I>&gt;<i> 
+</I>&gt;<i> Can you tell me a little more about how your threads use the Channel?
+</I>&gt;<i> I'd like to know the state of the channel the thread is using, at the
+</I>&gt;<i> time of the call. What happened on that channel immediately before the
+</I>&gt;<i> waitForConfirms() call?
+</I>&gt;<i> 
+</I>&gt;<i> Perhaps some more snippets of the thread code would be useful, and a
+</I>&gt;<i> little more of the stack trace would help.
+</I>&gt;<i> 
+</I>&gt;<i> Finally, was there anything in the rabbit log around this time?
+</I>&gt;<i> 
+</I>&gt;<i> Steve Powell  (a happy bunny)
+</I>&gt;<i> ----------some more definitions from the SPD----------
+</I>&gt;<i> chinchilla (n.) Cooling device for the lower jaw.
+</I>&gt;<i> socialcast (n.) Someone to whom everyone is speaking but nobody likes.
+</I>&gt;<i> literacy (n.) A textually transmitted disease usually contracted in childhood.
+</I>&gt;<i> 
+</I>&gt;<i> On 28 Mar 2012, at 17:29, Emanuele Gheradini wrote:
+</I>&gt;<i> 
+</I>&gt;<i> &gt; 
+</I>&gt;<i> &gt; I want also to add that what I understood is:
+</I>&gt;<i> &gt; 
+</I>&gt;<i> &gt; for some reasons RabbitMQ java client gives the same channel (or channel
+</I>&gt;<i> &gt; number) to different threads, then these threads will perform different
+</I>&gt;<i> &gt; operations on that channel which will be closed by RabbitMQjavaclient, thus
+</I>&gt;<i> &gt; resulting in the crash of the waitForConfirm method, at line 182 (here is
+</I>&gt;<i> &gt; the snipped):
+</I>&gt;<i> &gt; 
+</I>&gt;<i> &gt; 181: if (getCloseReason() != null) {
+</I>&gt;<i> &gt; 182:                  throw Utility.fixStackTrace(getCloseReason());
+</I>&gt;<i> &gt; 183:               }
+</I>&gt;<i> &gt; 
+</I>&gt;<i> &gt; 
+</I>&gt;<i> &gt; I tried getting channels from rabbit in this way:
+</I>&gt;<i> &gt; 
+</I>&gt;<i> &gt; AtomicInteger chanNumber = new AtomicInteger(0);
+</I>&gt;<i> &gt; 
+</I>&gt;<i> &gt; connection.createChannel(chanNumber.getAndIncrement());
+</I>&gt;<i> &gt; 
+</I>&gt;<i> &gt; to be sure that each thread gets a channel with a different channelNumber,
+</I>&gt;<i> &gt; but this does not work either...
+</I>&gt;<i> &gt; 
+</I>&gt;<i> &gt; 
+</I>&gt;<i> &gt; I hope someone can give me a suggestion.
+</I>&gt;<i> &gt; 
+</I>&gt;<i> &gt; Thanks.
+</I>&gt;<i> &gt; -- 
+</I>&gt;<i> &gt; View this message in context: <A HREF="http://old.nabble.com/RMQ-Java-Client---ChannelN.waitForConfirm-randomly-throwing-exceptions-tp33544834p33544845.html">http://old.nabble.com/RMQ-Java-Client---ChannelN.waitForConfirm-randomly-throwing-exceptions-tp33544834p33544845.html</A>
+</I>&gt;<i> &gt; Sent from the RabbitMQ mailing list archive at Nabble.com.
+</I>&gt;<i> &gt; 
+</I>&gt;<i> &gt; _______________________________________________
+</I>&gt;<i> &gt; rabbitmq-discuss mailing list
+</I>&gt;<i> &gt; <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;<i> &gt; <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>&gt;<i> 
+</I> 		 	   		  
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20120329/7d713ee6/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20120329/7d713ee6/attachment.htm</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="019225.html">[rabbitmq-discuss] RMQ Java Client - ChannelN.waitForConfirm	randomly throwing exceptions
+</A></li>
+	<LI>Next message: <A HREF="019264.html">[rabbitmq-discuss] RMQ Java Client - ChannelN.waitForConfirm	randomly throwing exceptions
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#19245">[ date ]</a>
+              <a href="thread.html#19245">[ thread ]</a>
+              <a href="subject.html#19245">[ subject ]</a>
+              <a href="author.html#19245">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

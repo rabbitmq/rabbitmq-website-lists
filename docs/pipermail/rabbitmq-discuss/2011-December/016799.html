@@ -1,0 +1,166 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Need some help on C++ client receive code
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Need%20some%20help%20on%20C%2B%2B%20client%20receive%20code&In-Reply-To=%3Cc71bf1f5-81f6-45cd-82c2-442f177096e4%40o9g2000vbc.googlegroups.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="016798.html">
+   <LINK REL="Next"  HREF="016800.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Need some help on C++ client receive code</H1>
+    <B>Valentin BERNARD</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Need%20some%20help%20on%20C%2B%2B%20client%20receive%20code&In-Reply-To=%3Cc71bf1f5-81f6-45cd-82c2-442f177096e4%40o9g2000vbc.googlegroups.com%3E"
+       TITLE="[rabbitmq-discuss] Need some help on C++ client receive code">vbernard42 at gmail.com
+       </A><BR>
+    <I>Fri Dec  9 08:52:08 GMT 2011</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="016798.html">[rabbitmq-discuss] Need some help on C++ client receive code
+</A></li>
+        <LI>Next message: <A HREF="016800.html">[rabbitmq-discuss] Errors while running examples from RabbitMQ	tutorial
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#16799">[ date ]</a>
+              <a href="thread.html#16799">[ thread ]</a>
+              <a href="subject.html#16799">[ subject ]</a>
+              <a href="author.html#16799">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi,
+
+I don't really understand how your code snippet reassembles the
+message frames. I think you're only storing the content of the last
+received frame here. Here is my receiving code (for frames 3+):
+
+(...)
+
+size_t bodySize = (size_t) frame.payload.properties.body_size;
+size_t bodyReceived = 0;
+amqp_bytes_t body = amqp_bytes_malloc(bodySize);
+
+/* Frames 3+ : message content */
+while (bodyReceived &lt; bodySize) {
+    int result = amqp_simple_wait_frame(connection, &amp;frame);
+    if (result &lt; 0) {
+        // error
+    }
+
+    if (frame.frame_type != AMQP_FRAME_BODY) {
+        // error
+    }
+
+    memcpy((void *)((int)body.bytes + bodyReceived),
+        frame.payload.body_fragment.bytes,
+        frame.payload.body_fragment.len);
+    bodyReceived += frame.payload.body_fragment.len;
+}
+
+// body now contains the message content
+
+Hope that helps.
+
+Cheers,
+
+Valentin.
+
+On 9 d&#233;c, 07:46, tang qingxiong &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">tqx... at gmail.com</A>&gt; wrote:
+&gt;<i> Below is a code snippet of my receiving code
+</I>&gt;<i>
+</I>&gt;<i> &#160; &#160; &#160; amqp_frame_t frame;
+</I>&gt;<i> &#160; &#160; &#160; amqp_maybe_release_buffers(myConnection);
+</I>&gt;<i> &#160; &#160; &#160; int result = amqp_simple_wait_frame(myConnection, &amp;frame);
+</I>&gt;<i>
+</I>&gt;<i> &#160; &#160; &#160; if (result &lt; 0)
+</I>&gt;<i> &#160; &#160; &#160; {
+</I>&gt;<i> &#160; &#160; &#160; &#160; return -1;
+</I>&gt;<i> &#160; &#160; &#160; }
+</I>&gt;<i> &#160; &#160; &#160; if (frame.frame_type != AMQP_FRAME_METHOD)
+</I>&gt;<i> &#160; &#160; &#160; {
+</I>&gt;<i> &#160; &#160; &#160; &#160; return 0;
+</I>&gt;<i> &#160; &#160; &#160; }
+</I>&gt;<i> &#160; &#160; &#160; if (frame.payload.method.id != AMQP_BASIC_DELIVER_METHOD)
+</I>&gt;<i> &#160; &#160; &#160; {
+</I>&gt;<i> &#160; &#160; &#160; &#160; return 0;
+</I>&gt;<i> &#160; &#160; &#160; }
+</I>&gt;<i> &#160; &#160; &#160; result = amqp_simple_wait_frame(myConnection, &amp;frame);
+</I>&gt;<i>
+</I>&gt;<i> &#160; &#160; &#160; if (result &lt; 0)
+</I>&gt;<i> &#160; &#160; &#160; {
+</I>&gt;<i> &#160; &#160; &#160; &#160; return -1;
+</I>&gt;<i> &#160; &#160; &#160; }
+</I>&gt;<i> &#160; &#160; &#160; if (frame.frame_type != AMQP_FRAME_HEADER)
+</I>&gt;<i> &#160; &#160; &#160; {
+</I>&gt;<i> &#160; &#160; &#160; &#160; abort();
+</I>&gt;<i> &#160; &#160; &#160; }
+</I>&gt;<i> &#160; &#160; &#160; uint64_t target = frame.payload.properties.body_size;
+</I>&gt;<i> &#160; &#160; &#160; uint64_t received = 0;
+</I>&gt;<i> &#160; &#160; &#160; while (received &lt; target)
+</I>&gt;<i> &#160; &#160; &#160; {
+</I>&gt;<i> &#160; &#160; &#160; &#160; result = amqp_simple_wait_frame(myConnection, &amp;frame);
+</I>&gt;<i> &#160; &#160; &#160; &#160; if (result &lt; 0)
+</I>&gt;<i> &#160; &#160; &#160; &#160; {
+</I>&gt;<i> &#160; &#160; &#160; &#160; &#160; return -1;
+</I>&gt;<i> &#160; &#160; &#160; &#160; }
+</I>&gt;<i> &#160; &#160; &#160; &#160; if (frame.frame_type != AMQP_FRAME_BODY)
+</I>&gt;<i> &#160; &#160; &#160; &#160; {
+</I>&gt;<i> &#160; &#160; &#160; &#160; &#160; abort();
+</I>&gt;<i> &#160; &#160; &#160; &#160; }
+</I>&gt;<i> &#160; &#160; &#160; &#160; received += frame.payload.body_fragment.len;
+</I>&gt;<i> &#160; &#160; &#160; }
+</I>&gt;<i>
+</I>&gt;<i> &#160; &#160; &#160; &#160;char* recvBuffer =new char[RABBIT_BUFFER_SIZE];
+</I>&gt;<i> &#160; &#160; &#160; &#160;memcpy(recvBuffer, frame.payload.body_fragment.bytes,
+</I>&gt;<i> frame.payload.body_fragment.len);
+</I>&gt;<i> int framesize =frame.payload.body_fragment.len;
+</I>&gt;<i>
+</I>&gt;<i> This code is adapted from the C client example and it is running mostly
+</I>&gt;<i> fine. However after running it on my server for 19 hours, it crashes. After
+</I>&gt;<i> tracing. it shows that
+</I>&gt;<i>
+</I>&gt;<i> frame.payload.body_fragment.len is only 23 while received is over 10k. Am I
+</I>&gt;<i> doing something wrong? The assumption that I made after looking at the code
+</I>&gt;<i> is that frame is == message. If it is not , how could I received the entire
+</I>&gt;<i> message before processing?
+</I>&gt;<i>
+</I>&gt;<i> Regards,
+</I>&gt;<i> QX
+</I>&gt;<i>
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-disc... at lists.rabbitmq.comhttps</A>://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss
+</I></PRE>
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="016798.html">[rabbitmq-discuss] Need some help on C++ client receive code
+</A></li>
+	<LI>Next message: <A HREF="016800.html">[rabbitmq-discuss] Errors while running examples from RabbitMQ	tutorial
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#16799">[ date ]</a>
+              <a href="thread.html#16799">[ thread ]</a>
+              <a href="subject.html#16799">[ subject ]</a>
+              <a href="author.html#16799">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,172 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] odd consumer behaviour
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20odd%20consumer%20behaviour&In-Reply-To=481A0A5A.7080508%40lshift.net">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000765.html">
+   <LINK REL="Next"  HREF="000768.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] odd consumer behaviour</H1>
+    <B>David.Corcoran at edftrading.com</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20odd%20consumer%20behaviour&In-Reply-To=481A0A5A.7080508%40lshift.net"
+       TITLE="[rabbitmq-discuss] odd consumer behaviour">David.Corcoran at edftrading.com
+       </A><BR>
+    <I>Fri May  2 11:51:57 BST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000765.html">[rabbitmq-discuss] odd consumer behaviour
+</A></li>
+        <LI>Next message: <A HREF="000768.html">[rabbitmq-discuss] odd consumer behaviour
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#767">[ date ]</a>
+              <a href="thread.html#767">[ thread ]</a>
+              <a href="subject.html#767">[ subject ]</a>
+              <a href="author.html#767">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi Matthias,
+
+That makes perfect sense. Thanks for your help. I think my brain was a
+little fried when I was writing the example. I was actually trying to write
+a simple piece of code that exhibited a problem I was having and the
+example I gave was obviously wrong.
+
+The problem I was actually having I suspect is related to prefetching. I'll
+try and explain it and perhaps you can confirm if it sounds likely?
+
+I'm testing rabbitmq as a new messaging system for our job control. So I
+write a job to the queue and it gets picked up by a worker and run.
+Unfortunately each job can start more jobs, down to a level of about 3
+deep. So with one job runner active this would lead to deadlock, as a job
+would start a new job and block waiting for it to finish but no other job
+runner would pick it up.
+
+The way we work around this is when a parent job starts its own child jobs
+and blocks, a new thread is started with a new channel pointing to the same
+queue. Then when the parent job finishes the thread it was running in
+finishes too. This way we only have 1 thread doing any work at a time.
+
+In our current system for this to work I have to turn off prefetching by
+the clients. Otherwise the first thread can start a job with dependencies,
+then block, but the dependent jobs are prefetched into its local buffer
+which leads to deadlock. With prefetching off another client can pick up
+the job and work on it.
+
+I think I've hit a problem with prefetching and RabbitMQ. Do you think this
+might be the case?
+
+Thanks for your help,
+
+Dave
+
+
+
+
+                                                                           
+             Matthias                                                      
+             Radestock                                                     
+             &lt;<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">matthias at lshift.</A>                                          To 
+             net&gt;                      <A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">David.Corcoran at edftrading.com</A>       
+                                                                        cc 
+             01/05/2008 19:22          <A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A> 
+                                                                   Subject 
+                                       Re: [rabbitmq-discuss] odd consumer 
+                                       behaviour                           
+                                                                           
+                                                                           
+                                                                           
+                                                                           
+                                                                           
+                                                                           
+
+
+
+
+
+David,
+
+<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">David.Corcoran at edftrading.com</A> wrote:
+&gt;<i> 1. Run the HelloClient RabbitMQ example modified slightly so that it
+</I>sends
+&gt;<i> 20 messages instead of 1.
+</I>&gt;<i> 2. Run the HelloServer example but with a slight change to the code. Add
+</I>a
+&gt;<i> Thread.sleep(10*1000) before the return in handleStringCall().
+</I>&gt;<i> 3. Now run a normal HelloServer example, without any sleep.
+</I>&gt;<i> What I noticed here is that the normal example doesn't run at full speed.
+</I>&gt;<i> It looks like the slow server is slowing down the normal one.
+</I>&gt;<i> 5. Kill the slow server (the one with the sleep) and the normal
+</I>HelloServer
+&gt;<i> now runs at full speed and finishes the rest of the messages within the
+</I>&gt;<i> second.
+</I>
+How exactly did you modify the HelloClient? Did you just put the original
+
+             System.out.println(service.stringCall(request));
+
+in a 20-iteration loop?
+
+If so, then you are issuing 20 RPCs sequentially, i.e. the client will
+be waiting for the result of the previous call before issuing the next.
+
+Each call will be handled by one of the two HelloServers you are
+running. If a call gets handled by the &quot;slow&quot; server then it will take
+10 seconds to complete. If it happens to get handled by the fast server
+then it will complete nearly instantly. As soon as you stop the slow
+server all remaining requests will get handled by the fast server and
+hence complete quickly.
+
+So the behaviour you are seeing is to be expected.
+
+Were you trying to construct a load balancing test? If so you'd need to
+be issuing RPCs *concurrently*. Also, the RpcServer wasn't designed for
+load balancing - it will actually consume messages from the underlying
+AMQP queue as fast as it can without waiting for them to be processed.
+You'd have to change that.
+
+Regards,
+
+Matthias.
+
+
+
+*********************************************************************
+This communication contains confidential information, some or all of which may be privileged. It is for the intended recipient only and others must not disclose, distribute, copy, print or rely on this communication. If an addressing or transmission error has misdirected this communication, please notify the sender by replying to this e-mail and then delete the e-mail. E-mail sent to EDF Trading may be monitored by the company. Thank you. 
+EDF Trading Limited
+80 Victoria Street, 3rd Floor, Cardinal Place, London, SW1E 5JL
+A Company registered in England No. 4255974. 
+Switchboard: 020 7061 4000
+EDF Trading Markets Limited is a member of the EDF Trading Limited Group and is authorised and regulated by the Financial Services Authority.
+VAT number: GB 735 5479 07
+*********************************************************************
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000765.html">[rabbitmq-discuss] odd consumer behaviour
+</A></li>
+	<LI>Next message: <A HREF="000768.html">[rabbitmq-discuss] odd consumer behaviour
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#767">[ date ]</a>
+              <a href="thread.html#767">[ thread ]</a>
+              <a href="subject.html#767">[ subject ]</a>
+              <a href="author.html#767">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

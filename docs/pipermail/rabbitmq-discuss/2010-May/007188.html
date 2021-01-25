@@ -1,0 +1,170 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] request for help!
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20request%20for%20help%21&In-Reply-To=4BE84174.1000609%40redhat.com">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="007187.html">
+   <LINK REL="Next"  HREF="007203.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] request for help!</H1>
+    <B>Tim Fox</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20request%20for%20help%21&In-Reply-To=4BE84174.1000609%40redhat.com"
+       TITLE="[rabbitmq-discuss] request for help!">tim.fox at jboss.com
+       </A><BR>
+    <I>Mon May 10 18:43:27 BST 2010</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="007187.html">[rabbitmq-discuss] request for help!
+</A></li>
+        <LI>Next message: <A HREF="007203.html">[rabbitmq-discuss] request for help!
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#7188">[ date ]</a>
+              <a href="thread.html#7188">[ thread ]</a>
+              <a href="subject.html#7188">[ subject ]</a>
+              <a href="author.html#7188">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>On 10/05/10 18:25, Rafael Schloming wrote:
+&gt;<i> Tim Fox wrote:
+</I>&gt;&gt;<i> On 10/05/10 16:18, Robert Godfrey wrote:
+</I>&gt;&gt;&gt;<i> Just to be clear, while this behaviour is permitted under the spec, it
+</I>&gt;&gt;&gt;<i> is not mandated that every message exchange follows this pattern.
+</I>&gt;&gt;&gt;<i> Firstly the protocol will support different reliability guarantees
+</I>&gt;&gt;&gt;<i> agreed at the link level (at most once, at least once, exactly once,
+</I>&gt;&gt;&gt;<i> etc) which will allow simpler patterns where the extra guarantees are
+</I>&gt;&gt;&gt;<i> not required.
+</I>&gt;&gt;<i> I believe you can use a simpler pattern, but still retain the once 
+</I>&gt;&gt;<i> and only once guarantee.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> This is how we do it in HornetQ to give us once and only once when 
+</I>&gt;&gt;<i> bridging messages from one server A to another B.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> The sender doesn't maintain any delivery map at all. Each message has 
+</I>&gt;&gt;<i> a de-duplication-id which can either be set by the client when the 
+</I>&gt;&gt;<i> message was originally sent, or can be set by the server and derived 
+</I>&gt;&gt;<i> from the message and node id of the sender.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Since the id can be derived from the message, or is already persisted 
+</I>&gt;&gt;<i> as part of the message there's no need to persist it separately or 
+</I>&gt;&gt;<i> maintain a map on the client side.
+</I>&gt;<i>
+</I>&gt;<i> The specification doesn't require you to persist the delivery-tag 
+</I>&gt;<i> separately. It's a perfectly valid (and expected) choice to populate 
+</I>&gt;<i> it from the message itself as you describe. When you do this the set 
+</I>&gt;<i> of unacked messages has all the necessary information to construct the 
+</I>&gt;<i> protocol primitives defined in the spec without maintaining a separate 
+</I>&gt;<i> map.
+</I>&gt;<i>
+</I>&gt;&gt;<i> The receiving node B simply maintains a circular cache of received 
+</I>&gt;&gt;<i> ids (which is optionally persisted). If B sees the same 
+</I>&gt;&gt;<i> de-duplication-id more than once it simply ignores the message.
+</I>&gt;<i>
+</I>&gt;<i> As I believe Rob already pointed out, this is all the information 
+</I>&gt;<i> necessary to fulfill the protocol contracts from the Receiver's side.
+</I>&gt;<i>
+</I>&gt;&gt;<i> After failure, the sender can just carry on sending any unacked 
+</I>&gt;&gt;<i> messages as normal and the server will reject any dups.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> B sends acks back to A asynchronously in a different stream (so 
+</I>&gt;&gt;<i> everything is pipelined for performance). When A receives the ack, 
+</I>&gt;&gt;<i> then the message can be removed from storage.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> This gives us once and only once without having the c) interaction 
+</I>&gt;&gt;<i> above.
+</I>&gt;<i>
+</I>&gt;<i> How does B know when A has received the ack?
+</I>&gt;<i>
+</I>&gt;<i> If this fact is communicated on the wire, then it is equivalent to the 
+</I>&gt;<i> c) interaction. If this fact isn't communicated on the wire, then B is 
+</I>&gt;<i> making an assumption when it purges entries from its cache, and is 
+</I>&gt;<i> exposing itself to duplicate messages, i.e. this is only providing a 
+</I>&gt;<i> probabilistic exactly-once guarantee.
+</I>You can tune the duplicate id cache size so that it more than covers the 
+amount of unacked messages you might reasonably expect at any one time. 
+This figure should be close to the flow control window size. So take the 
+figure and multiply by two (or 5 or 10). This should reduce the 
+probability of dups to effectively zero.
+&gt;<i>
+</I>&gt;&gt;<i> I believe it this gives us one less transfer on the wire, but more 
+</I>&gt;&gt;<i> importantly one less write to storage - on the sender side.
+</I>&gt;<i>
+</I>&gt;<i> The c) interaction has almost no overhead since it is trivially 
+</I>&gt;<i> inferred from the window of unsettled deliveries which is piggybacked 
+</I>&gt;<i> on message transfers, however both the Sender and Receiver can short 
+</I>&gt;<i> circuit the full transfer interaction by indicating that a delivery is 
+</I>&gt;<i> settled.
+</I>&gt;<i>
+</I>&gt;<i> This can be done on the initial transfer if fire and 
+</I>&gt;<i> forget/at-most-once messaging is desired, or on the initial ack if 
+</I>&gt;<i> at-least-once (or probabilistic exactly-once) messaging is desired.
+</I>&gt;<i>
+</I>&gt;&gt;<i> I can see that your scheme accomplishes the same goal, but it seems 
+</I>&gt;&gt;<i> somewhat more complex, unless I am missing something (quite possible 
+</I>&gt;&gt;<i> ;) )
+</I>&gt;<i>
+</I>&gt;<i> I think perhaps the key point is that the spec is defining the 
+</I>&gt;<i> protocol primitives and minimal semantics required for interop, but 
+</I>&gt;<i> not actually attempting to prescribe or proscribe a particular 
+</I>&gt;<i> implementation strategy. So the intention is very much to permit the 
+</I>&gt;<i> sort of things you're describing, but not to constrain implementations 
+</I>&gt;<i> to choose only those strategies.
+</I>&gt;<i>
+</I>&gt;<i> As I mentioned to Rob in another post, we could probably be a bit 
+</I>&gt;<i> clearer on this in our descriptions and examples.
+</I>&gt;<i>
+</I>&gt;<i> --Rafael
+</I>
+
+-- 
+Sent from my BBC Micro Model B
+
+Tim Fox
+JBoss
+
+HornetQ - putting the buzz in messaging <A HREF="http://hornetq.org">http://hornetq.org</A>
+<A HREF="http://hornetq.blogspot.com/">http://hornetq.blogspot.com/</A>
+<A HREF="http://twitter.com/hornetq">http://twitter.com/hornetq</A>
+<A HREF="irc://irc.freenode.net:6667#hornetq">irc://irc.freenode.net:6667#hornetq</A>	
+<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">fox at redhat.com</A>
+
+
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="007187.html">[rabbitmq-discuss] request for help!
+</A></li>
+	<LI>Next message: <A HREF="007203.html">[rabbitmq-discuss] request for help!
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#7188">[ date ]</a>
+              <a href="thread.html#7188">[ thread ]</a>
+              <a href="subject.html#7188">[ subject ]</a>
+              <a href="author.html#7188">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

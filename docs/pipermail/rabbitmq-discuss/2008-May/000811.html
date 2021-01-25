@@ -1,0 +1,256 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Fwd: More RabbitMQ Erlang client woes
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20Fwd%3A%20More%20RabbitMQ%20Erlang%20client%20woes&In-Reply-To=">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000848.html">
+   <LINK REL="Next"  HREF="000814.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Fwd: More RabbitMQ Erlang client woes</H1>
+    <B>Ben Hood</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20Fwd%3A%20More%20RabbitMQ%20Erlang%20client%20woes&In-Reply-To="
+       TITLE="[rabbitmq-discuss] Fwd: More RabbitMQ Erlang client woes">0x6e6562 at gmail.com
+       </A><BR>
+    <I>Thu May  8 22:22:18 BST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000848.html">[rabbitmq-discuss] Channel crashes after basic.cancel_ok.
+</A></li>
+        <LI>Next message: <A HREF="000814.html">[rabbitmq-discuss] More RabbitMQ Erlang client woes
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#811">[ date ]</a>
+              <a href="thread.html#811">[ thread ]</a>
+              <a href="subject.html#811">[ subject ]</a>
+              <a href="author.html#811">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>
+
+Begin forwarded message:
+
+&gt;<i> From: &quot;Edwin Fine&quot; &lt;<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">emofine at gmail.com</A>&gt;
+</I>&gt;<i> Date: 8 May 2008 22:12:07 BST
+</I>&gt;<i> To: &quot;Ben Hood&quot; &lt;<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">0x6e6562 at gmail.com</A>&gt;
+</I>&gt;<i> Subject: More RabbitMQ Erlang client woes
+</I>&gt;<i>
+</I>&gt;<i> Hi Ben,
+</I>&gt;<i>
+</I>&gt;<i> Sorry for the long email. Trying to get to the bottom of the  
+</I>&gt;<i> problems. I have done a LOT more investigation into the Erlang  
+</I>&gt;<i> network client, and I believe there are two related bugs, one in the  
+</I>&gt;<i> client, and the other I don't know where, or perhaps I am abusing  
+</I>&gt;<i> how AMQP is supposed to work.
+</I>&gt;<i>
+</I>&gt;<i> Bug #1: rabbit_writer not shut down
+</I>&gt;<i>
+</I>&gt;<i> The first (and easier) bug, which I have fixed eventually, is that  
+</I>&gt;<i> every time you start a channel, the network client creates a  
+</I>&gt;<i> rabbit_writer, but never shuts it down. Therefore, each channel that  
+</I>&gt;<i> is created leaves behind a rabbit_writer process.
+</I>&gt;<i> What happens is that in the handshake, the network driver starts a  
+</I>&gt;<i> rabbit_writer on channel 0. I believe this is used for the  
+</I>&gt;<i> connection itself. Its pid is stored in writer_pid in the  
+</I>&gt;<i> connection_state. This writer gets cleaned up properly when the  
+</I>&gt;<i> connection is shut down. There is no problem with this.
+</I>&gt;<i> Thereafter, when a channel is opened and  
+</I>&gt;<i> amqp_network_driver:open_channel is called, another writer is  
+</I>&gt;<i> started (correctly - need one per connection, right?). There is a  
+</I>&gt;<i> singleton reader. Anyway, this writer is never terminated. The  
+</I>&gt;<i> writer is registered as a peer to the channel, using  
+</I>&gt;<i> amqp_channel:register_direct_peer. This causes a bug, because the  
+</I>&gt;<i> registered peer is never shut down, probably because the direct peer  
+</I>&gt;<i> never should be shut down... but this is the NETWORK peer.
+</I>&gt;<i>
+</I>&gt;<i> So what I did (and you may have a better way) is to add another  
+</I>&gt;<i> function, amqp_channel:register_network_peer. This sets a &quot;direct&quot;  
+</I>&gt;<i> flag in the channel_state (which I had to add) to false. Calling  
+</I>&gt;<i> register_direct_peer sets the flag to true. When  
+</I>&gt;<i> amqp_channel:channel_cleanup() is eventually called (and I had to do  
+</I>&gt;<i> something for this, too), it checks to see if direct is false. If  
+</I>&gt;<i> so, it stops the writer in writer_pid, otherwise it leaves it alone.
+</I>&gt;<i>
+</I>&gt;<i> I also had to add a call to channel_cleanup in the close_ok, because  
+</I>&gt;<i> the cleanup was never getting called.:
+</I>&gt;<i>
+</I>&gt;<i> amqp_channel:handle_method(ChannelCloseOk = #'channel.close_ok'{},  
+</I>&gt;<i> State) -&gt;
+</I>&gt;<i>     {noreply, NewState} = rpc_bottom_half(ChannelCloseOk, State),
+</I>&gt;<i>     NewState2 = channel_cleanup(State),
+</I>&gt;<i>     {stop, normal, NewState2};
+</I>&gt;<i>
+</I>&gt;<i> Now this may be major hackery, and you may find a better way. Or,  
+</I>&gt;<i> maybe there has been a code change to the client and I have old  
+</I>&gt;<i> code. I haven't looked in the past few weeks.
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> Maybe-Bug #2: I believe that multiple concurrent consumers cannot  
+</I>&gt;<i> self-register
+</I>&gt;<i>
+</I>&gt;<i> If all consumers are registered by a single process (which is what I  
+</I>&gt;<i> used to do, and it worked), and not by the consumer process itself,  
+</I>&gt;<i> all consume_ok methods are returned correctly. However, if you start  
+</I>&gt;<i> more than one consumer right after each other, and they try to self- 
+</I>&gt;<i> register, things get mixed up. Take a look at this output below. The  
+</I>&gt;<i> key is this debug print:
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> However, the basic.consume method was called with the consumer's  
+</I>&gt;<i> PID, and my understanding is that providing the pid of the consumer  
+</I>&gt;<i> will ensure that the response gets back to the right one. Here is my  
+</I>&gt;<i> code, where you can see the self():
+</I>&gt;<i>
+</I>&gt;<i>     #'basic.consume_ok'{consumer_tag = NewConsumerTag} =  
+</I>&gt;<i> amqp_channel:call(Channel, BasicConsume, self()),
+</I>&gt;<i>
+</I>&gt;<i> And the corresponding output, showing that the responses are mixed  
+</I>&gt;<i> together.
+</I>&gt;<i>
+</I>&gt;<i> [&lt;0.121.0&gt;] Subscribing consumer &lt;&lt;&quot;EMF_TEST_Q.1&quot;&gt;&gt; to channel  
+</I>&gt;<i> &lt;0.117.0&gt;
+</I>&gt;<i> [&lt;0.122.0&gt;] Subscribing consumer &lt;&lt;&quot;EMF_TEST_Q.2&quot;&gt;&gt; to channel  
+</I>&gt;<i> &lt;0.117.0&gt;
+</I>&gt;<i> [&lt;0.122.0&gt;] subscribing: Response from amqp_channel:call  
+</I>&gt;<i> consumer_tag = &lt;&lt;&quot;EMF_TEST_Q.1&quot;&gt;&gt; from channel &lt;0.117.0&gt;
+</I>&gt;<i> [&lt;0.122.0&gt;] received consume_ok: Actual tag: &lt;&lt;&quot;EMF_TEST_Q.1&quot;&gt;&gt;  
+</I>&gt;<i> Expected Tag: &lt;&lt;&quot;EMF_TEST_Q.2&quot;&gt;&gt;
+</I>&gt;<i>
+</I>&gt;<i> -----------------------------------------------------------------------------
+</I>&gt;<i> This is the complete output trace of the test code. I've attached my  
+</I>&gt;<i> version of the client (with my debug prints and my mods), and the  
+</I>&gt;<i> test source code.
+</I>&gt;<i> -----------------------------------------------------------------------------
+</I>&gt;<i>
+</I>&gt;<i> (<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">xhg at ender</A>)8&gt; rabbit_chan_crash:go(<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at ender</A>,2,1).
+</I>&gt;<i> start_writer(Sock = #Port&lt;0.141&gt;, Channel = 0)
+</I>&gt;<i>   WriterPid = &lt;0.115.0&gt;
+</I>&gt;<i> Setting up channel on realm &lt;&lt;&quot;/data&quot;&gt;&gt; for connection  
+</I>&gt;<i> {&lt;0.112.0&gt;,network}
+</I>&gt;<i> start_writer(Sock = #Port&lt;0.141&gt;, Channel = 1)
+</I>&gt;<i>   WriterPid = &lt;0.118.0&gt;
+</I>&gt;<i> amqp_network_driver:open_channel:: Nothing ever shuts this writer  
+</I>&gt;<i> down: &lt;0.118.0&gt; *** I believe I have fixed this bug
+</I>&gt;<i> [&lt;0.117.0&gt;] Calling rpc_bottom_half for {'channel.open_ok'}
+</I>&gt;<i> [&lt;0.117.0&gt;] Calling rpc_bottom_half for {'access.request_ok',101}
+</I>&gt;<i> Access granted for channel &lt;0.117.0&gt; on realm &lt;&lt;&quot;/data&quot;&gt;&gt; for  
+</I>&gt;<i> connection {&lt;0.112.0&gt;,
+</I>&gt;<i>                                                                           network 
+</I>&gt;<i> }
+</I>&gt;<i> Declaring exchange &lt;&lt;&quot;emf_test&quot;&gt;&gt; using ticket 101
+</I>&gt;<i> [&lt;0.117.0&gt;] Calling rpc_bottom_half for {'exchange.declare_ok'}
+</I>&gt;<i> Declared exchange &lt;&lt;&quot;emf_test&quot;&gt;&gt; using ticket 101
+</I>&gt;<i> Declaring queue &lt;&lt;&quot;EMF_TEST_Q.1&quot;&gt;&gt;
+</I>&gt;<i> [&lt;0.117.0&gt;] Calling rpc_bottom_half for {'queue.declare_ok',
+</I>&gt;<i>                                          &lt;&lt;&quot;EMF_TEST_Q.1&quot;&gt;&gt;,0,0}
+</I>&gt;<i> Declared queue &lt;&lt;&quot;EMF_TEST_Q.1&quot;&gt;&gt;, msgc = 0, cons_c = 0
+</I>&gt;<i> Declaring queue &lt;&lt;&quot;EMF_TEST_Q.2&quot;&gt;&gt;
+</I>&gt;<i> [&lt;0.117.0&gt;] Calling rpc_bottom_half for {'queue.declare_ok',
+</I>&gt;<i>                                          &lt;&lt;&quot;EMF_TEST_Q.2&quot;&gt;&gt;,0,0}
+</I>&gt;<i> Declared queue &lt;&lt;&quot;EMF_TEST_Q.2&quot;&gt;&gt;, msgc = 0, cons_c = 0
+</I>&gt;<i> Binding queue &lt;&lt;&quot;EMF_TEST_Q.1&quot;&gt;&gt;, ticket 101, exchange  
+</I>&gt;<i> &lt;&lt;&quot;emf_test&quot;&gt;&gt;, routing key &lt;&lt;&quot;EMF_TEST_Q.1&quot;&gt;&gt;
+</I>&gt;<i> [&lt;0.117.0&gt;] Calling rpc_bottom_half for {'queue.bind_ok'}
+</I>&gt;<i> Bound queue &lt;&lt;&quot;EMF_TEST_Q.1&quot;&gt;&gt; to exchange &lt;&lt;&quot;emf_test&quot;&gt;&gt;
+</I>&gt;<i> Binding queue &lt;&lt;&quot;EMF_TEST_Q.2&quot;&gt;&gt;, ticket 101, exchange  
+</I>&gt;<i> &lt;&lt;&quot;emf_test&quot;&gt;&gt;, routing key &lt;&lt;&quot;EMF_TEST_Q.2&quot;&gt;&gt;
+</I>&gt;<i> [&lt;0.117.0&gt;] Calling rpc_bottom_half for {'queue.bind_ok'}
+</I>&gt;<i> Bound queue &lt;&lt;&quot;EMF_TEST_Q.2&quot;&gt;&gt; to exchange &lt;&lt;&quot;emf_test&quot;&gt;&gt;
+</I>&gt;<i> Environment setup complete, rmq_state =
+</I>&gt;<i> {rmq_state,&quot;guest&quot;,&quot;guest&quot;,
+</I>&gt;<i>            {&lt;0.112.0&gt;,network},
+</I>&gt;<i>            &lt;0.117.0&gt;,101,&lt;&lt;&quot;emf_test&quot;&gt;&gt;,&lt;&lt;&quot;/data&quot;&gt;&gt;,&lt;&lt;&quot;/emf_test&quot;&gt;&gt;,
+</I>&gt;<i>            <A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at ender</A>,2,
+</I>&gt;<i>            [&lt;&lt;&quot;EMF_TEST_Q.1&quot;&gt;&gt;,&lt;&lt;&quot;EMF_TEST_Q.2&quot;&gt;&gt;],
+</I>&gt;<i>            undefined,undefined}
+</I>&gt;<i> Consumers started: [&lt;0.121.0&gt;,&lt;0.122.0&gt;]
+</I>&gt;<i> [&lt;0.121.0&gt;] Started consumer tag &lt;&lt;&quot;EMF_TEST_Q.1&quot;&gt;&gt; for existing  
+</I>&gt;<i> channel/ticket/queue &lt;0.117.0&gt;/101/&lt;&lt;&quot;EMF_TEST_Q.1&quot;&gt;&gt;
+</I>&gt;<i> [&lt;0.122.0&gt;] Started consumer tag &lt;&lt;&quot;EMF_TEST_Q.2&quot;&gt;&gt; for existing  
+</I>&gt;<i> channel/ticket/queue &lt;0.117.0&gt;/101/&lt;&lt;&quot;EMF_TEST_Q.2&quot;&gt;&gt;
+</I>&gt;<i> Producer started: &lt;0.123.0&gt;
+</I>&gt;<i> [&lt;0.121.0&gt;] Subscribing consumer &lt;&lt;&quot;EMF_TEST_Q.1&quot;&gt;&gt; to channel  
+</I>&gt;<i> &lt;0.117.0&gt;
+</I>&gt;<i> [&lt;0.122.0&gt;] Subscribing consumer &lt;&lt;&quot;EMF_TEST_Q.2&quot;&gt;&gt; to channel  
+</I>&gt;<i> &lt;0.117.0&gt;
+</I>&gt;<i> &lt;0.120.0&gt;
+</I>&gt;<i> [&lt;0.122.0&gt;] subscribing: Response from amqp_channel:call  
+</I>&gt;<i> consumer_tag = &lt;&lt;&quot;EMF_TEST_Q.1&quot;&gt;&gt; from channel &lt;0.117.0&gt;
+</I>&gt;<i> [&lt;0.122.0&gt;] received consume_ok: Actual tag: &lt;&lt;&quot;EMF_TEST_Q.1&quot;&gt;&gt;  
+</I>&gt;<i> Expected Tag: &lt;&lt;&quot;EMF_TEST_Q.2&quot;&gt;&gt;
+</I>&gt;<i> Consumer tag &lt;&lt;&quot;EMF_TEST_Q.2&quot;&gt;&gt; pid &lt;0.122.0&gt; unsubscribing
+</I>&gt;<i> Unsubscribing consumer &lt;&lt;&quot;EMF_TEST_Q.2&quot;&gt;&gt; from channel &lt;0.117.0&gt;
+</I>&gt;<i> (<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">xhg at ender</A>)9&gt;
+</I>&gt;<i> =ERROR REPORT==== 8-May-2008::16:53:43 ===
+</I>&gt;<i> ** Generic server &lt;0.117.0&gt; terminating
+</I>&gt;<i> ** Last message in was {method,{'basic.consume_ok',&lt;&lt;&quot;EMF_TEST_Q. 
+</I>&gt;<i> 2&quot;&gt;&gt;},none}
+</I>&gt;<i> ** When Server state == {channel_state, 
+</I>&gt;<i> 1,&lt;0.112.0&gt;,&lt;0.114.0&gt;,&lt;0.118.0&gt;,false,
+</I>&gt;<i>                             #Fun&lt;amqp_network_driver.do.2&gt;,
+</I>&gt;<i>                             #Fun&lt;amqp_network_driver.do. 
+</I>&gt;<i> 3&gt;,&lt;&lt;&gt;&gt;,&lt;&lt;&gt;&gt;,false,
+</I>&gt;<i>                             undefined,
+</I>&gt;<i>                             {dict,1,16,16,8,80,48,
+</I>&gt;<i>                                 {[],[],[],[],[],[],[],[],[],[],[],[], 
+</I>&gt;<i> [],[],[],
+</I>&gt;<i>                                  []},
+</I>&gt;<i>                                 {{[],[],[],[],[],[],[],[],
+</I>&gt;<i>                                   [[&lt;&lt;&quot;EMF_TEST_Q.1&quot;&gt;&gt;|&lt;0.122.0&gt;]],
+</I>&gt;<i>                                   [],[],[],[],[],[],[]}}}}
+</I>&gt;<i> ** Reason for termination ==
+</I>&gt;<i> ** {badarg,[{amqp_channel,handle_method,2},
+</I>&gt;<i>             {gen_server,handle_msg,5},
+</I>&gt;<i>             {proc_lib,init_p,5}]}
+</I>&gt;<i>
+</I>
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: <A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20080508/de442ed9/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20080508/de442ed9/attachment.htm</A> 
+-------------- next part --------------
+A non-text attachment was scrubbed...
+Name: erlang-client-src-mod-by-edwin-fine.tar.gz
+Type: application/x-gzip
+Size: 12850 bytes
+Desc: not available
+Url : <A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20080508/de442ed9/attachment.bin">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20080508/de442ed9/attachment.bin</A> 
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: <A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20080508/de442ed9/attachment-0001.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20080508/de442ed9/attachment-0001.htm</A> 
+-------------- next part --------------
+A non-text attachment was scrubbed...
+Name: test-src-edwin-fine.tar.gz
+Type: application/x-gzip
+Size: 5651 bytes
+Desc: not available
+Url : <A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20080508/de442ed9/attachment-0001.bin">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20080508/de442ed9/attachment-0001.bin</A> 
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: <A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20080508/de442ed9/attachment-0002.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20080508/de442ed9/attachment-0002.htm</A> 
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000848.html">[rabbitmq-discuss] Channel crashes after basic.cancel_ok.
+</A></li>
+	<LI>Next message: <A HREF="000814.html">[rabbitmq-discuss] More RabbitMQ Erlang client woes
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#811">[ date ]</a>
+              <a href="thread.html#811">[ thread ]</a>
+              <a href="subject.html#811">[ subject ]</a>
+              <a href="author.html#811">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

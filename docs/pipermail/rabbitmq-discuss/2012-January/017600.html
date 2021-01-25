@@ -1,0 +1,187 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Architecture Question: 2 Brokers, or Not 2 Brokers ?
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Architecture%20Question%3A%202%20Brokers%2C%0A%20or%20Not%202%20Brokers%20%3F&In-Reply-To=%3C33191832.post%40talk.nabble.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="017591.html">
+   <LINK REL="Next"  HREF="017601.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Architecture Question: 2 Brokers, or Not 2 Brokers ?</H1>
+    <B>dnsplus</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Architecture%20Question%3A%202%20Brokers%2C%0A%20or%20Not%202%20Brokers%20%3F&In-Reply-To=%3C33191832.post%40talk.nabble.com%3E"
+       TITLE="[rabbitmq-discuss] Architecture Question: 2 Brokers, or Not 2 Brokers ?">developer at dnsplus.net
+       </A><BR>
+    <I>Mon Jan 23 22:57:44 GMT 2012</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="017591.html">[rabbitmq-discuss] Architecture Question: 2 Brokers, or Not 2 Brokers ?
+</A></li>
+        <LI>Next message: <A HREF="017601.html">[rabbitmq-discuss] Architecture Question: 2 Brokers, or Not 2 Brokers ?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#17600">[ date ]</a>
+              <a href="thread.html#17600">[ thread ]</a>
+              <a href="subject.html#17600">[ subject ]</a>
+              <a href="author.html#17600">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>
+
+
+simone_b wrote:
+&gt;<i> 
+</I>&gt;<i> Hi dns, I'll try to bring my own experience on the subject. When you
+</I>&gt;<i> federate exchanges between brokers you are in the loose sense having the
+</I>&gt;<i> downstream exchange acting as a consumer for the upstream exchange. I may
+</I>&gt;<i> have misunderstood you but I think that having 8000 brokers rather 8000
+</I>&gt;<i> remote consumers on the central broker doesn't solve the consistency
+</I>&gt;<i> problem you are describing.
+</I>&gt;<i> 
+</I>&gt;<i> Let's make an example with federated brokers on the happy path:
+</I>&gt;<i> 
+</I>&gt;<i>    1. One message is published on the upstream exchange and reaches the
+</I>&gt;<i>    downstream exchange, and in turn the queue and then the consumer on the
+</I>&gt;<i>    downstream broker
+</I>&gt;<i>    2. The downstream broker confirms the message to the upstream broker so
+</I>&gt;<i>    the upstream broker can forget about it
+</I>&gt;<i>    3. The connection between the brokers goes down
+</I>&gt;<i>    4. The consumer on the downstream broker processes the message,
+</I>&gt;<i>    acknowledges it and everyone's happy
+</I>&gt;<i> 
+</I>&gt;<i> Here's the sad path with federated brokers:
+</I>&gt;<i> 
+</I>&gt;<i>    1. same as above
+</I>&gt;<i>    2. The connection between the brokers is lost before the downstream can
+</I>&gt;<i>    confirm the message to the upstream (unlikely, but can definitely
+</I>&gt;<i> happen)
+</I>&gt;<i>    3. The consumer on the downstream broker processes the message and
+</I>&gt;<i>    acknowledges it to its local broker
+</I>&gt;<i>    4. The connection between the two brokers is restored, and thus the
+</I>&gt;<i>    upstream will resend the unconfirmed messages once again
+</I>&gt;<i>    5. The consumer on the downstream will receive the same message it has
+</I>&gt;<i>    already consumed, therefore it will need a way to deduplicate it
+</I>&gt;<i> 
+</I>&gt;<i> Now the safe path with just the central broker:
+</I>&gt;<i> 
+</I>&gt;<i>    1. One message is published on the central broker and reaches a remote
+</I>&gt;<i>    consumers
+</I>&gt;<i>    2. The consumer processes the message but the connection to the central
+</I>&gt;<i>    broker will go down before it can ack the message
+</I>&gt;<i>    3. Once the connection is restored the consumer will receive the
+</I>&gt;<i> unacked
+</I>&gt;<i>    message again, so also in this case it will need to deduplicate it
+</I>&gt;<i> 
+</I>&gt;<i> Some observations:
+</I>&gt;<i> 
+</I>&gt;<i>    - in any case your consumer will need to be somewhat aware of the fact
+</I>&gt;<i>    that it is quite distant from the original broker and cope with what
+</I>&gt;<i> this
+</I>&gt;<i>    implies in some way (message duplication, for one)
+</I>&gt;<i>    - with the central broker the remote consumers will have to handle
+</I>&gt;<i>    connection failures themselves, something which is less likely to
+</I>&gt;<i> happen
+</I>&gt;<i>    with a local broker, although not impossible of course. This is handled
+</I>&gt;<i> by
+</I>&gt;<i>    the federation plugin in case of federated brokers instead
+</I>&gt;<i>    - Having 8000 brokers rather than 8000 consumers is going to require
+</I>&gt;<i>    quite some maintenance, and I'm not sure how well the federation plugin
+</I>&gt;<i>    RabbitMQ can handle that, I am under the impression that it was not
+</I>&gt;<i>    designed for this many federated exchanges, but I may be wrong
+</I>&gt;<i>    - You mention synchronicity between the central location and the remote
+</I>&gt;<i>    consumers. Consider that even if you federate brokers and you see all
+</I>&gt;<i>    messages delivered and acked on the federation queues, it doesn't tell
+</I>&gt;<i> you
+</I>&gt;<i>    anything about whether the remote consumers have processed the messages
+</I>&gt;<i> or
+</I>&gt;<i>    not
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>
+Thank you for all this. If I were inclined to use central and remote
+exchanges/brokers, then SHOVEL is the missing piece I have been looking for.
+However ... oh, the overhead with maintaining it all !
+
+I suppose I am inclined to go with a Central Broker and have remote
+consumers, and was wondering if someone might convince me otherwise.
+However, this has not yet happened. 
+
+Seeing as how my application is more of a &quot;task distribution and management
+system&quot; where all sites are processing the same tasks (with RabbitMQ making
+sure that the tasks are received), it has occurred to me that I might want a
+database component at the central data center as well. I am working on a
+conceptual workflow to flush this idea out.
+
+I keep coming back around to keeping as much intelligence as possible at
+Central, and keeping the consumer side as lean as I can. 
+
+Thoughts ?
+
+
+-- 
+View this message in context: <A HREF="http://old.nabble.com/Architecture-Question%3A-2-Brokers%2C-or-Not-2-Brokers---tp33189279p33191832.html">http://old.nabble.com/Architecture-Question%3A-2-Brokers%2C-or-Not-2-Brokers---tp33189279p33191832.html</A>
+Sent from the RabbitMQ mailing list archive at Nabble.com.
+
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="017591.html">[rabbitmq-discuss] Architecture Question: 2 Brokers, or Not 2 Brokers ?
+</A></li>
+	<LI>Next message: <A HREF="017601.html">[rabbitmq-discuss] Architecture Question: 2 Brokers, or Not 2 Brokers ?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#17600">[ date ]</a>
+              <a href="thread.html#17600">[ thread ]</a>
+              <a href="subject.html#17600">[ subject ]</a>
+              <a href="author.html#17600">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

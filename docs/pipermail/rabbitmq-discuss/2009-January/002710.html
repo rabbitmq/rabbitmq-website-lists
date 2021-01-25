@@ -1,0 +1,148 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] RabbitMQ experience
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20RabbitMQ%20experience&In-Reply-To=497E44F8.9050007%40lshift.net">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002706.html">
+   <LINK REL="Next"  HREF="002716.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] RabbitMQ experience</H1>
+    <B>Martin Sustrik</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20RabbitMQ%20experience&In-Reply-To=497E44F8.9050007%40lshift.net"
+       TITLE="[rabbitmq-discuss] RabbitMQ experience">sustrik at imatix.com
+       </A><BR>
+    <I>Tue Jan 27 07:45:46 GMT 2009</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002706.html">[rabbitmq-discuss] RabbitMQ experience
+</A></li>
+        <LI>Next message: <A HREF="002716.html">[rabbitmq-discuss] RabbitMQ experience
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2710">[ date ]</a>
+              <a href="thread.html#2710">[ thread ]</a>
+              <a href="subject.html#2710">[ subject ]</a>
+              <a href="author.html#2710">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Matthias, Gordon,
+
+&gt;<i> It is actually surprisingly difficult to determine the *maximum* 
+</I>&gt;<i> sustainable throughput that way.
+</I>
+That's because there's no such thing as maximum throughput. Frankly, 
+from methodological point of view the metric is completely broken. 
+Still, we have to measure it because people expect us to do so.
+
+&gt;<i> My experiments have shown that in a 
+</I>&gt;<i> test where the feedback loop ensures a constant lag (the number of 
+</I>&gt;<i> messages &quot;in flight&quot;, i.e. the difference between the number of messages 
+</I>&gt;<i> sent by the producer and received by the consumer), plotting the lag vs 
+</I>&gt;<i> throughput exhibits some peculiar characteristics:
+</I>
+The problem here is that the throughput has to be measured at a _single_ 
+point of the flow. Trying to measure throughput between point A and 
+point B gives some strange metric that is half throughput and half 
+latency. Think of a river. You can measure the flow rate of Danube 
+(m^3/s) in Vienna, you can measure the flow rate in Budapest, but 
+there's no such way as &quot;flow rate between Vienna and Budapest&quot;.
+
+&gt;<i> - there are local maxima, due to buffering and other effects
+</I>
+The maxima are inherent to the methodology. To compute throughput you 
+have to do a rolling average over the data. The smaller the window for 
+rolling average (and more fine grained the view of the data) the more 
+peaky it is. With window size approaching 1, high peaks approach 
+infinity while low peaks approach zero.
+
+&gt;<i> - the graph is very sensitive to the setup
+</I>
+Yes. Confirmed. There's very little point in presenting throughput 
+results to users as any little change in customer's setup can shift the 
+actual figures by 50% or so.
+
+&gt;<i> - the graph changes over time, due in part to the effects of JITs
+</I>&gt;<i> 
+</I>&gt;<i> - sampling intervals have to be very long to get anything approaching 
+</I>&gt;<i> reproducible results
+</I>
+We are using sampling intervals of 10,000,000-100,000,000 messages to 
+keep the test quick and what we see is that results differ by up to 20% 
+- even though dedicated non-switched link and real-time OS are used, 
+whole quad-core CPU is shielded for the test, scheduling is set to FIFO etc.
+
+&gt;<i> And all that happens when the feedback loop has been minimised by 
+</I>&gt;<i> colocating the producer and consumer in the same O/S process and using 
+</I>&gt;<i> internal message passing for the feedback. Routing the feedback through 
+</I>&gt;<i> the broker would make the results even more unpredictable.
+</I>
+Yes, the &quot;broken methodology&quot; problem applies even in a single process. 
+Actually, passing messages between two threads may prove to be even more 
+peaky as the timeslices assigned to a thread by OS are non-continuous by 
+design and thus messages tend to processed in bursts.
+
+&gt;<i> That's why so far the goal of writing a &quot;press a button and get the 
+</I>&gt;<i> maximum throughput figure&quot; test has eluded us. Coming up with a test 
+</I>&gt;<i> that delivers results with a +/-20% accuracy isn't too hard. But that is 
+</I>&gt;<i> far too insensitive for performance regression tests, where we are 
+</I>&gt;<i> interested in spotting variations of as little as 2%.
+</I>
+On more reason why &quot;maximal throughput&quot; metric is broken: It's often 
+considered obvious that if maximal throughput is 200,000 msgs/sec, the 
+system will be able to handle 100,000 msgs/sec. This may not be true. 
+For example, when ingress rate is 200,000 msgs/sec system may be able to 
+do some batching that will reduce number of packets on the network. With 
+100,000 msgs/sec the ingress can be too slow to trigger batching 
+mechanism and each message will be sent as a separate packet overloading 
+the network stack. The consequence is that you'll experience no latency 
+problems at the rate 200,000 msgs/sec, but messages may be delayed at 
+100,000 msgs/sec.
+
+Given all the methodological problems above and many more I haven't even 
+mentioned lead us to use a different metric internally. We call it 
+&quot;message density&quot; (1/lambda for those familiar with Erlang's work). It's 
+a time interval between two subsequent messages at a single point of the 
+network. The metric proved to be very stable and the tests are suddenly 
+reproducible :) Also, performance results make much more sense when 
+measured using density metric. Check following two graphs:
+
+<A HREF="http://www.zeromq.org/results:0mq-tests-v03#toc4">http://www.zeromq.org/results:0mq-tests-v03#toc4</A>
+
+First of them uses &quot;throughput&quot; metric, second one &quot;density&quot; metric. 
+Even on first sight it's obvious that the &quot;density&quot; communicates more 
+stable and predictable info about the behaviour of the system.
+
+Sorry for such a long email, but we've messed with measurement 
+methodology for at least a year so I have strong opinions on it.
+
+Martin
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002706.html">[rabbitmq-discuss] RabbitMQ experience
+</A></li>
+	<LI>Next message: <A HREF="002716.html">[rabbitmq-discuss] RabbitMQ experience
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2710">[ date ]</a>
+              <a href="thread.html#2710">[ thread ]</a>
+              <a href="subject.html#2710">[ subject ]</a>
+              <a href="author.html#2710">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

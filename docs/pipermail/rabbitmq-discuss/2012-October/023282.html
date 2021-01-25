@@ -1,0 +1,170 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Channel thread-safety
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Channel%20thread-safety&In-Reply-To=%3C508671A5.6050007%40rabbitmq.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="023263.html">
+   <LINK REL="Next"  HREF="023283.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Channel thread-safety</H1>
+    <B>Tim Watson</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Channel%20thread-safety&In-Reply-To=%3C508671A5.6050007%40rabbitmq.com%3E"
+       TITLE="[rabbitmq-discuss] Channel thread-safety">tim at rabbitmq.com
+       </A><BR>
+    <I>Tue Oct 23 11:29:57 BST 2012</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="023263.html">[rabbitmq-discuss] Channel thread-safety
+</A></li>
+        <LI>Next message: <A HREF="023283.html">[rabbitmq-discuss] Channel thread-safety
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#23282">[ date ]</a>
+              <a href="thread.html#23282">[ thread ]</a>
+              <a href="subject.html#23282">[ subject ]</a>
+              <a href="author.html#23282">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Actually, that's not quite right. Channels *are* thread safe in the 
+java-client, and can be shared across multiple threads if you wish. As 
+the Java client API documentation 
+(<A HREF="http://www.rabbitmq.com/api-guide.html">http://www.rabbitmq.com/api-guide.html</A>) states however:
+
+&quot;Channel instances are safe for use by multiple threads. Requests into a 
+Channel are serialized, with only one thread being able to run a command 
+on the Channel at a time. Even so, applications should prefer using a 
+Channel per thread instead of sharing the same Channel across multiple 
+threads.&quot;
+
+In other words, because the transmission of AMQP commands via a given 
+Channel is serialised, there is probably little or no benefit in sharing 
+the channel between threads.
+
+Unfortunately, whilst we've updated the documentation on the website to 
+reflect this change (which was merged in September 2011 and released in 
+2.7.0) we appear to have missed the javadocs for the Channel class - I 
+will get that fixed asap so as to avoid any further confusion!
+
+Cheers,
+Tim
+
+On 10/23/2012 02:08 AM, Laurent Vauthrin wrote:
+&gt;<i> Thanks for clearing that up!
+</I>&gt;<i>
+</I>&gt;<i> On Mon, Oct 22, 2012 at 3:46 PM, Michael Klishin 
+</I>&gt;<i> &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">michael.s.klishin at gmail.com</A> &lt;mailto:<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">michael.s.klishin at gmail.com</A>&gt;&gt; wrote:
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>     2012/10/22 Laurent Vauthrin &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">lvauthrin at gmail.com</A>
+</I>&gt;<i>     &lt;mailto:<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">lvauthrin at gmail.com</A>&gt;&gt;
+</I>&gt;<i>
+</I>&gt;<i>         My questions are:
+</I>&gt;<i>         1. Should we be using a channel per thread considering that
+</I>&gt;<i>         we're synchronizing the basicPublish call anyway?
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>     Yes. Channels are just integer on the wire and a little bit of
+</I>&gt;<i>     memory allocated on the JVM heap. They are very cheap
+</I>&gt;<i>     for all intents and purposes and you are much more likely to max
+</I>&gt;<i>     out your OS and hardware resources (assuming 1 channel per JVM
+</I>&gt;<i>     thread) before
+</I>&gt;<i>     you run into issues with channel objects.
+</I>&gt;<i>
+</I>&gt;<i>         2. Can we just share one channel across all threads and not
+</I>&gt;<i>         synchronize the call to basicPublish?
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>     No. The real issue with shared channels is that large messages
+</I>&gt;<i>     will result in multiple protocol frames being sent
+</I>&gt;<i>     for a single basicPublish operation. When publishing on the same
+</I>&gt;<i>     channel from multiple threads, this may result
+</I>&gt;<i>     in frames being delivered out of order:
+</I>&gt;<i>
+</I>&gt;<i>     T1 =&gt; basicPublish =&gt; [Frame11] [Frame12] [Frame13]
+</I>&gt;<i>     T2 =&gt; basicPublish =&gt; [Frame21] [Frame22] [Frame23]
+</I>&gt;<i>
+</I>&gt;<i>     may result in the following delivery order, all on the same channel:
+</I>&gt;<i>
+</I>&gt;<i>     [Frame11][Frame21][Frame12][Frame13][Frame22][Frame23]
+</I>&gt;<i>
+</I>&gt;<i>     and because all frames are on the same channel, RabbitMQ won't be
+</I>&gt;<i>     able to tell how to reconstruct your messages.
+</I>&gt;<i>     -- 
+</I>&gt;<i>     MK
+</I>&gt;<i>
+</I>&gt;<i>     <A HREF="http://github.com/michaelklishin">http://github.com/michaelklishin</A>
+</I>&gt;<i>     <A HREF="http://twitter.com/michaelklishin">http://twitter.com/michaelklishin</A>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>     _______________________________________________
+</I>&gt;<i>     rabbitmq-discuss mailing list
+</I>&gt;<i>     <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;<i>     &lt;mailto:<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>&gt;
+</I>&gt;<i>     <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20121023/5eefd15e/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20121023/5eefd15e/attachment.htm</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="023263.html">[rabbitmq-discuss] Channel thread-safety
+</A></li>
+	<LI>Next message: <A HREF="023283.html">[rabbitmq-discuss] Channel thread-safety
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#23282">[ date ]</a>
+              <a href="thread.html#23282">[ thread ]</a>
+              <a href="subject.html#23282">[ subject ]</a>
+              <a href="author.html#23282">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

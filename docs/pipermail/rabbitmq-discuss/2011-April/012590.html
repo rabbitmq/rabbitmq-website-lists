@@ -1,0 +1,260 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Message Aggregating Queue
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Message%20Aggregating%20Queue&In-Reply-To=%3CEB18BEAA-7A85-465A-A198-4503157D048D%40gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="012567.html">
+   <LINK REL="Next"  HREF="012597.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Message Aggregating Queue</H1>
+    <B>Alvaro Videla</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Message%20Aggregating%20Queue&In-Reply-To=%3CEB18BEAA-7A85-465A-A198-4503157D048D%40gmail.com%3E"
+       TITLE="[rabbitmq-discuss] Message Aggregating Queue">videlalvaro at gmail.com
+       </A><BR>
+    <I>Thu Apr 28 13:13:48 BST 2011</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="012567.html">[rabbitmq-discuss] Message Aggregating Queue
+</A></li>
+        <LI>Next message: <A HREF="012597.html">[rabbitmq-discuss] Message Aggregating Queue
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#12590">[ date ]</a>
+              <a href="thread.html#12590">[ thread ]</a>
+              <a href="subject.html#12590">[ subject ]</a>
+              <a href="author.html#12590">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi Guys,
+
+I spent sometime last night reading the RabbitMQ implementation of Exchanges/Queues. This are my conclusions/ideas:
+
+1) I wanted to have something like what Tim replied, that is, some sort of K/V queue, that just updates whatever there is for key *abc*. So in that way you always get the latest value in the consumer and all the others discarded.
+
+To achieve that we could change the value for *backing_queue_module* on the .app file. Problem is that value is global on the server, which means we could only use this new type of queue, but not the default one (Please correct me if I'm wrong). On that matter I've checked RabbitMQ's code to see if there could be an extension to the protocol where on queue declaration we could specify the module implementation for the queue, that is the *backing_queue_module*. 
+
+Then, the value passed on declaration could be stored in Mnesia by augmenting the #amqqueue{} record with a new filed like *module* or something like that. So by default that value would be *rabbit_variable_queue* else the value specified on queue.declare. 
+
+Problem is the function rabbit_amqqueue:stop/0 on this particular code snippet:     
+		
+		{ok, BQ} = application:get_env(rabbit, backing_queue_module),
+		ok = BQ:stop().
+
+Since there we have no access to the #amqqueue{} record, it's not possible to get the BQ variable bound to something meaningful. Also, If I'm not mistaken the only place where rabbit_amqqueue:stop/0 is called is from one of the tests, if that's right, then is just a matter of modifying the test.
+
+So in short, I think is possible to extend the protocol so during 'queue.declare' we could specify which kind of queue we want. That information could be stored in Mnesia using the #amqqueue{} record. The new queue module will have to implement the rabbit_backing_queue behaviour. Since for this particular use case the messages could be kept just in memory, I think the implementation shouldn't get to complex.
+
+2) Another way of implementing this could be with a custom exchange:
+
+The exchange will get the message, will purge the queue, and will publish the message. I know this is *hackish* but should work. Problem is as Jon Brisbin stated in another thread, that we don't have the Queues Pids when routing messages on the custom exchange interface. 
+
+3) Regarding the problem of calculating the average/aggregation and flushing the proper message to the consumers once it finishes with the message that is processing, I think that could be implemented as another queue type too. We could also configure aggregation function callbacks for each kind of queue/message.
+
+I hope this helps and that I didn't went too crazy at some points :)
+
+Cheers,
+
+Alvaro
+
+On Apr 28, 2011, at 11:18 AM, Tim Fox wrote:
+
+&gt;<i> On 28/04/11 10:06, Alexis Richardson wrote:
+</I>&gt;&gt;<i> Jason
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;<i> Interesting stuff :-)
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;<i> Prior discussions on this subject have tended to the view that the
+</I>&gt;&gt;<i> exchange is the best place to cache a 'last value'.
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;<i> In your example below, the way to identify that #1 and #3 refer to the
+</I>&gt;&gt;<i> same stock would be to use the stock ticker (eg &quot;UBS&quot;) as the routing
+</I>&gt;&gt;<i> key in a direct exchange.
+</I>&gt;<i> Other systems that implement &quot;last value queues&quot;, that I know of, HornetQ and Qpid do it by having a special &quot;queue&quot; type which doesn't actually queue anything, but instead maintains a map of value_key =&gt; message
+</I>&gt;<i> 
+</I>&gt;<i> As new messages arrive with the same value of value_key they are put into the map, overwriting any previous value for that same key.
+</I>&gt;<i> 
+</I>&gt;<i> The value_key is passed in the message in a header with a well known name.
+</I>&gt;<i> 
+</I>&gt;<i> This is actually very simple to implement and doesn't require you to route things in special ways.
+</I>&gt;&gt;<i> See for example this prototype: <A HREF="https://github.com/squaremo/rabbitmq-lvc-plugin">https://github.com/squaremo/rabbitmq-lvc-plugin</A>
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;<i> An aggregation capability is also doable but it's not obvious what the
+</I>&gt;&gt;<i> best way to do it is.  It depends whether aggregate messages are the
+</I>&gt;&gt;<i> same type as their constituents.  If they are not, as in your example,
+</I>&gt;&gt;<i> then you might want to republish a new aggregate message whenever
+</I>&gt;&gt;<i> something changes, and then cache aggregates using the LVC approach.
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;<i> alexis
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;<i> On Thu, Apr 28, 2011 at 9:28 AM, Jason Zaugg&lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">jzaugg at gmail.com</A>&gt;  wrote:
+</I>&gt;&gt;&gt;<i> Among other things, we're using RabbitMQ to distribute market data
+</I>&gt;&gt;&gt;<i> ticks. The interesting characteristic about this stream of messages is
+</I>&gt;&gt;&gt;<i> that a new tick for a obsoletes previous, unprocessed, ticks for the
+</I>&gt;&gt;&gt;<i> same stock.
+</I>&gt;&gt;&gt;<i> 
+</I>&gt;&gt;&gt;<i> After a little brainstorming last night with Alvaro Videla, I'm
+</I>&gt;&gt;&gt;<i> curious to discuss how this could be modeled with an extension to
+</I>&gt;&gt;&gt;<i> RabbitMQ.
+</I>&gt;&gt;&gt;<i> 
+</I>&gt;&gt;&gt;<i> It seems a similar problem to the Queue Based TTL [1], however TTL
+</I>&gt;&gt;&gt;<i> isn't quite right for this case, as the validity period of a tick
+</I>&gt;&gt;&gt;<i> depends on the liquidity of the stock. We really just want the
+</I>&gt;&gt;&gt;<i> *latest* tick.
+</I>&gt;&gt;&gt;<i> 
+</I>&gt;&gt;&gt;<i> Assume a message stream:
+</I>&gt;&gt;&gt;<i> 
+</I>&gt;&gt;&gt;<i> 1. Tick { stock = &quot;UBS&quot;, bid = 12.3 }   RK=&quot;tick.UBS&quot;
+</I>&gt;&gt;&gt;<i> 2. Tick { stock = &quot;ABB&quot;, bid = 15.3 }  RK=&quot;tick.ABB&quot;
+</I>&gt;&gt;&gt;<i> 3. Tick { stock = &quot;UBS&quot;, bid = 12.28 } RK=&quot;tick.UBS&quot;
+</I>&gt;&gt;&gt;<i> 
+</I>&gt;&gt;&gt;<i> These are sent to a fanout exchange, and on to a queue(s) for a
+</I>&gt;&gt;&gt;<i> Consumer(s). Assume that consumer is slow, and the messages are not
+</I>&gt;&gt;&gt;<i> processed immediately. Rather than just en queuing message #3, I would
+</I>&gt;&gt;&gt;<i> like to insert it in place of message #1.
+</I>&gt;&gt;&gt;<i> 
+</I>&gt;&gt;&gt;<i> This has the nice property that the broker won't overrun with messages
+</I>&gt;&gt;&gt;<i> if the consumer can't keep up; and that the consumer doesn't do work
+</I>&gt;&gt;&gt;<i> that is obsolete.
+</I>&gt;&gt;&gt;<i> 
+</I>&gt;&gt;&gt;<i> What would be the suitable way to identify that #1 and #3 refer to the
+</I>&gt;&gt;&gt;<i> same stock? Is the routing key of message #1 retained after it has
+</I>&gt;&gt;&gt;<i> been en queued?
+</I>&gt;&gt;&gt;<i> 
+</I>&gt;&gt;&gt;<i> An generalization of this would be to provide a function that takes
+</I>&gt;&gt;&gt;<i> the old and new message and combines them into an aggregated message.
+</I>&gt;&gt;&gt;<i> For example, we might want to track the latest, min and max:
+</I>&gt;&gt;&gt;<i> 
+</I>&gt;&gt;&gt;<i>  AggregatedTick { stock = &quot;UBS&quot;, latestBid = 12.28 minBid=12.28 maxBid=12.30 }
+</I>&gt;&gt;&gt;<i> 
+</I>&gt;&gt;&gt;<i> So, does this sound sensible and possible?
+</I>&gt;&gt;&gt;<i> 
+</I>&gt;&gt;&gt;<i> -jason
+</I>&gt;&gt;&gt;<i> 
+</I>&gt;&gt;&gt;<i> [1] <A HREF="http://www.rabbitmq.com/extensions.html#queue-ttl">http://www.rabbitmq.com/extensions.html#queue-ttl</A>
+</I>&gt;&gt;&gt;<i> _______________________________________________
+</I>&gt;&gt;&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;&gt;&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;&gt;&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>&gt;&gt;&gt;<i> 
+</I>&gt;&gt;<i> _______________________________________________
+</I>&gt;&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>&gt;<i> 
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>
+Sent form my Nokia 1100
+
+
+
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="012567.html">[rabbitmq-discuss] Message Aggregating Queue
+</A></li>
+	<LI>Next message: <A HREF="012597.html">[rabbitmq-discuss] Message Aggregating Queue
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#12590">[ date ]</a>
+              <a href="thread.html#12590">[ thread ]</a>
+              <a href="subject.html#12590">[ subject ]</a>
+              <a href="author.html#12590">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

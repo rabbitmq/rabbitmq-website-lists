@@ -1,0 +1,125 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Reliable way to get number of messages in a	queue
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20Reliable%20way%20to%20get%20number%20of%20messages%20in%20a%0A%09queue&In-Reply-To=407fa4640911181010o27d298bbl1abb2025e7197ac3%40mail.gmail.com">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="005477.html">
+   <LINK REL="Next"  HREF="005503.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Reliable way to get number of messages in a	queue</H1>
+    <B>Michael Nacos</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20Reliable%20way%20to%20get%20number%20of%20messages%20in%20a%0A%09queue&In-Reply-To=407fa4640911181010o27d298bbl1abb2025e7197ac3%40mail.gmail.com"
+       TITLE="[rabbitmq-discuss] Reliable way to get number of messages in a	queue">m.nacos at gmail.com
+       </A><BR>
+    <I>Thu Nov 19 16:08:52 GMT 2009</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="005477.html">[rabbitmq-discuss] Reliable way to get number of messages in a	queue
+</A></li>
+        <LI>Next message: <A HREF="005503.html">[rabbitmq-discuss] Reliable way to get number of messages in a queue
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#5494">[ date ]</a>
+              <a href="thread.html#5494">[ thread ]</a>
+              <a href="subject.html#5494">[ subject ]</a>
+              <a href="author.html#5494">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Thanks again for your help.
+
+I have changed our polling strategy to read the message count from
+queue.declare, it makes more sense, obviously. I am using the Erlang client
+for the polling process. Previous answers such as 'not supported by the
+protocol' had put me in a 'dirty'-solution mindset, which explains the
+initial polling strategy (I used the first thing I had seen which gave me
+that sort of information).
+
+The problem, as you have guessed already, is the number we really want is
+messages_unacknowledged. The number I get from the message count is
+messages_ready. I have been trying to make a producer process self-regulate
+its firing rate in case the consumers are not keeping up (to avoid ram
+exhaustion until the new persister comes along -- sorry Matthew :-)
+
+Our Java consumers re-use their channels and consume messages 'by
+subscription' (it's obviously a better approach) without disconnecting at
+any point while the system is running. When even a single consumer connects
+to the queue in question (it's a multiple consumers for a single queue
+round-robin scenario) in this mode, all 'ready' messages become
+'unacknowledged' messages, even though there is no way our Java threads have
+processed them this fast (do the messages go into an internal Java client
+buffer perhaps? or is this more of a responsibility transfer case?). So our
+polling process constantly gets zero (messages_ready), unless all consumers
+disconnect, in which case messages_ready shoots up to whatever
+messages_unacknowledged is when this happens. Is this what you would expect?
+
+For our purposes, anything less than an ack means our consumers are not
+keeping up, so we have enforced a qos setting of 1 for each consumer. This
+way, the message_ready value returned to the polling process will, of
+course, be off by a few messages each time but, at least, its order of
+magnitude indicates if our consumers are keeping up.
+
+Best regards,
+
+Michael
+
+2009/11/18 Michael Nacos &lt;<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">m.nacos at gmail.com</A>&gt;
+
+&gt;<i> thanks... more testing tomorrow
+</I>&gt;<i>
+</I>&gt;<i> 2009/11/18 Matthew Sackman &lt;<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">matthew at lshift.net</A>&gt;
+</I>&gt;<i>
+</I>&gt;<i> On Wed, Nov 18, 2009 at 05:18:53PM +0000, Matthew Sackman wrote:
+</I>&gt;&gt;<i> &gt; That's odd. However, you're really much much better off using
+</I>&gt;&gt;<i> &gt; queue.declare to redeclare the existing queue - the declare-ok that you
+</I>&gt;&gt;<i> &gt; get back contains the number of messages in the queue. This is a much
+</I>&gt;&gt;<i> &gt; neater strategy than below. I would recommend you switch to using this
+</I>&gt;&gt;<i> &gt; and repeat your test.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> What's actually wrong with what you were doing is that the rabbitmqctl
+</I>&gt;&gt;<i> list_queues contains both the ready messages and the unack'd msgs (as
+</I>&gt;&gt;<i> well as uncommitted msgs). Thus if your consumers aren't acking msgs
+</I>&gt;&gt;<i> quickly enough (and have an unbounded qos setting) then it will appear
+</I>&gt;&gt;<i> that they're not keeping up. Use:
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> rabbitmqctl list_queues name messages_ready messages_unacknowledged
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Matthew
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> _______________________________________________
+</I>&gt;&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;&gt;<i> <A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;&gt;<i> <A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>&gt;&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: <A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20091119/c2b492f1/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20091119/c2b492f1/attachment.htm</A> 
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="005477.html">[rabbitmq-discuss] Reliable way to get number of messages in a	queue
+</A></li>
+	<LI>Next message: <A HREF="005503.html">[rabbitmq-discuss] Reliable way to get number of messages in a queue
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#5494">[ date ]</a>
+              <a href="thread.html#5494">[ thread ]</a>
+              <a href="subject.html#5494">[ subject ]</a>
+              <a href="author.html#5494">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,139 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Intermittent Problem - 2.8.5 java client	hangs on declare exchange
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Intermittent%20Problem%20-%202.8.5%20java%20client%0A%09hangs%20on%20declare%20exchange&In-Reply-To=%3C1345838064.01971026%40apps.rackspace.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="022097.html">
+   <LINK REL="Next"  HREF="022113.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Intermittent Problem - 2.8.5 java client	hangs on declare exchange</H1>
+    <B>m.luchak at smartasking.com</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Intermittent%20Problem%20-%202.8.5%20java%20client%0A%09hangs%20on%20declare%20exchange&In-Reply-To=%3C1345838064.01971026%40apps.rackspace.com%3E"
+       TITLE="[rabbitmq-discuss] Intermittent Problem - 2.8.5 java client	hangs on declare exchange">m.luchak at smartasking.com
+       </A><BR>
+    <I>Fri Aug 24 20:54:24 BST 2012</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="022097.html">[rabbitmq-discuss] Intermittent Problem - 2.8.5 java client hangs on declare exchange
+</A></li>
+        <LI>Next message: <A HREF="022113.html">[rabbitmq-discuss] Intermittent Problem - 2.8.5 java client hangs on declare exchange
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#22112">[ date ]</a>
+              <a href="thread.html#22112">[ thread ]</a>
+              <a href="subject.html#22112">[ subject ]</a>
+              <a href="author.html#22112">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>
+Thanks Maze,
+ 
+We have tracked it down to a wait() while declaring an exchange that never completes...
+ 
+com.rabbitmq.client.impl.AMQChannel
+
+private AMQCommand privateRpc(Method m)
+ throws IOException, ShutdownSignalException
+ {
+ SimpleBlockingRpcContinuation k = new SimpleBlockingRpcContinuation();
+ rpc(m, k);
+ // At this point, the request method has been sent, and we
+ // should wait for the reply to arrive.
+ //
+ // Calling getReply() on the continuation puts us to sleep
+ // until the connection's reader-thread throws the reply over
+ // the fence.
+ return k.getReply();
+ }
+ 
+This k.getReply(); jumps through a number of basically empty methods and eventually terminates with another endless wait() that (only on 3G and intermittently) never fulfills. The exchange gets declared but the return is &quot;lost&quot;..
+ 
+We are looking at modifying the client .jar to call a wait with a timeout... I'll keep you updated
+
+
+ 
+-----Original Message-----
+From: &quot;Matthias Reik&quot; &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">matthias.reik at gmail.com</A>&gt;
+Sent: Friday, August 24, 2012 11:34am
+To: &quot;Discussions about RabbitMQ&quot; &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>&gt;
+Subject: Re: [rabbitmq-discuss] Intermittent Problem - 2.8.5 java client hangs on declare exchange
+
+
+
+We had a similar issue (I think we where running 2.6.1 or so)... the exchange/queue declare did eventually happen (after quite a long time).
+The same code run just fine on another computer (so we suspected that it was unrelated to RabbitMQ. After having investigated the issue
+ for quite a while it turned out to be due to the IPv6 stack timing out (the routing was set up the wrong way.
+
+Just mentioning it, because it might be a similar issue...
+
+Cheers
+Maze
+
+
+On Fri, Aug 24, 2012 at 4:55 PM, Matthias Radestock &lt;[mailto:<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">matthias at rabbitmq.com</A>] <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">matthias at rabbitmq.com</A>&gt; wrote:
+Matthew,
+
+
+ On 24/08/12 15:44, [mailto:<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">m.luchak at smartasking.com</A>] <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">m.luchak at smartasking.com</A> wrote:
+what in theory would happen if the server closed the AMQP
+ connection {inet_error,etimedout} and the client was connecting?  In
+ theory would this cause the client to hang?
+It shouldn't, i.e. the client should see the socket close. etimedout is the kind of error that is indicative of network problems though, and in some cases these can take quite a while to be noticed by the parties. Configuring the clients to enable AMQP heartbeats is one way of addressing that problem.
+
+ Regards,
+
+ Matthias.
+
+
+ ______________________________ _________________
+ rabbitmq-discuss mailing list
+[mailto:<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>] <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.</A> rabbitmq.com
+[<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss]">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss]</A> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20120824/be675829/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20120824/be675829/attachment.htm</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="022097.html">[rabbitmq-discuss] Intermittent Problem - 2.8.5 java client hangs on declare exchange
+</A></li>
+	<LI>Next message: <A HREF="022113.html">[rabbitmq-discuss] Intermittent Problem - 2.8.5 java client hangs on declare exchange
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#22112">[ date ]</a>
+              <a href="thread.html#22112">[ thread ]</a>
+              <a href="subject.html#22112">[ subject ]</a>
+              <a href="author.html#22112">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

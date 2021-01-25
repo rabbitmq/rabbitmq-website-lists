@@ -1,0 +1,224 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Responsibility Transfer using RabbitMQ .NET API: How it works?
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Responsibility%20Transfer%20using%20RabbitMQ%20.NET%0A%20API%3A%20How%20it%20works%3F&In-Reply-To=%3C20110127043455.GC2357%40dakota%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="010862.html">
+   <LINK REL="Next"  HREF="010952.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Responsibility Transfer using RabbitMQ .NET API: How it works?</H1>
+    <B>Alexandru Scvor&#355;ov</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Responsibility%20Transfer%20using%20RabbitMQ%20.NET%0A%20API%3A%20How%20it%20works%3F&In-Reply-To=%3C20110127043455.GC2357%40dakota%3E"
+       TITLE="[rabbitmq-discuss] Responsibility Transfer using RabbitMQ .NET API: How it works?">alexandru at rabbitmq.com
+       </A><BR>
+    <I>Thu Jan 27 04:34:55 GMT 2011</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="010862.html">[rabbitmq-discuss] Responsibility Transfer using RabbitMQ .NET API:	How it works?
+</A></li>
+        <LI>Next message: <A HREF="010952.html">[rabbitmq-discuss] Responsibility Transfer using RabbitMQ .NET API: How it works?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#10930">[ date ]</a>
+              <a href="thread.html#10930">[ thread ]</a>
+              <a href="subject.html#10930">[ subject ]</a>
+              <a href="author.html#10930">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi Alfonso,
+
+&gt;<i> I've been googling a lot and some people suggested using this schema:
+</I>&gt;<i> 
+</I>&gt;<i> ch.TxSelect()
+</I>&gt;<i> ch.BasicPublish(.....)
+</I>&gt;<i> ch.TxCommit()
+</I>...
+&gt;<i> Reading the API user guide I've found that this is called &quot;transfer
+</I>&gt;<i> responsibility&quot;.
+</I>
+That's correct.  The only way right now to transfer responsibility for
+a message to the broker is using transactions.
+
+That said, I don't think it's exactly what you want.  The TxCommit will
+succeed if messages are lost during routing (due to non-existing
+queues).
+
+
+&gt;<i> My question is:
+</I>&gt;<i> 
+</I>&gt;<i> Being TxCommit a void function I tested this block of code using a
+</I>&gt;<i> non-existing routing key and I didn't get any exception.
+</I>&gt;<i> Since safe publishing would be highly desiderable non routed messages should
+</I>&gt;<i> be detected because the application ACKs the messages of &quot;events queue&quot;
+</I>&gt;<i> when after evaluating its content has successfully sent another message to
+</I>&gt;<i> the &quot;results queue&quot; (currently if a a routing key is not being routed to a
+</I>&gt;<i> queue the messages are silently dropped and I have no way to detect the
+</I>&gt;<i> failure so the application ACKs the messages from &quot;events queue&quot;)
+</I>&gt;<i> 
+</I>&gt;<i> Please, can someone tell me how I can't get that &quot;CommitOK&quot; responses?
+</I>
+As far as I know, there's no way cause the broker to throw an exception
+for unroutable messages.
+
+What you could do instead is this:
+  - as you've suggested, publish with mandatory, immediate, and
+    persistent set;
+  - do publishes to persistent queues;
+  - wrap publishes in that tx code;
+  - have the publisher watch for basic.returns and handle somehow lost
+    messages (maybe rollback the transaction, republish to a different
+    and commit).
+
+The message flags and the transactions should ensure that the broker
+either save the messages to disk or send it to a consumer.  The
+ReturnHandler should allow you to republish or somehow handle lost
+messages.
+
+Basic.publish/basic.return aren't synchronous out of the box and aren't
+meant to be used like that.  For unroutable messages, the broker sends
+the basic.return immediately after processing the basic.publish, so if
+you publish to a non-existent queue, you should expect the basic.return
+soonish; you could use this to make publishes/returns somewhat
+synchronous, but I wouldn't recommend it.
+
+BTW, the AMQP spec says you shouldn't rely on the broker's behaviour
+when publishing mandatory/immediate messages inside transactions, but I
+think there are any pitfalls doing this with rabbit.
+
+
+As you may have guessed by now, the scenario you described isn't handled
+very nicely by AMQP.  We're introducing publisher confirms to remedy
+this.  The code's on default now, and should be in the next release.
+The basic idea is that the broker sends a basic.ack back to the
+publisher when it's dealt with a message.  In addition, the basic.return
+would always be sent before the basic.ack, so the publisher would know
+when the message is no longer its responsibility.  Of course, this
+isn't synchronous, but it is fast, and the logic is a lot simpler than
+trying to do the same thing with transactions.
+
+
+&gt;<i> PS: I'm using the API version 1.7.2 and RabbitMQ server is the same version.
+</I>
+You really should upgrade.  Since 1.7.2, we've fixed lots of bugs
+(including a few serious ones), introduced a new persister (which is
+quite relevant if you care about transfer of responsibility) and added some
+very nice management and monitoring features (including a web UI).
+Publisher confirms are on default now, and should be in the next
+release.
+
+
+Hope this helps,
+
+Cheers,
+Alex
+
+On Mon, Jan 24, 2011 at 05:47:17PM +0100, Alfonso Pantoja wrote:
+&gt;<i> Hi,
+</I>&gt;<i> 
+</I>&gt;<i> I've developed an application that consumes messages from a queue (&quot;events
+</I>&gt;<i> queue&quot;) and depending on their data
+</I>&gt;<i> it publishes (per received message) a message to another queue (&quot;results
+</I>&gt;<i> queue&quot;)
+</I>&gt;<i> 
+</I>&gt;<i> The logic that checks the content of the received messages is publishing
+</I>&gt;<i> messages using BasicPublish (with mandatory=2, immediate=false and setting
+</I>&gt;<i> deliveryMode=2 to the messages to be sent)
+</I>&gt;<i> My concern is that BasicPublish is asynchronous  and the only exception I
+</I>&gt;<i> can get is when there is no connection to RabbitMQ or the destination
+</I>&gt;<i> exchange does not exist.
+</I>&gt;<i> 
+</I>&gt;<i> Since the application logic at this point is synchronous I can't use
+</I>&gt;<i> BasicReturn in order to use a handler when messages can't be delivered.
+</I>&gt;<i> 
+</I>&gt;<i> I've been googling a lot and some people suggested using this schema:
+</I>&gt;<i> 
+</I>&gt;<i> ch.TxSelect()
+</I>&gt;<i> ch.BasicPublish(.....)
+</I>&gt;<i> ch.TxCommit()
+</I>&gt;<i> 
+</I>&gt;<i> and also is suggested that &quot;commit-ok&quot; will be returned if the message has
+</I>&gt;<i> been published safely to the broker.
+</I>&gt;<i> 
+</I>&gt;<i> Reading the API user guide I've found that this is called &quot;transfer
+</I>&gt;<i> responsibility&quot;.
+</I>&gt;<i> 
+</I>&gt;<i> Copy &amp; paste follows:
+</I>&gt;<i> 
+</I>&gt;<i> --
+</I>&gt;<i> To transfer responsibility for delivery of a message to a broker
+</I>&gt;<i> &#8226; ensure (ahead of time) that the target queue exists and is durable,
+</I>&gt;<i> &#8226; select Tx mode using IModel.TxSelect,
+</I>&gt;<i> &#8226; publish the message with the &quot;mandatory&quot; flag set and DeliveryMode set
+</I>&gt;<i> equal to 2, and
+</I>&gt;<i> &#8226; commit the Tx transaction using IModel.TxCommit.
+</I>&gt;<i> 
+</I>&gt;<i> Once a broker replies with CommitOk (i.e. the TxCommit() call returns to the
+</I>&gt;<i> caller), it has taken
+</I>&gt;<i> responsibility for keeping the message on disk and on the target queue until
+</I>&gt;<i> some other application
+</I>&gt;<i> retrieves and acknowledges the message.
+</I>&gt;<i> A commit is not required after every message: batching of publications may
+</I>&gt;<i> be done, depending on the
+</I>&gt;<i> precise delivery guarantees the publishing application requires.
+</I>&gt;<i> Responsibility can also be placed with an external database, even further
+</I>&gt;<i> along the chain - see the section
+</I>&gt;<i> on interaction with external resources below
+</I>&gt;<i> ---
+</I>&gt;<i> 
+</I>&gt;<i> My question is:
+</I>&gt;<i> 
+</I>&gt;<i> Being TxCommit a void function I tested this block of code using a
+</I>&gt;<i> non-existing routing key and I didn't get any exception.
+</I>&gt;<i> Since safe publishing would be highly desiderable non routed messages should
+</I>&gt;<i> be detected because the application ACKs the messages of &quot;events queue&quot;
+</I>&gt;<i> when after evaluating its content has successfully sent another message to
+</I>&gt;<i> the &quot;results queue&quot; (currently if a a routing key is not being routed to a
+</I>&gt;<i> queue the messages are silently dropped and I have no way to detect the
+</I>&gt;<i> failure so the application ACKs the messages from &quot;events queue&quot;)
+</I>&gt;<i> 
+</I>&gt;<i> Please, can someone tell me how I can't get that &quot;CommitOK&quot; responses?
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> Thank you in advance.
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> Alfonso
+</I>&gt;<i> 
+</I>&gt;<i> PS: I'm using the API version 1.7.2 and RabbitMQ server is the same version.
+</I>
+&gt;<i> _______________________________________________
+</I>&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>
+</PRE>
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="010862.html">[rabbitmq-discuss] Responsibility Transfer using RabbitMQ .NET API:	How it works?
+</A></li>
+	<LI>Next message: <A HREF="010952.html">[rabbitmq-discuss] Responsibility Transfer using RabbitMQ .NET API: How it works?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#10930">[ date ]</a>
+              <a href="thread.html#10930">[ thread ]</a>
+              <a href="subject.html#10930">[ subject ]</a>
+              <a href="author.html#10930">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

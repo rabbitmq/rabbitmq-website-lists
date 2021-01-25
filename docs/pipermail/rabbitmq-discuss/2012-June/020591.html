@@ -1,0 +1,151 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Application architecture question: queue	failure
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Application%20architecture%20question%3A%20queue%0A%09failure&In-Reply-To=%3C4FD854F3.8000306%40rabbitmq.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="020501.html">
+   <LINK REL="Next"  HREF="020667.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Application architecture question: queue	failure</H1>
+    <B>Tim Watson</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Application%20architecture%20question%3A%20queue%0A%09failure&In-Reply-To=%3C4FD854F3.8000306%40rabbitmq.com%3E"
+       TITLE="[rabbitmq-discuss] Application architecture question: queue	failure">tim at rabbitmq.com
+       </A><BR>
+    <I>Wed Jun 13 09:53:07 BST 2012</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="020501.html">[rabbitmq-discuss] Application architecture question: queue failure
+</A></li>
+        <LI>Next message: <A HREF="020667.html">[rabbitmq-discuss] Application architecture question: queue	failure
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#20591">[ date ]</a>
+              <a href="thread.html#20591">[ thread ]</a>
+              <a href="subject.html#20591">[ subject ]</a>
+              <a href="author.html#20591">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>On 06/06/2012 14:05, Bill Moseley wrote:
+&gt;<i> We try and design our architecture (for a large web application) in a
+</I>&gt;<i> way that we expect any part to fail: &quot;design for failure&quot;.   There's
+</I>&gt;<i> parts of our system that are prime for RabbitMQ but the concern is that
+</I>&gt;<i> a message must never be lost -- even when RabbitMQ is setup for HA.
+</I>&gt;<i>
+</I>
+Hi Bill. When you do not want to loose messages then RabbitMQ has 
+support for ensuring that messages are on-disk and that the producer 
+knows this for sure. When rabbit is set up this way, no message will be 
+lost and we would consider it a serious bug if any were (and would fix 
+the problem as soon as humanly possible!) - so I think having the right 
+set up for this should probably be your first port of call.
+
+The first step is to declare your queue as durable, ensuring it will 
+survive a broker crash. Secondly, you should indicate that your messages 
+are persistent, instructing the broker to put them on disk so they too 
+will survive any crash.
+
+The next step is to set up producer confirms on the channel you're 
+publishing to. The broker confirms it has taken responsibility for these 
+messages by sending a basic.ack on the same channel. Persistent messages 
+are confirmed when all queues have either delivered the message and 
+received an acknowledgement, or persisted the message (which includes 
+flushing the data to disk). It is important to make sure your consumers 
+have to ack messages to ensure no information can potentially be lost in 
+transit.
+
+As per the documentation on publisher confirms (see 
+<A HREF="http://www.rabbitmq.com/extensions.html#confirms">http://www.rabbitmq.com/extensions.html#confirms</A>), the broker will send 
+a basic.nack if it cannot, for some reason handle the message. The 
+publisher can then decide what to do.
+
+When you now set up your cluster, you can use HA (active/active mirror) 
+queues to make sure that each node in the cluster behaves in this way 
+with regard to handling messages. If the master node crashes, any 
+message that has been ack'ed is going to be safely persisted on a mirror 
+queue on one of the neighboring nodes.
+
+&gt;<i> So, designing for that rare situation that a message might get lost, my
+</I>&gt;<i> approach has been to maintain state on the application.  When I send a
+</I>&gt;<i> message to get some work down I flag it as &quot;in process&quot; or &quot;pending&quot;
+</I>&gt;<i> with a start time and a retry counter.  I can then (say with cron) find
+</I>&gt;<i> the uncompleted tasks that have been waiting for some value of too long.
+</I>&gt;<i>
+</I>&gt;<i> But, then the problem is what to do with that information?  How do I
+</I>&gt;<i> know that the message is really lost and not just backed up in the
+</I>&gt;<i> queue?  Don't want to queue it again in this case as it just compounds
+</I>&gt;<i> the problem (and then if the first job finally completes the state of
+</I>&gt;<i> the wrong message is updated).
+</I>&gt;<i>
+</I>
+To my mind, this comes down entirely to how you process messages in the 
+consumer. If a persistent message is written to a durable queue, the 
+channel is set up to use publisher confirms, and the message has been 
+ack'ed by the broker it is *definitely* not lost: it is on disk at this 
+point.
+
+In AMQP-0.9.1 the issue of whether or not a job has been processed (by a 
+consumer) already is entirely dependent on the client. You can set up a 
+system for tracking jobs by unique id (uuid, or whatever) in the 
+consumer, to ensure that a job isn't processed twice. You should 
+probably read 
+<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/2010-August/008271.html">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/2010-August/008271.html</A> 
+to get a feel for why this requires explicit effort by the consumers.
+
+&gt;<i> That, and I frankly think the overhead of my state tracking is possibly
+</I>&gt;<i> more problematic than the potential for a loss of a message.
+</I>&gt;<i>
+</I>
+Well I'd like to know where your concerns about loss of messages comes 
+from. As with anything built by humans, there is always *some* risk of 
+things going wrong with any software, but rabbit does a *lot* of work to 
+make sure this doesn't ever happen. If you're using publisher confirms 
+and clustering (which latter technique choosing the Consistency and 
+Availability parts of the CAP theorem), then you should not have to 
+worry about this too much, especially in a 'work-queue' scenario, which 
+this sounds like.
+
+&gt;<i> Anyway, sorry if this is a mundane (if not a bit off-topic) question --,
+</I>&gt;<i> and I know it's application-specific. But, it's a question that comes up
+</I>&gt;<i> often in our design discussions.
+</I>&gt;<i>
+</I>&gt;<i> Do you have these concerns and how do you handle the possibility of
+</I>&gt;<i> message or queue loss?
+</I>&gt;<i>
+</I>
+Well rabbit fight's like a cornered... rabbit ... to make sure this 
+doesn't happen! ;)
+
+Please feel free to elaborate on your concerns and questions, as that's 
+what the list is for! I'd certainly like to understand a bit more about 
+how your application works, what constitutes a job and how these are 
+identified throughout the system. I often find the issue of identity can 
+be particularly vexing in any non-trivial architecture.
+</PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="020501.html">[rabbitmq-discuss] Application architecture question: queue failure
+</A></li>
+	<LI>Next message: <A HREF="020667.html">[rabbitmq-discuss] Application architecture question: queue	failure
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#20591">[ date ]</a>
+              <a href="thread.html#20591">[ thread ]</a>
+              <a href="subject.html#20591">[ subject ]</a>
+              <a href="author.html#20591">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

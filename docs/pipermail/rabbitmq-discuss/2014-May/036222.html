@@ -1,0 +1,256 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Fully reliable setup impossible?
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Fully%20reliable%20setup%20impossible%3F&In-Reply-To=%3CCAFtA53xteWeGA8Lgca_iY-V%3Dnz3eGuFQjDAY_MjhwGk_XeJc9Q%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="036220.html">
+   <LINK REL="Next"  HREF="036223.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Fully reliable setup impossible?</H1>
+    <B>Ron Cordell</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Fully%20reliable%20setup%20impossible%3F&In-Reply-To=%3CCAFtA53xteWeGA8Lgca_iY-V%3Dnz3eGuFQjDAY_MjhwGk_XeJc9Q%40mail.gmail.com%3E"
+       TITLE="[rabbitmq-discuss] Fully reliable setup impossible?">ron.cordell at gmail.com
+       </A><BR>
+    <I>Thu May 22 21:04:20 BST 2014</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="036220.html">[rabbitmq-discuss] Fully reliable setup impossible?
+</A></li>
+        <LI>Next message: <A HREF="036223.html">[rabbitmq-discuss] Fully reliable setup impossible?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#36222">[ date ]</a>
+              <a href="thread.html#36222">[ thread ]</a>
+              <a href="subject.html#36222">[ subject ]</a>
+              <a href="author.html#36222">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>It seems that one of your assumptions is that a cluster would operate
+across data centers. This is not recommended for RabbitMQ and we don't use
+it that way - we use shovels between clusters since we, like you, can deal
+with eventual consistency.
+
+Our clusters are similar to what you describe. For us, (almost) all queues
+are persistent and mirrored because we can't tolerate message loss. We have
+seen significant sensitivity to partitioning in Windows OS-based clusters
+under very heavy load; we do not see this on Linux and can run at least
+twice the load as well.
+
+There is an F5 in front of the cluster, but it doesn't do load balancing
+but just acts as a persistent router. We've found that by directing all
+traffic to one node and letting it replicate to other nodes we don't have
+to deal with issues if a network partition occurs, and they *do* occur
+(earlier this week one of the virtual NICs stopped on one of the Rabbit
+nodes, for example). The F5 will detect this very quickly and divert
+traffic to another node if necessary. (Note to others - we've found that
+this arrangement scales significantly better than round robin load
+balancing for mirrored persistent queues).
+
+We have clusters in each data center; for clusters that need to replicate
+to a different data center there is the shovel. However, there is a chance
+of message loss if the application sends the message to the cluster in one
+DC and that entire DC is hit by a meteor before the message can be
+delivered to the other data center. For most scenarios, however, the
+messages will be eventually delivered when the DC comes back up.
+
+Hope that helps a little...
+
+Cheers,
+
+-ronc
+
+
+On Thu, May 22, 2014 at 12:04 PM, Steffen Daniel Jensen &lt;
+<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">steffen.daniel.jensen at gmail.com</A>&gt; wrote:
+
+&gt;<i> Hi Simon,
+</I>&gt;<i>
+</I>&gt;<i> Thank you for your reply.
+</I>&gt;<i>
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i>  We have two data centers connected closely by LAN.
+</I>&gt;&gt;&gt;<i> We are interested in a *reliable cluster* setup. It must be a cluster
+</I>&gt;&gt;&gt;<i> because we want clients to be able to connect to each node
+</I>&gt;&gt;&gt;<i> transparently. Federation is not an option.
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> I hope you realise that you are asking for a lot here! You should read up
+</I>&gt;&gt;<i> on the CAP theorem if you have not already done so.
+</I>&gt;&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> Yes, I know. But I am not asking an unreasonably lot, IMO :-)
+</I>&gt;<i> I am aware of the CAP theorem, but I don't see how it is in violation. I
+</I>&gt;<i> am willing to live with eventual consistency.
+</I>&gt;<i>
+</I>&gt;<i> 1. It happens that the firewall/switch is restarted, and maybe a few
+</I>&gt;&gt;&gt;<i> ping messages are lost.
+</I>&gt;&gt;&gt;<i> 2. The setup should survive data center crash
+</I>&gt;&gt;&gt;<i> 3. All queues are durable and mirrored, all messages are persisted, all
+</I>&gt;&gt;&gt;<i> publishes are confirmed
+</I>&gt;&gt;&gt;<i> There are 3 cluster-recovery settings
+</I>&gt;&gt;&gt;<i> a) ignore: A cross data center network break-down would cause message
+</I>&gt;&gt;&gt;<i> loss on the node that is restarted In order to rejoin.
+</I>&gt;&gt;&gt;<i> b) pause_minority: If we choose the same number of nodes in each data
+</I>&gt;&gt;&gt;<i> center, the whole cluster will pause. If we don't, only the data center
+</I>&gt;&gt;&gt;<i> with the most nodes can survive.
+</I>&gt;&gt;&gt;<i> c) auto_heal: If the cluster decides network partitioning, there is a
+</I>&gt;&gt;&gt;<i> potential of message loss, when joining.
+</I>&gt;&gt;&gt;<i> [I would really like a resync-setting similar to the one described below]
+</I>&gt;&gt;&gt;<i> Question 1: Is it even possible to have a fully reliable setup in such a
+</I>&gt;&gt;&gt;<i> setting?
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Depends how you define &quot;fully reliable&quot;. If you want Consistency (i.e.
+</I>&gt;&gt;<i> mirrored queues), Availability (i.e. neither data centre pauses) and
+</I>&gt;&gt;<i> Partition tolerance (no loss of data from either side if the network goes
+</I>&gt;&gt;<i> down between them) then I'm afraid you can't.
+</I>&gt;&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> What I mean when I say &quot;reliable&quot; is: All subscribers at the time of
+</I>&gt;<i> publish will eventually get the message.
+</I>&gt;<i>
+</I>&gt;<i> That should be possible, assuming that all live inconsistent nodes will
+</I>&gt;<i> eventually rejoin (without dumping messages). I know this is not the case
+</I>&gt;<i> in rabbitmq, but it is definitely theoretically possible. I guess this is
+</I>&gt;<i> what is usually referred to as eventual consistency.
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;&gt;<i> In reality we probably won't have actual network partitions, and it will
+</I>&gt;&gt;&gt;<i> most probably only be a very short network downtime.
+</I>&gt;&gt;&gt;<i> Question 2: Is it possible to adjust how long it takes rabbitmq to
+</I>&gt;&gt;&gt;<i> decide &quot;node down&quot;?
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Yes, see <A HREF="http://www.rabbitmq.com/nettick.html">http://www.rabbitmq.com/nettick.html</A>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> Thank you! (!)
+</I>&gt;<i> I have been looking for that one. But I am surprised to see that it is
+</I>&gt;<i> actually 60sec. Then I really don't understand how I could have seen so
+</I>&gt;<i> many clusters ending up partitioned.
+</I>&gt;<i>
+</I>&gt;<i> Do you know what the consequence of doubling it might be?
+</I>&gt;<i>
+</I>&gt;<i> RabbitMq writes:
+</I>&gt;<i> Increasing the net_ticktime across all nodes in a cluster will make the
+</I>&gt;<i> cluster more resilient to short network outtages, but it will take longer
+</I>&gt;<i> for remaing nodes to detect crashed nodes.
+</I>&gt;<i>
+</I>&gt;<i> More specifically I wonder what happens in the time a node is actually in
+</I>&gt;<i> its own network, but before it finds out. In our setup all publishes have
+</I>&gt;<i> all-HA subscriber queues, with publisher confirm. So I will expect a
+</I>&gt;<i> distributed agreement that the msg has been persisted. Will a publisher
+</I>&gt;<i> confirm then block until the node decides that other nodes are down, and
+</I>&gt;<i> then succeed?
+</I>&gt;<i>
+</I>&gt;<i> It is much better to have a halted rabbitmq for some seconds than to
+</I>&gt;&gt;&gt;<i> have message loss.
+</I>&gt;&gt;&gt;<i> Question 3: Assume that we are using the ignore setting, and that we
+</I>&gt;&gt;&gt;<i> have only two nodes in the cluster. Would the following be a full
+</I>&gt;&gt;&gt;<i> recovery with zero message loss?
+</I>&gt;&gt;&gt;<i> 0. Decide which node survives, Ns, and which should be restarted, Nr.
+</I>&gt;&gt;&gt;<i> 1. Refuse all connections to Nr except from a special recovery
+</I>&gt;&gt;&gt;<i> application. (One could change the ip, so all running services can't
+</I>&gt;&gt;&gt;<i> connect or similar)
+</I>&gt;&gt;&gt;<i> 2. Consume and republish all message from Nr to Ns.
+</I>&gt;&gt;&gt;<i> 3. Restart Nr
+</I>&gt;&gt;&gt;<i> Then the cluster should be up-and-running again.
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> That sounds like it would work. You're losing some availability and
+</I>&gt;&gt;<i> consistency, and your message ordering will change. You have a pretty good
+</I>&gt;&gt;<i> chance of duplicating lots of messages too (any that were in the queues
+</I>&gt;&gt;<i> when the partition happened). Assuming you're happy with that it sounds
+</I>&gt;&gt;<i> reasonable.
+</I>&gt;&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> The duplication is ok -- but assuming that rabbit is usually empty, it
+</I>&gt;<i> won't really happen, I think.
+</I>&gt;<i> But -- I am sure that rabbit does not guarantee exactly once delivery
+</I>&gt;<i> anyway.
+</I>&gt;<i> For that reason, we will build in idempotency for critical messages.
+</I>&gt;<i>
+</I>&gt;<i> Ordering can always get scrambled when nacking consuming messages, so we
+</I>&gt;<i> are not assuming ordering either.
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> About the CAP theorem in relation to rabbit.
+</I>&gt;<i> Reliable messaging (zero message loss), is often preferred in
+</I>&gt;<i> SOA-settings. I wonder why vmware/pivotal/... chose not to prioritize this
+</I>&gt;<i> guarantee. It is aimed by the federation setup, but it is a little to weak
+</I>&gt;<i> in its synchronization. It would be preferred if it had a possibility of
+</I>&gt;<i> communicating consumption of messages. Then one could mirror queues between
+</I>&gt;<i> up/down-stream exchanges, and have even more &quot;availability&quot;. One would
+</I>&gt;<i> definitely give up consistency a little further, but it would be possible
+</I>&gt;<i> to have the setup above, I think. I know it definitely doesn't come
+</I>&gt;<i> out-of-the-box, and it is not a part of AMQP, AFAIK, but it seems possible.
+</I>&gt;<i>
+</I>&gt;<i> Thank you, Simon!
+</I>&gt;<i>
+</I>&gt;<i> -- S
+</I>&gt;<i>
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20140522/6972a4b1/attachment.html">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20140522/6972a4b1/attachment.html</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="036220.html">[rabbitmq-discuss] Fully reliable setup impossible?
+</A></li>
+	<LI>Next message: <A HREF="036223.html">[rabbitmq-discuss] Fully reliable setup impossible?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#36222">[ date ]</a>
+              <a href="thread.html#36222">[ thread ]</a>
+              <a href="subject.html#36222">[ subject ]</a>
+              <a href="author.html#36222">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

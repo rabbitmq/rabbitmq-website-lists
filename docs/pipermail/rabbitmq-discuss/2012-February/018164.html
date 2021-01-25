@@ -1,0 +1,214 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Looking for guidance on R14B04 vs. R13B03	performance
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Looking%20for%20guidance%20on%20R14B04%20vs.%20R13B03%0A%09performance&In-Reply-To=%3CCACLE7iwUVeao_ceQdUr-y43srcNVrk%2BR5R9OBOiZxGG8FZ4OnA%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="018149.html">
+   <LINK REL="Next"  HREF="018165.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Looking for guidance on R14B04 vs. R13B03	performance</H1>
+    <B>Matt Pietrek</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Looking%20for%20guidance%20on%20R14B04%20vs.%20R13B03%0A%09performance&In-Reply-To=%3CCACLE7iwUVeao_ceQdUr-y43srcNVrk%2BR5R9OBOiZxGG8FZ4OnA%40mail.gmail.com%3E"
+       TITLE="[rabbitmq-discuss] Looking for guidance on R14B04 vs. R13B03	performance">mpietrek at skytap.com
+       </A><BR>
+    <I>Wed Feb 15 17:15:44 GMT 2012</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="018149.html">[rabbitmq-discuss] Looking for guidance on R14B04 vs. R13B03 performance
+</A></li>
+        <LI>Next message: <A HREF="018165.html">[rabbitmq-discuss] Looking for guidance on R14B04 vs. R13B03 performance
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#18164">[ date ]</a>
+              <a href="thread.html#18164">[ thread ]</a>
+              <a href="subject.html#18164">[ subject ]</a>
+              <a href="author.html#18164">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Thanks Simon. The 5% figure is useful for me.
+
+Let me give you a more precise description of what I'm doing to get the 36
+message/sec.
+
+
+   - RabbitMQ 2.71 on a 3-node cluster with mirrored queues, durable on all
+   nodes.
+   - Client is Python 2.6/Pika 0.9.5.
+   - Each message publish occurs in a transaction so that we can be sure
+   it's safely in RabbitMQ.
+   - All nodes are Ubuntu 10.04 VMs with 4GB RAM and 2 or 4 vCPUs.
+
+
+At the heart of things, we're driving a highly complex state machine that
+manages thousands of VMs and their associated state. Losing track of any
+state is prohibitively expensive to clean up manually. As such, all state
+is modeled in clustered databases and/or persistent messages in the message
+queue. We have to assume that a given client app instance (our management
+code) may be ungracefully terminated at any moment, so enough state must be
+modeled to let a new instance pick up and recover. If our database record
+indicates that a message has been sent, it better darn well be in the hands
+of the RabbitMQ broker, and not sitting in some Pika client-side queue.
+
+For this reasons, publisher-confirms are not particularly helpful - They
+assume that the client app will be around to resend the message if the
+message doesn't get confirmed. Similar story for batching messages. We have
+to know they've been sent, and we can't stall our state machine waiting for
+enough message to accumulate to publish multiple messages at once.
+
+My goal in my latest round of experiments is to see what the maximum
+throughput of a highly available system is in optimal circumstances. We're
+perfectly willing to spend the money on high end SSDs and networking
+equipment as necessary.
+
+To prototype what this perf level is, I've configured RabbitMQ with the
+MNESIA directory pointing to a ramdisk (/tmp). I've configured all the VMs
+with VMXNET3 networking, am with 16K blocks, are seeing bandwidth of
+130MB/sec between VMs in the cluster.
+
+My test app simply writes 6 byte message, one at a time, as quickly as it
+can. In monitoring the cluster nodes, I'm seeing very low CPU usage, very
+few writes to the physical disk, and network operation rates of about
+700/sec for the master node and 350/sec for the client node.
+
+In short, there's a bottleneck somewhere and it's not obvious where. I'll
+try your suggestion about replacing tx.commit. Any other insight or
+guidance would of course be very much appreciated. :-)
+
+Matt
+
+
+On Wed, Feb 15, 2012 at 2:08 AM, Simon MacMullen &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">simon at rabbitmq.com</A>&gt; wrote:
+
+&gt;<i> On 14/02/12 23:07, Matt Pietrek wrote:
+</I>&gt;<i>
+</I>&gt;&gt;<i> I'm looking to squeeze every last bit of message throughput out of our
+</I>&gt;&gt;<i> mirrored queue setup.
+</I>&gt;&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> Hi Matt.
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>  I max out at 36 messages/sec when writing. (Yes,
+</I>&gt;&gt;<i> we use transactions, and we know it's not optimal, but we're valuing
+</I>&gt;&gt;<i> high reliability over speed. Our clients and/or servers could go away at
+</I>&gt;&gt;<i> any moment, so things like Publisher-acknowledge are nice, but take away
+</I>&gt;&gt;<i> from the fundamental disaster hardness.)
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Anyhow, we're running on Ubuntu 10.04 with 2.71 and the default Erlang
+</I>&gt;&gt;<i> install. This gives us R13B03 as the Erlang version.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Question: Does anybody (and particularly the RabbitMQ folks) have any
+</I>&gt;&gt;<i> input on what sort of perf improvements we might get by switching to a
+</I>&gt;&gt;<i> newer Erlang Version?
+</I>&gt;&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> Not much really. We haven't tested extensively but if you got 5% I think
+</I>&gt;<i> you would consider yourself lucky.
+</I>&gt;<i>
+</I>&gt;<i> However, 36 msg/s is *really* slow.
+</I>&gt;<i>
+</I>&gt;<i> Although mirrored queues are slower than normal ones I would still hope
+</I>&gt;<i> you could stick a couple of zeroes on the end of that figure. So I suspect
+</I>&gt;<i> you are not actually CPU bound at the server.
+</I>&gt;<i>
+</I>&gt;<i> I assume when you say &quot;using transactions&quot; you mean publishing a single
+</I>&gt;<i> message per transaction? In that case you are incurring the cost of a
+</I>&gt;<i> network round trip and an fsync() on each publish, and I suspect that is
+</I>&gt;<i> what is killing your performance.
+</I>&gt;<i>
+</I>&gt;<i> If I had to guess I would suspect the fsync is the worst of the problem.
+</I>&gt;<i> Assuming the 36 msg/s is from some test app, you might want to remove the
+</I>&gt;<i> tx.select and replace the tx.commit with some meaningless synchronous
+</I>&gt;<i> request (basic.qos is a favourite) and see what happens to your message
+</I>&gt;<i> rate. If it shoots up, the fsync is the problem. If it doesn't, the network
+</I>&gt;<i> round trip is.
+</I>&gt;<i>
+</I>&gt;<i> When you have the answer to that, you know whether you're going to want to
+</I>&gt;<i> spend money on fancy networking hardware or SSDs...
+</I>&gt;<i>
+</I>&gt;<i> Of course, *really* I would suggest you need to be publishing more
+</I>&gt;<i> messages per round-trip / fsync. So either batch multiple publishes into a
+</I>&gt;<i> transaction or start using confirms instead. I know you say that they &quot;take
+</I>&gt;<i> away from the fundamental disaster hardness&quot; but I'm not sure I understand
+</I>&gt;<i> what you mean by that. Both confirms and tx give you a way to know when a
+</I>&gt;<i> given message is definitely on disc. And in fact tx is implemented in terms
+</I>&gt;<i> of confirms these days.
+</I>&gt;<i>
+</I>&gt;<i> Cheers, Simon
+</I>&gt;<i>
+</I>&gt;<i> --
+</I>&gt;<i> Simon MacMullen
+</I>&gt;<i> RabbitMQ, VMware
+</I>&gt;<i> ______________________________**_________________
+</I>&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.</A>**rabbitmq.com&lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>&gt;
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/**cgi-bin/mailman/listinfo/**rabbitmq-discuss&lt;https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/**cgi-bin/mailman/listinfo/**rabbitmq-discuss&lt;https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>&gt;
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20120215/eeec5ae9/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20120215/eeec5ae9/attachment.htm</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="018149.html">[rabbitmq-discuss] Looking for guidance on R14B04 vs. R13B03 performance
+</A></li>
+	<LI>Next message: <A HREF="018165.html">[rabbitmq-discuss] Looking for guidance on R14B04 vs. R13B03 performance
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#18164">[ date ]</a>
+              <a href="thread.html#18164">[ thread ]</a>
+              <a href="subject.html#18164">[ subject ]</a>
+              <a href="author.html#18164">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

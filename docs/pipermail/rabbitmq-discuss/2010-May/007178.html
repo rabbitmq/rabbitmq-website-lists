@@ -1,0 +1,194 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] request for help!
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20request%20for%20help%21&In-Reply-To=4BE80C00.3080204%40jboss.com">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="007173.html">
+   <LINK REL="Next"  HREF="007182.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] request for help!</H1>
+    <B>Colin Clark</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20request%20for%20help%21&In-Reply-To=4BE80C00.3080204%40jboss.com"
+       TITLE="[rabbitmq-discuss] request for help!">colin at cloudeventprocessing.com
+       </A><BR>
+    <I>Mon May 10 15:32:34 BST 2010</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="007173.html">[rabbitmq-discuss] request for help!
+</A></li>
+        <LI>Next message: <A HREF="007182.html">[rabbitmq-discuss] request for help!
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#7178">[ date ]</a>
+              <a href="thread.html#7178">[ thread ]</a>
+              <a href="subject.html#7178">[ subject ]</a>
+              <a href="author.html#7178">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>In regards to the once-and-only-once discussion below:
+
+In many financial formats, like FIX and others, we utilize message ID's 
+that help with this behavior a lot.  It also prevents from messages 
+being delivered out of sequence.  For example.
+
+Client logs in - server and client at message ID of 0,
+every message that the server sends has an incremented ID,
+if the client receives an unexpected ID, it can either request a 
+retransmit from the last known or kill the session,
+when a client logs back in, the client logs in with the expected ID, 
+server &amp; client negotiate and session resumes.
+(there are id's for both the client &amp; server messages, both incremented 
+for each message and the above behavior applies on both sides of the 
+connection)
+
+FIX employs an optimistic delivery protocol, i.e., assume that it was 
+received.  There is no session level ack.  Only an ack at the 
+application level; and that ack is not mandatory.  Use of the message ID 
+provides the once &amp; only once and in order semantics required for 
+trading; a behavior that is obviously very useful elsewhere as well.
+
+Using sequence #'s also allows for advanced concepts such as flow 
+control - I haven't read enough of the spec yet to see if that's a 
+feature yet or not.
+
+I do agree, if a message is sent, then an ack is waited for, sending an 
+ack of ack seems a little over kill to me.  Perhaps it's time for me to 
+read the whole spec again.
+
+On 5/10/2010 8:37 AM, Tim Fox wrote:
+&gt;<i> I've spent this morning going through the 1.0. PR3 spec, firstly, it's
+</I>&gt;<i> considerably simpler than 0.10, which is great news :)
+</I>&gt;<i>
+</I>&gt;<i> Here's my 2p:
+</I>&gt;<i>
+</I>&gt;<i> One thing I find quite strange is that the core spec doesn't actually
+</I>&gt;<i> seem to mandate any queueing semantics anywhere. I've nothing
+</I>&gt;<i> particularly against that - in fact, the idea that a node can do
+</I>&gt;<i> different types of ordering is actually quite nice, however it's not a
+</I>&gt;<i> queueing protocol. Shouldn't AMQP therefore be renamed to AMTP (Advanced
+</I>&gt;<i> Message Transfer Protocol) ? ;)
+</I>&gt;<i>
+</I>&gt;<i> On a more serious note, my main concerns are mainly around complexity,
+</I>&gt;<i> and verbosity of the wire format. The latter I suppose is not completely
+</I>&gt;<i> independent from the former.
+</I>&gt;<i>
+</I>&gt;<i> Regarding complexity. IMO a large part of the complexity in the spec.
+</I>&gt;<i> seems to come from the way it tries to provide a once and only once
+</I>&gt;<i> delivery guarantee. AIUI the way the spec. implements this guarantee is
+</I>&gt;<i> something like the following when transferring a message from A to B:
+</I>&gt;<i>
+</I>&gt;<i> a) message to be sent from A--&gt;B
+</I>&gt;<i> b) ack sent back from B--&gt;A
+</I>&gt;<i> c) &quot;ack of ack&quot; sent from A--&gt;B - now the delivery tag can be removed
+</I>&gt;<i> from the senders cache
+</I>&gt;<i>
+</I>&gt;<i> This results in a complex set of message states, and puts the burden on
+</I>&gt;<i> both sides of the link to maintain a map of delivery tags, which would
+</I>&gt;<i> also have to be persisted in order to provide once and only delivery
+</I>&gt;<i> guarantee in event of failures of node(s). This will also require
+</I>&gt;<i> several syncs to storage at each transition (for durable messaging).
+</I>&gt;<i> I.e. slow
+</I>&gt;<i>
+</I>&gt;<i> Perhaps a simpler way of getting the once and only guarantee is to
+</I>&gt;<i> forget the delivery tag altogether and allow the sender to specify a
+</I>&gt;<i> de-duplication-id - this is just a user generated id - e.g. a String or
+</I>&gt;<i> a byte[], (can be generated from user application domain concepts - e.g.
+</I>&gt;<i> order number).
+</I>&gt;<i>
+</I>&gt;<i> When sending a message this id can be specified on the transfer. The
+</I>&gt;<i> receiving end can then maintain a de-duplication cache. The
+</I>&gt;<i> de-duplication cache can be implemented as a circular buffer which just
+</I>&gt;<i> overwrites itself when full (this is what we do in HornetQ for reliable
+</I>&gt;<i> bridging between nodes), this means the interaction c) is not necessary
+</I>&gt;<i> or can just be sent intermittently to allow the cache to be cleared. The
+</I>&gt;<i> de-dup cache still requires syncing to non volatile storage to give the
+</I>&gt;<i> once and only once (for durable messages), however it requires less
+</I>&gt;<i> writes than the method described in the spec, and it it has one less
+</I>&gt;<i> interaction (you can get rid of the &quot;ack of ack&quot;)
+</I>&gt;<i>
+</I>&gt;<i> On recovery after system failure, the sender just blindly sends the
+</I>&gt;<i> messages again, on receipt at the server any messages seen before will
+</I>&gt;<i> just be rejected. No need for reattaching, sending maps of unsettled
+</I>&gt;<i> transfers or other complex stuff like that.
+</I>&gt;<i>
+</I>&gt;<i> By removing all this delivery tag book-keeping and session re-attachment
+</I>&gt;<i> stuff, which seems unnecessary to me, would result in a dramatic
+</I>&gt;<i> simplification.
+</I>&gt;<i>
+</I>&gt;<i> Regarding verbosity of the wire format for message transfer; if you're
+</I>&gt;<i> just passing a 12 byte message (e.g. stock price - 4 byte identifier + 8
+</I>&gt;<i> byte price) then the overall encoded size is much higher than 12 bytes.
+</I>&gt;<i>
+</I>&gt;<i> This will kill performance for small messages, making any AMQP compliant
+</I>&gt;<i> implementation unable to compete in the world of lightweight
+</I>&gt;<i> publish/subscribe messaging with other, non AMQP implementations which
+</I>&gt;<i> don't have to conform to the AMQP wire format and can produce much more
+</I>&gt;<i> lightweight encodings. The key to perf with lightweight pub/sub is to
+</I>&gt;<i> make the encoded message size as small as possible and cram as many
+</I>&gt;<i> messages as you can into single socket writes.
+</I>&gt;<i>
+</I>&gt;<i> Now, lightweight pub/sub may not be the target domain for AMQP, in which
+</I>&gt;<i> case it does not need to worry about it, however if a particular
+</I>&gt;<i> messaging system supports multiple protocols including AMQP, it will not
+</I>&gt;<i> do much for the adoption of AMQP if the best performance is not
+</I>&gt;<i> achievable using the AMQP protocol - users will fall back to using the
+</I>&gt;<i> proprietary protocol offered by the vendor.
+</I>&gt;<i>
+</I>&gt;<i> A short comment on transactions. I have to be honest here, I spent about
+</I>&gt;<i> 30 mins reading the chapter on transactions several times. I have to say
+</I>&gt;<i> at the end of it I am not much further understanding it. :(
+</I>&gt;<i>
+</I>&gt;<i> However maybe that is moot - a part of me is thinking that transactions
+</I>&gt;<i> don't really belong in the core spec. Perhaps the core spec should be
+</I>&gt;<i> concerned with allowing the reliable movement of messages between nodes.
+</I>&gt;<i> With that in place, transactions could be layered on top in another spec (?)
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>    
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: <A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20100510/689406fc/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20100510/689406fc/attachment.htm</A> 
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="007173.html">[rabbitmq-discuss] request for help!
+</A></li>
+	<LI>Next message: <A HREF="007182.html">[rabbitmq-discuss] request for help!
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#7178">[ date ]</a>
+              <a href="thread.html#7178">[ thread ]</a>
+              <a href="subject.html#7178">[ subject ]</a>
+              <a href="author.html#7178">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

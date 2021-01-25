@@ -1,0 +1,178 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] AlreadyClosedException always sets hardError and initiatedByApplication to true
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20AlreadyClosedException%20always%20sets%20hardError%0A%20and%20initiatedByApplication%20to%20true&In-Reply-To=%3CCA%2Bes_-yARn7NJdwQvdUaHLmwsgFE%2Bimeom8SFq32AXwVubR0LA%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="031268.html">
+   <LINK REL="Next"  HREF="031020.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] AlreadyClosedException always sets hardError and initiatedByApplication to true</H1>
+    <B>Jonathan Halterman</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20AlreadyClosedException%20always%20sets%20hardError%0A%20and%20initiatedByApplication%20to%20true&In-Reply-To=%3CCA%2Bes_-yARn7NJdwQvdUaHLmwsgFE%2Bimeom8SFq32AXwVubR0LA%40mail.gmail.com%3E"
+       TITLE="[rabbitmq-discuss] AlreadyClosedException always sets hardError and initiatedByApplication to true">jhalterman at gmail.com
+       </A><BR>
+    <I>Thu Oct 24 00:14:55 BST 2013</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="031268.html">[rabbitmq-discuss] AlreadyClosedException always sets hardError	and initiatedByApplication to true
+</A></li>
+        <LI>Next message: <A HREF="031020.html">[rabbitmq-discuss] Rabbitmq-C amqp_basic_publish crash on connection loss
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#31299">[ date ]</a>
+              <a href="thread.html#31299">[ thread ]</a>
+              <a href="subject.html#31299">[ subject ]</a>
+              <a href="author.html#31299">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hey Steve,
+
+
+On Wed, Oct 23, 2013 at 3:24 AM, Steve Powell &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">steve at rabbitmq.com</A>&gt; wrote:
+
+&gt;<i> Jonathan,
+</I>&gt;<i> There are some subtleties here. Comments in-line:
+</I>&gt;<i>
+</I>&gt;<i> On 22 Oct 2013, at 17:07, Jonathan Halterman &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">jhalterman at gmail.com</A>&gt; wrote:
+</I>&gt;<i>
+</I>&gt;<i> if you're doing rapid basicPublish calls to a non-existent exchange.
+</I>&gt;<i> Eventually basicPublish fails with an AlreadyClosedException, but this
+</I>&gt;<i> often occurs before the Channel's ShutdownListener is called. So the client
+</I>&gt;<i> has no fair way of avoiding the AlreadyClosedException.
+</I>&gt;<i>
+</I>&gt;<i> Let's get one thing out of the way first of all.
+</I>&gt;<i>
+</I>&gt;<i> Basic.Publish is an asynchronous call. Therefore, if the channel is known
+</I>&gt;<i> and open as far as the client is concerned, there is no good reason for the
+</I>&gt;<i> Basic.Publish to fail (or know anything about the exchange's existence)
+</I>&gt;<i> and no way for the client to prevent subsequent Basic.Publish calls until
+</I>&gt;<i> there are replies back from the server.  Nor is there any way to stop
+</I>&gt;<i> previously queued consumer actions on that channel from running. Consumers
+</I>&gt;<i> will be driven (eventually) with a handleShutdownSignal() as their last
+</I>&gt;<i> action. Any channel ShutdownListener will also be driven with the
+</I>&gt;<i> ShutdownSignalException passed to it, but asynchronously. Ordering of
+</I>&gt;<i> action and listener call is not enforced by the client.
+</I>&gt;<i>
+</I>&gt;<i> If a subsequent action on a closed channel is executed, you will get an
+</I>&gt;<i> AlreadyClosedException (sometimes&#8212;ought this to be always?) and this is
+</I>&gt;<i> due to an application initiated action (!), and has a channel reference.
+</I>&gt;<i>  (It is represented as a hard error, which is probably wrong.)
+</I>&gt;<i>
+</I>&gt;<i> Given the channel reference you can get the ShutdownSignalException *which
+</I>&gt;<i> closed that channel* with Channel.getCloseReason().
+</I>&gt;<i> This also works on Connections.
+</I>&gt;<i>
+</I>
+Ah yes, thanks for this pointer.
+
+
+&gt;<i>
+</I>&gt;<i> So from my perspective, there are a few things I'd prefer to see out of
+</I>&gt;<i> all this:
+</I>&gt;<i>
+</I>&gt;<i> - That AlreadyClosedExceptions be allowed to represent channels that were
+</I>&gt;<i> already closed (as seems to be the case with the reference being set to a
+</I>&gt;<i> Channel).
+</I>&gt;<i>
+</I>&gt;<i> On Channel method calls it does that already, but has hardError set to
+</I>&gt;<i> true, which is sometimes misleading.
+</I>&gt;<i>
+</I>&gt;<i> - That an invocation against a Channel that has already been closed does
+</I>&gt;<i> not result in the Connection being closed (as seems to be the case).
+</I>&gt;<i>
+</I>&gt;<i> It depends on what you mean by 'already closed'. If the client knows it
+</I>&gt;<i> has closed, then yes, I agree with you. If it doesn't (yet) know it has
+</I>&gt;<i> closed (as in the case for a little while after a publish to a non-existent
+</I>&gt;<i> exchange) then it may not be able to throw an exception (yet).  It may,
+</I>&gt;<i> though, because some actions are synchronous with server interaction, which
+</I>&gt;<i> means we can tell from the response if something went wrong.
+</I>&gt;<i>
+</I>
+In the case of basicPublish to a non-existent queue, eventually the channel
+will be closed, but the first time the client learns that the channel has
+been closed might be when it receives an AlreadyClosedException. And that's
+fine to me, as long as it doesn't result in the connection being closed,
+which it doesn't right now.
+
+
+&gt;<i>
+</I>&gt;<i> - That AlreadyClosedExceptions include the Method that originally cased
+</I>&gt;<i> the closure as the shutdown reason (if any), such as 404. This would allow
+</I>&gt;<i> me to determine why a basicPublish fails.
+</I>&gt;<i>
+</I>&gt;<i> See above: given the object that has closed, you should be able to get the
+</I>&gt;<i> ShutdownSignalException and determine why it closed.
+</I>&gt;<i>
+</I>&gt;<i> Steve Powell  [*Cell*: +44-7815-838-558] [RabbitMQ&lt;<A HREF="http://www.rabbitmq.com/">http://www.rabbitmq.com/</A>&gt;
+</I>&gt;<i> ,* *Pivotal &lt;<A HREF="http://gopivotal.com/">http://gopivotal.com/</A>&gt;]
+</I>&gt;<i> *&#8220;L&#8217;enfer, c&#8217;est les autres.&#8221; *Sartre
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20131023/db773719/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20131023/db773719/attachment.htm</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="031268.html">[rabbitmq-discuss] AlreadyClosedException always sets hardError	and initiatedByApplication to true
+</A></li>
+	<LI>Next message: <A HREF="031020.html">[rabbitmq-discuss] Rabbitmq-C amqp_basic_publish crash on connection loss
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#31299">[ date ]</a>
+              <a href="thread.html#31299">[ thread ]</a>
+              <a href="subject.html#31299">[ subject ]</a>
+              <a href="author.html#31299">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

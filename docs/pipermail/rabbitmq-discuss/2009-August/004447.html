@@ -1,0 +1,171 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Weird Crash (91MB message over STOMP)	[Reproducible]
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20Weird%20Crash%20%2891MB%20message%20over%20STOMP%29%0A%09%5BReproducible%5D&In-Reply-To=4A7D462F.3020401%40lshift.net">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="004446.html">
+   <LINK REL="Next"  HREF="004449.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Weird Crash (91MB message over STOMP)	[Reproducible]</H1>
+    <B>Darien Kindlund</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20Weird%20Crash%20%2891MB%20message%20over%20STOMP%29%0A%09%5BReproducible%5D&In-Reply-To=4A7D462F.3020401%40lshift.net"
+       TITLE="[rabbitmq-discuss] Weird Crash (91MB message over STOMP)	[Reproducible]">darien at kindlund.com
+       </A><BR>
+    <I>Sat Aug  8 14:29:07 BST 2009</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="004446.html">[rabbitmq-discuss] Weird Crash (91MB message over STOMP)	[Reproducible]
+</A></li>
+        <LI>Next message: <A HREF="004449.html">[rabbitmq-discuss] Weird Crash (91MB message over STOMP)	[Reproducible]
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#4447">[ date ]</a>
+              <a href="thread.html#4447">[ thread ]</a>
+              <a href="subject.html#4447">[ subject ]</a>
+              <a href="author.html#4447">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi Matthias,
+
+Okay, I'll try and develop a compact version of the perl test code  
+that I've got. If, for some reason, the message content actually  
+matters, then you'll have to let me know the best way for me to send  
+you a 91MB test file.  If you guys have no preferred method, then I'll  
+use my company's default method (not email).
+
+You'll have the test code by Monday at the latest.
+
+-- Darien
+
+On Aug 8, 2009, at 5:32 AM, Matthias Radestock &lt;<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">matthias at lshift.net</A>&gt;  
+wrote:
+
+&gt;<i> Darien,
+</I>&gt;<i>
+</I>&gt;<i> Darien Kindlund wrote:
+</I>&gt;&gt;<i> Actually, this problem is a bit worse.... apparently, when RabbitMQ
+</I>&gt;&gt;<i> restarts and recovers the persister -- even persistent messages  
+</I>&gt;&gt;<i> marked
+</I>&gt;&gt;<i> 'ready' on OTHER durable queues are NOT retrievable by other STOMP
+</I>&gt;&gt;<i> clients.... I get the same type of error in the rabbit.log:
+</I>&gt;&gt;<i> =ERROR REPORT==== 8-Aug-2009::04:21:16 ===
+</I>&gt;&gt;<i> STOMP Reply command unhandled: {'basic.deliver',
+</I>&gt;&gt;<i>                                   &lt;&lt;&quot;Q_1.manager.workers&quot;&gt;&gt;,
+</I>&gt;&gt;<i>                                   1,
+</I>&gt;&gt;<i>                                   false,
+</I>&gt;&gt;<i>                                   &lt;&lt;&quot;events&quot;&gt;&gt;,
+</I>&gt;&gt;<i>                                    
+</I>&gt;&gt;<i> &lt;&lt;&quot;1.job.create.job.urls.job_alerts&quot;&gt;&gt;}
+</I>&gt;<i>
+</I>&gt;<i> Right. I think I know what the problem is, and it is indeed a bug in  
+</I>&gt;<i> the STOMP adapter which causes it to barf when attempting to deliver  
+</I>&gt;<i> any message that was recovered from the persister.
+</I>&gt;<i>
+</I>&gt;&gt;<i> The unit test case for this would be:
+</I>&gt;&gt;<i> 1) Create a durable exchange
+</I>&gt;&gt;<i> 2) Create a durable queue
+</I>&gt;&gt;<i> 3) Bind the queue to the exchange
+</I>&gt;&gt;<i> 4) Make sure the queue has no consumers subscribed
+</I>&gt;&gt;<i> 5) Send a small (normal) persistent message to the queue
+</I>&gt;&gt;<i> 6) Crash RabbitMQ by sending a large message to a different,  
+</I>&gt;&gt;<i> unrelated queue
+</I>&gt;&gt;<i> 7) Kill epmd
+</I>&gt;&gt;<i> 8) Restart RabbitMQ
+</I>&gt;&gt;<i> 9) Verify the (normal) message still exists via rabbitmqctl
+</I>&gt;&gt;<i> 10) Start STOMP consumer and attempt to subscribe to the queue
+</I>&gt;&gt;<i> 11) STOMP consumer waits, RabbitMQ generates the log message, but no
+</I>&gt;&gt;<i> persistent (normal) message gets delivered
+</I>&gt;<i>
+</I>&gt;<i> You should be able to skip steps 6 and 7, i.e. just bounce rabbit  
+</I>&gt;<i> normally, and still see the problem.
+</I>&gt;<i>
+</I>&gt;&gt;<i> I see the 'unacknowledged messages' after a start up the STOMP
+</I>&gt;&gt;<i> clients.
+</I>&gt;<i>
+</I>&gt;<i> *phew*. That is much more plausible, and means there is unlikely to  
+</I>&gt;<i> be a bug in the rabbit core.
+</I>&gt;<i>
+</I>&gt;&gt;<i> So, I'm thinking the order of operations is:
+</I>&gt;&gt;<i> 1) Unacknowledged messages exist on the queue
+</I>&gt;&gt;<i> 2) RabbitMQ dies
+</I>&gt;&gt;<i> 3) RabbitMQ starts up
+</I>&gt;&gt;<i> 4) Recovery mode starts, marks all un-ack'd messages as 'ready'
+</I>&gt;&gt;<i> 5) STOMP clients connect
+</I>&gt;&gt;<i> 6) RabbitMQ generates the STOMP error
+</I>&gt;&gt;<i> 7) I check the rabbitmqctl output, and see that there are un-ack'd  
+</I>&gt;&gt;<i> messages
+</I>&gt;&gt;<i> To be honest, I can't seem to replicate the issue where the STOMP
+</I>&gt;&gt;<i> clients disconnect and the messages remain 'un-ack'd' -- I'm thinking
+</I>&gt;&gt;<i> this error may be transient or somehow a wierd corner case.  If I  
+</I>&gt;&gt;<i> ever
+</I>&gt;&gt;<i> encounter that scenario again, I'll be sure to save the mnesia
+</I>&gt;&gt;<i> directory at that point.
+</I>&gt;<i>
+</I>&gt;<i> Makes sense. There may well be a delay between the error being  
+</I>&gt;<i> generated and the messages being moved back into the 'ready' state,  
+</I>&gt;<i> particularly, say, when rabbit is busy dumping a large error message  
+</I>&gt;<i> to a log file.
+</I>&gt;<i>
+</I>&gt;&gt;<i> I don't have a pure AMQP test client, but I'm curious if this error
+</I>&gt;&gt;<i> condition exists if the large message were sent over AMQP instead of
+</I>&gt;&gt;<i> STOMP...
+</I>&gt;<i>
+</I>&gt;<i> That we have definitely tested. And no, it doesn't cause an error.
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> So, in summary, I think you have managed to uncover three bugs in  
+</I>&gt;<i> the STOMP adapter:
+</I>&gt;<i>
+</I>&gt;<i> 1) attempting to deliver messages recovered from the persister via  
+</I>&gt;<i> STOMP causes an error
+</I>&gt;<i>
+</I>&gt;<i> 2) STOMP client disconnects can result in huge error messages being  
+</I>&gt;<i> logged
+</I>&gt;<i>
+</I>&gt;<i> 3) sending large messages via STOMP causes rabbit to die
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> Thanks for your help in tracking down these problems.
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> I have one last request: Would it be possible for you to construct a  
+</I>&gt;<i> simple test case for 3? Ideally I want something along the lines of  
+</I>&gt;<i> &quot;1) start a clean (i.e. no existing db) rabbit with stomp enabled,  
+</I>&gt;<i> 2) run this program, 3) see rabbit die&quot;. Based on your investigation  
+</I>&gt;<i> so far, the program in question could perhaps be as simple as  
+</I>&gt;<i> creating a large message and then attempting to send it over STOMP.
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> Regards,
+</I>&gt;<i>
+</I>&gt;<i> Matthias.
+</I>
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="004446.html">[rabbitmq-discuss] Weird Crash (91MB message over STOMP)	[Reproducible]
+</A></li>
+	<LI>Next message: <A HREF="004449.html">[rabbitmq-discuss] Weird Crash (91MB message over STOMP)	[Reproducible]
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#4447">[ date ]</a>
+              <a href="thread.html#4447">[ thread ]</a>
+              <a href="subject.html#4447">[ subject ]</a>
+              <a href="author.html#4447">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,655 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Loss of queues after network partition?
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Loss%20of%20queues%20after%20network%20partition%3F&In-Reply-To=%3C507BE3FC.30104%40rabbitmq.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="023016.html">
+   <LINK REL="Next"  HREF="023060.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Loss of queues after network partition?</H1>
+    <B>Tim Watson</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Loss%20of%20queues%20after%20network%20partition%3F&In-Reply-To=%3C507BE3FC.30104%40rabbitmq.com%3E"
+       TITLE="[rabbitmq-discuss] Loss of queues after network partition?">tim at rabbitmq.com
+       </A><BR>
+    <I>Mon Oct 15 11:22:52 BST 2012</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="023016.html">[rabbitmq-discuss] Loss of queues after network partition?
+</A></li>
+        <LI>Next message: <A HREF="023060.html">[rabbitmq-discuss] Loss of queues after network partition?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#23041">[ date ]</a>
+              <a href="thread.html#23041">[ thread ]</a>
+              <a href="subject.html#23041">[ subject ]</a>
+              <a href="author.html#23041">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi Matt,
+
+This is a problem we're aware of (i.e., we have an open bug which we're 
+working on!) and are looking at ways of handling it. What is basically 
+happening here is that mnesia gets into an inconsistent state due to a 
+network partition and the mnesia transaction manager sends unanticipated 
+(and unhandled) messages to certain Erlang processes causing a crash.
+
+Whilst this falls into the category of &quot;Rabbit clusters do not handle 
+network partitions&quot; obviously we want to prevent this sort of thing 
+happening and as I say, we're looking at various ways of responding in a 
+somewhat more user friendly manner.
+
+In the meanwhile, I'd be very interested to see if the queue information 
+has actually been deleted from mnesia when this happens. Are these HA 
+queues durable and do they all &quot;come back to life&quot; after restarting the 
+node(s)?
+
+Cheers,
+Tim
+
+On 10/12/2012 09:01 PM, Matt Pietrek wrote:
+&gt;<i> I'll be the first to admit that this is a somewhat unusual/complicated 
+</I>&gt;<i> circumstance, but I'm posting this on the chance there's something 
+</I>&gt;<i> unusual. This is RabbitMQ is *2.8.7 *on Erlang R15B01.
+</I>&gt;<i>
+</I>&gt;<i> We have two brokers (mq1, mq2) running clustered with all HA queues. A 
+</I>&gt;<i> VIP is in front of them.
+</I>&gt;<i>
+</I>&gt;<i> At some point there was a network event, and afterwards, a queue 
+</I>&gt;<i> vanished. (Still trying to figure out exactly what the network hiccup 
+</I>&gt;<i> was, but it's fair to say there was a communication disruption between 
+</I>&gt;<i> the nodes.)  My guess from looking at the logs is that each node had a 
+</I>&gt;<i> moment where it couldn't see the other, so took actions that were 
+</I>&gt;<i> ultimately incompatible when both nodes were visible to each other.
+</I>&gt;<i>
+</I>&gt;<i> The actual error as seen by our code is a missing queue named 
+</I>&gt;<i> &quot;charon&quot;. You'll see it near the end of the <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at mq2.log</A> (below):
+</I>&gt;<i>
+</I>&gt;<i> *{amqp_error,not_found,&quot;no queue 'charon' in vhost '/'&quot;,'queue.declare'}*
+</I>&gt;<i>
+</I>&gt;<i> Prior to the network event, our client was successfully reading from 
+</I>&gt;<i> the charon queue.
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> *Here's the relevant parts of the <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at mq1.log</A> file
+</I>&gt;<i> ====================================================*
+</I>&gt;<i> =INFO REPORT==== 11-Oct-2012::14:01:58 ===
+</I>&gt;<i> rabbit on node <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at mq2</A> down
+</I>&gt;<i>
+</I>&gt;<i> =ERROR REPORT==== 11-Oct-2012::14:02:03 ===
+</I>&gt;<i> Mnesia(<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at mq1</A>): ** ERROR ** mnesia_event got 
+</I>&gt;<i> {inconsistent_database, running_partitioned_network, <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at mq2</A>}
+</I>&gt;<i>
+</I>&gt;<i> =ERROR REPORT==== 11-Oct-2012::14:02:03 ===
+</I>&gt;<i> ** Generic server &lt;0.547.0&gt; terminating
+</I>&gt;<i> ** Last message in was {<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">mnesia_locker,rabbit at mq2</A>,granted}
+</I>&gt;<i> ** When Server state == {state,
+</I>&gt;<i>                             {0,&lt;0.547.0&gt;},
+</I>&gt;<i>                             {{0,&lt;0.547.0&gt;},undefined},
+</I>&gt;<i>                             {{0,&lt;0.547.0&gt;},undefined},
+</I>&gt;<i>                             {resource,&lt;&lt;&quot;/&quot;&gt;&gt;,queue,&lt;&lt;&quot;charon&quot;&gt;&gt;},
+</I>&gt;<i>                             rabbit_mirror_queue_coordinator,
+</I>&gt;<i>                             {3,
+</I>&gt;<i>                              [{{0,&lt;0.547.0&gt;},
+</I>&gt;<i>                                {view_member,
+</I>&gt;<i>                                    {0,&lt;0.547.0&gt;},
+</I>&gt;<i>                                    [],
+</I>&gt;<i>                                    {0,&lt;0.547.0&gt;},
+</I>&gt;<i>                                    {0,&lt;0.547.0&gt;}}}]},
+</I>&gt;<i>                             1,[],
+</I>&gt;<i>                             [&lt;0.546.0&gt;],
+</I>&gt;<i>                             {[],[]},
+</I>&gt;<i>                             [],undefined}
+</I>&gt;<i> ** Reason for termination ==
+</I>&gt;<i> ** {function_clause,
+</I>&gt;<i>        [{gm,handle_info,
+</I>&gt;<i>             [{<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">mnesia_locker,rabbit at mq2</A>,granted},
+</I>&gt;<i>              {state,
+</I>&gt;<i>                  {0,&lt;0.547.0&gt;},
+</I>&gt;<i>                  {{0,&lt;0.547.0&gt;},undefined},
+</I>&gt;<i>                  {{0,&lt;0.547.0&gt;},undefined},
+</I>&gt;<i>                  {resource,&lt;&lt;&quot;/&quot;&gt;&gt;,queue,&lt;&lt;&quot;charon&quot;&gt;&gt;},
+</I>&gt;<i>                  rabbit_mirror_queue_coordinator,
+</I>&gt;<i>                  {3,
+</I>&gt;<i>                   [{{0,&lt;0.547.0&gt;},
+</I>&gt;<i>                     {view_member,
+</I>&gt;<i>                         {0,&lt;0.547.0&gt;},
+</I>&gt;<i>                         [],
+</I>&gt;<i>                         {0,&lt;0.547.0&gt;},
+</I>&gt;<i>                         {0,&lt;0.547.0&gt;}}}]},
+</I>&gt;<i>                  1,[],
+</I>&gt;<i>                  [&lt;0.546.0&gt;],
+</I>&gt;<i>                  {[],[]},
+</I>&gt;<i>                  [],undefined}],
+</I>&gt;<i>             [{file,&quot;src/gm.erl&quot;},{line,665}]},
+</I>&gt;<i>         
+</I>&gt;<i> {gen_server2,handle_msg,2,[{file,&quot;src/gen_server2.erl&quot;},{line,912}]},
+</I>&gt;<i>         {proc_lib,wake_up,3,[{file,&quot;proc_lib.erl&quot;},{line,237}]}]}
+</I>&gt;<i>
+</I>&gt;<i> =ERROR REPORT==== 11-Oct-2012::14:02:03 ===
+</I>&gt;<i> ** Generic server &lt;0.545.0&gt; terminating
+</I>&gt;<i> ** Last message in was {'EXIT',&lt;0.546.0&gt;,
+</I>&gt;<i>                         {function_clause,
+</I>&gt;<i>                          [{gm,handle_info,
+</I>&gt;<i>                            [{<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">mnesia_locker,rabbit at mq2</A>,granted},
+</I>&gt;<i>                             {state,
+</I>&gt;<i>                              {0,&lt;0.547.0&gt;},
+</I>&gt;<i>                              {{0,&lt;0.547.0&gt;},undefined},
+</I>&gt;<i>                              {{0,&lt;0.547.0&gt;},undefined},
+</I>&gt;<i>                              {resource,&lt;&lt;&quot;/&quot;&gt;&gt;,queue,&lt;&lt;&quot;charon&quot;&gt;&gt;},
+</I>&gt;<i>                              rabbit_mirror_queue_coordinator,
+</I>&gt;<i>                              {3,
+</I>&gt;<i>                               [{{0,&lt;0.547.0&gt;},
+</I>&gt;<i>                                 {view_member,
+</I>&gt;<i>                                  {0,&lt;0.547.0&gt;},
+</I>&gt;<i>                                  [],
+</I>&gt;<i>                                  {0,&lt;0.547.0&gt;},
+</I>&gt;<i>                                  {0,&lt;0.547.0&gt;}}}]},
+</I>&gt;<i>                              1,[],
+</I>&gt;<i>                              [&lt;0.546.0&gt;],
+</I>&gt;<i>                              {[],[]},
+</I>&gt;<i>                              [],undefined}],
+</I>&gt;<i>                            [{file,&quot;src/gm.erl&quot;},{line,665}]},
+</I>&gt;<i>                           {gen_server2,handle_msg,2,
+</I>&gt;<i>                            [{file,&quot;src/gen_server2.erl&quot;},{line,912}]},
+</I>&gt;<i>                           {proc_lib,wake_up,3,
+</I>&gt;<i>                            [{file,&quot;proc_lib.erl&quot;},{line,237}]}]}}
+</I>&gt;<i> ** When Server state == {q,
+</I>&gt;<i>                          {amqqueue,
+</I>&gt;<i>                           {resource,&lt;&lt;&quot;/&quot;&gt;&gt;,queue,&lt;&lt;&quot;charon&quot;&gt;&gt;},
+</I>&gt;<i>                           true,false,none,
+</I>&gt;<i>                           [{&lt;&lt;&quot;x-ha-policy&quot;&gt;&gt;,longstr,&lt;&lt;&quot;all&quot;&gt;&gt;}],
+</I>&gt;<i> &lt;0.545.0&gt;,[],all},
+</I>&gt;<i>                          none,false,rabbit_mirror_queue_master,
+</I>&gt;<i>                          {state,&lt;0.547.0&gt;,&lt;0.546.0&gt;,rabbit_variable_queue,
+</I>&gt;<i>                           {vqstate,
+</I>&gt;<i>                            {0,{[],[]}},
+</I>&gt;<i>                            {0,{[],[]}},
+</I>&gt;<i>                            {delta,undefined,0,undefined},
+</I>&gt;<i>                            {0,{[],[]}},
+</I>&gt;<i>                            {0,{[],[]}},
+</I>&gt;<i>                            0,
+</I>&gt;<i>                            {0,nil},
+</I>&gt;<i>                            undefined,
+</I>&gt;<i>                            {0,nil},
+</I>&gt;<i>                            {qistate,
+</I>&gt;<i>                             
+</I>&gt;<i> &quot;/highland/var/lib/<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at mq1</A>/queues/4L2SY4TVRPM8HP85JDVO85BPL&quot;,
+</I>&gt;<i>                             {{dict,0,16,16,8,80,48,
+</I>&gt;<i>                               
+</I>&gt;<i> {[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],
+</I>&gt;<i>                                []},
+</I>&gt;<i>                               
+</I>&gt;<i> {{[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],
+</I>&gt;<i>                                 []}}},
+</I>&gt;<i>                              []},
+</I>&gt;<i>                             undefined,0,262144,
+</I>&gt;<i>                             #Fun&lt;rabbit_variable_queue.2.121500735&gt;,
+</I>&gt;<i>                             {0,nil}},
+</I>&gt;<i>                            {{client_msstate,msg_store_persistent,
+</I>&gt;<i> &lt;&lt;112,32,84,92,54,73,67,43,231,35,164,79,106,8,27,
+</I>&gt;<i>                                132&gt;&gt;,
+</I>&gt;<i>                              {dict,0,16,16,8,80,48,
+</I>&gt;<i>                               
+</I>&gt;<i> {[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],
+</I>&gt;<i>                                []},
+</I>&gt;<i>                               
+</I>&gt;<i> {{[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],
+</I>&gt;<i>                                 []}}},
+</I>&gt;<i>                              {state,237637,
+</I>&gt;<i>                               
+</I>&gt;<i> &quot;/highland/var/lib/<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at mq1</A>/msg_store_persistent&quot;},
+</I>&gt;<i>                              rabbit_msg_store_ets_index,
+</I>&gt;<i>                              
+</I>&gt;<i> &quot;/highland/var/lib/<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at mq1</A>/msg_store_persistent&quot;,
+</I>&gt;<i> &lt;0.289.0&gt;,241734,233540,245831,249928},
+</I>&gt;<i>                             {client_msstate,msg_store_transient,
+</I>&gt;<i> &lt;&lt;204,18,155,40,29,120,124,76,144,83,195,135,250,
+</I>&gt;<i>                                91,216,3&gt;&gt;,
+</I>&gt;<i>                              {dict,0,16,16,8,80,48,
+</I>&gt;<i>                               
+</I>&gt;<i> {[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],
+</I>&gt;<i>                                []},
+</I>&gt;<i>                               
+</I>&gt;<i> {{[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],
+</I>&gt;<i>                                 []}}},
+</I>&gt;<i>                              {state,217152,
+</I>&gt;<i>                               
+</I>&gt;<i> &quot;/highland/var/lib/<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at mq1</A>/msg_store_transient&quot;},
+</I>&gt;<i>                              rabbit_msg_store_ets_index,
+</I>&gt;<i>                              
+</I>&gt;<i> &quot;/highland/var/lib/<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at mq1</A>/msg_store_transient&quot;,
+</I>&gt;<i> &lt;0.284.0&gt;,221249,213055,225346,229443}},
+</I>&gt;<i>                            
+</I>&gt;<i> true,0,#Fun&lt;rabbit_amqqueue_process.5.24780734&gt;,0,
+</I>&gt;<i>                            0,infinity,0,0,0,0,0,
+</I>&gt;<i>                            {rates,
+</I>&gt;<i>                             {{1349,988602,967125},0},
+</I>&gt;<i>                             {{1349,988602,967125},0},
+</I>&gt;<i>                             0.0,0.0,
+</I>&gt;<i>                             {1349,988606,141019}},
+</I>&gt;<i>                            {0,nil},
+</I>&gt;<i>                            {0,nil},
+</I>&gt;<i>                            {0,nil},
+</I>&gt;<i>                            {0,nil},
+</I>&gt;<i>                            0,0,
+</I>&gt;<i>                            {rates,
+</I>&gt;<i>                             {{1349,988602,967125},0},
+</I>&gt;<i>                             {{1349,988602,967125},0},
+</I>&gt;<i>                             0.0,0.0,
+</I>&gt;<i>                             {1349,988606,141019}}},
+</I>&gt;<i>                           0,
+</I>&gt;<i>                           {dict,0,16,16,8,80,48,
+</I>&gt;<i>                            
+</I>&gt;<i> {[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[]},
+</I>&gt;<i>                            {{[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],
+</I>&gt;<i>                              []}}},
+</I>&gt;<i>                           [],
+</I>&gt;<i>                           {dict,0,16,16,8,80,48,
+</I>&gt;<i>                            
+</I>&gt;<i> {[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[]},
+</I>&gt;<i>                            {{[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],
+</I>&gt;<i>                              []}}},
+</I>&gt;<i>                           {set,0,16,16,8,80,48,
+</I>&gt;<i>                            
+</I>&gt;<i> {[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[]},
+</I>&gt;<i>                            {{[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],
+</I>&gt;<i>                              []}}}},
+</I>&gt;<i>                          {[],[]},
+</I>&gt;<i>                          undefined,undefined,undefined,undefined,
+</I>&gt;<i>                          {state,fine,5000,undefined},
+</I>&gt;<i>                          {0,nil},
+</I>&gt;<i>                          undefined,undefined,undefined,
+</I>&gt;<i>                          {dict,0,16,16,8,80,48,
+</I>&gt;<i>                           
+</I>&gt;<i> {[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[]},
+</I>&gt;<i>                           
+</I>&gt;<i> {{[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[]}}},
+</I>&gt;<i>                          1,
+</I>&gt;<i>                          {{0,nil},{0,nil}},
+</I>&gt;<i>                          undefined,
+</I>&gt;<i>                          {dict,0,16,16,8,80,48,
+</I>&gt;<i>                           
+</I>&gt;<i> {[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[]},
+</I>&gt;<i>                           
+</I>&gt;<i> {{[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[]}}},
+</I>&gt;<i>                          undefined,undefined}
+</I>&gt;<i> ** Reason for termination ==
+</I>&gt;<i> ** {noproc,{gen_server2,call,[&lt;0.547.0&gt;,info,infinity]}}
+</I>&gt;<i> ** In 'terminate' callback with reason ==
+</I>&gt;<i> ** {function_clause,
+</I>&gt;<i>        [{gm,handle_info,
+</I>&gt;<i>             [{<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">mnesia_locker,rabbit at mq2</A>,granted},
+</I>&gt;<i>              {state,
+</I>&gt;<i>                  {0,&lt;0.547.0&gt;},
+</I>&gt;<i>                  {{0,&lt;0.547.0&gt;},undefined},
+</I>&gt;<i>                  {{0,&lt;0.547.0&gt;},undefined},
+</I>&gt;<i>                  {resource,&lt;&lt;&quot;/&quot;&gt;&gt;,queue,&lt;&lt;&quot;charon&quot;&gt;&gt;},
+</I>&gt;<i>                  rabbit_mirror_queue_coordinator,
+</I>&gt;<i>                  {3,
+</I>&gt;<i>                   [{{0,&lt;0.547.0&gt;},
+</I>&gt;<i>                     {view_member,
+</I>&gt;<i>                         {0,&lt;0.547.0&gt;},
+</I>&gt;<i>                         [],
+</I>&gt;<i>                         {0,&lt;0.547.0&gt;},
+</I>&gt;<i>                         {0,&lt;0.547.0&gt;}}}]},
+</I>&gt;<i>                  1,[],
+</I>&gt;<i>                  [&lt;0.546.0&gt;],
+</I>&gt;<i>                  {[],[]},
+</I>&gt;<i>                  [],undefined}],
+</I>&gt;<i>             [{file,&quot;src/gm.erl&quot;},{line,665}]},
+</I>&gt;<i>         
+</I>&gt;<i> {gen_server2,handle_msg,2,[{file,&quot;src/gen_server2.erl&quot;},{line,912}]},
+</I>&gt;<i>         {proc_lib,wake_up,3,[{file,&quot;proc_lib.erl&quot;},{line,237}]}]}
+</I>&gt;<i>
+</I>&gt;<i> =INFO REPORT==== 11-Oct-2012::14:02:03 ===
+</I>&gt;<i> Mirrored-queue (queue 'cmcmd' in vhost '/'): Master 
+</I>&gt;<i> &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at mq1.2.665.0</A>&gt; saw deaths of mirrors &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at mq2.1.383.0</A>&gt;
+</I>&gt;<i>
+</I>&gt;<i> =INFO REPORT==== 11-Oct-2012::14:02:03 ===
+</I>&gt;<i> Mirrored-queue (queue 'ConfigurationManager' in vhost '/'): Master 
+</I>&gt;<i> &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at mq1.2.605.0</A>&gt; saw deaths of mirrors &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at mq2.1.377.0</A>&gt;
+</I>&gt;<i>
+</I>&gt;<i> =INFO REPORT==== 11-Oct-2012::14:02:03 ===
+</I>&gt;<i> global: Name conflict terminating {rabbit_mgmt_db,&lt;3198.32532.0&gt;}
+</I>&gt;<i>
+</I>&gt;<i> =INFO REPORT==== 11-Oct-2012::14:26:40 ===
+</I>&gt;<i> accepting AMQP connection &lt;0.6507.1&gt; (10.72.0.50:46742 
+</I>&gt;<i> &lt;<A HREF="http://10.72.0.50:46742">http://10.72.0.50:46742</A>&gt; -&gt; 10.72.0.47:5672 &lt;<A HREF="http://10.72.0.47:5672">http://10.72.0.47:5672</A>&gt;)
+</I>&gt;<i>
+</I>&gt;<i> =INFO REPORT==== 11-Oct-2012::14:26:40 ===
+</I>&gt;<i> closing AMQP connection &lt;0.6507.1&gt; (10.72.0.50:46742 
+</I>&gt;<i> &lt;<A HREF="http://10.72.0.50:46742">http://10.72.0.50:46742</A>&gt; -&gt; 10.72.0.47:5672 &lt;<A HREF="http://10.72.0.47:5672">http://10.72.0.47:5672</A>&gt;)
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> *And here's the relevant parts of the <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at m2.log</A> file
+</I>&gt;<i> ====================================================*
+</I>&gt;<i> =ERROR REPORT==== 11-Oct-2012::14:01:37 ===
+</I>&gt;<i> ** Node <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at mq1</A> not responding **
+</I>&gt;<i> ** Removing (timedout) connection **
+</I>&gt;<i>
+</I>&gt;<i> =INFO REPORT==== 11-Oct-2012::14:01:37 ===
+</I>&gt;<i> rabbit on node <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at mq1</A> down
+</I>&gt;<i>
+</I>&gt;<i> =INFO REPORT==== 11-Oct-2012::14:01:40 ===
+</I>&gt;<i> Statistics database started.
+</I>&gt;<i>
+</I>&gt;<i> =INFO REPORT==== 11-Oct-2012::14:01:43 ===
+</I>&gt;<i> Mirrored-queue (queue 'cmcmd' in vhost '/'): Slave 
+</I>&gt;<i> &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at mq2.1.383.0</A>&gt; saw deaths of mirrors &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at mq1.2.665.0</A>&gt;
+</I>&gt;<i>
+</I>&gt;<i> =INFO REPORT==== 11-Oct-2012::14:01:43 ===
+</I>&gt;<i> Mirrored-queue (queue 'cmcmd' in vhost '/'): Promoting slave 
+</I>&gt;<i> &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at mq2.1.383.0</A>&gt; to master
+</I>&gt;<i>
+</I>&gt;<i> =INFO REPORT==== 11-Oct-2012::14:01:43 ===
+</I>&gt;<i> Mirrored-queue (queue 'charon' in vhost '/'): Slave 
+</I>&gt;<i> &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at mq2.1.371.0</A>&gt; saw deaths of mirrors &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at mq1.2.545.0</A>&gt;
+</I>&gt;<i>
+</I>&gt;<i> =INFO REPORT==== 11-Oct-2012::14:01:43 ===
+</I>&gt;<i> Mirrored-queue (queue 'charon' in vhost '/'): Promoting slave 
+</I>&gt;<i> &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at mq2.1.371.0</A>&gt; to master
+</I>&gt;<i>
+</I>&gt;<i> =INFO REPORT==== 11-Oct-2012::14:01:43 ===
+</I>&gt;<i> Mirrored-queue (queue 'ConfigurationManager' in vhost '/'): Slave 
+</I>&gt;<i> &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at mq2.1.377.0</A>&gt; saw deaths of mirrors &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at mq1.2.605.0</A>&gt;
+</I>&gt;<i>
+</I>&gt;<i> =INFO REPORT==== 11-Oct-2012::14:01:43 ===
+</I>&gt;<i> Mirrored-queue (queue 'ConfigurationManager' in vhost '/'): Promoting 
+</I>&gt;<i> slave &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at mq2.1.377.0</A>&gt; to master
+</I>&gt;<i>
+</I>&gt;<i> =ERROR REPORT==== 11-Oct-2012::14:05:03 ===
+</I>&gt;<i> Mnesia(<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at mq2</A>): ** ERROR ** mnesia_event got 
+</I>&gt;<i> {inconsistent_database, running_partitioned_network, <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at mq1</A>}
+</I>&gt;<i>
+</I>&gt;<i> =INFO REPORT==== 11-Oct-2012::14:05:03 ===
+</I>&gt;<i> Statistics database started.
+</I>&gt;<i>
+</I>&gt;<i> =ERROR REPORT==== 11-Oct-2012::14:29:39 ===
+</I>&gt;<i> ** Generic server &lt;0.32583.0&gt; terminating
+</I>&gt;<i> ** Last message in was {'$gen_cast',{gm_deaths,[&lt;0.5504.1&gt;]}}
+</I>&gt;<i> ** When Server state == {state,
+</I>&gt;<i>                             {amqqueue,
+</I>&gt;<i>                                 {resource,&lt;&lt;&quot;/&quot;&gt;&gt;,queue,&lt;&lt;&quot;charon&quot;&gt;&gt;},
+</I>&gt;<i>                                 true,false,none,
+</I>&gt;<i>                                 [{&lt;&lt;&quot;x-ha-policy&quot;&gt;&gt;,longstr,&lt;&lt;&quot;all&quot;&gt;&gt;}],
+</I>&gt;<i> &lt;0.371.0&gt;,[],all},
+</I>&gt;<i> &lt;0.372.0&gt;,
+</I>&gt;<i>                             {dict,0,16,16,8,80,48,
+</I>&gt;<i>                                 
+</I>&gt;<i> {[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],
+</I>&gt;<i>                                  []},
+</I>&gt;<i>                                 
+</I>&gt;<i> {{[],[],[],[],[],[],[],[],[],[],[],[],[],[],
+</I>&gt;<i>                                   [],[]}}},
+</I>&gt;<i>                             #Fun&lt;rabbit_mirror_queue_master.1.32244930&gt;,
+</I>&gt;<i>                             #Fun&lt;rabbit_mirror_queue_master.2.32244930&gt;}
+</I>&gt;<i> ** Reason for termination ==
+</I>&gt;<i> ** {bad_return_value,
+</I>&gt;<i>        {error,
+</I>&gt;<i>            {{badmatch,[]},
+</I>&gt;<i>             [{rabbit_mirror_queue_misc,'-remove_from_queue/2-fun-0-',2,
+</I>&gt;<i>                  [{file,&quot;src/rabbit_mirror_queue_misc.erl&quot;},{line,63}]},
+</I>&gt;<i>              {mnesia_tm,apply_fun,3,[{file,&quot;mnesia_tm.erl&quot;},{line,829}]},
+</I>&gt;<i>              {mnesia_tm,execute_transaction,5,
+</I>&gt;<i>                  [{file,&quot;mnesia_tm.erl&quot;},{line,809}]},
+</I>&gt;<i>              {rabbit_misc,'-execute_mnesia_transaction/1-fun-0-',1,
+</I>&gt;<i>                  [{file,&quot;src/rabbit_misc.erl&quot;},{line,440}]},
+</I>&gt;<i>              {worker_pool_worker,handle_call,3,
+</I>&gt;<i>                  [{file,&quot;src/worker_pool_worker.erl&quot;},{line,80}]},
+</I>&gt;<i>              {gen_server2,handle_msg,2,
+</I>&gt;<i>                  [{file,&quot;src/gen_server2.erl&quot;},{line,879}]},
+</I>&gt;<i>              {proc_lib,wake_up,3,[{file,&quot;proc_lib.erl&quot;},{line,237}]}]}}}
+</I>&gt;<i>
+</I>&gt;<i> =ERROR REPORT==== 11-Oct-2012::14:29:39 ===
+</I>&gt;<i> ** Generic server &lt;0.371.0&gt; terminating
+</I>&gt;<i> ** Last message in was {'EXIT',&lt;0.32583.0&gt;,
+</I>&gt;<i>                         {bad_return_value,
+</I>&gt;<i>                          {error,
+</I>&gt;<i>                           {{badmatch,[]},
+</I>&gt;<i>                            [{rabbit_mirror_queue_misc,
+</I>&gt;<i>                              '-remove_from_queue/2-fun-0-',2,
+</I>&gt;<i>                              [{file,&quot;src/rabbit_mirror_queue_misc.erl&quot;},
+</I>&gt;<i>                               {line,63}]},
+</I>&gt;<i>                             {mnesia_tm,apply_fun,3,
+</I>&gt;<i>                              [{file,&quot;mnesia_tm.erl&quot;},{line,829}]},
+</I>&gt;<i>                             {mnesia_tm,execute_transaction,5,
+</I>&gt;<i>                              [{file,&quot;mnesia_tm.erl&quot;},{line,809}]},
+</I>&gt;<i>                             {rabbit_misc,
+</I>&gt;<i>                              '-execute_mnesia_transaction/1-fun-0-',1,
+</I>&gt;<i>                              [{file,&quot;src/rabbit_misc.erl&quot;},{line,440}]},
+</I>&gt;<i>                             {worker_pool_worker,handle_call,3,
+</I>&gt;<i>                              
+</I>&gt;<i> [{file,&quot;src/worker_pool_worker.erl&quot;},{line,80}]},
+</I>&gt;<i>                             {gen_server2,handle_msg,2,
+</I>&gt;<i>                              [{file,&quot;src/gen_server2.erl&quot;},{line,879}]},
+</I>&gt;<i>                             {proc_lib,wake_up,3,
+</I>&gt;<i>                              [{file,&quot;proc_lib.erl&quot;},{line,237}]}]}}}}
+</I>&gt;<i> ** When Server state == {q,
+</I>&gt;<i>                          {amqqueue,
+</I>&gt;<i>                           {resource,&lt;&lt;&quot;/&quot;&gt;&gt;,queue,&lt;&lt;&quot;charon&quot;&gt;&gt;},
+</I>&gt;<i>                           true,false,none,
+</I>&gt;<i>                           [{&lt;&lt;&quot;x-ha-policy&quot;&gt;&gt;,longstr,&lt;&lt;&quot;all&quot;&gt;&gt;}],
+</I>&gt;<i> &lt;0.371.0&gt;,[],all},
+</I>&gt;<i>                          none,false,rabbit_mirror_queue_master,
+</I>&gt;<i>                          
+</I>&gt;<i> {state,&lt;0.372.0&gt;,&lt;0.32583.0&gt;,rabbit_variable_queue,
+</I>&gt;<i>                           {vqstate,
+</I>&gt;<i>                            {0,{[],[]}},
+</I>&gt;<i>                            {0,{[],[]}},
+</I>&gt;<i>                            {delta,undefined,0,undefined},
+</I>&gt;<i>                            {0,{[],[]}},
+</I>&gt;<i>                            {0,{[],[]}},
+</I>&gt;<i>                            0,
+</I>&gt;<i>                            {0,nil},
+</I>&gt;<i>                            undefined,
+</I>&gt;<i>                            {0,nil},
+</I>&gt;<i>                            {qistate,
+</I>&gt;<i>                             
+</I>&gt;<i> &quot;/highland/var/lib/<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at mq2</A>/queues/4L2SY4TVRPM8HP85JDVO85BPL&quot;,
+</I>&gt;<i>                             {{dict,0,16,16,8,80,48,
+</I>&gt;<i>                               
+</I>&gt;<i> {[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],
+</I>&gt;<i>                                []},
+</I>&gt;<i>                               
+</I>&gt;<i> {{[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],
+</I>&gt;<i>                                 []}}},
+</I>&gt;<i>                              []},
+</I>&gt;<i>                             undefined,0,262144,
+</I>&gt;<i>                             #Fun&lt;rabbit_variable_queue.2.121500735&gt;,
+</I>&gt;<i>                             {0,nil}},
+</I>&gt;<i>                            {{client_msstate,msg_store_persistent,
+</I>&gt;<i> &lt;&lt;23,245,132,154,3,96,225,184,108,75,232,224,184,
+</I>&gt;<i>                                114,108,141&gt;&gt;,
+</I>&gt;<i>                              {dict,0,16,16,8,80,48,
+</I>&gt;<i>                               
+</I>&gt;<i> {[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],
+</I>&gt;<i>                                []},
+</I>&gt;<i>                               
+</I>&gt;<i> {{[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],
+</I>&gt;<i>                                 []}}},
+</I>&gt;<i>                              {state,282693,
+</I>&gt;<i>                               
+</I>&gt;<i> &quot;/highland/var/lib/<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at mq2</A>/msg_store_persistent&quot;},
+</I>&gt;<i>                              rabbit_msg_store_ets_index,
+</I>&gt;<i>                              
+</I>&gt;<i> &quot;/highland/var/lib/<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at mq2</A>/msg_store_persistent&quot;,
+</I>&gt;<i> &lt;0.285.0&gt;,286790,278596,290887,294984},
+</I>&gt;<i>                             {client_msstate,msg_store_transient,
+</I>&gt;<i> &lt;&lt;17,62,75,125,126,21,66,37,170,44,198,72,18,94,
+</I>&gt;<i>                                170,197&gt;&gt;,
+</I>&gt;<i>                              {dict,0,16,16,8,80,48,
+</I>&gt;<i>                               
+</I>&gt;<i> {[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],
+</I>&gt;<i>                                []},
+</I>&gt;<i>                               
+</I>&gt;<i> {{[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],
+</I>&gt;<i>                                 []}}},
+</I>&gt;<i>                              {state,262208,
+</I>&gt;<i>                               
+</I>&gt;<i> &quot;/highland/var/lib/<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at mq2</A>/msg_store_transient&quot;},
+</I>&gt;<i>                              rabbit_msg_store_ets_index,
+</I>&gt;<i>                              
+</I>&gt;<i> &quot;/highland/var/lib/<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at mq2</A>/msg_store_transient&quot;,
+</I>&gt;<i> &lt;0.280.0&gt;,266305,258111,270402,274499}},
+</I>&gt;<i>                            
+</I>&gt;<i> true,0,#Fun&lt;rabbit_mirror_queue_slave.1.69615989&gt;,
+</I>&gt;<i>                            0,0,infinity,0,0,0,0,0,
+</I>&gt;<i>                            {rates,
+</I>&gt;<i>                             {{1349,989325,677031},0},
+</I>&gt;<i>                             {{1349,989325,677031},0},
+</I>&gt;<i>                             0.0,0.0,
+</I>&gt;<i>                             {1349,989505,348090}},
+</I>&gt;<i>                            {0,nil},
+</I>&gt;<i>                            {0,nil},
+</I>&gt;<i>                            {0,nil},
+</I>&gt;<i>                            {0,nil},
+</I>&gt;<i>                            0,0,
+</I>&gt;<i>                            {rates,
+</I>&gt;<i>                             {{1349,989325,677031},0},
+</I>&gt;<i>                             {{1349,989325,677031},0},
+</I>&gt;<i>                             0.0,0.0,
+</I>&gt;<i>                             {1349,989505,348090}}},
+</I>&gt;<i>                           0,
+</I>&gt;<i>                           {dict,0,16,16,8,80,48,
+</I>&gt;<i>                            
+</I>&gt;<i> {[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[]},
+</I>&gt;<i>                            {{[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],
+</I>&gt;<i>                              []}}},
+</I>&gt;<i>                           [],
+</I>&gt;<i>                           {dict,0,16,16,8,80,48,
+</I>&gt;<i>                            
+</I>&gt;<i> {[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[]},
+</I>&gt;<i>                            {{[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],
+</I>&gt;<i>                              []}}},
+</I>&gt;<i>                           {set,0,16,16,8,80,48,
+</I>&gt;<i>                            
+</I>&gt;<i> {[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[]},
+</I>&gt;<i>                            {{[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],
+</I>&gt;<i>                              []}}}},
+</I>&gt;<i>                          {[],[]},
+</I>&gt;<i>                          undefined,undefined,undefined,undefined,
+</I>&gt;<i>                          {state,fine,5000,undefined},
+</I>&gt;<i>                          {0,nil},
+</I>&gt;<i>                          undefined,undefined,undefined,
+</I>&gt;<i>                          {dict,0,16,16,8,80,48,
+</I>&gt;<i>                           
+</I>&gt;<i> {[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[]},
+</I>&gt;<i>                           
+</I>&gt;<i> {{[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[]}}},
+</I>&gt;<i>                          1,
+</I>&gt;<i>                          {{0,nil},{0,nil}},
+</I>&gt;<i>                          undefined,
+</I>&gt;<i>                          {dict,0,16,16,8,80,48,
+</I>&gt;<i>                           
+</I>&gt;<i> {[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[]},
+</I>&gt;<i>                           
+</I>&gt;<i> {{[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],[]}}},
+</I>&gt;<i>                          undefined,undefined}
+</I>&gt;<i> ** Reason for termination ==
+</I>&gt;<i> ** {noproc,{gen_server2,call,[&lt;0.372.0&gt;,info,infinity]}}
+</I>&gt;<i> ** In 'terminate' callback with reason ==
+</I>&gt;<i> ** {bad_return_value,
+</I>&gt;<i>        {error,
+</I>&gt;<i>            {{badmatch,[]},
+</I>&gt;<i>             [{rabbit_mirror_queue_misc,'-remove_from_queue/2-fun-0-',2,
+</I>&gt;<i>                  [{file,&quot;src/rabbit_mirror_queue_misc.erl&quot;},{line,63}]},
+</I>&gt;<i>              {mnesia_tm,apply_fun,3,[{file,&quot;mnesia_tm.erl&quot;},{line,829}]},
+</I>&gt;<i>              {mnesia_tm,execute_transaction,5,
+</I>&gt;<i>                  [{file,&quot;mnesia_tm.erl&quot;},{line,809}]},
+</I>&gt;<i>              {rabbit_misc,'-execute_mnesia_transaction/1-fun-0-',1,
+</I>&gt;<i>                  [{file,&quot;src/rabbit_misc.erl&quot;},{line,440}]},
+</I>&gt;<i>              {worker_pool_worker,handle_call,3,
+</I>&gt;<i>                  [{file,&quot;src/worker_pool_worker.erl&quot;},{line,80}]},
+</I>&gt;<i>              {gen_server2,handle_msg,2,
+</I>&gt;<i>                  [{file,&quot;src/gen_server2.erl&quot;},{line,879}]},
+</I>&gt;<i>              {proc_lib,wake_up,3,[{file,&quot;proc_lib.erl&quot;},{line,237}]}]}}}
+</I>&gt;<i>
+</I>&gt;<i> =INFO REPORT==== 11-Oct-2012::14:29:43 ===
+</I>&gt;<i> accepting AMQP connection &lt;0.5524.1&gt; (10.72.0.23:36056 
+</I>&gt;<i> &lt;<A HREF="http://10.72.0.23:36056">http://10.72.0.23:36056</A>&gt; -&gt; 10.72.0.56:5672 &lt;<A HREF="http://10.72.0.56:5672">http://10.72.0.56:5672</A>&gt;)
+</I>&gt;<i>
+</I>&gt;<i> =INFO REPORT==== 11-Oct-2012::14:29:44 ===
+</I>&gt;<i> accepting AMQP connection &lt;0.5574.1&gt; (10.72.0.23:36064 
+</I>&gt;<i> &lt;<A HREF="http://10.72.0.23:36064">http://10.72.0.23:36064</A>&gt; -&gt; 10.72.0.56:5672 &lt;<A HREF="http://10.72.0.56:5672">http://10.72.0.56:5672</A>&gt;)
+</I>&gt;<i>
+</I>&gt;<i> =INFO REPORT==== 11-Oct-2012::17:56:16 ===
+</I>&gt;<i> accepting AMQP connection &lt;0.23868.1&gt; (10.72.0.53:57122 
+</I>&gt;<i> &lt;<A HREF="http://10.72.0.53:57122">http://10.72.0.53:57122</A>&gt; -&gt; 10.72.0.56:5672 &lt;<A HREF="http://10.72.0.56:5672">http://10.72.0.56:5672</A>&gt;)
+</I>&gt;<i>
+</I>&gt;<i> =ERROR REPORT==== 11-Oct-2012::17:56:16 ===
+</I>&gt;<i> connection &lt;0.23868.1&gt;, channel 1 - error:
+</I>&gt;<i> {amqp_error,not_found,&quot;no queue 'charon' in vhost '/'&quot;,'queue.declare'}
+</I>&gt;<i>
+</I>&gt;<i> =WARNING REPORT==== 11-Oct-2012::17:56:16 ===
+</I>&gt;<i> closing AMQP connection &lt;0.23868.1&gt; (10.72.0.53:57122 
+</I>&gt;<i> &lt;<A HREF="http://10.72.0.53:57122">http://10.72.0.53:57122</A>&gt; -&gt; 10.72.0.56:5672 &lt;<A HREF="http://10.72.0.56:5672">http://10.72.0.56:5672</A>&gt;):
+</I>&gt;<i> connection_closed_abruptly
+</I>&gt;<i>
+</I>&gt;<i> =INFO REPORT==== 11-Oct-2012::17:56:16 ===
+</I>&gt;<i> accepting AMQP connection &lt;0.23878.1&gt; (10.72.0.52:56025 
+</I>&gt;<i> &lt;<A HREF="http://10.72.0.52:56025">http://10.72.0.52:56025</A>&gt; -&gt; 10.72.0.56:5672 &lt;<A HREF="http://10.72.0.56:5672">http://10.72.0.56:5672</A>&gt;)
+</I>&gt;<i>
+</I>&gt;<i> =ERROR REPORT==== 11-Oct-2012::17:56:16 ===
+</I>&gt;<i> connection &lt;0.23878.1&gt;, channel 1 - error:
+</I>&gt;<i> {amqp_error,not_found,&quot;no queue 'charon' in vhost '/'&quot;,'queue.declare'}
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20121015/f61759f4/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20121015/f61759f4/attachment.htm</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="023016.html">[rabbitmq-discuss] Loss of queues after network partition?
+</A></li>
+	<LI>Next message: <A HREF="023060.html">[rabbitmq-discuss] Loss of queues after network partition?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#23041">[ date ]</a>
+              <a href="thread.html#23041">[ thread ]</a>
+              <a href="subject.html#23041">[ subject ]</a>
+              <a href="author.html#23041">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

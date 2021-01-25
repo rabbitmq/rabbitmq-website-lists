@@ -1,0 +1,654 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] System CPU spikes, multi-second latency
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20System%20CPU%20spikes%2C%20multi-second%20latency&In-Reply-To=%3CCAK5JfkgZEXBN5sPMVE%2BePAoPtBV08fqS6_J2yZrvpdkQYLekZg%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="015513.html">
+   <LINK REL="Next"  HREF="015531.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] System CPU spikes, multi-second latency</H1>
+    <B>Ben Rady</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20System%20CPU%20spikes%2C%20multi-second%20latency&In-Reply-To=%3CCAK5JfkgZEXBN5sPMVE%2BePAoPtBV08fqS6_J2yZrvpdkQYLekZg%40mail.gmail.com%3E"
+       TITLE="[rabbitmq-discuss] System CPU spikes, multi-second latency">benrady at gmail.com
+       </A><BR>
+    <I>Thu Oct 13 04:41:25 BST 2011</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="015513.html">[rabbitmq-discuss] Debugging queue.declare
+</A></li>
+        <LI>Next message: <A HREF="015531.html">[rabbitmq-discuss] System CPU spikes, multi-second latency
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#15480">[ date ]</a>
+              <a href="thread.html#15480">[ thread ]</a>
+              <a href="subject.html#15480">[ subject ]</a>
+              <a href="author.html#15480">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>We've been having some latency problems with RabbitMQ that seem kinda out of
+the ordinary given what I've read on this list and in the documentation
+about it's capabilities. In some cases, the message rate for multiple
+exchanges simultaneously drops for up to a minute. This is followed by a
+giant spike as the messages finally rush through. Although no messages
+appear to be lost, the latency is a problem for us, and any help would be
+much appreciated.
+
+== About the environment ==
+
+- RabbitMQ 2.5.1 (Compiled from source tarball), web admin plugin installed,
+otherwise out of the box configuration
+- erlang-otp R14B03
+- Redhat Enterprise 6.0
+- IBM 3550, 12 cores, 192G memory (no, that's not a typo)
+- A single instance of RabbitMQ, receiving roughly 1200 messages per second
+across 70 (or so) fanout exchanges. Each exchange has 2 queues with one
+associated consumer per queue. The queues are non-persistant and non-ack.
+- There is one publisher per exchange, a Ruby process using the AMQP gem.
+The consumers also use ruby with the AMQP gem (one is JRuby, the other MRI).
+
+== What we're seeing ==
+
+I've been able to capture a lot of stats during once of these events, and
+I've attached some of the resulting data from one that lasted about 12
+seconds. What happens (in roughly temporal order) is this:
+
+1) As reported by top, one of the RabbitMQ threads (shown individually in
+top using the 'H' option) spikes to 100% CPU. By comparing the last used CPU
+in top to the per-cpu user/system/wait breakdown, it appears the thread is
+spending all it's time in system calls (see attached screenshot).
+2) As reported by netstat, TCP receive queues build up on the incoming
+RabbitMQ socket connections. This happens in just a few seconds. See the
+attached netstat.txt file for detailed stats from a particular episode.
+3) The web admin plugin stops responding to API requests.
+4) The incoming message rate across multiple exchanges drops dramatically.
+The system can stay in this state for 10-30 seconds or more.
+5) The CPU levels return to normal (sometimes a bit above normal), and the
+message rate jumps. Some queuing on the consumers happens as they try to
+catch up with flood of messages.
+6) The consumers work off the extra messages, and the system returns to
+normal (40%, or so, cpu for rabbit, &lt; 5% for the consumers).
+
+These episodes last from just a couple of seconds up to a minute, and seem
+to happen randomly, sometimes coming one right after another, sometimes
+hours apart. We've never seen it less than once a day.
+
+==What we've already done==
+
+1) Troubleshooting using strace
+Since the thread seems to be pegged in system calls, we've been using strace
+to try and capture the system call made by the offending thread during the
+event. Unfortunately, the best we've been able to do is capture the system
+calls immediately following the event. For example, here are the first
+system calls captured for two threads, once of which can be seen with a
+pegged CPU in the attached screenshot (pid 21860).
+
+$ head rabbit-thread.21860
+21:13:53.109706 futex(0x1f2bc20, FUTEX_WAKE_PRIVATE, 1) = 1 &lt;0.000021&gt;
+21:13:53.109805 futex(0x1f2bb60, FUTEX_WAKE_PRIVATE, 1) = 1 &lt;0.000018&gt;
+21:13:53.109853 futex(0x899240, FUTEX_WAIT_PRIVATE, 2, NULL) = 0 &lt;0.006322&gt;
+
+$ head rabbit-thread.21862
+21:13:48.663530 futex(0x1f2bce0, FUTEX_WAIT_PRIVATE, 4294967295, NULL)
+  = 0 &lt;4.446544&gt;
+21:13:53.110118 sched_yield() = 0 &lt;0.000102&gt;
+21:13:53.110334 futex(0x1f856e8, FUTEX_WAIT_PRIVATE, 2, NULL) = 0 &lt;0.006364&gt;
+21:13:53.116735 futex(0x1f856e8, FUTEX_WAKE_PRIVATE, 1) = 1 &lt;0.000092&gt;
+21:13:53.117139 recvfrom(204, &quot;
+
+The first system call logged for 21860 occurs at 21:13:53. However, notice
+the timestamp and 4.4 second execution time for the futex call in the other
+thread (21862). All of the straces for the threads were started at the same
+time (using the -ff option) and a number of other threads have a similar
+call around 21:13:48.6635 as their first logged system call (within a few
+milliseconds). This leads me to believe that whatever 21860 is doing during
+this time, it's working in a single system call rather
+than repeatedly calling in a loop.
+
+2) Reproducing the problem in a controlled environment
+
+This problem only seems to occur in our production environments, but not in
+any test environments. The software and hardware in the two environments are
+identical. We've used data recorded from our prod environment to try and
+reproduce the problem in test (with higher load, even), but no luck so far.
+
+3) Monitoring message rates through the web API
+
+In the second attached screenshot, you can see a graph generated from data
+pulled from the web API for this episode. Each trace in the graph represents
+the incoming message rate for an individual exchange as reported by the API.
+For example, the green line at the top shows the message rate dropping from
+223 messages/sec to 32 messages per second. Not all the exchanges
+
+Note that the sample rate for this query is every 5 seconds, and the
+straight line between the points at 21:13:40 and 21:13:53 indicate that the
+script pulling the data was unable to get a response from rabbit during this
+time.
+
+4) Restarting Rabbit
+
+It's not clear that restarting rabbit has any effect on this problem.
+Because it's so random, it's hard to tell if a rabbit restart makes things
+better.
+
+
+I've got more data on this if anyone wants to hear it. Thanks in advance for
+your help.
+
+Ben
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20111012/591902e5/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20111012/591902e5/attachment.htm</A>&gt;
+-------------- next part --------------
+Proto Recv-Q Send-Q Local Address               Foreign Address             State
+Wed Oct 12 21:13:01 CDT 2011
+Wed Oct 12 21:13:04 CDT 2011
+Wed Oct 12 21:13:06 CDT 2011
+Wed Oct 12 21:13:08 CDT 2011
+Wed Oct 12 21:13:10 CDT 2011
+Wed Oct 12 21:13:13 CDT 2011
+tcp     1581      0 localhost.localdomain:amqp  localhost.localdomain:47506 ESTABLISHED 
+Wed Oct 12 21:13:15 CDT 2011
+Wed Oct 12 21:13:17 CDT 2011
+tcp      733      0 localhost.localdomain:amqp  localhost.localdomain:47756 ESTABLISHED 
+Wed Oct 12 21:13:20 CDT 2011
+tcp     1467      0 localhost.localdomain:amqp  localhost.localdomain:47628 ESTABLISHED 
+Wed Oct 12 21:13:22 CDT 2011
+Wed Oct 12 21:13:24 CDT 2011
+Wed Oct 12 21:13:26 CDT 2011
+tcp     1053      0 localhost.localdomain:47508 localhost.localdomain:amqp  ESTABLISHED 
+Wed Oct 12 21:13:29 CDT 2011
+Wed Oct 12 21:13:32 CDT 2011
+Wed Oct 12 21:13:34 CDT 2011
+tcp      352      0 localhost.localdomain:47591 localhost.localdomain:amqp  ESTABLISHED 
+Wed Oct 12 21:13:37 CDT 2011
+Wed Oct 12 21:13:39 CDT 2011
+Wed Oct 12 21:13:41 CDT 2011
+Wed Oct 12 21:13:44 CDT 2011
+tcp    15936      0 localhost.localdomain:amqp  localhost.localdomain:47736 ESTABLISHED 
+tcp    21679      0 localhost.localdomain:amqp  localhost.localdomain:47761 ESTABLISHED 
+tcp    74232      0 localhost.localdomain:amqp  localhost.localdomain:47506 ESTABLISHED 
+tcp      600      0 localhost.localdomain:amqp  localhost.localdomain:47792 ESTABLISHED 
+tcp     3640      0 localhost.localdomain:amqp  localhost.localdomain:47592 ESTABLISHED 
+tcp    13376      0 localhost.localdomain:amqp  localhost.localdomain:47623 ESTABLISHED 
+tcp     4235      0 localhost.localdomain:amqp  localhost.localdomain:47756 ESTABLISHED 
+tcp      259      0 localhost.localdomain:amqp  localhost.localdomain:47459 ESTABLISHED 
+tcp      954      0 localhost.localdomain:amqp  localhost.localdomain:47566 ESTABLISHED 
+tcp    40460      0 localhost.localdomain:amqp  localhost.localdomain:47826 ESTABLISHED 
+tcp    18722      0 localhost.localdomain:amqp  localhost.localdomai:bacnet ESTABLISHED 
+tcp    32314      0 localhost.localdomain:amqp  localhost.localdomain:47655 ESTABLISHED 
+tcp    10383      0 localhost.localdomain:amqp  localhost.localdomain:47878 ESTABLISHED 
+tcp    10947      0 localhost.localdomain:amqp  localhost.localdomain:47573 ESTABLISHED 
+tcp     5798      0 localhost.localdomain:amqp  localhost.localdomain:47850 ESTABLISHED 
+tcp    14231      0 localhost.localdomain:amqp  localhost.localdomain:47872 ESTABLISHED 
+tcp    13748      0 localhost.localdomain:amqp  localhost.localdomain:47814 ESTABLISHED 
+tcp     2916      0 localhost.localdomain:amqp  localhost.localdomain:47626 ESTABLISHED 
+tcp    65939      0 localhost.localdomain:amqp  localhost.localdomain:47628 ESTABLISHED 
+tcp     4018      0 localhost.localdomain:amqp  localhost.localdomain:47812 ESTABLISHED 
+tcp    36104      0 localhost.localdomain:amqp  localhost.localdomain:47583 ESTABLISHED 
+tcp     2656      0 localhost.localdomain:amqp  localhost.localdomain:47787 ESTABLISHED 
+tcp    11890      0 localhost.localdomain:amqp  localhost.localdomain:47844 ESTABLISHED 
+tcp     3441      0 localhost.localdomain:amqp  localhost.localdomain:47619 ESTABLISHED 
+tcp    41800      0 localhost.localdomain:amqp  localhost.localdomain:47671 ESTABLISHED 
+tcp      270      0 localhost.localdomain:amqp  localhost.localdomain:47638 ESTABLISHED 
+tcp    46458      0 localhost.localdomain:amqp  localhost.localdomain:47871 ESTABLISHED 
+tcp     5460      0 localhost.localdomain:amqp  localhost.localdomain:47784 ESTABLISHED 
+tcp     2917      0 localhost.localdomain:amqp  localhost.localdomain:47480 ESTABLISHED 
+tcp    20745      0 localhost.localdomain:amqp  localhost.localdomain:47767 ESTABLISHED 
+tcp     7536      0 localhost.localdomain:amqp  localhost.localdomain:47837 ESTABLISHED 
+Wed Oct 12 21:13:46 CDT 2011
+tcp    28460      0 localhost.localdomain:amqp  localhost.localdomain:47736 ESTABLISHED 
+tcp    48715      0 localhost.localdomain:amqp  localhost.localdomain:47761 ESTABLISHED 
+tcp   209606      0 localhost.localdomain:amqp  localhost.localdomain:47506 ESTABLISHED 
+tcp     2400      0 localhost.localdomain:amqp  localhost.localdomain:47792 ESTABLISHED 
+tcp     7839      0 localhost.localdomain:amqp  localhost.localdomain:47592 ESTABLISHED 
+tcp    29473      0 localhost.localdomain:amqp  localhost.localdomain:47623 ESTABLISHED 
+tcp    11309      0 localhost.localdomain:amqp  localhost.localdomain:47756 ESTABLISHED 
+tcp      518      0 localhost.localdomain:amqp  localhost.localdomain:47459 ESTABLISHED 
+tcp     1908      0 localhost.localdomain:amqp  localhost.localdomain:47566 ESTABLISHED 
+tcp   102870      0 localhost.localdomain:amqp  localhost.localdomain:47826 ESTABLISHED 
+tcp    64155      0 localhost.localdomain:amqp  localhost.localdomai:bacnet ESTABLISHED 
+tcp    84905      0 localhost.localdomain:amqp  localhost.localdomain:47655 ESTABLISHED 
+tcp    25611      0 localhost.localdomain:amqp  localhost.localdomain:47878 ESTABLISHED 
+tcp    25791      0 localhost.localdomain:amqp  localhost.localdomain:47573 ESTABLISHED 
+tcp    12454      0 localhost.localdomain:amqp  localhost.localdomain:47850 ESTABLISHED 
+tcp    43832      0 localhost.localdomain:amqp  localhost.localdomain:47872 ESTABLISHED 
+tcp    41396      0 localhost.localdomain:amqp  localhost.localdomain:47814 ESTABLISHED 
+tcp     7078      0 localhost.localdomain:amqp  localhost.localdomain:47626 ESTABLISHED 
+tcp   170929      0 localhost.localdomain:amqp  localhost.localdomain:47628 ESTABLISHED 
+tcp     9673      0 localhost.localdomain:amqp  localhost.localdomain:47812 ESTABLISHED 
+tcp    88569      0 localhost.localdomain:amqp  localhost.localdomain:47583 ESTABLISHED 
+tcp     5251      0 localhost.localdomain:amqp  localhost.localdomain:47787 ESTABLISHED 
+tcp    41544      0 localhost.localdomain:amqp  localhost.localdomain:47844 ESTABLISHED 
+tcp    10038      0 localhost.localdomain:amqp  localhost.localdomain:47619 ESTABLISHED 
+tcp    91198      0 localhost.localdomain:amqp  localhost.localdomain:47671 ESTABLISHED 
+tcp      809      0 localhost.localdomain:amqp  localhost.localdomain:47638 ESTABLISHED 
+tcp   144476      0 localhost.localdomain:amqp  localhost.localdomain:47871 ESTABLISHED 
+tcp     7878      0 localhost.localdomain:amqp  localhost.localdomain:47784 ESTABLISHED 
+tcp     5829      0 localhost.localdomain:amqp  localhost.localdomain:47480 ESTABLISHED 
+tcp    64986      0 localhost.localdomain:amqp  localhost.localdomain:47767 ESTABLISHED 
+tcp    10902      0 localhost.localdomain:amqp  localhost.localdomain:47837 ESTABLISHED 
+Wed Oct 12 21:13:49 CDT 2011
+tcp    44641      0 localhost.localdomain:amqp  localhost.localdomain:47736 ESTABLISHED 
+tcp    91471      0 localhost.localdomain:amqp  localhost.localdomain:47761 ESTABLISHED 
+tcp   427156      0 localhost.localdomain:amqp  localhost.localdomain:47506 ESTABLISHED 
+tcp     3600      0 localhost.localdomain:amqp  localhost.localdomain:47792 ESTABLISHED 
+tcp    14675      0 localhost.localdomain:amqp  localhost.localdomain:47592 ESTABLISHED 
+tcp    45688      0 localhost.localdomain:amqp  localhost.localdomain:47623 ESTABLISHED 
+tcp    17949      0 localhost.localdomain:amqp  localhost.localdomain:47756 ESTABLISHED 
+tcp      777      0 localhost.localdomain:amqp  localhost.localdomain:47459 ESTABLISHED 
+tcp     3339      0 localhost.localdomain:amqp  localhost.localdomain:47566 ESTABLISHED 
+tcp   176459      0 localhost.localdomain:amqp  localhost.localdomain:47826 ESTABLISHED 
+tcp   116508      0 localhost.localdomain:amqp  localhost.localdomai:bacnet ESTABLISHED 
+tcp   158258      0 localhost.localdomain:amqp  localhost.localdomain:47655 ESTABLISHED 
+tcp    45869      0 localhost.localdomain:amqp  localhost.localdomain:47878 ESTABLISHED 
+tcp    49992      0 localhost.localdomain:amqp  localhost.localdomain:47573 ESTABLISHED 
+tcp    20884      0 localhost.localdomain:amqp  localhost.localdomain:47850 ESTABLISHED 
+tcp    69021      0 localhost.localdomain:amqp  localhost.localdomain:47872 ESTABLISHED 
+tcp    71917      0 localhost.localdomain:amqp  localhost.localdomain:47814 ESTABLISHED 
+tcp     7795      0 localhost.localdomain:amqp  localhost.localdomain:47626 ESTABLISHED 
+tcp   363634      0 localhost.localdomain:amqp  localhost.localdomain:47628 ESTABLISHED 
+tcp    18200      0 localhost.localdomain:amqp  localhost.localdomain:47812 ESTABLISHED 
+tcp   182609      0 localhost.localdomain:amqp  localhost.localdomain:47583 ESTABLISHED 
+tcp    19031      0 localhost.localdomain:amqp  localhost.localdomain:47787 ESTABLISHED 
+tcp    62316      0 localhost.localdomain:amqp  localhost.localdomain:47844 ESTABLISHED 
+tcp    13194      0 localhost.localdomain:amqp  localhost.localdomain:47619 ESTABLISHED 
+tcp   156987      0 localhost.localdomain:amqp  localhost.localdomain:47671 ESTABLISHED 
+tcp     1348      0 localhost.localdomain:amqp  localhost.localdomain:47638 ESTABLISHED 
+tcp   283881      0 localhost.localdomain:amqp  localhost.localdomain:47871 ESTABLISHED 
+tcp     9492      0 localhost.localdomain:amqp  localhost.localdomain:47784 ESTABLISHED 
+tcp    10333      0 localhost.localdomain:amqp  localhost.localdomain:47480 ESTABLISHED 
+tcp   105166      0 localhost.localdomain:amqp  localhost.localdomain:47767 ESTABLISHED 
+tcp      346      0 localhost.localdomain:amqp  localhost.localdomain:47706 ESTABLISHED 
+tcp    17632      0 localhost.localdomain:amqp  localhost.localdomain:47837 ESTABLISHED 
+Wed Oct 12 21:13:51 CDT 2011
+tcp    57163      0 localhost.localdomain:amqp  localhost.localdomain:47736 ESTABLISHED 
+tcp   120173      0 localhost.localdomain:amqp  localhost.localdomain:47761 ESTABLISHED 
+tcp   604265      0 localhost.localdomain:amqp  localhost.localdomain:47506 ESTABLISHED 
+tcp     4800      0 localhost.localdomain:amqp  localhost.localdomain:47792 ESTABLISHED 
+tcp    19344      0 localhost.localdomain:amqp  localhost.localdomain:47592 ESTABLISHED 
+tcp    64057      0 localhost.localdomain:amqp  localhost.localdomain:47623 ESTABLISHED 
+tcp    25192      0 localhost.localdomain:amqp  localhost.localdomain:47756 ESTABLISHED 
+tcp     1036      0 localhost.localdomain:amqp  localhost.localdomain:47459 ESTABLISHED 
+tcp     4293      0 localhost.localdomain:amqp  localhost.localdomain:47566 ESTABLISHED 
+tcp   242307      0 localhost.localdomain:amqp  localhost.localdomain:47826 ESTABLISHED 
+tcp   159940      0 localhost.localdomain:amqp  localhost.localdomai:bacnet ESTABLISHED 
+tcp   225302      0 localhost.localdomain:amqp  localhost.localdomain:47655 ESTABLISHED 
+tcp    60735      0 localhost.localdomain:amqp  localhost.localdomain:47878 ESTABLISHED 
+tcp    68294      0 localhost.localdomain:amqp  localhost.localdomain:47573 ESTABLISHED 
+tcp    26739      0 localhost.localdomain:amqp  localhost.localdomain:47850 ESTABLISHED 
+tcp    98622      0 localhost.localdomain:amqp  localhost.localdomain:47872 ESTABLISHED 
+tcp    96540      0 localhost.localdomain:amqp  localhost.localdomain:47814 ESTABLISHED 
+tcp    10084      0 localhost.localdomain:amqp  localhost.localdomain:47626 ESTABLISHED 
+tcp   516585      0 localhost.localdomain:amqp  localhost.localdomain:47628 ESTABLISHED 
+tcp    23854      0 localhost.localdomain:amqp  localhost.localdomain:47812 ESTABLISHED 
+tcp   257739      0 localhost.localdomain:amqp  localhost.localdomain:47583 ESTABLISHED 
+tcp    26798      0 localhost.localdomain:amqp  localhost.localdomain:47787 ESTABLISHED 
+tcp    93474      0 localhost.localdomain:amqp  localhost.localdomain:47844 ESTABLISHED 
+tcp    16635      0 localhost.localdomain:amqp  localhost.localdomain:47619 ESTABLISHED 
+tcp   210562      0 localhost.localdomain:amqp  localhost.localdomain:47671 ESTABLISHED 
+tcp     1887      0 localhost.localdomain:amqp  localhost.localdomain:47638 ESTABLISHED 
+tcp   402725      0 localhost.localdomain:amqp  localhost.localdomain:47871 ESTABLISHED 
+tcp    11396      0 localhost.localdomain:amqp  localhost.localdomain:47784 ESTABLISHED 
+tcp    13210      0 localhost.localdomain:amqp  localhost.localdomain:47480 ESTABLISHED 
+tcp   149404      0 localhost.localdomain:amqp  localhost.localdomain:47767 ESTABLISHED 
+tcp      698      0 localhost.localdomain:amqp  localhost.localdomain:47706 ESTABLISHED 
+tcp    21076      0 localhost.localdomain:amqp  localhost.localdomain:47837 ESTABLISHED 
+Wed Oct 12 21:13:53 CDT 2011
+tcp    33430      0 localhost.localdomain:amqp  localhost.localdomain:47736 ESTABLISHED 
+tcp   113449      0 localhost.localdomain:amqp  localhost.localdomain:47761 ESTABLISHED 
+tcp   862376      0 localhost.localdomain:amqp  localhost.localdomain:47506 ESTABLISHED 
+tcp    40638      0 localhost.localdomain:amqp  localhost.localdomain:47623 ESTABLISHED 
+tcp   266511      0 localhost.localdomain:amqp  localhost.localdomain:47826 ESTABLISHED 
+tcp   168676      0 localhost.localdomain:amqp  localhost.localdomai:bacnet ESTABLISHED 
+tcp   380701      0 localhost.localdomain:amqp  localhost.localdomain:47655 ESTABLISHED 
+tcp    36208      0 localhost.localdomain:amqp  localhost.localdomain:47878 ESTABLISHED 
+tcp   264931      0 localhost.localdomain:amqp  localhost.localdomain:47573 ESTABLISHED 
+tcp    78198      0 localhost.localdomain:amqp  localhost.localdomain:47872 ESTABLISHED 
+tcp    80677      0 localhost.localdomain:amqp  localhost.localdomain:47814 ESTABLISHED 
+tcp   758881      0 localhost.localdomain:amqp  localhost.localdomain:47628 ESTABLISHED 
+tcp   411550      0 localhost.localdomain:amqp  localhost.localdomain:47583 ESTABLISHED 
+tcp    71906      0 localhost.localdomain:amqp  localhost.localdomain:47844 ESTABLISHED 
+tcp   212783      0 localhost.localdomain:amqp  localhost.localdomain:47671 ESTABLISHED 
+tcp   623353      0 localhost.localdomain:amqp  localhost.localdomain:47871 ESTABLISHED 
+tcp   139246      0 localhost.localdomain:amqp  localhost.localdomain:47767 ESTABLISHED 
+Wed Oct 12 21:13:55 CDT 2011
+tcp   879697      0 localhost.localdomain:amqp  localhost.localdomain:47506 ESTABLISHED 
+tcp    76291      0 localhost.localdomain:amqp  localhost.localdomain:47826 ESTABLISHED 
+tcp      289      0 localhost.localdomain:amqp  localhost.localdomai:bacnet ESTABLISHED 
+tcp   824278      0 localhost.localdomain:amqp  localhost.localdomain:47655 ESTABLISHED 
+tcp   224023      0 localhost.localdomain:amqp  localhost.localdomain:47573 ESTABLISHED 
+tcp   1187576      0 localhost.localdomain:amqp  localhost.localdomain:47628 ESTABLISHED 
+tcp   529432      0 localhost.localdomain:amqp  localhost.localdomain:47583 ESTABLISHED 
+tcp     1048    323 localhost.localdomain:amqp  localhost.localdomain:47676 ESTABLISHED 
+tcp     6040      0 localhost.localdomain:amqp  localhost.localdomain:47671 ESTABLISHED 
+tcp      270      0 localhost.localdomain:amqp  localhost.localdomain:47638 ESTABLISHED 
+tcp   1080443      0 localhost.localdomain:amqp  localhost.localdomain:47871 ESTABLISHED 
+Wed Oct 12 21:13:58 CDT 2011
+tcp   952681      0 localhost.localdomain:amqp  localhost.localdomain:47506 ESTABLISHED 
+tcp   483169      0 localhost.localdomain:amqp  localhost.localdomain:47655 ESTABLISHED 
+tcp      441      0 localhost.localdomain:amqp  localhost.localdomain:47573 ESTABLISHED 
+tcp   1368987      0 localhost.localdomain:amqp  localhost.localdomain:47628 ESTABLISHED 
+tcp   376058      0 localhost.localdomain:amqp  localhost.localdomain:47583 ESTABLISHED 
+tcp   1089092      0 localhost.localdomain:amqp  localhost.localdomain:47871 ESTABLISHED 
+Wed Oct 12 21:14:00 CDT 2011
+tcp   953637      0 localhost.localdomain:amqp  localhost.localdomain:47506 ESTABLISHED 
+tcp      733      0 localhost.localdomain:amqp  localhost.localdomain:47756 ESTABLISHED 
+tcp   238139      0 localhost.localdomain:amqp  localhost.localdomain:47655 ESTABLISHED 
+tcp     2350      0 localhost.localdomain:amqp  localhost.localdomain:47573 ESTABLISHED 
+tcp   1268676      0 localhost.localdomain:amqp  localhost.localdomain:47628 ESTABLISHED 
+tcp   175759      0 localhost.localdomain:amqp  localhost.localdomain:47583 ESTABLISHED 
+tcp   755472      0 localhost.localdomain:amqp  localhost.localdomain:47871 ESTABLISHED 
+Wed Oct 12 21:14:02 CDT 2011
+tcp   950537      0 localhost.localdomain:amqp  localhost.localdomain:47506 ESTABLISHED 
+tcp      342      0 localhost.localdomain:amqp  localhost.localdomain:47826 ESTABLISHED 
+tcp     1713      0 localhost.localdomain:amqp  localhost.localdomain:47655 ESTABLISHED 
+tcp     2083      0 localhost.localdomain:amqp  localhost.localdomain:47573 ESTABLISHED 
+tcp   930418      0 localhost.localdomain:amqp  localhost.localdomain:47628 ESTABLISHED 
+tcp      314      0 localhost.localdomain:amqp  localhost.localdomain:47583 ESTABLISHED 
+tcp   538627      0 localhost.localdomain:amqp  localhost.localdomain:47871 ESTABLISHED 
+Wed Oct 12 21:14:05 CDT 2011
+tcp   965601      0 localhost.localdomain:amqp  localhost.localdomain:47506 ESTABLISHED 
+tcp   802603      0 localhost.localdomain:amqp  localhost.localdomain:47628 ESTABLISHED 
+tcp   229943      0 localhost.localdomain:amqp  localhost.localdomain:47871 ESTABLISHED 
+Wed Oct 12 21:14:07 CDT 2011
+tcp   957953      0 localhost.localdomain:amqp  localhost.localdomain:47506 ESTABLISHED 
+tcp      130      0 localhost.localdomain:amqp  localhost.localdomain:47655 ESTABLISHED 
+tcp     2383      0 localhost.localdomain:amqp  localhost.localdomain:47872 ESTABLISHED 
+tcp   470143      0 localhost.localdomain:amqp  localhost.localdomain:47628 ESTABLISHED 
+Wed Oct 12 21:14:09 CDT 2011
+tcp   951273      0 localhost.localdomain:amqp  localhost.localdomain:47506 ESTABLISHED 
+tcp     1631      0 localhost.localdomain:amqp  localhost.localdomai:bacnet ESTABLISHED 
+tcp    61814      0 localhost.localdomain:amqp  localhost.localdomain:47628 ESTABLISHED 
+Wed Oct 12 21:14:11 CDT 2011
+tcp    11763      0 localhost.localdomain:amqp  localhost.localdomain:47736 ESTABLISHED 
+tcp    33022      0 localhost.localdomain:amqp  localhost.localdomain:47761 ESTABLISHED 
+tcp   970902      0 localhost.localdomain:amqp  localhost.localdomain:47506 ESTABLISHED 
+tcp     1200      0 localhost.localdomain:amqp  localhost.localdomain:47792 ESTABLISHED 
+tcp     4667      0 localhost.localdomain:amqp  localhost.localdomain:47592 ESTABLISHED 
+tcp    15576      0 localhost.localdomain:amqp  localhost.localdomain:47623 ESTABLISHED 
+tcp     6331      0 localhost.localdomain:amqp  localhost.localdomain:47756 ESTABLISHED 
+tcp      259      0 localhost.localdomain:amqp  localhost.localdomain:47459 ESTABLISHED 
+tcp     1431      0 localhost.localdomain:amqp  localhost.localdomain:47566 ESTABLISHED 
+tcp    61176      0 localhost.localdomain:amqp  localhost.localdomain:47826 ESTABLISHED 
+tcp    39199      0 localhost.localdomain:amqp  localhost.localdomai:bacnet ESTABLISHED 
+tcp    45894      0 localhost.localdomain:amqp  localhost.localdomain:47655 ESTABLISHED 
+tcp    11861      0 localhost.localdomain:amqp  localhost.localdomain:47878 ESTABLISHED 
+tcp    23041      0 localhost.localdomain:amqp  localhost.localdomain:47573 ESTABLISHED 
+tcp     6448      0 localhost.localdomain:amqp  localhost.localdomain:47850 ESTABLISHED 
+tcp    21916      0 localhost.localdomain:amqp  localhost.localdomain:47872 ESTABLISHED 
+tcp    24337      0 localhost.localdomain:amqp  localhost.localdomain:47814 ESTABLISHED 
+tcp     3553      0 localhost.localdomain:amqp  localhost.localdomain:47626 ESTABLISHED 
+tcp   109572      0 localhost.localdomain:amqp  localhost.localdomain:47628 ESTABLISHED 
+tcp     6152      0 localhost.localdomain:amqp  localhost.localdomain:47812 ESTABLISHED 
+tcp    48431      0 localhost.localdomain:amqp  localhost.localdomain:47583 ESTABLISHED 
+tcp     9145      0 localhost.localdomain:amqp  localhost.localdomain:47787 ESTABLISHED 
+tcp    20772      0 localhost.localdomain:amqp  localhost.localdomain:47844 ESTABLISHED 
+tcp     3156      0 localhost.localdomain:amqp  localhost.localdomain:47619 ESTABLISHED 
+tcp    51892      0 localhost.localdomain:amqp  localhost.localdomain:47671 ESTABLISHED 
+tcp      539      0 localhost.localdomain:amqp  localhost.localdomain:47638 ESTABLISHED 
+tcp    70331      0 localhost.localdomain:amqp  localhost.localdomain:47871 ESTABLISHED 
+tcp      261      0 localhost.localdomain:amqp  localhost.localdomain:47784 ESTABLISHED 
+tcp     2893      0 localhost.localdomain:amqp  localhost.localdomain:47480 ESTABLISHED 
+tcp    38389      0 localhost.localdomain:amqp  localhost.localdomain:47767 ESTABLISHED 
+tcp      352      0 localhost.localdomain:amqp  localhost.localdomain:47706 ESTABLISHED 
+tcp     3436      0 localhost.localdomain:amqp  localhost.localdomain:47837 ESTABLISHED 
+Wed Oct 12 21:14:14 CDT 2011
+tcp    25682      0 localhost.localdomain:amqp  localhost.localdomain:47736 ESTABLISHED 
+tcp    74742      0 localhost.localdomain:amqp  localhost.localdomain:47761 ESTABLISHED 
+tcp   970902      0 localhost.localdomain:amqp  localhost.localdomain:47506 ESTABLISHED 
+tcp     2400      0 localhost.localdomain:amqp  localhost.localdomain:47792 ESTABLISHED 
+tcp    10642      0 localhost.localdomain:amqp  localhost.localdomain:47592 ESTABLISHED 
+tcp    31060      0 localhost.localdomain:amqp  localhost.localdomain:47623 ESTABLISHED 
+tcp    12133      0 localhost.localdomain:amqp  localhost.localdomain:47756 ESTABLISHED 
+tcp      518      0 localhost.localdomain:amqp  localhost.localdomain:47459 ESTABLISHED 
+tcp     2385      0 localhost.localdomain:amqp  localhost.localdomain:47566 ESTABLISHED 
+tcp   120723      0 localhost.localdomain:amqp  localhost.localdomain:47826 ESTABLISHED 
+tcp    77975      0 localhost.localdomain:amqp  localhost.localdomai:bacnet ESTABLISHED 
+tcp    98046      0 localhost.localdomain:amqp  localhost.localdomain:47655 ESTABLISHED 
+tcp    29099      0 localhost.localdomain:amqp  localhost.localdomain:47878 ESTABLISHED 
+tcp    40974      0 localhost.localdomain:amqp  localhost.localdomain:47573 ESTABLISHED 
+tcp    16055      0 localhost.localdomain:amqp  localhost.localdomain:47850 ESTABLISHED 
+tcp    47105      0 localhost.localdomain:amqp  localhost.localdomain:47872 ESTABLISHED 
+tcp    48952      0 localhost.localdomain:amqp  localhost.localdomain:47814 ESTABLISHED 
+tcp     4237      0 localhost.localdomain:amqp  localhost.localdomain:47626 ESTABLISHED 
+tcp   246403      0 localhost.localdomain:amqp  localhost.localdomain:47628 ESTABLISHED 
+tcp    14179      0 localhost.localdomain:amqp  localhost.localdomain:47812 ESTABLISHED 
+tcp   126854      0 localhost.localdomain:amqp  localhost.localdomain:47583 ESTABLISHED 
+tcp    11803      0 localhost.localdomain:amqp  localhost.localdomain:47787 ESTABLISHED 
+tcp    41544      0 localhost.localdomain:amqp  localhost.localdomain:47844 ESTABLISHED 
+tcp     6914      0 localhost.localdomain:amqp  localhost.localdomain:47619 ESTABLISHED 
+tcp   108956      0 localhost.localdomain:amqp  localhost.localdomain:47671 ESTABLISHED 
+tcp      808      0 localhost.localdomain:amqp  localhost.localdomain:47638 ESTABLISHED 
+tcp   174661      0 localhost.localdomain:amqp  localhost.localdomain:47871 ESTABLISHED 
+tcp     5721      0 localhost.localdomain:amqp  localhost.localdomain:47784 ESTABLISHED 
+tcp     5787      0 localhost.localdomain:amqp  localhost.localdomain:47480 ESTABLISHED 
+tcp    71406      0 localhost.localdomain:amqp  localhost.localdomain:47767 ESTABLISHED 
+tcp      352      0 localhost.localdomain:amqp  localhost.localdomain:47706 ESTABLISHED 
+tcp    10185      0 localhost.localdomain:amqp  localhost.localdomain:47837 ESTABLISHED 
+Wed Oct 12 21:14:16 CDT 2011
+tcp     1170      0 localhost.localdomain:amqp  localhost.localdomain:47578 ESTABLISHED 
+tcp    37767      0 localhost.localdomain:amqp  localhost.localdomain:47736 ESTABLISHED 
+tcp   117706      0 localhost.localdomain:amqp  localhost.localdomain:47761 ESTABLISHED 
+tcp   970902      0 localhost.localdomain:amqp  localhost.localdomain:47506 ESTABLISHED 
+tcp     3900      0 localhost.localdomain:amqp  localhost.localdomain:47792 ESTABLISHED 
+tcp    14838      0 localhost.localdomain:amqp  localhost.localdomain:47592 ESTABLISHED 
+tcp    46320      0 localhost.localdomain:amqp  localhost.localdomain:47623 ESTABLISHED 
+tcp    18206      0 localhost.localdomain:amqp  localhost.localdomain:47756 ESTABLISHED 
+tcp     1036      0 localhost.localdomain:amqp  localhost.localdomain:47459 ESTABLISHED 
+tcp     3339      0 localhost.localdomain:amqp  localhost.localdomain:47566 ESTABLISHED 
+tcp   186578      0 localhost.localdomain:amqp  localhost.localdomain:47826 ESTABLISHED 
+tcp   121427      0 localhost.localdomain:amqp  localhost.localdomai:bacnet ESTABLISHED 
+tcp   160900      0 localhost.localdomain:amqp  localhost.localdomain:47655 ESTABLISHED 
+tcp    46592      0 localhost.localdomain:amqp  localhost.localdomain:47878 ESTABLISHED 
+tcp    58943      0 localhost.localdomain:amqp  localhost.localdomain:47573 ESTABLISHED 
+tcp    22513      0 localhost.localdomain:amqp  localhost.localdomain:47850 ESTABLISHED 
+tcp    72864      0 localhost.localdomain:amqp  localhost.localdomain:47872 ESTABLISHED 
+tcp    73951      0 localhost.localdomain:amqp  localhost.localdomain:47814 ESTABLISHED 
+tcp     5667      0 localhost.localdomain:amqp  localhost.localdomain:47626 ESTABLISHED 
+tcp   395569      0 localhost.localdomain:amqp  localhost.localdomain:47628 ESTABLISHED 
+tcp    19831      0 localhost.localdomain:amqp  localhost.localdomain:47812 ESTABLISHED 
+tcp   198582      0 localhost.localdomain:amqp  localhost.localdomain:47583 ESTABLISHED 
+tcp    14401      0 localhost.localdomain:amqp  localhost.localdomain:47787 ESTABLISHED 
+tcp    72702      0 localhost.localdomain:amqp  localhost.localdomain:47844 ESTABLISHED 
+tcp    13511      0 localhost.localdomain:amqp  localhost.localdomain:47619 ESTABLISHED 
+tcp   163556      0 localhost.localdomain:amqp  localhost.localdomain:47671 ESTABLISHED 
+tcp     1347      0 localhost.localdomain:amqp  localhost.localdomain:47638 ESTABLISHED 
+tcp   296571      0 localhost.localdomain:amqp  localhost.localdomain:47871 ESTABLISHED 
+tcp     7868      0 localhost.localdomain:amqp  localhost.localdomain:47784 ESTABLISHED 
+tcp     9428      0 localhost.localdomain:amqp  localhost.localdomain:47480 ESTABLISHED 
+tcp   105453      0 localhost.localdomain:amqp  localhost.localdomain:47767 ESTABLISHED 
+tcp      352      0 localhost.localdomain:amqp  localhost.localdomain:47706 ESTABLISHED 
+tcp    14360      0 localhost.localdomain:amqp  localhost.localdomain:47837 ESTABLISHED 
+Wed Oct 12 21:14:18 CDT 2011
+tcp     1170      0 localhost.localdomain:amqp  localhost.localdomain:47578 ESTABLISHED 
+tcp    51258      0 localhost.localdomain:amqp  localhost.localdomain:47736 ESTABLISHED 
+tcp   153314      0 localhost.localdomain:amqp  localhost.localdomain:47761 ESTABLISHED 
+tcp   970902      0 localhost.localdomain:amqp  localhost.localdomain:47506 ESTABLISHED 
+tcp     5100      0 localhost.localdomain:amqp  localhost.localdomain:47792 ESTABLISHED 
+tcp    19811      0 localhost.localdomain:amqp  localhost.localdomain:47592 ESTABLISHED 
+tcp    64777      0 localhost.localdomain:amqp  localhost.localdomain:47623 ESTABLISHED 
+tcp    23957      0 localhost.localdomain:amqp  localhost.localdomain:47756 ESTABLISHED 
+tcp     1295      0 localhost.localdomain:amqp  localhost.localdomain:47459 ESTABLISHED 
+tcp     4293      0 localhost.localdomain:amqp  localhost.localdomain:47566 ESTABLISHED 
+tcp   243685      0 localhost.localdomain:amqp  localhost.localdomain:47826 ESTABLISHED 
+tcp   169201      0 localhost.localdomain:amqp  localhost.localdomai:bacnet ESTABLISHED 
+tcp   231517      0 localhost.localdomain:amqp  localhost.localdomain:47655 ESTABLISHED 
+tcp    62584      0 localhost.localdomain:amqp  localhost.localdomain:47878 ESTABLISHED 
+tcp    76915      0 localhost.localdomain:amqp  localhost.localdomain:47573 ESTABLISHED 
+tcp    29885      0 localhost.localdomain:amqp  localhost.localdomain:47850 ESTABLISHED 
+tcp    98622      0 localhost.localdomain:amqp  localhost.localdomain:47872 ESTABLISHED 
+tcp   100245      0 localhost.localdomain:amqp  localhost.localdomain:47814 ESTABLISHED 
+tcp     5667      0 localhost.localdomain:amqp  localhost.localdomain:47626 ESTABLISHED 
+tcp   544151      0 localhost.localdomain:amqp  localhost.localdomain:47628 ESTABLISHED 
+tcp    27355      0 localhost.localdomain:amqp  localhost.localdomain:47812 ESTABLISHED 
+tcp   271094      0 localhost.localdomain:amqp  localhost.localdomain:47583 ESTABLISHED 
+tcp    15669      0 localhost.localdomain:amqp  localhost.localdomain:47787 ESTABLISHED 
+tcp    93474      0 localhost.localdomain:amqp  localhost.localdomain:47844 ESTABLISHED 
+tcp    16350      0 localhost.localdomain:amqp  localhost.localdomain:47619 ESTABLISHED 
+tcp   215103      0 localhost.localdomain:amqp  localhost.localdomain:47671 ESTABLISHED 
+tcp     1886      0 localhost.localdomain:amqp  localhost.localdomain:47638 ESTABLISHED 
+tcp   419203      0 localhost.localdomain:amqp  localhost.localdomain:47871 ESTABLISHED 
+tcp     9494      0 localhost.localdomain:amqp  localhost.localdomain:47784 ESTABLISHED 
+tcp    12871      0 localhost.localdomain:amqp  localhost.localdomain:47480 ESTABLISHED 
+tcp   149655      0 localhost.localdomain:amqp  localhost.localdomain:47767 ESTABLISHED 
+tcp      698      0 localhost.localdomain:amqp  localhost.localdomain:47706 ESTABLISHED 
+tcp    22846      0 localhost.localdomain:amqp  localhost.localdomain:47837 ESTABLISHED 
+Wed Oct 12 21:14:20 CDT 2011
+tcp    17883      0 localhost.localdomain:amqp  localhost.localdomain:47736 ESTABLISHED 
+tcp   177245      0 localhost.localdomain:amqp  localhost.localdomain:47761 ESTABLISHED 
+tcp   958410      0 localhost.localdomain:amqp  localhost.localdomain:47506 ESTABLISHED 
+tcp    36263      0 localhost.localdomain:amqp  localhost.localdomain:47623 ESTABLISHED 
+tcp   259518      0 localhost.localdomain:amqp  localhost.localdomain:47826 ESTABLISHED 
+tcp   155674      0 localhost.localdomain:amqp  localhost.localdomai:bacnet ESTABLISHED 
+tcp   425744      0 localhost.localdomain:amqp  localhost.localdomain:47655 ESTABLISHED 
+tcp    26357      0 localhost.localdomain:amqp  localhost.localdomain:47878 ESTABLISHED 
+tcp   256227      0 localhost.localdomain:amqp  localhost.localdomain:47573 ESTABLISHED 
+tcp    70898      0 localhost.localdomain:amqp  localhost.localdomain:47872 ESTABLISHED 
+tcp    73109      0 localhost.localdomain:amqp  localhost.localdomain:47814 ESTABLISHED 
+tcp   761979      0 localhost.localdomain:amqp  localhost.localdomain:47628 ESTABLISHED 
+tcp   473563      0 localhost.localdomain:amqp  localhost.localdomain:47583 ESTABLISHED 
+tcp      530    577 localhost.localdomain:amqp  localhost.localdomain:47676 ESTABLISHED 
+tcp    61686      0 localhost.localdomain:amqp  localhost.localdomain:47844 ESTABLISHED 
+tcp   214324      0 localhost.localdomain:amqp  localhost.localdomain:47671 ESTABLISHED 
+tcp   691459      0 localhost.localdomain:amqp  localhost.localdomain:47871 ESTABLISHED 
+tcp   121978      0 localhost.localdomain:amqp  localhost.localdomain:47767 ESTABLISHED 
+Wed Oct 12 21:14:23 CDT 2011
+tcp   996686      0 localhost.localdomain:amqp  localhost.localdomain:47506 ESTABLISHED 
+tcp    41877      0 localhost.localdomain:amqp  localhost.localdomain:47826 ESTABLISHED 
+tcp   823505      0 localhost.localdomain:amqp  localhost.localdomain:47655 ESTABLISHED 
+tcp   216406      0 localhost.localdomain:amqp  localhost.localdomain:47573 ESTABLISHED 
+tcp   1212223      0 localhost.localdomain:amqp  localhost.localdomain:47628 ESTABLISHED 
+tcp   838518      0 localhost.localdomain:amqp  localhost.localdomain:47583 ESTABLISHED 
+tcp   1109464      0 localhost.localdomain:amqp  localhost.localdomain:47871 ESTABLISHED 
+Wed Oct 12 21:14:25 CDT 2011
+tcp   1030094      0 localhost.localdomain:amqp  localhost.localdomain:47506 ESTABLISHED 
+tcp   596756      0 localhost.localdomain:amqp  localhost.localdomain:47655 ESTABLISHED 
+tcp    32166      0 localhost.localdomain:amqp  localhost.localdomain:47573 ESTABLISHED 
+tcp   1427227      0 localhost.localdomain:amqp  localhost.localdomain:47628 ESTABLISHED 
+tcp   638147      0 localhost.localdomain:amqp  localhost.localdomain:47583 ESTABLISHED 
+tcp   1260456      0 localhost.localdomain:amqp  localhost.localdomain:47871 ESTABLISHED 
+Wed Oct 12 21:14:27 CDT 2011
+tcp   1069334      0 localhost.localdomain:amqp  localhost.localdomain:47506 ESTABLISHED 
+tcp   327272      0 localhost.localdomain:amqp  localhost.localdomain:47655 ESTABLISHED 
+tcp     1120      0 localhost.localdomain:amqp  localhost.localdomain:47878 ESTABLISHED 
+tcp   1405311      0 localhost.localdomain:amqp  localhost.localdomain:47628 ESTABLISHED 
+tcp   260070      0 localhost.localdomain:amqp  localhost.localdomain:47583 ESTABLISHED 
+tcp   954564      0 localhost.localdomain:amqp  localhost.localdomain:47871 ESTABLISHED 
+Wed Oct 12 21:14:29 CDT 2011
+tcp   1067210      0 localhost.localdomain:amqp  localhost.localdomain:47506 ESTABLISHED 
+tcp    98646      0 localhost.localdomain:amqp  localhost.localdomain:47655 ESTABLISHED 
+tcp   1105244      0 localhost.localdomain:amqp  localhost.localdomain:47628 ESTABLISHED 
+tcp    50081      0 localhost.localdomain:amqp  localhost.localdomain:47583 ESTABLISHED 
+tcp   695523      0 localhost.localdomain:amqp  localhost.localdomain:47871 ESTABLISHED 
+Wed Oct 12 21:14:32 CDT 2011
+tcp   1069462      0 localhost.localdomain:amqp  localhost.localdomain:47506 ESTABLISHED 
+tcp   912047      0 localhost.localdomain:amqp  localhost.localdomain:47628 ESTABLISHED 
+tcp     1461      0 localhost.localdomain:amqp  localhost.localdomain:47583 ESTABLISHED 
+tcp   633875      0 localhost.localdomain:amqp  localhost.localdomain:47871 ESTABLISHED 
+Wed Oct 12 21:14:34 CDT 2011
+tcp   1067010      0 localhost.localdomain:amqp  localhost.localdomain:47506 ESTABLISHED 
+tcp      320      0 localhost.localdomain:amqp  localhost.localdomain:47623 ESTABLISHED 
+tcp      259      0 localhost.localdomain:amqp  localhost.localdomain:47459 ESTABLISHED 
+tcp      918      0 localhost.localdomain:amqp  localhost.localdomain:47826 ESTABLISHED 
+tcp      450      0 localhost.localdomain:amqp  localhost.localdomain:47655 ESTABLISHED 
+tcp      313      0 localhost.localdomain:amqp  localhost.localdomain:47573 ESTABLISHED 
+tcp     3843      0 localhost.localdomain:amqp  localhost.localdomain:47872 ESTABLISHED 
+tcp   919325      0 localhost.localdomain:amqp  localhost.localdomain:47628 ESTABLISHED 
+tcp   664134      0 localhost.localdomain:47649 localhost.localdomain:amqp  ESTABLISHED 
+tcp   606917      0 localhost.localdomain:47508 localhost.localdomain:amqp  ESTABLISHED 
+Wed Oct 12 21:14:36 CDT 2011
+Wed Oct 12 21:14:38 CDT 2011
+Wed Oct 12 21:14:41 CDT 2011
+tcp     1997      0 localhost.localdomain:47877 localhost.localdomain:amqp  ESTABLISHED 
+tcp      307      0 localhost.localdomain:47766 localhost.localdomain:amqp  ESTABLISHED 
+Wed Oct 12 21:14:43 CDT 2011
+Wed Oct 12 21:14:45 CDT 2011
+Wed Oct 12 21:14:47 CDT 2011
+Wed Oct 12 21:14:50 CDT 2011
+-------------- next part --------------
+A non-text attachment was scrubbed...
+Name: incoming-messages-per-exchange.png
+Type: image/png
+Size: 266627 bytes
+Desc: not available
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20111012/591902e5/attachment.png">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20111012/591902e5/attachment.png</A>&gt;
+-------------- next part --------------
+A non-text attachment was scrubbed...
+Name: rabbit-threads-top.png
+Type: image/png
+Size: 74431 bytes
+Desc: not available
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20111012/591902e5/attachment-0001.png">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20111012/591902e5/attachment-0001.png</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="015513.html">[rabbitmq-discuss] Debugging queue.declare
+</A></li>
+	<LI>Next message: <A HREF="015531.html">[rabbitmq-discuss] System CPU spikes, multi-second latency
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#15480">[ date ]</a>
+              <a href="thread.html#15480">[ thread ]</a>
+              <a href="subject.html#15480">[ subject ]</a>
+              <a href="author.html#15480">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

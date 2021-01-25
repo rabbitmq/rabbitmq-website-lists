@@ -1,0 +1,221 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Fwd: Exception in Creating Rabbit MQ Connection
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Fwd%3A%20Exception%20in%20Creating%20Rabbit%20MQ%20Connection&In-Reply-To=%3CAANLkTi%3DK4%2B4HW5aQ-gwhE-w2eW2z_LkKbE80hFvrMN%2BM%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="011462.html">
+   <LINK REL="Next"  HREF="011467.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Fwd: Exception in Creating Rabbit MQ Connection</H1>
+    <B>sagar varpe</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Fwd%3A%20Exception%20in%20Creating%20Rabbit%20MQ%20Connection&In-Reply-To=%3CAANLkTi%3DK4%2B4HW5aQ-gwhE-w2eW2z_LkKbE80hFvrMN%2BM%40mail.gmail.com%3E"
+       TITLE="[rabbitmq-discuss] Fwd: Exception in Creating Rabbit MQ Connection">sagar.varpe at wissen.co.in
+       </A><BR>
+    <I>Thu Feb 24 17:47:39 GMT 2011</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="011462.html">[rabbitmq-discuss] Exception in Creating Rabbit MQ Connection
+</A></li>
+        <LI>Next message: <A HREF="011467.html">[rabbitmq-discuss] Announcing Vorpal Bunny 0.1
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#11464">[ date ]</a>
+              <a href="thread.html#11464">[ thread ]</a>
+              <a href="subject.html#11464">[ subject ]</a>
+              <a href="author.html#11464">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>  Hi guys ,
+              I am using RabbitMQ version 2.3 on server and in code I am
+using java RabbitMQ client jar 2.3.1.
+
+              The whole application is in Scala in which there are 10 actors
+each has its own  Queue on RabbitMQ  Server.
+               each Actor is accessing its Queue through its own methods
+like get Message and addMessage.
+               In Attachment I have  attached One sample code for Actor
+methods .
+
+               in every actor continuously checks for any Message in queue
+like
+
+
+
+   1.       def act {
+   2.                this ! 1
+   3.                 loop {
+   4.                   react {
+   5.                         case 1 =&gt;
+   processMessage(QueueManager.getMessage); this ! 1
+   6.
+   7.                          }
+   8.                        }
+   9.                       }
+
+
+          this works fine ..But sometimes it gives me error like
+
+ Exception in Creating Rabbit MQ Connection
+java.net.ConnectException: Connection timed out
+       at java.net.PlainSocketImpl.socketConnect(Native Method)
+       at
+java.net.AbstractPlainSocketImpl.doConnect(AbstractPlainSocketImpl.java:310)
+       at
+java.net.AbstractPlainSocketImpl.connectToAddress(AbstractPlainSocketImpl.java:176)
+       at
+java.net.AbstractPlainSocketImpl.connect(AbstractPlainSocketImpl.java:163)
+       at java.net.SocksSocketImpl.connect(SocksSocketImpl.java:384)
+       at java.net.Socket.connect(Socket.java:546)
+       at java.net.Socket.connect(Socket.java:495)
+       at
+com.rabbitmq.client.ConnectionFactory.createFrameHandler(ConnectionFactory.java:338)
+       at
+com.rabbitmq.client.ConnectionFactory.newConnection(ConnectionFactory.java:376)
+       at
+com.rabbitmq.client.ConnectionFactory.newConnection(ConnectionFactory.java:399)
+
+
+    The server is running on its default port 5672. and actors are running
+on same machine .
+ the QueueManager is
+
+object QueueManager {
+  private val logger: Logger = Logger.getLogger(this.getClass.getName)
+  private val FACTORY = RabbitMQConstants.getFactory
+
+  private var conn: Connection = null
+  private var channel: Channel = null
+
+  /**
+   * @return
+   * com.prolinkd.actor.QueueObject
+   * reads a Message from rabbitMQ Queue
+   */
+  def getMessage: QueueObject = synchronized{
+    if (conn == null || (channel != null &amp;&amp; (!channel.isOpen))) {
+      getConnection
+      if (conn == null) {
+        return null
+      }
+    }
+    var obj = new ConnectionObject
+    try {
+      val response = channel.basicGet(CONNECTION_QUEUE, false)
+      if (response == null) return null
+      val msg = new java.io.ObjectInputStream(
+        new java.io.ByteArrayInputStream(response.getBody)).readObject()
+      obj = msg.asInstanceOf[ConnectionObject]
+      channel.basicAck(response.getEnvelope().getDeliveryTag(), false)
+    } catch {
+      case e: Exception =&gt; logger.error(&quot;error in Get Message&quot;, e);
+//endConnection
+    }
+    //endConnection
+    obj
+  }
+
+
+  /**
+   * Get Connected with RabbitMQ Server
+   */
+  private def getConnection {
+    try {
+      conn = FACTORY.newConnection
+      if (conn == null) {
+        logger.info(&quot; FAILED TO CREATE CONNECTION WITH RABBITMQ ON  &quot; +
+FACTORY.getHost + &quot;:&quot; + FACTORY.getPort)
+      }
+      channel = conn.createChannel
+      if (channel == null) {
+        logger.info(&quot; FAILED TO CREATE CHANNEL WITH RABBITMQ ON  &quot; +
+FACTORY.getHost + &quot;:&quot; + FACTORY.getPort)
+      }
+      if (conn != null) {
+        val durable = true
+        channel.exchangeDeclare(CONNECTION_EXCHANGE, &quot;direct&quot;, durable)
+        channel.queueDeclare(CONNECTION_QUEUE, durable, false, false, null)
+        channel queueBind (CONNECTION_QUEUE, CONNECTION_EXCHANGE,
+CONNECTION_ROUTING_KEY)
+      }
+    } catch {
+      case e: Exception =&gt; logger.error(&quot;Exception In Getting Connection to
+RabbitMQ &quot;, e)
+    }
+
+  }
+
+}
+
+
+we can't figure out the particular issue.can you guys  help us please
+
+-- 
+Regards,
+Sagar
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20110224/085ee164/attachment-0001.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20110224/085ee164/attachment-0001.htm</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="011462.html">[rabbitmq-discuss] Exception in Creating Rabbit MQ Connection
+</A></li>
+	<LI>Next message: <A HREF="011467.html">[rabbitmq-discuss] Announcing Vorpal Bunny 0.1
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#11464">[ date ]</a>
+              <a href="thread.html#11464">[ thread ]</a>
+              <a href="subject.html#11464">[ subject ]</a>
+              <a href="author.html#11464">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

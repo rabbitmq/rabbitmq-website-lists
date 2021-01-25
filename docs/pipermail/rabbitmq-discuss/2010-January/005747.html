@@ -1,0 +1,155 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Should requent queue	creation-attachment-deletion be avoided?
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20Should%20requent%20queue%0A%09creation-attachment-deletion%20be%20avoided%3F&In-Reply-To=45d84bd01001020404i48c958adw75e8d8f90b3146cf%40mail.gmail.com">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="005746.html">
+   <LINK REL="Next"  HREF="005748.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Should requent queue	creation-attachment-deletion be avoided?</H1>
+    <B>Alexis Richardson</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20Should%20requent%20queue%0A%09creation-attachment-deletion%20be%20avoided%3F&In-Reply-To=45d84bd01001020404i48c958adw75e8d8f90b3146cf%40mail.gmail.com"
+       TITLE="[rabbitmq-discuss] Should requent queue	creation-attachment-deletion be avoided?">alexis.richardson at gmail.com
+       </A><BR>
+    <I>Sat Jan  2 17:13:21 GMT 2010</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="005746.html">[rabbitmq-discuss] Should requent queue	creation-attachment-deletion be avoided?
+</A></li>
+        <LI>Next message: <A HREF="005748.html">[rabbitmq-discuss] Encoding message payload for multiple	languages
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#5747">[ date ]</a>
+              <a href="thread.html#5747">[ thread ]</a>
+              <a href="subject.html#5747">[ subject ]</a>
+              <a href="author.html#5747">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Davorin
+
+You are definitely thinking along the right lines here.
+
+* Queue creation, binding, etc, carries a small cost in time and space
+* For some use cases (eg managing a lot of chat style sessions) it
+would be great to have a way to 'hide' bindings temporarily, instead
+of deleting them
+* A mechanism akin to 'presence' has been mooted but not implemented yet
+
+Space costs:
+
+* The space cost is usually the more critical to considerations of
+scale in our practical experience with real apps, to date
+* Each binding takes a couple of 100 bytes, last time I asked the
+engineering team about this, but this may have improved recently, or
+be about to improve with the new persistor - you'll have to ask
+Matthew
+* Obviously if you have a large machine (8Gb RAM or more) this goes a
+long way to helping.
+* Memory consumption in RabbitMQ 1.7 is the cost of the entities plus
+the bindings plus any messages in memory (messages are stored at most
+once per node if they are larger than 60 bytes)
+* Per message memory consumption will decrease for persistent
+messages, with the new persistor
+* For more on this, read
+<A HREF="http://www.lshift.net/blog/2009/12/07/rabbitmq-at-the-skills-matter-functional-programming-exchange">http://www.lshift.net/blog/2009/12/07/rabbitmq-at-the-skills-matter-functional-programming-exchange</A>
+
+Time costs:
+
+* Direct exchange lookup is order log(n) and topic is order n.  Yes,
+this could be improved.
+* So if you are using topic exchanges at large scale, time is likely
+to be a factor too.
+
+Space and time:
+
+* When you run a clustered broker, the routing table (&quot;exchange&quot;) is
+replicated across nodes.
+* Replication is synchronised to the binding lifecycle
+* The combination of large scale, heavy binding churn, and clustering,
+is therefore not a happy one
+* That said almost all problems can be made to go away with
+intelligent partitioning or hashing, and reasonably big boxes
+
+Bottom line:
+
+* RabbitMQ can handle pretty large applications on one box provided
+you do not do anything daft
+* Avoid churn if you can
+* The new persistor will help with some cases
+
+alexis
+
+
+
+
+
+
+
+On Sat, Jan 2, 2010 at 12:04 PM, Davorin Rusevljan
+&lt;<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">davorin.rusevljan at gmail.com</A>&gt; wrote:
+&gt;<i> Hi,
+</I>&gt;<i>
+</I>&gt;<i> I am thinking how to model my problem with RabbitMQ and AMQP. Let me
+</I>&gt;<i> describe it briefly.
+</I>&gt;<i>
+</I>&gt;<i> There are something like 1000 entities about which central site should
+</I>&gt;<i> publish and broadcast information. There are also something like
+</I>&gt;<i> 100-1000 clients which can choose only one of those items and receive
+</I>&gt;<i> pushed updates to its state. I was thinking about setting an exchange
+</I>&gt;<i> to which updates are going to be published, and each client would get
+</I>&gt;<i> its private queue attached to it to fetch updates from. The updates
+</I>&gt;<i> need not to be persisted or ack-ed.
+</I>&gt;<i>
+</I>&gt;<i> Now the clients might at some times quite frequently change the entity
+</I>&gt;<i> they are monitoring, maybe even once per second if they are edgy. Over
+</I>&gt;<i> the period of 6-10 hours that might cumulate to quite large number of
+</I>&gt;<i> private queues being created, attached to exchanges and deleted
+</I>&gt;<i> subsequently. Is this going to be costly and possible time and
+</I>&gt;<i> resource drain?
+</I>&gt;<i>
+</I>&gt;<i> Maybe queues need not to be deleted but they could be just reattached
+</I>&gt;<i> with different keyword pattern? Is that possible and if yes, would it
+</I>&gt;<i> also present performance and resource issue?
+</I>&gt;<i>
+</I>&gt;<i> Or maybe this should be modeled in some other way?
+</I>&gt;<i>
+</I>&gt;<i> Many thanks!
+</I>&gt;<i>
+</I>&gt;<i> Davorin Rusevljan
+</I>&gt;<i> <A HREF="http://www.cloud208.com/">http://www.cloud208.com/</A>
+</I>&gt;<i>
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;<i> <A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;<i> <A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>&gt;<i>
+</I>
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="005746.html">[rabbitmq-discuss] Should requent queue	creation-attachment-deletion be avoided?
+</A></li>
+	<LI>Next message: <A HREF="005748.html">[rabbitmq-discuss] Encoding message payload for multiple	languages
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#5747">[ date ]</a>
+              <a href="thread.html#5747">[ thread ]</a>
+              <a href="subject.html#5747">[ subject ]</a>
+              <a href="author.html#5747">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

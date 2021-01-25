@@ -1,0 +1,266 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Performance of &quot;blocking publisher-confirms&quot; vs. transactions
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Performance%20of%20%22blocking%20publisher-confirms%22%0A%20vs.%20transactions&In-Reply-To=%3CCACLE7izmng-gMdkCGFFjS5UzW_Q9kCLtTOXLjM4C_Lao4k3fxQ%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="018215.html">
+   <LINK REL="Next"  HREF="018224.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Performance of &quot;blocking publisher-confirms&quot; vs. transactions</H1>
+    <B>Matt Pietrek</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Performance%20of%20%22blocking%20publisher-confirms%22%0A%20vs.%20transactions&In-Reply-To=%3CCACLE7izmng-gMdkCGFFjS5UzW_Q9kCLtTOXLjM4C_Lao4k3fxQ%40mail.gmail.com%3E"
+       TITLE="[rabbitmq-discuss] Performance of &quot;blocking publisher-confirms&quot; vs. transactions">mpietrek at skytap.com
+       </A><BR>
+    <I>Fri Feb 17 17:46:58 GMT 2012</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="018215.html">[rabbitmq-discuss] Performance of &quot;blocking publisher-confirms&quot; vs. transactions
+</A></li>
+        <LI>Next message: <A HREF="018224.html">[rabbitmq-discuss] Performance of &quot;blocking publisher-confirms&quot; vs.	transactions
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#18243">[ date ]</a>
+              <a href="thread.html#18243">[ thread ]</a>
+              <a href="subject.html#18243">[ subject ]</a>
+              <a href="author.html#18243">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Simon,
+
+What you're saying make sense from a purely technical standpoint. We could
+just not consider the message sent until seeing the publisher confirm.
+
+However, implementing this in our code would push a fair amount of
+complexity back into our application layer. It's already a highly complex
+state machine and adding another state, e.g. &quot;the message *may* have been
+sent&quot;, would make things far worse than they already are.
+
+Also, I noticed that you have an exactly-once QOS requirement, whereas we
+don't. We need to be tolerant of duplicate messages, but we absolutely must
+get every message at least once to drive the state machine forward. Losing
+a message in the &quot;confirm window&quot; could cause entire operations to stall.
+And adding async callback into our state machine logic to change
+operational state from &quot;maybe sent&quot; to &quot;guaranteed sent&quot; is a non-starter
+with the other system architects.
+
+
+On Thu, Feb 16, 2012 at 3:06 PM, Simone Busoli &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">simone.busoli at gmail.com</A>&gt;wrote:
+
+&gt;<i> Hello Matt, thanks for the explanation and sorry for not reading the
+</I>&gt;<i> previous thread carefully, I did now.
+</I>&gt;<i>
+</I>&gt;<i> I can't tell you what differences you should expect between using a
+</I>&gt;<i> blocking publisher confirms model and transactions as I've never used
+</I>&gt;<i> transactions before, but allow me to insist a bit more on why the first may
+</I>&gt;<i> fit your scenario by describing mine. I'm using RabbitMQ in an environment
+</I>&gt;<i> where high reliability, together with strict ordering of messages and
+</I>&gt;<i> exactly-once quality of service are needed. We're using asynchronous
+</I>&gt;<i> publisher confirms to achieve that.
+</I>&gt;<i>
+</I>&gt;<i> You seem to be worried about a scenario in which you believe some messages
+</I>&gt;<i> to be in the hands of the server while instead they aren't due to the
+</I>&gt;<i> asynchronous nature of publisher confirms, and especially that the
+</I>&gt;<i> publishers may not be there to republish them in case something goes wrong.
+</I>&gt;<i> Without knowing much about your system I would suggest that you don't
+</I>&gt;<i> consider the messages as &quot;delivered&quot; until you receive the asynchronous
+</I>&gt;<i> confirm from the broker, and just pretend they were never published until
+</I>&gt;<i> this happens. The problem you describe seems to arise because you consider
+</I>&gt;<i> published messages as &quot;delivered&quot;, which is not true until you receive a
+</I>&gt;<i> confirm.
+</I>&gt;<i> So what's worst case scenario difference between publisher confirms used
+</I>&gt;<i> in this way compared to transactions? If a publisher dies, in the first
+</I>&gt;<i> case you would consider as published only the messages that have been
+</I>&gt;<i> confirmed, thus pretending the unconfirmed ones to have never existed, in
+</I>&gt;<i> the second case an hypothetical ongoing transaction is rolled back. I think
+</I>&gt;<i> the difference here lies only in the number of messages you have tried to
+</I>&gt;<i> publish which may not have reached the broker. In the case of transactions
+</I>&gt;<i> it is at most 1, with async publisher confirms it may be more than 1 (it
+</I>&gt;<i> will be 1 with synchronous publisher confirms), but I don't think this
+</I>&gt;<i> number changes the nature of the problem.
+</I>&gt;<i>
+</I>&gt;<i> On Thu, Feb 16, 2012 at 22:44, Matt Pietrek &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">mpietrek at skytap.com</A>&gt; wrote:
+</I>&gt;<i>
+</I>&gt;&gt;<i> Hi Simone,
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> | Can you describe why you think publisher confirms are not appropriate
+</I>&gt;&gt;<i> in your scenario?
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> I think if you read the paragraph that starts with &quot;At the heart of
+</I>&gt;&gt;<i> things&quot; it describes the scenario in enough detail. In a follow up, Simon
+</I>&gt;&gt;<i> MacMullen appears to agree that publisher confirms aren't ideal for us.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> In short, when we publish a message, we must know that the broker safely
+</I>&gt;&gt;<i> has it. With transactions, OR a blocking publisher-confirm model, the
+</I>&gt;&gt;<i> client is assured it has it.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> HOWEVER, all the publisher-confirm descriptions/examples I've seen assume
+</I>&gt;&gt;<i> an async model: Publish a message and some time later you'll be told that
+</I>&gt;&gt;<i> the message is safely in the broker's hands. However, that window between
+</I>&gt;&gt;<i> those two events is the crux of the problem in our environment.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Assume we went with the async publisher-confirm model as suggested. What
+</I>&gt;&gt;<i> if our client dies and is not around to re-send the message? Or what if the
+</I>&gt;&gt;<i> client dies, and milliseconds later the broker dies? No publisher confirm
+</I>&gt;&gt;<i> would be forthcoming, and hence, lost messages.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Top level problem for us: Our state machine, which persists every
+</I>&gt;&gt;<i> critical change of state to a database, will be incorrect. We will have
+</I>&gt;&gt;<i> recorded &quot;Yup, that message was sent&quot;, when in reality it might not have
+</I>&gt;&gt;<i> made it to broker, or the broker died before the confirm could be sent.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> By not recording that we've sent the message until AFTER a
+</I>&gt;&gt;<i> transaction/publisher-confirm completes, we can guarantee the integrity of
+</I>&gt;&gt;<i> our state-machine. However, as we've all seen, transactions impose a limit
+</I>&gt;&gt;<i> on message throughput. I'm simply trying to understand if there's any
+</I>&gt;&gt;<i> non-trivial message rate difference expected between using a transaction
+</I>&gt;&gt;<i> vs. waiting in my publish routine for the confirm.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> | If you happen to be using the .NET API this is already implemented, the
+</I>&gt;&gt;<i> WaitForConfirms and WaitForConfirmsOrDie on the IModel interface provide
+</I>&gt;&gt;<i> this behavior.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Unfortunately, I'm not on a .NET client. I'm using Python/Pika. I'd
+</I>&gt;&gt;<i> consider going to the c-library (wrapped from Python) if there's some
+</I>&gt;&gt;<i> non-trivial benefit to using a synchronous publisher-confirm.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Thanks,
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Matt
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> On Thu, Feb 16, 2012 at 1:08 PM, Simone Busoli &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">simone.busoli at gmail.com</A>&gt;wrote:
+</I>&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i> Hi Matt, I've gone through the old thread very quickly so forgive me if
+</I>&gt;&gt;&gt;<i> I'm missing something. Your first sentence leaves me with some doubts:
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i>  As I've detailed in other posts to this DL (<A HREF="http://bit.ly/zf6sKC">http://bit.ly/zf6sKC</A>), we
+</I>&gt;&gt;&gt;&gt;<i> have situation where straightforward publisher-confirms aren't appropriate
+</I>&gt;&gt;&gt;&gt;<i> in our scenario. We need to know the broker has received the message, and
+</I>&gt;&gt;&gt;&gt;<i> we have to assume our client can die at any moment, so retransmitting
+</I>&gt;&gt;&gt;&gt;<i> messages is not an option for us.
+</I>&gt;&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i> Publisher confirms guarantee that the broker has taken care of the
+</I>&gt;&gt;&gt;<i> message and it has been either delivered to a queue or to a consumer. This
+</I>&gt;&gt;&gt;<i> is a strong delivery guarantee, even if the client dies. Coupled with
+</I>&gt;&gt;&gt;<i> persistent messages and durable exchange/queues, it guarantees
+</I>&gt;&gt;&gt;<i> at-least-once delivery. Can you describe why you think publisher confirms
+</I>&gt;&gt;&gt;<i> are not appropriate in your scenario?
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;&gt;<i> What I'd like to know is: Is there any benefit to creating our own
+</I>&gt;&gt;&gt;&gt;<i> &quot;blocking publisher-confirm publishing&quot;? That is, we'd do the following:
+</I>&gt;&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;&gt;<i> Publish a single message
+</I>&gt;&gt;&gt;&gt;<i> Block on an event 'X'
+</I>&gt;&gt;&gt;&gt;<i> When the publisher confirm comes in, signal 'X'
+</I>&gt;&gt;&gt;&gt;<i> Return from the publish call
+</I>&gt;&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i> If you happen to be using the .NET API this is already implemented, the
+</I>&gt;&gt;&gt;<i> WaitForConfirms and WaitForConfirmsOrDie on the IModel interface provide
+</I>&gt;&gt;&gt;<i> this behavior.
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;&gt;<i> In a mirrored queue scenario, is there any advantage to doing this vs.
+</I>&gt;&gt;&gt;&gt;<i> using straight-up transactions?
+</I>&gt;&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;&gt;<i> Matt
+</I>&gt;&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;&gt;<i> p.s. I realize in the above pseudocode that multiple threads would be
+</I>&gt;&gt;&gt;&gt;<i> necessary - One to block and the other to listen for the publisher-confirm.
+</I>&gt;&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;&gt;<i> _______________________________________________
+</I>&gt;&gt;&gt;&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;&gt;&gt;&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;&gt;&gt;&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>&gt;&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;<i>
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20120217/8977dc21/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20120217/8977dc21/attachment.htm</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="018215.html">[rabbitmq-discuss] Performance of &quot;blocking publisher-confirms&quot; vs. transactions
+</A></li>
+	<LI>Next message: <A HREF="018224.html">[rabbitmq-discuss] Performance of &quot;blocking publisher-confirms&quot; vs.	transactions
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#18243">[ date ]</a>
+              <a href="thread.html#18243">[ thread ]</a>
+              <a href="subject.html#18243">[ subject ]</a>
+              <a href="author.html#18243">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,199 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] multiple message listeners on a single reply	queue
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20multiple%20message%20listeners%20on%20a%20single%20reply%0A%09queue&In-Reply-To=%3CCADtU9_sv_Bv7oEOX4ogPzSgLnneoJFpZPYFf_cs78BYKyjbyBQ%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="033638.html">
+   <LINK REL="Next"  HREF="033640.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] multiple message listeners on a single reply	queue</H1>
+    <B>Gary Russell</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20multiple%20message%20listeners%20on%20a%20single%20reply%0A%09queue&In-Reply-To=%3CCADtU9_sv_Bv7oEOX4ogPzSgLnneoJFpZPYFf_cs78BYKyjbyBQ%40mail.gmail.com%3E"
+       TITLE="[rabbitmq-discuss] multiple message listeners on a single reply	queue">grussell at gopivotal.com
+       </A><BR>
+    <I>Thu Feb  6 18:22:17 GMT 2014</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="033638.html">[rabbitmq-discuss] multiple message listeners on a single reply	queue
+</A></li>
+        <LI>Next message: <A HREF="033640.html">[rabbitmq-discuss] multiple message listeners on a single	reply	queue
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#33639">[ date ]</a>
+              <a href="thread.html#33639">[ thread ]</a>
+              <a href="subject.html#33639">[ subject ]</a>
+              <a href="author.html#33639">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>You cannot share reply queues across instances; unlike JMS, AMQP has no
+notion of a message selector to choose messages from a queue, so each
+instance needs its own reply queue.
+
+When the reply goes to the wrong instance, the originating instance thread
+will be suspended for (default) 5 seconds (modifiable by setting
+replyTimeout).
+
+You can increase throughput by increasing the concurrency on the listener
+containers.
+
+The upcoming 1.3 release of spring-AMQP allows the concurrency to vary on
+demand; with 1.2.x you have to stop/start the container to change the
+concurrency.
+
+
+On Thu, Feb 6, 2014 at 1:07 PM, tgv amni &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">tgvt53 at gmail.com</A>&gt; wrote:
+
+&gt;<i> Hi
+</I>&gt;<i>
+</I>&gt;<i> We are beginners in rabbitmq. We use rabbitmq 3.2.2. We use spring amqp.
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> I recently observed an issue with multiple listeners on the same reply
+</I>&gt;<i> queue when performance testing
+</I>&gt;<i>
+</I>&gt;<i> our application.
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> Here is the test scenario:
+</I>&gt;<i>
+</I>&gt;<i> 50 Concurrent users post a request to Service F to create an entity A. The
+</I>&gt;<i> message contains a user id and a timestamp. Each concurrent user posts
+</I>&gt;<i> roughly two messages per second.
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> F publishes this message to a non-durable queue via a topic exchange
+</I>&gt;<i> (using convertSendAndReceive) and waits for the response on a fixed reply
+</I>&gt;<i> queue ReplyQ1.
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> Service A picks up this message and creates this entity (basically an
+</I>&gt;<i> entry in a table) after
+</I>&gt;<i>
+</I>&gt;<i> validating that the user id wihin that message is valid.
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> For the validation, Service A sends this message to another non-durable
+</I>&gt;<i> queue via a topic exchange (convertSendAndReceive) and waits for a response
+</I>&gt;<i> on
+</I>&gt;<i>
+</I>&gt;<i> another fixed reply queue, ReplyQ2.
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> A validating service V picks up this user id, validates it (basically a
+</I>&gt;<i> select from a db table) and then sends the response back to ReplyQ2.
+</I>&gt;<i>
+</I>&gt;<i> Service A picks this up, based on the message, creates the entity and then
+</I>&gt;<i> sends response to ReplyQ1.
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> All messages are non-persistent. No concurrency or prefetch settings
+</I>&gt;<i> configured on the listeners.
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> *CreateEntity A Request -&gt; Service F -&gt; Q1 -&gt; Service A -&gt; Q2 - Service V*
+</I>&gt;<i>
+</I>&gt;<i> *Service V-&gt; ReplyQ2 -&gt; Service A (creates entity A if user valid) -&gt;
+</I>&gt;<i> ReplyQ1 -&gt; Service F*
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> F, A and V all live within the same tomcat instance. When a second tomcat
+</I>&gt;<i> instance was started with service A and V, I started to notice warning
+</I>&gt;<i> messages in tomcat logs:
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> *WARN : org.springframework.amqp.rabbit.core.RabbitTemplate - Reply
+</I>&gt;<i> received after timeout for b3fd4f57-0403-4704-8f16-8c3055ca0cd9*
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> It looked like messages were not picked up by the correct listener from
+</I>&gt;<i> the validation response queues. Rabbitmq logs did not show any errors. From
+</I>&gt;<i> the management console i saw 40-60 messages always staying in ready state
+</I>&gt;<i>  in Q1, with a few in unacked state.
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> Response times were very high for this create Entity A request (10
+</I>&gt;<i> seconds) and only about 5 transactions were processed per second. Tests
+</I>&gt;<i> were run in AWS on m1.large instances.
+</I>&gt;<i>
+</I>&gt;<i> High response time was not caused by network latency. Network latency was
+</I>&gt;<i> really small.
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> On testing with separate reply queues for the user id validation response,
+</I>&gt;<i>
+</I>&gt;<i> (ReplyQ21 and ReplyQ22 instead of ReplyQ2), response times improved (1
+</I>&gt;<i> second) and more transactions (roughly 70) were processed per second.
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> Is this a good design approach for this scenario? Or is there a better way
+</I>&gt;<i> to handle this ?
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> Please let me know if you need any other information.
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> Thanks.
+</I>&gt;<i>
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20140206/3f663fcc/attachment.html">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20140206/3f663fcc/attachment.html</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="033638.html">[rabbitmq-discuss] multiple message listeners on a single reply	queue
+</A></li>
+	<LI>Next message: <A HREF="033640.html">[rabbitmq-discuss] multiple message listeners on a single	reply	queue
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#33639">[ date ]</a>
+              <a href="thread.html#33639">[ thread ]</a>
+              <a href="subject.html#33639">[ subject ]</a>
+              <a href="author.html#33639">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

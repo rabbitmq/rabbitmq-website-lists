@@ -1,0 +1,160 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Message durability and partition tolerence
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Message%20durability%20and%20partition%20tolerence&In-Reply-To=%3C4EC1303C.3080709%40rabbitmq.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="016047.html">
+   <LINK REL="Next"  HREF="016053.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Message durability and partition tolerence</H1>
+    <B>Simon MacMullen</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Message%20durability%20and%20partition%20tolerence&In-Reply-To=%3C4EC1303C.3080709%40rabbitmq.com%3E"
+       TITLE="[rabbitmq-discuss] Message durability and partition tolerence">simon at rabbitmq.com
+       </A><BR>
+    <I>Mon Nov 14 15:14:04 GMT 2011</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="016047.html">[rabbitmq-discuss] Message durability and partition tolerence
+</A></li>
+        <LI>Next message: <A HREF="016053.html">[rabbitmq-discuss] Unicode Characters In AMQP Headers?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#16211">[ date ]</a>
+              <a href="thread.html#16211">[ thread ]</a>
+              <a href="subject.html#16211">[ subject ]</a>
+              <a href="author.html#16211">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi Jonathan. Thanks for an interesting mail!
+
+On 08/11/11 16:26, Jonathan Oliver wrote:
+&gt;<i> Since the introduction of better clustering support and message queue
+</I>&gt;<i> failover in v2.6, my company is starting to consider moving to RabbitMQ.
+</I>&gt;<i> But we had a few questions about the roadmap.
+</I>&gt;<i>
+</I>&gt;<i> We are looking to ensure that a message is only considered received by
+</I>&gt;<i> an exchange from a producing app when at least two physical instances of
+</I>&gt;<i> Rabbit acknowledge the receipt of the message--similar to Riak's method.
+</I>&gt;<i> Furthermore, we are looking to ensure that a message is considered
+</I>&gt;<i> consumed (ack'd) when when at least one physical instance receives the
+</I>&gt;<i> ack, which may result in a message being delivered more than once.
+</I>&gt;<i> Essentially, we'd like to propose a configuration where Rabbit can fall
+</I>&gt;<i> on the AP side of CAP instead of the CA side.
+</I>
+This starts to sound quite a lot like federation. Especially the 
+AP-as-opposed-to-CA part, which could almost have been taken from 
+<A HREF="http://www.rabbitmq.com/blog/2011/06/22/federation-plugin-preview-release/">http://www.rabbitmq.com/blog/2011/06/22/federation-plugin-preview-release/</A> 
+:<i>-)
+</I>
+(Incidentally this is reminding me that federation really needs better 
+documentation right now! Sigh...)
+
+Where your vision differs is the &quot;at least two physical instances&quot; part. 
+I always assumed that people would use federations-of-clusters to get HA 
+with partition tolerance. But that does require that you can specify 
+that some groups of nodes *won't* get partitioned from each other. Easy 
+if you're thinking in terms of data centres linked by WANs, less easy in 
+the cloud. Hmm.
+
+...snip discussion of ordering...
+
+&gt;<i> For example, if an instance of
+</I>&gt;<i> Rabbit goes offline under the current HA configuration, when it rejoins
+</I>&gt;<i> the cluster the queues are wiped clean. Yuck. So much for guaranteed
+</I>&gt;<i> delivery.
+</I>
+With our current HA queues any offline slave queue has to be wiped and 
+restarted because it doesn't know what happened while it was down - but 
+that's just the same as having to sync up a RAID after a similar event. 
+In particular it doesn't mean that messages were lost - the whole point 
+is that the queue has other mirrors which will keep it up.
+
+Non-HA queues don't get wiped at rejoin, since we know nothing can have 
+happened to them while they were down.
+
+&gt;<i> While under some kind of partition-tolerant configuration, the
+</I>&gt;<i> queues wouldn't need to be cleaned. Instead, the consuming application
+</I>&gt;<i> would be responsible for message idempotency.
+</I>&gt;<i>
+</I>&gt;<i> At the same time, I realize that you guys might be bumping against
+</I>&gt;<i> restrictions in the AMQP standard, for example multiple consumers
+</I>&gt;<i> receiving copies of the message where one consumer ack's the message,
+</I>&gt;<i> while another nack's the message.  But that's something where the
+</I>&gt;<i> messaging system can't determine the proper course of action without
+</I>&gt;<i> knowing the business context. In that case, I would imaging it should
+</I>&gt;<i> present that nack back to the producer as it currently does.
+</I>
+One thing that the federation plugin does not attempt to do at all is 
+make the resultant network look like a single broker as defined by AMQP 
+(or in any other sense). As far as I can see this is the only thing to 
+do for an AP system. Trying to look like &quot;a broker&quot; is going to imply 
+global state, which... ugh. So one corollary is that things like 
+mandatory can't work across federation.
+
+&gt;<i> The bottom line in my question and proposal really has to do with
+</I>&gt;<i> message loss. If the idea is to *not lose messages*, I can see a
+</I>&gt;<i> partition-tolerant configuration bringing a lot to the table and where
+</I>&gt;<i> the consuming application must be resilient to duplicate messages and
+</I>&gt;<i> ordering, thus freeing up RabbitMQ from having to worry so much about that.
+</I>
+I wonder about message loss in an AP Rabbit, with your &quot;at least two 
+instances&quot; constraint. (Using that term rather than federated to imply 
+that we're not inherently talking about the current plugin here).
+
+You're a producer. You connect to a node and send it a message. That's 
+one instance. So it needs to forward the message on to another instance 
+before it can send you a confirm...
+
+...but we need to cope with partitions. What happens if you and the node 
+you're talking to are on a network partition? How long should it wait? 
+If the answer is &quot;forever&quot; then I think you just lost Availability. If 
+it isn't, then the partition can always heal just after you timed out, 
+which I guess also means you weren't Available. How should this work?
+
+FTR the current federation will confirm your message as soon as the 
+first node has it, and will forward it when connectivity is available.
+
+Cheers, Simon
+
+-- 
+Simon MacMullen
+RabbitMQ, VMware
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="016047.html">[rabbitmq-discuss] Message durability and partition tolerence
+</A></li>
+	<LI>Next message: <A HREF="016053.html">[rabbitmq-discuss] Unicode Characters In AMQP Headers?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#16211">[ date ]</a>
+              <a href="thread.html#16211">[ thread ]</a>
+              <a href="subject.html#16211">[ subject ]</a>
+              <a href="author.html#16211">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

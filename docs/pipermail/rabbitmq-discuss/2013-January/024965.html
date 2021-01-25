@@ -1,0 +1,229 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] How to use federation with clustering for best	HA-behaviour?
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20How%20to%20use%20federation%20with%20clustering%20for%20best%0A%09HA-behaviour%3F&In-Reply-To=%3Cop.wq0l07ich82nkl%40e778e7d1af99b9.eemea.ericsson.se%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="024996.html">
+   <LINK REL="Next"  HREF="024988.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] How to use federation with clustering for best	HA-behaviour?</H1>
+    <B>Adam Aquilon</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20How%20to%20use%20federation%20with%20clustering%20for%20best%0A%09HA-behaviour%3F&In-Reply-To=%3Cop.wq0l07ich82nkl%40e778e7d1af99b9.eemea.ericsson.se%3E"
+       TITLE="[rabbitmq-discuss] How to use federation with clustering for best	HA-behaviour?">adam.aquilon at ericsson.com
+       </A><BR>
+    <I>Wed Jan 16 17:40:09 GMT 2013</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="024996.html">[rabbitmq-discuss] consistent hashing plugin
+</A></li>
+        <LI>Next message: <A HREF="024988.html">[rabbitmq-discuss] How to use federation with clustering for best HA-behaviour?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#24965">[ date ]</a>
+              <a href="thread.html#24965">[ thread ]</a>
+              <a href="subject.html#24965">[ subject ]</a>
+              <a href="author.html#24965">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hello!
+
+This is my first post, so be nice please? :-)
+
+For the impatient:
+
+I'm trying to understand how to achieve the best possible High
+Availability-setup with RabbitMQ. The documentation seems to say
+that I don't need to mirror the queues created by the federation
+plugin, but then I don't get uninterrupted traffic.
+
+Once I created a policy that included &quot;ha-mode&quot;:&quot;all&quot; for federated
+queues, I could crash single cluster nodes with no interruption in
+traffic. Did I misunderstand the documentation or is there something
+else going on here?
+
+
+Background:
+
+Currently, I have six test nodes running on my linux box, arranged
+in three clusters of two nodes each: {n1,n2}, {n3,n4} and {n5,n6}.
+
+The clusters are called &quot;kista&quot;, &quot;linkoping&quot; and &quot;lindholmen&quot;
+respectively. They are meant to represent different sites.
+For the details, please see the end of this email which has
+output from rabbitmqadmin.
+
+I've defined separate upstreams and upstream-sets for each one-way
+link between clusters. (Is that the way to do it?)
+
+For test purposes I defined three topic exchanges per site:
+
+  o &quot;local.ci&quot;  -- for intra-site messages
+  o &quot;ci&quot;        -- for normal messages
+  o &quot;&lt;site&gt;.ci&quot; -- filtered &quot;ci&quot; messages, federated
+
+E.g. the &quot;kista.ci&quot; exchange only gets those &quot;ci&quot; messages we
+would like to be visible to other sites. (Exchange to exchange
+binding.)
+
+
+During the test runs, I had a producer in &quot;kista&quot; and consumers
+both in &quot;kista&quot; and the other two sites.
+
+
+First test:
+
+For the first test, I didn't have the &quot;^federation:&quot; policy rule.
+In this case, it seemed as the federation plugin only setup one
+link to each site, to one specific node.
+
+When I deliberately killed that node, messages did not get sent
+to the corresponding site.
+
+When the node was restarted, the connection was resumed and messages
+started flowing again.
+
+Second test:
+
+Here I defined the policy that mirrored the federation queues.
+
+Now, when I killed one node, traffic continued uninterrupted (at
+least seemingly). Restoring one node and killing the other also
+worked (as expected). I had to kill both nodes at a site to stop
+messages, which is the behaviour I wanted.
+
+
+Question:
+
+Have I understood correctly how to setup federation in clustered
+sites?
+
+Is there a better way?
+
+
+Thank you for your time!
+Kind regards,
+Adam Aquilon
+
+
+======================================================================
+
+Policies for the &quot;kista&quot; site (nodes n1,n2):
++-------+------------+-------------------------------------------------------------+-----------------------+----------+
+|<i> vhost |    name    |                         definition                          |        pattern        | priority |
+</I>+-------+------------+-------------------------------------------------------------+-----------------------+----------+
+|<i> /     | lindholmen | {&quot;ha-mode&quot;: &quot;all&quot;, &quot;federation-upstream-set&quot;: &quot;lindholmen&quot;} | ^lindholmen\.         | 0        |
+</I>|<i> /     | linkoping  | {&quot;ha-mode&quot;: &quot;all&quot;, &quot;federation-upstream-set&quot;: &quot;linkoping&quot;}  | ^linkoping\.          | 0        |
+</I>|<i> /     | local      | {&quot;ha-mode&quot;: &quot;all&quot;}                                          | ^(ci|local\.|kista\.) | 0        |
+</I>|<i> /     | mirrored   | {&quot;ha-mode&quot;: &quot;all&quot;}                                          | ^federation:          | 0        |
+</I>+-------+------------+-------------------------------------------------------------+-----------------------+----------+
+
+Policies for the &quot;linkoping&quot; site (nodes n3,n4):
++-------+------------+-------------------------------------------------------------+--------------------------+----------+
+|<i> vhost |    name    |                         definition                          |         pattern          | priority |
+</I>+-------+------------+-------------------------------------------------------------+--------------------------+----------+
+|<i> /     | kista      | {&quot;ha-mode&quot;: &quot;all&quot;, &quot;federation-upstream-set&quot;: &quot;kista&quot;}      | ^kista\.                 | 0        |
+</I>|<i> /     | lindholmen | {&quot;ha-mode&quot;: &quot;all&quot;, &quot;federation-upstream-set&quot;: &quot;lindholmen&quot;} | ^lindholmen\.            | 0        |
+</I>|<i> /     | local      | {&quot;ha-mode&quot;: &quot;all&quot;}                                          | ^(ci|local\.linkoping\.) | 0        |
+</I>|<i> /     | mirrored   | {&quot;ha-mode&quot;: &quot;all&quot;}                                          | ^federation:             | 0        |
+</I>+-------+------------+-------------------------------------------------------------+--------------------------+----------+
+
+Policies for the &quot;lindholmen&quot; site (nodes n5,n6):
++-------+-----------+------------------------------------------------------------+----------------------------+----------+
+|<i> vhost |   name    |                         definition                         |          pattern           | priority |
+</I>+-------+-----------+------------------------------------------------------------+----------------------------+----------+
+|<i> /     | kista     | {&quot;ha-mode&quot;: &quot;all&quot;, &quot;federation-upstream-set&quot;: &quot;kista&quot;}     | ^kista\.                   | 0        |
+</I>|<i> /     | linkoping | {&quot;ha-mode&quot;: &quot;all&quot;, &quot;federation-upstream-set&quot;: &quot;linkoping&quot;} | ^linkoping\.               | 0        |
+</I>|<i> /     | local     | {&quot;ha-mode&quot;: &quot;all&quot;}                                         | ^(ci|local\.|lindholmen\.) | 0        |
+</I>|<i> /     | mirrored  | {&quot;ha-mode&quot;: &quot;all&quot;}                                         | ^federation:               | 0        |
+</I>+-------+-----------+------------------------------------------------------------+----------------------------+----------+
+
+
+Parameters for the &quot;kista&quot; site (nodes n1,n2):
++-------+----------------+-------------------------+--------------------------------------------------------------+
+|<i> vhost |      name      |        component        |                            value                             |
+</I>+-------+----------------+-------------------------+--------------------------------------------------------------+
+|<i> /     | lindholmen     | federation-upstream-set | [{&quot;upstream&quot;: &quot;lindholmen5&quot;}, {&quot;upstream&quot;: &quot;lindholmen6&quot;}]   |
+</I>|<i> /     | lindholmen5    | federation-upstream     | {&quot;uri&quot;: &quot;<A HREF="amqp://localhost:5675&quot;,">amqp://localhost:5675&quot;,</A> &quot;max-hops&quot;: 1}              |
+</I>|<i> /     | lindholmen6    | federation-upstream     | {&quot;uri&quot;: &quot;<A HREF="amqp://localhost:5676&quot;,">amqp://localhost:5676&quot;,</A> &quot;max-hops&quot;: 1}              |
+</I>|<i> /     | linkoping      | federation-upstream-set | [{&quot;upstream&quot;: &quot;linkoping3&quot;}, {&quot;upstream&quot;: &quot;linkoping4&quot;}]     |
+</I>|<i> /     | linkoping3     | federation-upstream     | {&quot;uri&quot;: &quot;<A HREF="amqp://localhost:5673&quot;,">amqp://localhost:5673&quot;,</A> &quot;max-hops&quot;: 1}              |
+</I>|<i> /     | linkoping4     | federation-upstream     | {&quot;uri&quot;: &quot;<A HREF="amqp://localhost:5674&quot;,">amqp://localhost:5674&quot;,</A> &quot;max-hops&quot;: 1}              |
+</I>|<i> /     | local-nodename | federation              | <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">kista at myhost</A>                                                |
+</I>|<i> /     | local-username | federation              | guest                                                        |
+</I>+-------+----------------+-------------------------+--------------------------------------------------------------+
+
+Parameters for the &quot;linkoping&quot; site (nodes n3,n4):
++-------+----------------+-------------------------+--------------------------------------------------------------+
+|<i> vhost |      name      |        component        |                            value                             |
+</I>+-------+----------------+-------------------------+--------------------------------------------------------------+
+|<i> /     | kista          | federation-upstream-set | [{&quot;upstream&quot;: &quot;kista1&quot;}, {&quot;upstream&quot;: &quot;kista2&quot;}]             |
+</I>|<i> /     | kista1         | federation-upstream     | {&quot;uri&quot;: &quot;<A HREF="amqp://localhost:5671&quot;,">amqp://localhost:5671&quot;,</A> &quot;max-hops&quot;: 1}              |
+</I>|<i> /     | kista2         | federation-upstream     | {&quot;uri&quot;: &quot;<A HREF="amqp://localhost:5672&quot;,">amqp://localhost:5672&quot;,</A> &quot;max-hops&quot;: 1}              |
+</I>|<i> /     | lindholmen     | federation-upstream-set | [{&quot;upstream&quot;: &quot;lindholmen5&quot;}, {&quot;upstream&quot;: &quot;lindholmen6&quot;}]   |
+</I>|<i> /     | lindholmen5    | federation-upstream     | {&quot;uri&quot;: &quot;<A HREF="amqp://localhost:5675&quot;,">amqp://localhost:5675&quot;,</A> &quot;max-hops&quot;: 1}              |
+</I>|<i> /     | lindholmen6    | federation-upstream     | {&quot;uri&quot;: &quot;<A HREF="amqp://localhost:5676&quot;,">amqp://localhost:5676&quot;,</A> &quot;max-hops&quot;: 1}              |
+</I>|<i> /     | local-nodename | federation              | <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">linkoping at myhost</A>                                          |
+</I>|<i> /     | local-username | federation              | guest                                                        |
+</I>+-------+----------------+-------------------------+--------------------------------------------------------------+
+
+Parameters for the &quot;lindholmen&quot; site (nodes n5,n6):
++-------+----------------+-------------------------+------------------------------------------------------------+
+|<i> vhost |      name      |        component        |                           value                            |
+</I>+-------+----------------+-------------------------+------------------------------------------------------------+
+|<i> /     | kista          | federation-upstream-set | [{&quot;upstream&quot;: &quot;kista1&quot;}, {&quot;upstream&quot;: &quot;kista2&quot;}]           |
+</I>|<i> /     | kista1         | federation-upstream     | {&quot;uri&quot;: &quot;<A HREF="amqp://localhost:5671&quot;,">amqp://localhost:5671&quot;,</A> &quot;max-hops&quot;: 1}            |
+</I>|<i> /     | kista2         | federation-upstream     | {&quot;uri&quot;: &quot;<A HREF="amqp://localhost:5672&quot;,">amqp://localhost:5672&quot;,</A> &quot;max-hops&quot;: 1}            |
+</I>|<i> /     | linkoping      | federation-upstream-set | [{&quot;upstream&quot;: &quot;linkoping3&quot;}, {&quot;upstream&quot;: &quot;linkoping4&quot;}]   |
+</I>|<i> /     | linkoping3     | federation-upstream     | {&quot;uri&quot;: &quot;<A HREF="amqp://localhost:5673&quot;,">amqp://localhost:5673&quot;,</A> &quot;max-hops&quot;: 1}            |
+</I>|<i> /     | linkoping4     | federation-upstream     | {&quot;uri&quot;: &quot;<A HREF="amqp://localhost:5674&quot;,">amqp://localhost:5674&quot;,</A> &quot;max-hops&quot;: 1}            |
+</I>|<i> /     | local-nodename | federation              | <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">lindholmen at myhost</A>                                       |
+</I>|<i> /     | local-username | federation              | guest                                                      |
+</I>+-------+----------------+-------------------------+------------------------------------------------------------+
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="024996.html">[rabbitmq-discuss] consistent hashing plugin
+</A></li>
+	<LI>Next message: <A HREF="024988.html">[rabbitmq-discuss] How to use federation with clustering for best HA-behaviour?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#24965">[ date ]</a>
+              <a href="thread.html#24965">[ thread ]</a>
+              <a href="subject.html#24965">[ subject ]</a>
+              <a href="author.html#24965">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

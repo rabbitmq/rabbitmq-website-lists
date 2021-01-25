@@ -1,0 +1,118 @@
+<tt>
+&lt;div&nbsp;dir=&quot;ltr&quot;&gt;When&nbsp;a&nbsp;message&nbsp;is&nbsp;delivered&nbsp;over&nbsp;AMQP&nbsp;to&nbsp;a&nbsp;client&nbsp;with&nbsp;a&nbsp;consumer&nbsp;the&nbsp;client&nbsp;will&nbsp;receive&nbsp;the&nbsp;following&nbsp;frames&nbsp;this&nbsp;order:&lt;div&gt;&lt;br&gt;&lt;/div&gt;&lt;div&gt;-&nbsp;a&nbsp;method&nbsp;frame&nbsp;containing&nbsp;the&nbsp;basic.deliver&nbsp;method&lt;/div&gt;&lt;div&gt;<br>
+-&nbsp;a&nbsp;header&nbsp;frame&nbsp;containing&nbsp;the&nbsp;properties&nbsp;structure&lt;/div&gt;&lt;div&gt;-&nbsp;one&nbsp;or&nbsp;more&nbsp;body&nbsp;frames&nbsp;containing&nbsp;the&nbsp;message&nbsp;data&lt;/div&gt;&lt;div&gt;&lt;br&gt;&lt;/div&gt;&lt;div&gt;Note&nbsp;that&nbsp;this&nbsp;happens&nbsp;in&nbsp;the&nbsp;context&nbsp;of&nbsp;a&nbsp;single&nbsp;channel.&nbsp;AMQP&nbsp;multiplexes&nbsp;multiple&nbsp;channels&nbsp;over&nbsp;a&nbsp;single&nbsp;connection.&nbsp;My&nbsp;understanding&nbsp;of&nbsp;AMQP&nbsp;is&nbsp;that&nbsp;as&nbsp;a&nbsp;client,&nbsp;once&nbsp;you&nbsp;receive&nbsp;a&nbsp;basic.deliver&nbsp;method&nbsp;on&nbsp;a&nbsp;channel,&nbsp;the&nbsp;next&nbsp;2&nbsp;or&nbsp;more&nbsp;frames&nbsp;will&nbsp;be&nbsp;a&nbsp;header&nbsp;frame&nbsp;and&nbsp;one&nbsp;or&nbsp;more&nbsp;body&nbsp;frames,&nbsp;with&nbsp;no&nbsp;other&nbsp;frames&nbsp;in&nbsp;between&nbsp;unless&nbsp;there&amp;#39;s&nbsp;some&nbsp;kind&nbsp;of&nbsp;channel&nbsp;exception,&nbsp;in&nbsp;which&nbsp;case&nbsp;you&amp;#39;ll&nbsp;receive&nbsp;a&nbsp;channel.close&nbsp;and&nbsp;the&nbsp;message&nbsp;is&nbsp;aborted&nbsp;being&nbsp;received.&lt;/div&gt;<br>
+<br>
+&lt;div&gt;&lt;br&gt;&lt;/div&gt;&lt;div&gt;Why&nbsp;does&nbsp;this&nbsp;matter?&nbsp;Because&nbsp;amqp_simple_wait_frame()&nbsp;returns&nbsp;the&nbsp;next&nbsp;frame&nbsp;*for&nbsp;the&nbsp;connection*.&nbsp;Thus&nbsp;if&nbsp;you&nbsp;have&nbsp;more&nbsp;than&nbsp;one&nbsp;consumer&nbsp;running&nbsp;on&nbsp;different&nbsp;channels,&nbsp;the&nbsp;logic&nbsp;for&nbsp;reading&nbsp;messages&nbsp;from&nbsp;the&nbsp;broker&nbsp;becomes&nbsp;a&nbsp;little&nbsp;more&nbsp;involved&nbsp;in&nbsp;that&nbsp;you&nbsp;need&nbsp;to&nbsp;separate&nbsp;out&nbsp;frames&nbsp;based&nbsp;on&nbsp;their&nbsp;channel,&nbsp;then&nbsp;construct&nbsp;the&nbsp;messages&nbsp;from&nbsp;there.&nbsp;(Unfortunately&nbsp;the&nbsp;rabbitmq-c&nbsp;examples&nbsp;don&amp;#39;t&nbsp;cover&nbsp;this&nbsp;scenario)&lt;/div&gt;<br>
+<br>
+&lt;div&gt;&lt;br&gt;&lt;/div&gt;&lt;div&gt;This&nbsp;is&nbsp;why&nbsp;I&nbsp;asked&nbsp;for&nbsp;a&nbsp;bit&nbsp;more&nbsp;context&nbsp;as&nbsp;to&nbsp;what&nbsp;your&nbsp;program&nbsp;was&nbsp;doing&nbsp;outside&nbsp;of&nbsp;the&nbsp;code&nbsp;you&nbsp;provided.&nbsp;(I&amp;#39;m&nbsp;still&nbsp;don&amp;#39;t&nbsp;have&nbsp;all&nbsp;the&nbsp;details&nbsp;necessary&nbsp;to&nbsp;understand&nbsp;what&nbsp;you&amp;#39;re&nbsp;doing&nbsp;e.g.,&nbsp;describe&nbsp;what&nbsp;amqp_*&nbsp;commands&nbsp;you&amp;#39;re&nbsp;issuing&nbsp;before&nbsp;you&nbsp;get&nbsp;to&nbsp;the&nbsp;message&nbsp;reader&nbsp;loop).&lt;/div&gt;<br>
+&lt;div&gt;&lt;br&gt;&lt;/div&gt;<br>
+&lt;div&gt;-Alan&lt;/div&gt;&lt;/div&gt;&lt;div&nbsp;class=&quot;gmail_extra&quot;&gt;&lt;br&gt;&lt;br&gt;&lt;div&nbsp;class=&quot;gmail_quote&quot;&gt;On&nbsp;Sat,&nbsp;Jun&nbsp;29,&nbsp;2013&nbsp;at&nbsp;6:04&nbsp;PM,&nbsp;cogitate&nbsp;&lt;span&nbsp;dir=&quot;ltr&quot;&gt;&amp;lt;&lt;a&nbsp;href=&quot;mailto:monish.unni@gmail.com&quot;&nbsp;target=&quot;_blank&quot;&gt;monish.unni@gmail.com&lt;/a&gt;&amp;gt;&lt;/span&gt;&nbsp;wrote:&lt;br&gt;<br>
+&lt;blockquote&nbsp;class=&quot;gmail_quote&quot;&nbsp;style=&quot;margin:0&nbsp;0&nbsp;0&nbsp;.8ex;border-left:1px&nbsp;#ccc&nbsp;solid;padding-left:1ex&quot;&gt;hi&nbsp;alan:&lt;br&gt;<br>
+right&nbsp;now,&nbsp;i&nbsp;am&nbsp;not&nbsp;running&nbsp;the&nbsp;program&nbsp;with&nbsp;those&nbsp;conditions&nbsp;=&amp;gt;&lt;br&gt;<br>
+[1]&nbsp;when&nbsp;no&nbsp;routing_key&nbsp;is&nbsp;found&nbsp;and&nbsp;the&nbsp;message&nbsp;is&nbsp;sent&nbsp;to&nbsp;bounded&nbsp;AE&nbsp;and&nbsp;a&lt;br&gt;<br>
+consumer&nbsp;of&nbsp;AE&nbsp;tries&nbsp;to&nbsp;get&nbsp;the&nbsp;message.&lt;br&gt;<br>
+[2]&nbsp;when&nbsp;due&nbsp;message-ttl&nbsp;the&nbsp;message&nbsp;ends&nbsp;up&nbsp;at&nbsp;DLX&nbsp;consumer.&lt;br&gt;<br>
+&lt;br&gt;<br>
+however,&nbsp;just&nbsp;for&nbsp;your&nbsp;reference,&nbsp;it&nbsp;seems&nbsp;this&nbsp;is&nbsp;what&nbsp;pika&nbsp;is&nbsp;doing&nbsp;(see&lt;br&gt;<br>
+below),&nbsp;and&nbsp;it&nbsp;just&nbsp;seems&nbsp;that&nbsp;it&nbsp;doesn&amp;#39;t&nbsp;expect&nbsp;the&nbsp;frames&nbsp;to&nbsp;be&nbsp;in&nbsp;any&lt;br&gt;<br>
+certain&nbsp;order&nbsp;like&nbsp;the&nbsp;C&nbsp;consumer&nbsp;(if&nbsp;,&nbsp;else&nbsp;if&nbsp;,&nbsp;else&nbsp;if...)&lt;br&gt;<br>
+&lt;br&gt;<br>
+i&amp;#39;ll&nbsp;however,&nbsp;try&nbsp;and&nbsp;reproduce&nbsp;the&nbsp;conditions&nbsp;in&nbsp;the&nbsp;meanwhile.&lt;br&gt;<br>
+&lt;br&gt;<br>
+&lt;br&gt;<br>
+def&nbsp;decode_frame(data_in):&lt;br&gt;<br>
+ &nbsp; &nbsp;&amp;quot;&amp;quot;&amp;quot;&lt;br&gt;<br>
+ &nbsp; &nbsp;Receives&nbsp;raw&nbsp;socket&nbsp;data&nbsp;and&nbsp;attempts&nbsp;to&nbsp;turn&nbsp;it&nbsp;into&nbsp;a&nbsp;frame.&lt;br&gt;<br>
+ &nbsp; &nbsp;Returns&nbsp;bytes&nbsp;used&nbsp;to&nbsp;make&nbsp;the&nbsp;frame&nbsp;and&nbsp;the&nbsp;frame&lt;br&gt;<br>
+ &nbsp; &nbsp;&amp;quot;&amp;quot;&amp;quot;&lt;br&gt;<br>
+ &nbsp; &nbsp;#&nbsp;Look&nbsp;to&nbsp;see&nbsp;if&nbsp;it&amp;#39;s&nbsp;a&nbsp;protocol&nbsp;header&nbsp;frame&lt;br&gt;<br>
+ &nbsp; &nbsp;try:&lt;br&gt;<br>
+ &nbsp; &nbsp; &nbsp; &nbsp;if&nbsp;data_in[0:4]&nbsp;==&nbsp;&amp;#39;AMQP&amp;#39;:&lt;br&gt;<br>
+ &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp;major,&nbsp;minor,&nbsp;revision&nbsp;=&nbsp;struct.unpack_from(&amp;#39;BBB&amp;#39;,&nbsp;data_in,&nbsp;5)&lt;br&gt;<br>
+ &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp;return&nbsp;8,&nbsp;ProtocolHeader(major,&nbsp;minor,&nbsp;revision)&lt;br&gt;<br>
+ &nbsp; &nbsp;except&nbsp;IndexError:&lt;br&gt;<br>
+ &nbsp; &nbsp; &nbsp; &nbsp;#&nbsp;We&nbsp;didn&amp;#39;t&nbsp;get&nbsp;a&nbsp;full&nbsp;frame&lt;br&gt;<br>
+ &nbsp; &nbsp; &nbsp; &nbsp;return&nbsp;0,&nbsp;None&lt;br&gt;<br>
+ &nbsp; &nbsp;except&nbsp;struct.error:&lt;br&gt;<br>
+ &nbsp; &nbsp; &nbsp; &nbsp;#&nbsp;We&nbsp;didn&amp;#39;t&nbsp;get&nbsp;a&nbsp;full&nbsp;frame&lt;br&gt;<br>
+ &nbsp; &nbsp; &nbsp; &nbsp;return&nbsp;0,&nbsp;None&lt;br&gt;<br>
+&lt;br&gt;<br>
+ &nbsp; &nbsp;#&nbsp;Get&nbsp;the&nbsp;Frame&nbsp;Type,&nbsp;Channel&nbsp;Number&nbsp;and&nbsp;Frame&nbsp;Size&lt;br&gt;<br>
+ &nbsp; &nbsp;try:&lt;br&gt;<br>
+ &nbsp; &nbsp; &nbsp; &nbsp;frame_type,&nbsp;channel_number,&nbsp;frame_size&nbsp;=&nbsp;\&lt;br&gt;<br>
+ &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp;struct.unpack(&amp;#39;&amp;gt;BHL&amp;#39;,&nbsp;data_in[0:7])&lt;br&gt;<br>
+ &nbsp; &nbsp;except&nbsp;struct.error:&lt;br&gt;<br>
+ &nbsp; &nbsp; &nbsp; &nbsp;#&nbsp;We&nbsp;didn&amp;#39;t&nbsp;get&nbsp;a&nbsp;full&nbsp;frame&lt;br&gt;<br>
+ &nbsp; &nbsp; &nbsp; &nbsp;return&nbsp;0,&nbsp;None&lt;br&gt;<br>
+&lt;br&gt;<br>
+ &nbsp; &nbsp;#&nbsp;Get&nbsp;the&nbsp;frame&nbsp;data&lt;br&gt;<br>
+ &nbsp; &nbsp;frame_end&nbsp;=&nbsp;spec.FRAME_HEADER_SIZE&nbsp;+\&lt;br&gt;<br>
+ &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp;frame_size&nbsp;+\&lt;br&gt;<br>
+ &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp;spec.FRAME_END_SIZE&lt;br&gt;<br>
+&lt;br&gt;<br>
+ &nbsp; &nbsp;#&nbsp;We&nbsp;don&amp;#39;t&nbsp;have&nbsp;all&nbsp;of&nbsp;the&nbsp;frame&nbsp;yet&lt;br&gt;<br>
+ &nbsp; &nbsp;if&nbsp;frame_end&nbsp;&amp;gt;&nbsp;len(data_in):&lt;br&gt;<br>
+ &nbsp; &nbsp; &nbsp; &nbsp;return&nbsp;0,&nbsp;None&lt;br&gt;<br>
+&lt;br&gt;<br>
+ &nbsp; &nbsp;#&nbsp;The&nbsp;Frame&nbsp;termination&nbsp;chr&nbsp;is&nbsp;wrong&lt;br&gt;<br>
+ &nbsp; &nbsp;if&nbsp;data_in[frame_end&nbsp;-&nbsp;1]&nbsp;!=&nbsp;chr(spec.FRAME_END):&lt;br&gt;<br>
+ &nbsp; &nbsp; &nbsp; &nbsp;raise&nbsp;exceptions.InvalidFrameError(&amp;quot;Invalid&nbsp;FRAME_END&nbsp;marker&amp;quot;)&lt;br&gt;<br>
+&lt;br&gt;<br>
+ &nbsp; &nbsp;#&nbsp;Get&nbsp;the&nbsp;raw&nbsp;frame&nbsp;data&lt;br&gt;<br>
+ &nbsp; &nbsp;frame_data&nbsp;=&nbsp;data_in[spec.FRAME_HEADER_SIZE:frame_end&nbsp;-&nbsp;1]&lt;br&gt;<br>
+&lt;br&gt;<br>
+ &nbsp; &nbsp;if&nbsp;frame_type&nbsp;==&nbsp;spec.FRAME_METHOD:&lt;br&gt;<br>
+&lt;br&gt;<br>
+ &nbsp; &nbsp; &nbsp; &nbsp;#&nbsp;Get&nbsp;the&nbsp;Method&nbsp;ID&nbsp;from&nbsp;the&nbsp;frame&nbsp;data&lt;br&gt;<br>
+ &nbsp; &nbsp; &nbsp; &nbsp;method_id&nbsp;=&nbsp;struct.unpack_from(&amp;#39;&amp;gt;I&amp;#39;,&nbsp;frame_data)[0]&lt;br&gt;<br>
+&lt;br&gt;<br>
+ &nbsp; &nbsp; &nbsp; &nbsp;#&nbsp;Get&nbsp;a&nbsp;Method&nbsp;object&nbsp;for&nbsp;this&nbsp;method_id&lt;br&gt;<br>
+ &nbsp; &nbsp; &nbsp; &nbsp;method&nbsp;=&nbsp;spec.methods[method_id]()&lt;br&gt;<br>
+&lt;br&gt;<br>
+ &nbsp; &nbsp; &nbsp; &nbsp;#&nbsp;Decode&nbsp;the&nbsp;content&lt;br&gt;<br>
+ &nbsp; &nbsp; &nbsp; &nbsp;method.decode(frame_data,&nbsp;4)&lt;br&gt;<br>
+&lt;br&gt;<br>
+ &nbsp; &nbsp; &nbsp; &nbsp;#&nbsp;Return&nbsp;the&nbsp;amount&nbsp;of&nbsp;data&nbsp;consumed&nbsp;and&nbsp;the&nbsp;Method&nbsp;object&lt;br&gt;<br>
+ &nbsp; &nbsp; &nbsp; &nbsp;return&nbsp;frame_end,&nbsp;Method(channel_number,&nbsp;method)&lt;br&gt;<br>
+&lt;br&gt;<br>
+ &nbsp; &nbsp;elif&nbsp;frame_type&nbsp;==&nbsp;spec.FRAME_HEADER:&lt;br&gt;<br>
+&lt;br&gt;<br>
+ &nbsp; &nbsp; &nbsp; &nbsp;#&nbsp;Return&nbsp;the&nbsp;header&nbsp;class&nbsp;and&nbsp;body&nbsp;size&lt;br&gt;<br>
+ &nbsp; &nbsp; &nbsp; &nbsp;class_id,&nbsp;weight,&nbsp;body_size&nbsp;=&nbsp;struct.unpack_from(&amp;#39;&amp;gt;HHQ&amp;#39;,&nbsp;frame_data)&lt;br&gt;<br>
+&lt;br&gt;<br>
+ &nbsp; &nbsp; &nbsp; &nbsp;#&nbsp;Get&nbsp;the&nbsp;Properties&nbsp;type&lt;br&gt;<br>
+ &nbsp; &nbsp; &nbsp; &nbsp;properties&nbsp;=&nbsp;spec.props[class_id]()&lt;br&gt;<br>
+&lt;br&gt;<br>
+ &nbsp; &nbsp; &nbsp; &nbsp;#&nbsp;Decode&nbsp;the&nbsp;properties&lt;br&gt;<br>
+ &nbsp; &nbsp; &nbsp; &nbsp;out&nbsp;=&nbsp;properties.decode(frame_data[12:])&lt;br&gt;<br>
+&lt;br&gt;<br>
+ &nbsp; &nbsp; &nbsp; &nbsp;#&nbsp;Return&nbsp;a&nbsp;Header&nbsp;frame&lt;br&gt;<br>
+ &nbsp; &nbsp; &nbsp; &nbsp;return&nbsp;frame_end,&nbsp;Header(channel_number,&nbsp;body_size,&nbsp;properties)&lt;br&gt;<br>
+&lt;br&gt;<br>
+ &nbsp; &nbsp;elif&nbsp;frame_type&nbsp;==&nbsp;spec.FRAME_BODY:&lt;br&gt;<br>
+&lt;br&gt;<br>
+ &nbsp; &nbsp; &nbsp; &nbsp;#&nbsp;Return&nbsp;the&nbsp;amount&nbsp;of&nbsp;data&nbsp;consumed&nbsp;and&nbsp;the&nbsp;Body&nbsp;frame&nbsp;w/&nbsp;data&lt;br&gt;<br>
+ &nbsp; &nbsp; &nbsp; &nbsp;return&nbsp;frame_end,&nbsp;Body(channel_number,&nbsp;frame_data)&lt;br&gt;<br>
+&lt;br&gt;<br>
+ &nbsp; &nbsp;elif&nbsp;frame_type&nbsp;==&nbsp;spec.FRAME_HEARTBEAT:&lt;br&gt;<br>
+&lt;br&gt;<br>
+ &nbsp; &nbsp; &nbsp; &nbsp;#&nbsp;Return&nbsp;the&nbsp;amount&nbsp;of&nbsp;data&nbsp;and&nbsp;a&nbsp;Heartbeat&nbsp;frame&lt;br&gt;<br>
+ &nbsp; &nbsp; &nbsp; &nbsp;return&nbsp;frame_end,&nbsp;Heartbeat()&lt;br&gt;<br>
+&lt;br&gt;<br>
+ &nbsp; &nbsp;raise&nbsp;exceptions.InvalidFrameError(&amp;quot;Unknown&nbsp;frame&nbsp;type:&nbsp;%i&amp;quot;&nbsp;%&lt;br&gt;<br>
+frame_type)&lt;br&gt;<br>
+&lt;br&gt;<br>
+&lt;br&gt;<br>
+&lt;br&gt;<br>
+&lt;br&gt;<br>
+--&lt;br&gt;<br>
+View&nbsp;this&nbsp;message&nbsp;in&nbsp;context:&nbsp;&lt;a&nbsp;href=&quot;http://rabbitmq.1065348.n5.nabble.com/c-amqp-consumer-frame-header-issue-tp27685p27692.html&quot;&nbsp;target=&quot;_blank&quot;&gt;http://rabbitmq.1065348.n5.nabble.com/c-amqp-consumer-frame-header-issue-tp27685p27692.html&lt;/a&gt;&lt;br&gt;<br>
+<br>
+&lt;div&nbsp;class=&quot;HOEnZb&quot;&gt;&lt;div&nbsp;class=&quot;h5&quot;&gt;Sent&nbsp;from&nbsp;the&nbsp;RabbitMQ&nbsp;mailing&nbsp;list&nbsp;archive&nbsp;at&nbsp;Nabble.com.&lt;br&gt;<br>
+_______________________________________________&lt;br&gt;<br>
+rabbitmq-discuss&nbsp;mailing&nbsp;list&lt;br&gt;<br>
+&lt;a&nbsp;href=&quot;mailto:rabbitmq-discuss@lists.rabbitmq.com&quot;&gt;rabbitmq-discuss@lists.rabbitmq.com&lt;/a&gt;&lt;br&gt;<br>
+&lt;a&nbsp;href=&quot;https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss&quot;&nbsp;target=&quot;_blank&quot;&gt;https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss&lt;/a&gt;&lt;br&gt;<br>
+&lt;/div&gt;&lt;/div&gt;&lt;/blockquote&gt;&lt;/div&gt;&lt;br&gt;&lt;/div&gt;<br>
+
+</tt>

@@ -1,0 +1,161 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Message deleted at subscription?
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20Message%20deleted%20at%20subscription%3F&In-Reply-To=4972F92E.3000708%40lshift.net">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002637.html">
+   <LINK REL="Next"  HREF="002639.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Message deleted at subscription?</H1>
+    <B>Julien Genestoux</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20Message%20deleted%20at%20subscription%3F&In-Reply-To=4972F92E.3000708%40lshift.net"
+       TITLE="[rabbitmq-discuss] Message deleted at subscription?">julien.genestoux at gmail.com
+       </A><BR>
+    <I>Sun Jan 18 16:43:37 GMT 2009</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002637.html">[rabbitmq-discuss] Message deleted at subscription?
+</A></li>
+        <LI>Next message: <A HREF="002639.html">[rabbitmq-discuss] Message deleted at subscription?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2638">[ date ]</a>
+              <a href="thread.html#2638">[ thread ]</a>
+              <a href="subject.html#2638">[ subject ]</a>
+              <a href="author.html#2638">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Thanks Matthias for this very helpful and complete answer. I was actually
+not using AMQP, but STOMP... I guess the problem and the solution remain the
+same.
+Do you think I should rather switch from Stomp to Amqp?
+
+Thanks,
+
+--
+Julien Genestoux
+<A HREF="http://www.ouvre-boite.com">http://www.ouvre-boite.com</A>
+<A HREF="http://blog.notifixio.us">http://blog.notifixio.us</A>
+
++1 (415) 254 7340
++33 (0)9 70 44 76 29
+
+
+On Sun, Jan 18, 2009 at 1:41 AM, Matthias Radestock &lt;<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">matthias at lshift.net</A>&gt;wrote:
+
+&gt;<i> Julien,
+</I>&gt;<i>
+</I>&gt;<i> Julien Genestoux wrote:
+</I>&gt;<i>
+</I>&gt;&gt;<i> A process puts messages in a queue every second roughly. Atfer some time,
+</I>&gt;&gt;<i> I check the queue.
+</I>&gt;&gt;<i>  &gt; rabbitmqctl list_queues messages name consumers
+</I>&gt;&gt;<i> Listing queues ...
+</I>&gt;&gt;<i> 508    /queue/MyQueue    0
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Now, I start a consumer with the following code :
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> queue_client.subscribe(&quot;/queue/FeedsToParse&quot;, {:durable =&gt; true,
+</I>&gt;&gt;<i> &quot;auto-delete&quot;.intern =&gt; false}) do |message|
+</I>&gt;&gt;<i>  sleep 600
+</I>&gt;&gt;<i>  puts &quot;done!&quot;
+</I>&gt;&gt;<i> end
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> As you can see, when starting this client, the number of elements in my
+</I>&gt;&gt;<i> queue should decrease pretty slowly (1 every 10 minutes)... but here is what
+</I>&gt;&gt;<i> happens if I check the queue again:
+</I>&gt;&gt;<i>  &gt; rabbitmqctl list_queues messages name consumers
+</I>&gt;&gt;<i> Listing queues ...
+</I>&gt;&gt;<i> 417    /queue/MyQueue    1
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> So it seems that starting a consumer deletes some messages in the queue. I
+</I>&gt;&gt;<i> have no idea why. Can anyone explain?
+</I>&gt;&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> The 'messages' count is the sum of:
+</I>&gt;<i>
+</I>&gt;<i> - messages_ready - Number of ready messages (i.e. messages ready to be
+</I>&gt;<i> delivered to client)
+</I>&gt;<i>
+</I>&gt;<i> - messages_unacknowledged - Number of unacknowledged messages.
+</I>&gt;<i>
+</I>&gt;<i> - messages_uncommitted - Number of uncommitted messages (i.e. messages
+</I>&gt;<i> published in a transaction but not yet committed)
+</I>&gt;<i>
+</I>&gt;<i> Since your example does not involve transactions, only messages_ready +
+</I>&gt;<i> messages_unacknowledged come into play.
+</I>&gt;<i>
+</I>&gt;<i> On publication, messages_ready increases.
+</I>&gt;<i>
+</I>&gt;<i> When delivering messages to a client, messages_ready decreases and
+</I>&gt;<i> messages_unacknowledged increases by the same amount, so the sum remains the
+</I>&gt;<i> same.
+</I>&gt;<i>
+</I>&gt;<i> When an acknowledgement is received from the client,
+</I>&gt;<i> messages_unacknowledged decreases, and so does the sum.
+</I>&gt;<i>
+</I>&gt;<i> Now ...
+</I>&gt;<i>
+</I>&gt;<i> I am familiar with Aman's ruby client, but looking at the code and docs it
+</I>&gt;<i> appears that by default the subscribe method creates a consumer from which
+</I>&gt;<i> the server does not expect acknowledgements (and indeed there is no explicit
+</I>&gt;<i> ack in the code above). Here's what ruby client's docs say;
+</I>&gt;<i>
+</I>&gt;<i>    # == Options
+</I>&gt;<i>    # * :ack =&gt; true | false (default false)
+</I>&gt;<i>    # If this field is set to false the server does not expect
+</I>&gt;<i> acknowledgments
+</I>&gt;<i>    # for messages. That is, when a message is delivered to the client
+</I>&gt;<i>    # the server automatically and silently acknowledges it on behalf
+</I>&gt;<i>    # of the client. This functionality increases performance but at
+</I>&gt;<i>    # the cost of reliability. Messages can get lost if a client dies
+</I>&gt;<i>    # before it can deliver them to the application.
+</I>&gt;<i>
+</I>&gt;<i> So as soon as your code creates the subscription, the server will start
+</I>&gt;<i> sending it the queue's messages (resulting in messages_ready to decrease)
+</I>&gt;<i> and automatically acknowledge all such messages (resulting in
+</I>&gt;<i> messages_unacknowledged to remain unchanged), and thus the 'messages' count
+</I>&gt;<i> decreases. This is an asynchronous operation; so the client will receive a
+</I>&gt;<i> stream of messages without having to do anything. The stream is only paused
+</I>&gt;<i> by network/tcp congestion, and basic.qos (search the archives for
+</I>&gt;<i> discussions on the latter).
+</I>&gt;<i>
+</I>&gt;<i> If that is not what you want I suggest you change the flag to true and
+</I>&gt;<i> explicitly acknowledge messages in your code.
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> Regards,
+</I>&gt;<i>
+</I>&gt;<i> Matthias
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: <A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20090118/8dbf43a1/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20090118/8dbf43a1/attachment.htm</A> 
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002637.html">[rabbitmq-discuss] Message deleted at subscription?
+</A></li>
+	<LI>Next message: <A HREF="002639.html">[rabbitmq-discuss] Message deleted at subscription?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2638">[ date ]</a>
+              <a href="thread.html#2638">[ thread ]</a>
+              <a href="subject.html#2638">[ subject ]</a>
+              <a href="author.html#2638">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

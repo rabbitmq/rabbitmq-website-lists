@@ -1,0 +1,92 @@
+<tt>
+I&nbsp;get&nbsp;approximately&nbsp;that&nbsp;performance&nbsp;(4000&nbsp;messages/s)&nbsp;on&nbsp;64-bit&nbsp;Windows&nbsp;7,&nbsp;with&nbsp;v2.7.1&nbsp;of&nbsp;the&nbsp;RabbitMQ&nbsp;broker&nbsp;running&nbsp;R15B&nbsp;of&nbsp;Erlang,&nbsp;using&nbsp;the&nbsp;loopback&nbsp;network&nbsp;interface,&nbsp;running&nbsp;on&nbsp;a&nbsp;2.80GHz&nbsp;Xeon&nbsp;with&nbsp;memory&nbsp;bus&nbsp;running&nbsp;at&lt;div&gt;<br>
+&lt;br&gt;&lt;/div&gt;&lt;div&gt;Having&nbsp;done&nbsp;some&nbsp;minimal&nbsp;performance&nbsp;testing&nbsp;what&nbsp;is&nbsp;slow&nbsp;is&nbsp;the&nbsp;way&nbsp;I&nbsp;do&nbsp;the&nbsp;BasicPublish.&lt;/div&gt;&lt;div&gt;&lt;br&gt;&lt;/div&gt;&lt;div&gt;What&nbsp;makes&nbsp;this&nbsp;slow&nbsp;is&nbsp;that&nbsp;I&amp;#39;ve&nbsp;enabled&nbsp;the&nbsp;publisher&nbsp;confirms&nbsp;part&nbsp;of&nbsp;the&nbsp;AMQP&nbsp;protocol&nbsp;-&nbsp;so&nbsp;when&nbsp;I&nbsp;basic.publish&nbsp;a&nbsp;message&nbsp;to&nbsp;the&nbsp;broker,&nbsp;I&nbsp;wait&nbsp;for&nbsp;the&nbsp;broker&nbsp;to&nbsp;&amp;#39;deal&amp;#39;&nbsp;with&nbsp;the&nbsp;message&nbsp;and&nbsp;send&nbsp;a&nbsp;basic.ack&nbsp;back.&nbsp; This&nbsp;is&nbsp;slow.&nbsp; I&nbsp;did&nbsp;this&nbsp;to&nbsp;take&nbsp;something&nbsp;that&nbsp;is inherently asynchronous&nbsp;(basic.publish&nbsp;at&nbsp;its&nbsp;default&nbsp;is&nbsp;asynchonous,&nbsp;especially&nbsp;the&nbsp;way&nbsp;it&nbsp;handles&nbsp;errors&nbsp;like&nbsp;publishing&nbsp;to&nbsp;a&nbsp;non-existent exchange)&nbsp;and&nbsp;wrap&nbsp;it&nbsp;in&nbsp;a&nbsp;synchronous&nbsp;API.&lt;/div&gt;<br>
+&lt;div&gt;&lt;br&gt;&lt;/div&gt;&lt;div&gt;If&nbsp;you&nbsp;break&nbsp;apart&nbsp;the&nbsp;publishing&nbsp;and&nbsp;consuming&nbsp;I&nbsp;can&nbsp;get&nbsp;~4000&nbsp;msg/s&nbsp;publish,&nbsp;and&nbsp;~65000&nbsp;msg/s&nbsp;consume&nbsp;without&nbsp;worrying&nbsp;about&nbsp;acking&nbsp;messages:&lt;/div&gt;&lt;div&gt;&lt;br&gt;&lt;/div&gt;&lt;div&gt;&lt;div&gt;#define&nbsp;BOOST_ALL_NO_LIB&lt;/div&gt;<br>
+&lt;div&gt;&lt;br&gt;&lt;/div&gt;&lt;div&gt;#include&nbsp;&amp;lt;SimpleAmqpClient/SimpleAmqpClient.h&amp;gt;&lt;/div&gt;&lt;div&gt;&lt;br&gt;&lt;/div&gt;&lt;div&gt;#include&nbsp;&amp;lt;iostream&amp;gt;&lt;/div&gt;&lt;div&gt;#include&nbsp;&amp;lt;boost/timer/timer.hpp&amp;gt;&lt;/div&gt;&lt;div&gt;#include&nbsp;&amp;lt;stdlib.h&amp;gt;&lt;/div&gt;&lt;div&gt;&lt;br&gt;<br>
+&lt;/div&gt;&lt;div&gt;using&nbsp;namespace&nbsp;AmqpClient;&lt;/div&gt;&lt;div&gt;int&nbsp;main()&lt;/div&gt;&lt;div&gt;{&lt;/div&gt;&lt;div&gt; &nbsp; &nbsp;char*&nbsp;szBroker&nbsp;=&nbsp;getenv(&amp;quot;AMQP_BROKER&amp;quot;);&lt;/div&gt;&lt;div&gt; &nbsp; &nbsp;Channel::ptr_t&nbsp;channel;&lt;/div&gt;&lt;div&gt; &nbsp; &nbsp;if&nbsp;(szBroker&nbsp;!=&nbsp;NULL)&lt;/div&gt;&lt;div&gt; &nbsp; &nbsp; &nbsp; &nbsp;channel&nbsp;=&nbsp;Channel::Create(szBroker);&lt;/div&gt;<br>
+&lt;div&gt; &nbsp; &nbsp;else&lt;/div&gt;&lt;div&gt; &nbsp; &nbsp; &nbsp; &nbsp;channel&nbsp;=&nbsp;Channel::Create();&lt;/div&gt;&lt;div&gt;&lt;br&gt;&lt;/div&gt;&lt;div&gt;&lt;span&nbsp;class=&quot;Apple-tab-span&quot;&nbsp;style=&quot;white-space:pre&quot;&gt;&nbsp&nbsp&nbsp&nbsp&nbsp&nbsp&nbsp&nbsp&lt;/span&gt;channel-&amp;gt;DeclareQueue(&amp;quot;alanqueue&amp;quot;);&lt;/div&gt;&lt;div&gt;&lt;span&nbsp;class=&quot;Apple-tab-span&quot;&nbsp;style=&quot;white-space:pre&quot;&gt;&nbsp&nbsp&nbsp&nbsp&nbsp&nbsp&nbsp&nbsp&lt;/span&gt;channel-&amp;gt;BindQueue(&amp;quot;alanqueue&amp;quot;,&nbsp;&amp;quot;amq.direct&amp;quot;,&nbsp;&amp;quot;alankey&amp;quot;);&lt;/div&gt;<br>
+&lt;div&gt;&lt;br&gt;&lt;/div&gt;&lt;div&gt;&lt;span&nbsp;class=&quot;Apple-tab-span&quot;&nbsp;style=&quot;white-space:pre&quot;&gt;&nbsp&nbsp&nbsp&nbsp&nbsp&nbsp&nbsp&nbsp&lt;/span&gt;BasicMessage::ptr_t&nbsp;msg_in&nbsp;=&nbsp;BasicMessage::Create();&lt;/div&gt;&lt;div&gt;&lt;br&gt;&lt;/div&gt;&lt;div&gt;&lt;span&nbsp;class=&quot;Apple-tab-span&quot;&nbsp;style=&quot;white-space:pre&quot;&gt;&nbsp&nbsp&nbsp&nbsp&nbsp&nbsp&nbsp&nbsp&lt;/span&gt;msg_in-&amp;gt;Body(&amp;quot;This&nbsp;is&nbsp;a&nbsp;small&nbsp;message.&amp;quot;);&lt;/div&gt;<br>
+&lt;div&gt;&lt;br&gt;&lt;/div&gt;&lt;div&gt; &nbsp;std::cerr&nbsp;&amp;lt;&amp;lt;&nbsp;&amp;quot;Sending&nbsp;messages....&amp;quot;;&lt;/div&gt;&lt;div&gt; &nbsp;{&lt;/div&gt;&lt;div&gt; &nbsp; &nbsp;boost::timer::auto_cpu_timer&nbsp;t;&lt;/div&gt;&lt;div&gt; &nbsp; &nbsp;for&nbsp;(int&nbsp;i&nbsp;=&nbsp;0;&nbsp;i&nbsp;&amp;lt;&nbsp;100000;&nbsp;++i)&lt;/div&gt;&lt;div&gt; &nbsp; &nbsp;{&lt;/div&gt;&lt;div&gt; &nbsp; &nbsp; &nbsp;channel-&amp;gt;BasicPublish(&amp;quot;amq.direct&amp;quot;,&nbsp;&amp;quot;alankey&amp;quot;,&nbsp;msg_in);&lt;/div&gt;<br>
+&lt;div&gt; &nbsp; &nbsp;}&lt;/div&gt;&lt;div&gt; &nbsp;}&lt;/div&gt;&lt;div&gt; &nbsp;std::cerr&nbsp;&amp;lt;&amp;lt;&nbsp;&amp;quot;done.\n&amp;quot;;&lt;/div&gt;&lt;div&gt;&lt;br&gt;&lt;/div&gt;&lt;div&gt; &nbsp;std::cerr&nbsp;&amp;lt;&amp;lt;&nbsp;&amp;quot;Receiving&nbsp;messages....&amp;quot;;&lt;/div&gt;&lt;div&gt;&lt;span&nbsp;class=&quot;Apple-tab-span&quot;&nbsp;style=&quot;white-space:pre&quot;&gt;&nbsp&nbsp&nbsp&nbsp&nbsp&nbsp&nbsp&nbsp&lt;/span&gt;std::string&nbsp;consumer&nbsp;=&nbsp;channel-&amp;gt;BasicConsume(&amp;quot;alanqueue&amp;quot;,&nbsp;&amp;quot;consumertag&amp;quot;);&lt;/div&gt;<br>
+&lt;div&gt; &nbsp;{&lt;/div&gt;&lt;div&gt; &nbsp; &nbsp;boost::timer::auto_cpu_timer&nbsp;t;&lt;/div&gt;&lt;div&gt; &nbsp; &nbsp;for&nbsp;(int&nbsp;i&nbsp;=&nbsp;0;&nbsp;i&nbsp;&amp;lt;&nbsp;100000;&nbsp;++i)&lt;/div&gt;&lt;div&gt; &nbsp; &nbsp;{&lt;/div&gt;&lt;div&gt; &nbsp; &nbsp; &nbsp;channel-&amp;gt;BasicConsumeMessage(consumer);&lt;/div&gt;&lt;div&gt; &nbsp; &nbsp;}&lt;/div&gt;&lt;div&gt; &nbsp;}&lt;/div&gt;&lt;div&gt; &nbsp;std::cerr&nbsp;&amp;lt;&amp;lt;&nbsp;&amp;quot;done.\n&amp;quot;;&lt;/div&gt;<br>
+&lt;div&gt;}&lt;/div&gt;&lt;/div&gt;&lt;div&gt;&lt;br&gt;&lt;/div&gt;&lt;div&gt;&lt;br&gt;&lt;/div&gt;&lt;div&gt;Output&nbsp;from&nbsp;this&nbsp;program:&lt;/div&gt;&lt;div&gt;&lt;br&gt;&lt;/div&gt;&lt;div&gt;&lt;div&gt;Sending&nbsp;messages....&nbsp;24.938781s&nbsp;wall,&nbsp;0.546003s&nbsp;user&nbsp;+&nbsp;5.272834s&nbsp;system&nbsp;=&nbsp;5.818837s&nbsp;CPU&nbsp;(23.3%)&lt;/div&gt;&lt;div&gt;done.&lt;/div&gt;<br>
+&lt;div&gt;Receiving&nbsp;messages....&nbsp;0.165081s&nbsp;wall,&nbsp;0.078001s&nbsp;user&nbsp;+&nbsp;0.078001s&nbsp;system&nbsp;=&nbsp;0.156001s&nbsp;CPU&nbsp;(94.5%)&lt;/div&gt;&lt;div&gt;done.&lt;/div&gt;&lt;/div&gt;&lt;div&gt;&lt;br&gt;&lt;/div&gt;&lt;div&gt;-Alan&lt;/div&gt;&lt;div&gt;&lt;br&gt;&lt;/div&gt;&lt;div&gt;&lt;br&gt;&lt;div&nbsp;class=&quot;gmail_quote&quot;&gt;On&nbsp;Thu,&nbsp;Mar&nbsp;8,&nbsp;2012&nbsp;at&nbsp;8:15&nbsp;AM,&nbsp;Eric&nbsp;J.&nbsp;Holtman&nbsp;&lt;span&nbsp;dir=&quot;ltr&quot;&gt;&amp;lt;&lt;a&nbsp;href=&quot;mailto:eric@holtmans.com&quot;&gt;eric@holtmans.com&lt;/a&gt;&amp;gt;&lt;/span&gt;&nbsp;wrote:&lt;br&gt;<br>
+&lt;blockquote&nbsp;class=&quot;gmail_quote&quot;&nbsp;style=&quot;margin:0&nbsp;0&nbsp;0&nbsp;.8ex;border-left:1px&nbsp;#ccc&nbsp;solid;padding-left:1ex&quot;&gt;I&amp;#39;ve&nbsp;finally&nbsp;gotten&nbsp;everything&nbsp;working&nbsp;inside&nbsp;my&lt;br&gt;<br>
+project&nbsp;(Thanks,&nbsp;Alan!).&lt;br&gt;<br>
+&lt;br&gt;<br>
+I&amp;#39;m&nbsp;trying&nbsp;a&nbsp;small&nbsp;test&nbsp;now&nbsp;where&nbsp;I&nbsp;have&nbsp;one&nbsp;producer&lt;br&gt;<br>
+and&nbsp;one&nbsp;consumer&nbsp;on&nbsp;a&nbsp;queue.&nbsp; Running&nbsp;in&nbsp;Release&nbsp;mode&lt;br&gt;<br>
+C++&nbsp;(no&nbsp;debugging),&nbsp;I&nbsp;seem&nbsp;to&nbsp;top&nbsp;out&nbsp;around&nbsp;3,700&lt;br&gt;<br>
+messages/second.&lt;br&gt;<br>
+&lt;br&gt;<br>
+Is&nbsp;that&nbsp;about&nbsp;what&nbsp;I&nbsp;should&nbsp;expect,&nbsp;or&nbsp;am&nbsp;I&nbsp;doing&lt;br&gt;<br>
+something&nbsp;wrong?&nbsp; I&nbsp;thought&nbsp;it&nbsp;should&nbsp;be&nbsp;higher.&lt;br&gt;<br>
+&lt;br&gt;<br>
+I&nbsp;can&nbsp;believe&nbsp;(but&nbsp;have&nbsp;not&nbsp;yet&nbsp;profiled&nbsp;it)&nbsp;that&nbsp;I&amp;#39;m&lt;br&gt;<br>
+losing&nbsp;throughput&nbsp;because&nbsp;of&nbsp;all&nbsp;the&nbsp;std::strings&nbsp;and&lt;br&gt;<br>
+shared_ptrs.&nbsp; If&nbsp;that&amp;#39;s&nbsp;the&nbsp;case,&nbsp;I&nbsp;think&nbsp;that&amp;#39;s&nbsp;just&lt;br&gt;<br>
+the&nbsp;price&nbsp;I&nbsp;will&nbsp;have&nbsp;to&nbsp;pay&nbsp;for&nbsp;C++,&nbsp;unless&nbsp;I&nbsp;want&lt;br&gt;<br>
+to&nbsp;drop&nbsp;down&nbsp;to&nbsp;using&nbsp;the&nbsp;underlying&nbsp;rabbitmq_c&nbsp;library.&lt;br&gt;<br>
+&lt;br&gt;<br>
+&lt;br&gt;<br>
+&lt;br&gt;<br>
+Here&amp;#39;s&nbsp;the&nbsp;guts&nbsp;of&nbsp;the&nbsp;producer:&lt;br&gt;<br>
+&lt;br&gt;<br>
+&nbsp; &nbsp; &nbsp; &nbsp; using&nbsp;namespace&nbsp;AmqpClient;&lt;br&gt;<br>
+&nbsp; &nbsp; &nbsp; &nbsp; Channel::ptr_t&nbsp;channel;&lt;br&gt;<br>
+&nbsp; &nbsp; &nbsp; &nbsp; channel&nbsp;=&nbsp;Channel::Create();&lt;br&gt;<br>
+&lt;br&gt;<br>
+&nbsp; &nbsp; &nbsp; &nbsp; channel-&amp;gt;DeclareQueue(&amp;quot;BasicReturnTestQueue&amp;quot;,&nbsp;false,&nbsp;false,&nbsp;false,&nbsp;true);&lt;br&gt;<br>
+&lt;br&gt;<br>
+&nbsp; &nbsp; &nbsp; &nbsp; const&nbsp;std::string&nbsp;constant&nbsp;(&amp;quot;foo&amp;quot;);&lt;br&gt;<br>
+&nbsp; &nbsp; &nbsp; &nbsp; try&nbsp; &nbsp; &nbsp;{&lt;br&gt;<br>
+&nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; for&nbsp;(int&nbsp;i&nbsp;=&nbsp;0;&nbsp;i&nbsp;&amp;lt;&nbsp;nmsgs;&nbsp;++i)&nbsp;{&lt;br&gt;<br>
+&nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; BasicMessage::ptr_t&nbsp;the_message&nbsp;=&nbsp;BasicMessage::Create(constant);&lt;br&gt;<br>
+&nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; channel-&amp;gt;BasicPublish(&amp;quot;&amp;quot;,&nbsp;&amp;quot;BasicReturnTestQueue&amp;quot;,&nbsp;the_message,&nbsp;true,&lt;br&gt;<br>
+false);&lt;br&gt;<br>
+&nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; }&lt;br&gt;<br>
+&nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; BasicMessage::ptr_t&nbsp;the_message&nbsp;=&nbsp;BasicMessage::Create(&amp;quot;quit&amp;quot;);&lt;br&gt;<br>
+&nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; channel-&amp;gt;BasicPublish(&amp;quot;&amp;quot;,&nbsp;&amp;quot;BasicReturnTestQueue&amp;quot;,&nbsp;the_message,&nbsp;true,&lt;br&gt;<br>
+false);&lt;br&gt;<br>
+&nbsp; &nbsp; &nbsp; &nbsp; }&lt;br&gt;<br>
+&nbsp; &nbsp; &nbsp; &nbsp; catch&nbsp;(MessageReturnedException&amp;amp;&nbsp;e)&nbsp;{&lt;br&gt;<br>
+&nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; std::cout&nbsp;&amp;lt;&amp;lt;&nbsp;&amp;quot;Message&nbsp;got&nbsp;returned:&nbsp;&amp;quot;&nbsp;&amp;lt;&amp;lt;&nbsp;e.what();&lt;br&gt;<br>
+&nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; std::cout&nbsp;&amp;lt;&amp;lt;&nbsp;&amp;quot;\nMessage&nbsp;body:&nbsp;&amp;quot;&nbsp;&amp;lt;&amp;lt;&nbsp;e.message()-&amp;gt;Body();&lt;br&gt;<br>
+&nbsp; &nbsp; &nbsp; &nbsp; }&lt;br&gt;<br>
+&lt;br&gt;<br>
+&lt;br&gt;<br>
+And&nbsp;here&amp;#39;s&nbsp;the&nbsp;consumer:&lt;br&gt;<br>
+&lt;br&gt;<br>
+&nbsp; &nbsp; &nbsp; &nbsp; using&nbsp;namespace&nbsp;AmqpClient;&lt;br&gt;<br>
+&nbsp; &nbsp; &nbsp; &nbsp; Channel::ptr_t&nbsp;channel;&lt;br&gt;<br>
+&nbsp; &nbsp; &nbsp; &nbsp; channel&nbsp;=&nbsp;Channel::Create();&lt;br&gt;<br>
+&lt;br&gt;<br>
+&nbsp; &nbsp; &nbsp; &nbsp; channel-&amp;gt;DeclareQueue(&amp;quot;BasicReturnTestQueue&amp;quot;,&nbsp;false,&nbsp;false,&nbsp;false,&nbsp;true);&lt;br&gt;<br>
+&nbsp; &nbsp; &nbsp; &nbsp; channel-&amp;gt;BasicConsume(&amp;quot;BasicReturnTestQueue&amp;quot;,&nbsp;&amp;quot;consumer_tag1&amp;quot;,&nbsp;true,&lt;br&gt;<br>
+true,&nbsp;true,&nbsp;10);&lt;br&gt;<br>
+&lt;br&gt;<br>
+&lt;br&gt;<br>
+&nbsp; &nbsp; &nbsp; &nbsp; try&nbsp;{&lt;br&gt;<br>
+&nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; while&nbsp;(1)&nbsp;{&lt;br&gt;<br>
+&nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; Envelope::ptr_t&nbsp;env;&lt;br&gt;<br>
+&nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; if&nbsp;(channel-&amp;gt;BasicConsumeMessage(&amp;quot;consumer_tag1&amp;quot;,&nbsp;env,&nbsp;0))&nbsp;{&lt;br&gt;<br>
+&nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; std::string&nbsp;msg&nbsp;=&nbsp;env-&amp;gt;Message&nbsp;()-&amp;gt;Body&nbsp;();&lt;br&gt;<br>
+&nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; if&nbsp;(msg&nbsp;==&nbsp;&amp;quot;quit&amp;quot;)&nbsp;{&lt;br&gt;<br>
+&nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; return;&lt;br&gt;<br>
+&nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; }&lt;br&gt;<br>
+&nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; }&lt;br&gt;<br>
+&nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; }&lt;br&gt;<br>
+&nbsp; &nbsp; &nbsp; &nbsp; }&lt;br&gt;<br>
+&nbsp; &nbsp; &nbsp; &nbsp; catch&nbsp;(MessageReturnedException&amp;amp;&nbsp;e)&lt;br&gt;<br>
+&nbsp; &nbsp; &nbsp; &nbsp; {&lt;br&gt;<br>
+&nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; std::cout&nbsp;&amp;lt;&amp;lt;&nbsp;&amp;quot;Message&nbsp;got&nbsp;returned:&nbsp;&amp;quot;&nbsp;&amp;lt;&amp;lt;&nbsp;e.what();&lt;br&gt;<br>
+&nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; std::cout&nbsp;&amp;lt;&amp;lt;&nbsp;&amp;quot;\nMessage&nbsp;body:&nbsp;&amp;quot;&nbsp;&amp;lt;&amp;lt;&nbsp;e.message()-&amp;gt;Body();&lt;br&gt;<br>
+&nbsp; &nbsp; &nbsp; &nbsp; }&lt;br&gt;<br>
+&lt;br&gt;<br>
+_______________________________________________&lt;br&gt;<br>
+rabbitmq-discuss&nbsp;mailing&nbsp;list&lt;br&gt;<br>
+&lt;a&nbsp;href=&quot;mailto:rabbitmq-discuss@lists.rabbitmq.com&quot;&gt;rabbitmq-discuss@lists.rabbitmq.com&lt;/a&gt;&lt;br&gt;<br>
+&lt;a&nbsp;href=&quot;https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss&quot;&nbsp;target=&quot;_blank&quot;&gt;https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss&lt;/a&gt;&lt;br&gt;<br>
+&lt;/blockquote&gt;&lt;/div&gt;&lt;br&gt;&lt;/div&gt;<br>
+
+</tt>

@@ -1,0 +1,165 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Upgrade fail
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Upgrade%20fail&In-Reply-To=%3C53453249.90808%40rabbitmq.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="035105.html">
+   <LINK REL="Next"  HREF="035209.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Upgrade fail</H1>
+    <B>Simon MacMullen</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Upgrade%20fail&In-Reply-To=%3C53453249.90808%40rabbitmq.com%3E"
+       TITLE="[rabbitmq-discuss] Upgrade fail">simon at rabbitmq.com
+       </A><BR>
+    <I>Wed Apr  9 12:43:05 BST 2014</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="035105.html">[rabbitmq-discuss] Upgrade fail
+</A></li>
+        <LI>Next message: <A HREF="035209.html">[rabbitmq-discuss] Upgrade fail
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#35129">[ date ]</a>
+              <a href="thread.html#35129">[ thread ]</a>
+              <a href="subject.html#35129">[ subject ]</a>
+              <a href="author.html#35129">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>On 09/04/14 00:48, Peter Kopias wrote:
+&gt;<i> Just starting and stopping rabbitmq-server leaves one running epmd
+</I>&gt;<i> process in memory! I've noticed it before, but it looks like it's intended.
+</I>
+Yes. The epmd process staying around is not related to anything else 
+you're seeing, that's how epmd is supposed to work.
+
+epmd is a very simple daemon which just maps names to port numbers for 
+Erlang (beam) processes. It doesn't contain any other state.
+
+&gt;<i>   Node2 and node3 always exited with the message that they are not the
+</I>&gt;<i> one stopped the last, and if I removed the locks they tried to connect
+</I>&gt;<i> to each other - while repairing the mnesia db, and as the network
+</I>&gt;<i> connect failed (as they were not accepting connections probably because
+</I>&gt;<i> the db repair was on), they quit, leaving the repair in half. So the
+</I>&gt;<i> nodes were not able to communicate because of the db repair (this is a
+</I>&gt;<i> theory only), and as the timeout arrived they quit before the repair
+</I>&gt;<i> would finish. (It would be nice to have a message like &quot;starting repair&quot;
+</I>&gt;<i> and &quot;repair finished&quot;, as the log message currently is not clear about
+</I>&gt;<i> the state of the repair, I'm not sure that if the repair ends I'll get a
+</I>&gt;<i> logitem.)
+</I>
+If you are talking about the upgrades, then
+
+&quot;mnesia upgrades: N to apply&quot;
+
+marks the start, and
+
+&quot;mnesia upgrades: All upgrades applied successfully&quot;
+
+marks the end.
+
+&gt;<i> node2: sudo reboot, and it's just waiting forever (without the usual
+</I>&gt;<i> conneciton closed by foreign host)
+</I>&gt;<i>
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">root at node2</A>:~# rabbitmqctl status
+</I>&gt;<i> Status of node <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at node2</A> ...
+</I>&gt;<i> Error: unable to connect to node <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at node2</A>: nodedown
+</I>&gt;<i>
+</I>&gt;<i> DIAGNOSTICS
+</I>&gt;<i> ===========
+</I>&gt;<i>
+</I>&gt;<i> attempted to contact: [<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at node2</A>]
+</I>&gt;<i>
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at node2</A>:
+</I>&gt;<i>    * rabbit seems not to be running at all
+</I>&gt;<i>    * other nodes on node2: [rabbitmqctl13579]
+</I>
+&lt;snip&gt;
+
+&gt;<i> NOTE that, we have the &quot;K20rabbitmq-server stop&quot;  running, we have the
+</I>&gt;<i> rabbitmq processes too, but currently neither rabbitmqctl nor management
+</I>&gt;<i> plugin is accessible, and the reboot process hung.
+</I>
+So this is very weird. The beam process is still around, but everything 
+in the shutdown appears to have succeeded.
+
+By the time &quot;Halting Erlang VM&quot; appears in the logs RabbitMQ is 
+completely stopped, that log message is literally the last thing we do 
+before telling the VM to stop.
+
+&gt;<i>   Could the problem be the inet_gethost process? Unfortunately I've seen
+</I>&gt;<i> dns problems in our networks, so that could be a problem, but that
+</I>&gt;<i> should not hang the shutdown.
+</I>
+No, it really shouldn't.
+
+The beam process has already unregistered from epmd (hence &quot;rabbit seems 
+not to be running at all&quot; in the status command above).
+
+&gt;<i>   The running rabbit processes and their open files are here:
+</I>&gt;<i>
+</I>&gt;<i> <A HREF="http://pastebin.com/mLKf5mEu">http://pastebin.com/mLKf5mEu</A>
+</I>
+And it seems to have few files open, and to have closed all network sockets.
+
+&gt;<i>   Any ideas? How can I debug this?
+</I>&gt;<i>   Specific questions?
+</I>
+I am not full of ideas here, this looks like more of an issue with 
+Erlang than RabbitMQ. But some things to look into:
+
+The beam process (2236 in your case) is the interesting one; it's the 
+thing that should have shut down but hasn't; everything else is pretty 
+much as expected. Unfortunately although it's an Erlang process it has 
+stopped listening for Erlang distribution messages so debugging it is 
+likely to be hard. Having said that, strace might give some clue as to 
+what it's doing, and the small bright side is that so much within that 
+process has already shut down that *anything* it is still doing is a 
+good candidate for what's making it stuck.
+
+So what does strace say for it?
+
+&gt;<i>   Thank you for your help, I hope these hangups could get eliminated.
+</I>
+I would hope so. We don't have much to go on though.
+
+Cheers, Simon
+
+-- 
+Simon MacMullen
+RabbitMQ, Pivotal
+</PRE>
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="035105.html">[rabbitmq-discuss] Upgrade fail
+</A></li>
+	<LI>Next message: <A HREF="035209.html">[rabbitmq-discuss] Upgrade fail
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#35129">[ date ]</a>
+              <a href="thread.html#35129">[ thread ]</a>
+              <a href="subject.html#35129">[ subject ]</a>
+              <a href="author.html#35129">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

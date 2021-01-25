@@ -1,0 +1,179 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Stats node getting slow
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Stats%20node%20getting%20slow&In-Reply-To=%3C5289F8B3.5040004%40rabbitmq.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="031979.html">
+   <LINK REL="Next"  HREF="031822.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Stats node getting slow</H1>
+    <B>Simon MacMullen</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Stats%20node%20getting%20slow&In-Reply-To=%3C5289F8B3.5040004%40rabbitmq.com%3E"
+       TITLE="[rabbitmq-discuss] Stats node getting slow">simon at rabbitmq.com
+       </A><BR>
+    <I>Mon Nov 18 11:23:31 GMT 2013</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="031979.html">[rabbitmq-discuss] Stats node getting slow
+</A></li>
+        <LI>Next message: <A HREF="031822.html">[rabbitmq-discuss] RabbitMQ Consumer/Producer Proxy Support
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#31993">[ date ]</a>
+              <a href="thread.html#31993">[ thread ]</a>
+              <a href="subject.html#31993">[ subject ]</a>
+              <a href="author.html#31993">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi Pierpaulo, thanks for that. So we can see from those outputs that the 
+vast majority of memory used is process memory rather than ETS. So it 
+looks like the management database is simply failing to keep up with 
+inbound messages. This is slightly disappointing because it contains an 
+emergency mechanism that is supposed to drop messages when it's getting 
+overwhelmed. So I'd like to find out more about your workload.
+
+That's what I was hoping to get from &quot;rabbitmqctl report&quot;. If you can't 
+send that to me direct then I'd like to know how many connections, 
+channels and queues you have, as well as the approximate churn rate for 
+each of those, and the degree of fanout (i.e. for each channel, how many 
+queues does it publish to / consume from?)
+
+Also: have you tried increasing collect_statistics_interval? I suspect 
+that would improve things for you.
+
+Cheers, Simon
+
+On 16/11/2013 04:24, Pierpaolo Baccichet wrote:
+&gt;<i> Hello Simon, as promised we did an experiment today reverting to the old
+</I>&gt;<i> config that enables fine grained stats and got the slowdown reproduced
+</I>&gt;<i> very quickly. I dumped the output of the commands you asked us to run in
+</I>&gt;<i> the attached files:
+</I>&gt;<i>
+</I>&gt;<i> log_rabbit_1.txt: rabbitmqctl eval '[{T, [KV || KV = {K, _} &lt;- I,
+</I>&gt;<i> lists:member(K, [size, memory])]} || T &lt;- ets:all(), I &lt;- [ets:info(T)],
+</I>&gt;<i> proplists:get_value(name, I) =:= rabbit_mgmt_db].'
+</I>&gt;<i>
+</I>&gt;<i> log_rabbit2.txt: rabbitmqctl eval
+</I>&gt;<i> 'process_info(global:whereis___name(rabbit_mgmt_db), memory).'
+</I>&gt;<i>
+</I>&gt;<i> I have also the output of the rabbitmqctl report command but it contains
+</I>&gt;<i> a lot of information that is leaking internal stuff so I can't really
+</I>&gt;<i> forward it as a whole. Is there something specific you'd like to see
+</I>&gt;<i> from it?
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> On Mon, Nov 11, 2013 at 6:24 AM, Pierpaolo Baccichet
+</I>&gt;<i> &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">pierpaolo at dropbox.com</A> &lt;mailto:<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">pierpaolo at dropbox.com</A>&gt;&gt; wrote:
+</I>&gt;<i>
+</I>&gt;<i>     Hello Simon,
+</I>&gt;<i>
+</I>&gt;<i>     Thanks for the response and yeah, my gut feeling went as well toward
+</I>&gt;<i>     a leak in that rewrite because in fact this issue started showing up
+</I>&gt;<i>     when we upgraded to 3.1.x. We ended up disabling the fine-grained
+</I>&gt;<i>     stats last friday as you mentioned in your last suggestion because
+</I>&gt;<i>     people were getting paged a bit too often :) The current config is below
+</I>&gt;<i>
+</I>&gt;<i>     [
+</I>&gt;<i>          {rabbit, [
+</I>&gt;<i>              {vm_memory_high_watermark, 0.75},
+</I>&gt;<i>              {cluster_nodes, [
+</I>&gt;<i>                  '<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at xyz1</A>',
+</I>&gt;<i>                  '<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at xyz2</A>',
+</I>&gt;<i>                  '<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at xyz3</A>'
+</I>&gt;<i>              ]},
+</I>&gt;<i>              {collect_statistics, coarse},
+</I>&gt;<i>              {collect_statistics_interval, 10000}
+</I>&gt;<i>          ]},
+</I>&gt;<i>          {rabbitmq_management_agent, [
+</I>&gt;<i>              {force_fine_statistics, false}
+</I>&gt;<i>          ]}
+</I>&gt;<i>     ].
+</I>&gt;<i>
+</I>&gt;<i>     I will give it a few more days with this config and then mayberevert
+</I>&gt;<i>     to help you figure this issue. A related question, is there a way to
+</I>&gt;<i>     programmatically figure which one is the stats node in the cluster?
+</I>&gt;<i>     I could not find the config in the HTTP API
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>     On Mon, Nov 11, 2013 at 1:52 AM, Simon MacMullen &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">simon at rabbitmq.com</A>
+</I>&gt;<i>     &lt;mailto:<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">simon at rabbitmq.com</A>&gt;&gt; wrote:
+</I>&gt;<i>
+</I>&gt;<i>         On 11/11/2013 9:45AM, Simon MacMullen wrote:
+</I>&gt;<i>
+</I>&gt;<i>             Hmm, the stats DB was more or less rewritten between 3.0.x
+</I>&gt;<i>             and 3.1.0 (to
+</I>&gt;<i>             keep stats histories). If there's a memory leak in there I'd
+</I>&gt;<i>             very much
+</I>&gt;<i>             like to get to the bottom of it.
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>         Of course the other possibility is that the stats DB is simply
+</I>&gt;<i>         overwhelmed with work and unable to keep up. It's supposed to
+</I>&gt;<i>         start dropping incoming stats messages in this situation, but
+</I>&gt;<i>         maybe it isn't. To determine if this is the case, look at:
+</I>&gt;<i>
+</I>&gt;<i>         rabbitmqctl eval
+</I>&gt;<i>         'process_info(global:whereis___name(rabbit_mgmt_db), memory).'
+</I>&gt;<i>
+</I>&gt;<i>         - and if the number that comes back looks like it would account
+</I>&gt;<i>         for most of the memory used, then that is likely to be the
+</I>&gt;<i>         problem. In that case you can slow down stats event emission by
+</I>&gt;<i>         changing collect_statistics_interval (see
+</I>&gt;<i>         <A HREF="http://www.rabbitmq.com/__configure.html">http://www.rabbitmq.com/__configure.html</A>
+</I>&gt;<i>         &lt;<A HREF="http://www.rabbitmq.com/configure.html">http://www.rabbitmq.com/configure.html</A>&gt;) and / or disable
+</I>&gt;<i>         fine-grained stats as I mentioned in the previous message.
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>         Cheers, Simon
+</I>&gt;<i>
+</I>&gt;<i>         --
+</I>&gt;<i>         Simon MacMullen
+</I>&gt;<i>         RabbitMQ, Pivotal
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="031979.html">[rabbitmq-discuss] Stats node getting slow
+</A></li>
+	<LI>Next message: <A HREF="031822.html">[rabbitmq-discuss] RabbitMQ Consumer/Producer Proxy Support
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#31993">[ date ]</a>
+              <a href="thread.html#31993">[ thread ]</a>
+              <a href="subject.html#31993">[ subject ]</a>
+              <a href="author.html#31993">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,223 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Possible memory leak in the management plugin
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Possible%20memory%20leak%20in%20the%20management%20plugin&In-Reply-To=%3C1397058685615-34697.post%40n5.nabble.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="035117.html">
+   <LINK REL="Next"  HREF="035147.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Possible memory leak in the management plugin</H1>
+    <B>Pavel</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Possible%20memory%20leak%20in%20the%20management%20plugin&In-Reply-To=%3C1397058685615-34697.post%40n5.nabble.com%3E"
+       TITLE="[rabbitmq-discuss] Possible memory leak in the management plugin">pmaisenovich at blizzard.com
+       </A><BR>
+    <I>Wed Apr  9 16:51:25 BST 2014</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="035117.html">[rabbitmq-discuss] Possible memory leak in the management plugin
+</A></li>
+        <LI>Next message: <A HREF="035147.html">[rabbitmq-discuss] Possible memory leak in the management plugin
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#35142">[ date ]</a>
+              <a href="thread.html#35142">[ thread ]</a>
+              <a href="subject.html#35142">[ subject ]</a>
+              <a href="author.html#35142">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi Simon,
+
+Thank you for a quick and detailed answer! Getting to the root of this issue
+is very important to us.
+
+&gt;<i> if you want to re-enable mgmt you might want to add 
+</I>&gt;<i> {rabbitmq_management_agent, [{force_fine_statistics, false}]} 
+</I>&gt;<i> in your configuration
+</I>
+We definitely want to have mgmt plugin running and we did re-enable it after
+implementing some work on reducing number of channels/exchanges a bit and
+increasing collect_statistics_interval as it proved to be helpful in the lab
+tests. We will consider turning off force_fine_statistics if the issue
+happens again instead turning off entire plugin.
+
+&gt;<i> So are they growing without bound? What happens when you close all the
+</I>&gt;<i> channels? 
+</I>
+It's hard to say how far they will grow, but these three (aggregated_stats,
+aggregated_stats_index, old_stats) definitely only go up during the test.
+See below for more info. 
+Killing publishing channels does bring these three tables and mgmt_db memory
+back to normal size (~6Mb) after some short time. So the issue definitely
+requires continuous activity on channels producing massive stats events to
+happen.
+
+&gt;<i>What does 
+</I>&gt;<i>rabbitmqctl eval
+</I>'erlang:garbage_collect(global:whereis_name(rabbit_mgmt_db)).' 
+&gt;<i>do to your memory use? 
+</I>
+I've repeated the test described earlier while running 
+/usr/sbin/rabbitmqctl eval
+'{process_info(global:whereis_name(rabbit_mgmt_db),memory),[{T,
+ets:info(T,size), ets:info(T,memory)} || T &lt;-lists:sort(ets:all()),
+rabbit_mgmt_db &lt;- [ets:info(T, name)]]}.'
+every second. Process memory (and sizes of those aggregated/old stats data
+structures) went quickly up to 2069410400 and then stopped. After about 30
+seconds I checked rabbitmqctl status and it reported that mgmt_db was using
+3795297904! 
+
+[<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">root at lab-rmq02</A> pmaisenovich]# /usr/sbin/rabbitmqctl status | grep mgmt_db
+      {mgmt_db,3795297904},
+[<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">root at lab-rmq02</A> pmaisenovich]# /usr/sbin/rabbitmqctl eval
+'{process_info(global:whereis_name(rabbit_mgmt_db),memory),[{T,
+ets:info(T,size), ets:info(T,memory)} || T &lt;-lists:sort(ets:all()),
+rabbit_mgmt_db &lt;- [ets:info(T, name)]]}.'
+{{memory,2069410496},
+ [{5734484,1046,205243},
+  {5738585,5,906},
+  {5742682,2006,136495},
+  {5746779,1,175},
+  {5750876,1,175},
+  {5754973,1,1059},
+  {5759070,895752,48244117},
+  {5763167,1777748,44462528},
+  {5767264,1777799,124621170}]}
+...done.
+
+Clearly we have some memory missing: ETS tables report ~225Mb,
+process_info(rabbit_mgmt_db, memory) reports ~2Gb, rabbitmqctl status
+reports ~3.8Gb for mgmt_db.
+
+Q5: What else is included in mgmt_db size when reported by rabbitmqctl
+status? 
+
+Running garbage collection
+(erlang:garbage_collect(global:whereis_name(rabbit_mgmt_db))) did instantly
+reduce the mgmt_db size:
+
+[<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">root at lab-rmq02</A> pmaisenovich]# /usr/sbin/rabbitmqctl status | grep mgmt_db
+      {mgmt_db,3853521792},
+[<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">root at lab-rmq02</A> pmaisenovich]# /usr/sbin/rabbitmqctl eval
+'erlang:garbage_collect(global:whereis_name(rabbit_mgmt_db)).'
+true
+...done.
+[<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">root at lab-rmq02</A> pmaisenovich]# /usr/sbin/rabbitmqctl status | grep mgmt_db
+      {mgmt_db,1804503848},
+
+And immediately cleaned up rabbit_mgmt_db memory (even too much so):
+
+{{memory,2069410400},
+ [{5734484,1046,205243},
+  {5738585,5,906},
+  {5742682,2006,136495},
+  {5746779,1,175},
+  {5750876,1,175},
+  {5754973,1,1059},
+  {5759070,916685,51561447},
+  {5763167,1819614,45509178},
+  {5767264,1819847,127559980}]}
+...done.
+{{memory,5960},
+ [{5734484,1046,205243},
+  {5738585,5,906},
+  {5742682,2006,136495},
+  {5746779,1,175},
+  {5750876,1,175},
+  {5754973,1,1059},
+  {5759070,916685,51561447},
+  {5763167,1819614,45509178},
+  {5767264,1819847,127559980}]}
+...done.
+
+Q6: In the last snapshot above process_info(rabbit_mgmt_db, memory) is much
+smaller than ETS numbers right below it. Are those not included in the
+process memory calculation?
+Q7: Note, that ETS table sizes didn't go down at all. Isn't GC supposed to
+clean those up?
+
+Furthermore, in 4 seconds after manual GC run, the
+process_info(rabbit_mgmt_db, memory) went up from 5960 to 783979640 and kept
+growing up to a certain (different to previous) limit.
+
+Here is a full log of process memory snapshots during this test (including
+drop after GC run):
+<A HREF="https://gist.github.com/maisenovich/10283607">https://gist.github.com/maisenovich/10283607</A>
+
+Note, that I ran GC a couple more times during the test, with the same
+effect - memory would go down briefly and quickly ramp back up.
+
+Finally, &quot;rabbitmqctl status&quot; output for Rabbit used in the test above
+(while idle, after publishing channels were terminated) just in case:
+<A HREF="https://gist.github.com/maisenovich/10284388">https://gist.github.com/maisenovich/10284388</A>
+
+Thanks!
+
+
+
+--
+View this message in context: <A HREF="http://rabbitmq.1065348.n5.nabble.com/Possible-memory-leak-in-the-management-plugin-tp27414p34697.html">http://rabbitmq.1065348.n5.nabble.com/Possible-memory-leak-in-the-management-plugin-tp27414p34697.html</A>
+Sent from the RabbitMQ mailing list archive at Nabble.com.
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="035117.html">[rabbitmq-discuss] Possible memory leak in the management plugin
+</A></li>
+	<LI>Next message: <A HREF="035147.html">[rabbitmq-discuss] Possible memory leak in the management plugin
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#35142">[ date ]</a>
+              <a href="thread.html#35142">[ thread ]</a>
+              <a href="subject.html#35142">[ subject ]</a>
+              <a href="author.html#35142">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

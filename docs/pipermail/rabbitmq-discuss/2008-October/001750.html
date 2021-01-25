@@ -1,0 +1,138 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] jms support
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20jms%20support&In-Reply-To=21A4D899-49EB-44F2-B0D3-2D5C96DF6AB6%40lindenlab.com">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001793.html">
+   <LINK REL="Next"  HREF="001752.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] jms support</H1>
+    <B>Ben Hood</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20jms%20support&In-Reply-To=21A4D899-49EB-44F2-B0D3-2D5C96DF6AB6%40lindenlab.com"
+       TITLE="[rabbitmq-discuss] jms support">0x6e6562 at gmail.com
+       </A><BR>
+    <I>Mon Oct 20 17:59:38 BST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001793.html">[rabbitmq-discuss] Exchanges, Routing, and AMQP
+</A></li>
+        <LI>Next message: <A HREF="001752.html">[rabbitmq-discuss] RabbitMQ - in SF tomorrow and Saturday
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1750">[ date ]</a>
+              <a href="thread.html#1750">[ thread ]</a>
+              <a href="subject.html#1750">[ subject ]</a>
+              <a href="author.html#1750">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Brian,
+
+On Mon, Oct 20, 2008 at 5:09 PM, Brian Sullivan &lt;<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">bsullivan at lindenlab.com</A>&gt; wrote:
+&gt;<i> We do have certain high-volume topics that we would like to be able to not
+</I>&gt;<i> worry about buildup - if we aren't running the consuming applications, I
+</I>&gt;<i> would expect there to be very little load on the system.  If I understand
+</I>&gt;<i> you correctly, I can get flow control if I have an active subscription.
+</I>
+Well not exactly. There is a command in AMQP called Channel.Flow which
+is essentially a reverse RPC - the broker requests the client to
+suspend sending any messages until such a time that the broker
+notifies the client that it can resume sending messages. This gives
+the broker a chance to process a backlog and thus prevents any
+overflow. The current released version of Rabbit does not implement
+this command, we are working on it at the moment and should be
+released in the near future (but as always, no concrete ETA).
+
+&gt;<i>  What I want to protect us against is slowing down of the entire system
+</I>&gt;<i> because of a spammy topic or two - we'd really like to have the ability to
+</I>&gt;<i> turn off consumption of that topic should things go haywire (either on
+</I>&gt;<i> message publication, or falling behind on the consumption of other feeds).
+</I>
+To prevent backlog you would ideally want to decrease production (e.g.
+by using Channel.Flow) or increase consumption (e.g. by adding more
+consumers). I don't think you would want to decrease consumption.
+
+&gt;<i>  The goal we have is to publish everything (ie, not turn off certain topics
+</I>&gt;<i> when we have a problem), and manage the load on the server via subscriptions
+</I>&gt;<i> and clustering.  Note that our publishing side has all intermixed topics -
+</I>&gt;<i> we have applications log all messages to a single place on a host, then we
+</I>&gt;<i> simply use that as a transmission buffer.  The benefit there is that we have
+</I>&gt;<i> a central place to store the queue of messages to be sent and can manage
+</I>&gt;<i> buffering there.  The downside is that flow controlling a single topic is
+</I>&gt;<i> not really possible - we'd be slowing down all feeds, if I understand you
+</I>&gt;<i> correctly.
+</I>&gt;<i>
+</I>&gt;<i> Does that make sense?
+</I>
+I think that having a central TX buffer may turn itself into a global
+bottleneck for the system.
+
+Having said this, I think it would be a good idea to be more specific
+about what you're trying to acheive with what mechanism (hopefully
+breaking this down gives you an idea of how I'm interpreting your
+questions, which I may be doing wrongly):
+
+1. Centralized logging: You don't need a store and forward dongle to
+log everything that passes through the system - you can just bind
+every exchange in your system to one or more log queues;
+
+2. Ingress Flow Control: Will be implemented by Channel.Flow command.
+
+3. Egress Flow Control: IMHO this is where your problem is going to
+be. To do proper credit based load balancing, you will need the
+Basic.QoS command, which we have designed but not yet implemented. ATM
+consumption is for all intents and purposes limited by the slowest
+consumer. WRT adding resources dynamically, this is not specifically a
+concern of the broker, since it has no control over consumers.
+Thinking on my feet I have 2 suggestions:
+
+- Always load every available hardware thread on the side of
+consumption with the optimal amount of consumers and let the OS
+scehduler load balance software threads for you - when there is no
+work to do, they just spin in NOOPs
+- If you think you can pull some extra CPU out of your hat at a
+critical stage, then you could petition us to include a callback
+handler mechanism for the Channel.Flow command. The current design
+just blocks subsequent publication, but you could easily notify a
+callback handler in the event loop which could take any course of
+prophylactic action (automagically deploy more consumers if this made
+sense or just sending a message to somebody's Blackberry for manual
+intervention).
+
+4. Topics: I still haven't completely understood the rational behind
+topic exchanges from the point of view of your application. As I have
+indicated before, direct exchanges are more efficient that topics ATM,
+but the sweet spot is going to depend on your app.
+
+HTH,
+
+Ben
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001793.html">[rabbitmq-discuss] Exchanges, Routing, and AMQP
+</A></li>
+	<LI>Next message: <A HREF="001752.html">[rabbitmq-discuss] RabbitMQ - in SF tomorrow and Saturday
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1750">[ date ]</a>
+              <a href="thread.html#1750">[ thread ]</a>
+              <a href="subject.html#1750">[ subject ]</a>
+              <a href="author.html#1750">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

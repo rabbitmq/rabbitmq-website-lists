@@ -1,0 +1,86 @@
+<tt>
+&lt;div&nbsp;dir=&quot;ltr&quot;&gt;&lt;div&gt;&lt;div&gt;Thanks&nbsp;for&nbsp;the&nbsp;answer&nbsp;Michael,&lt;br&gt;&lt;br&gt;&lt;/div&gt;&lt;div&gt;Configuring&nbsp;SO_LINGER&nbsp;didn&amp;#39;t&nbsp;help&nbsp;for&nbsp;socketWrite&nbsp;timeout.&nbsp;Also&nbsp;it&nbsp;seems&nbsp;it&nbsp;affects&nbsp;only&nbsp;&amp;quot;close&amp;quot;&nbsp;operation&nbsp;and&nbsp;also&nbsp;there&nbsp;is&nbsp;a&nbsp;code&nbsp;in&nbsp;SocketFrameHandler&nbsp;which&nbsp;already&nbsp;sets&nbsp;SO_LINGER&nbsp;for&nbsp;socket&nbsp;on&nbsp;close&nbsp;(1&nbsp;second&nbsp;default):&lt;br&gt;<br>
+&lt;br&gt;   &nbsp;public&nbsp;void&nbsp;close()&nbsp;{&lt;br&gt;       &nbsp;try&nbsp;{&nbsp;_socket.setSoLinger(true,&nbsp;SOCKET_CLOSING_TIMEOUT);&nbsp;}&nbsp;catch&nbsp;(Exception&nbsp;_)&nbsp;{}&lt;br&gt;       &nbsp;try&nbsp;{&nbsp;flush();                                          &nbsp;}&nbsp;catch&nbsp;(Exception&nbsp;_)&nbsp;{}&lt;br&gt;       &nbsp;try&nbsp;{&nbsp;_socket.close();                                  &nbsp;}&nbsp;catch&nbsp;(Exception&nbsp;_)&nbsp;{}&lt;br&gt;<br>
+   &nbsp;}&lt;br&gt;&lt;br&gt;&lt;/div&gt;&lt;div&gt;But&nbsp;I&nbsp;even&nbsp;cannot&nbsp;close&nbsp;connection&nbsp;by&nbsp;myself&nbsp;in&nbsp;a&nbsp;separate&nbsp;thread&nbsp;-&nbsp;it&amp;#39;s&nbsp;blocked&nbsp;in&nbsp;SocketFrameHandler#writeFrame&nbsp;method:&lt;br&gt;&lt;/div&gt;&lt;div&gt;&lt;br&gt;Thread&nbsp;[Thread-0]&nbsp;(Suspended)   &nbsp;&lt;br&gt;   &nbsp;owns:&nbsp;CommandAssembler &nbsp;(id=42)   &nbsp;&lt;br&gt;<br>
+   &nbsp;owns:&nbsp;Object &nbsp;(id=41)   &nbsp;&lt;br&gt;   &nbsp;waiting&nbsp;for:&nbsp;DataOutputStream &nbsp;(id=34)   &nbsp;&lt;br&gt;   &nbsp;SocketFrameHandler.writeFrame(Frame)&nbsp;line:&nbsp;137   &nbsp;&lt;br&gt;   &nbsp;AMQConnection.writeFrame(Frame)&nbsp;line:&nbsp;480   &nbsp;&lt;br&gt;   &nbsp;AMQCommand.transmit(AMQChannel)&nbsp;line:&nbsp;102   &nbsp;&lt;br&gt;<br>
+   &nbsp;AMQConnection$1(AMQChannel).quiescingTransmit(AMQCommand)&nbsp;line:&nbsp;316   &nbsp;&lt;br&gt;   &nbsp;AMQConnection$1(AMQChannel).quiescingTransmit(Method)&nbsp;line:&nbsp;298   &nbsp;&lt;br&gt;   &nbsp;AMQConnection$1(AMQChannel).quiescingRpc(Method,&nbsp;AMQChannel$RpcContinuation)&nbsp;line:&nbsp;233   &nbsp;&lt;br&gt;<br>
+   &nbsp;AMQConnection.close(int,&nbsp;String,&nbsp;boolean,&nbsp;Throwable,&nbsp;int,&nbsp;boolean)&nbsp;line:&nbsp;800   &nbsp;&lt;br&gt;   &nbsp;AMQConnection.close(int,&nbsp;String,&nbsp;int)&nbsp;line:&nbsp;724   &nbsp;&lt;br&gt;   &nbsp;AMQConnection.close(int)&nbsp;line:&nbsp;710   &nbsp;&lt;br&gt;   &nbsp;Send$2.run()&nbsp;line:&nbsp;118   &nbsp;&lt;br&gt;<br>
+   &nbsp;Thread.run()&nbsp;line:&nbsp;724   &nbsp;&lt;br&gt;&lt;br&gt;&lt;/div&gt;&lt;div&gt;I&nbsp;googled&nbsp;a&nbsp;bit&nbsp;again,&nbsp;here&nbsp;someone&nbsp;asks&nbsp;sun&nbsp;to&nbsp;provide&nbsp;socket&nbsp;write&nbsp;timeout&nbsp;(1997&nbsp;year)&nbsp;:&nbsp;&lt;br&gt;&lt;a&nbsp;href=&quot;http://bugs.sun.com/bugdatabase/view_bug.do?bug_id=4031100&quot;&nbsp;target=&quot;_top&quot;&nbsp;rel=&quot;nofollow&quot;&nbsp;link=&quot;external&quot;&gt;http://bugs.sun.com/bugdatabase/view_bug.do?bug_id=4031100&lt;/a&gt;&lt;br&gt;<br>
+&lt;/div&gt;&lt;div&gt;but&nbsp;the&nbsp;answer&nbsp;is&nbsp;to&nbsp;use&nbsp;nio&nbsp;SocketChannels&nbsp;or&nbsp;workaround&nbsp;with&nbsp;different&nbsp;thread&nbsp;for&nbsp;read&nbsp;and&nbsp;write.&lt;br&gt;&lt;br&gt;&lt;/div&gt;&lt;div&gt;Here&nbsp;someone&nbsp;asks&nbsp;ActiveMQ&nbsp;to&nbsp;provide&nbsp;such&nbsp;write&nbsp;timeout:&lt;br&gt;&lt;a&nbsp;href=&quot;https://issues.apache.org/jira/browse/AMQ-1993&quot;&nbsp;target=&quot;_top&quot;&nbsp;rel=&quot;nofollow&quot;&nbsp;link=&quot;external&quot;&gt;https://issues.apache.org/jira/browse/AMQ-1993&lt;/a&gt;&lt;br&gt;<br>
+&lt;/div&gt;&lt;div&gt;and&nbsp;the&nbsp;answer&nbsp;is&nbsp;to&nbsp;use&nbsp;&amp;quot;transport.soWriteTimeout&amp;quot;&nbsp;parameter&nbsp;which&nbsp;is&nbsp;managed&nbsp;by&nbsp;ActiveMQ&nbsp;itself&lt;br&gt;&lt;a&nbsp;href=&quot;http://activemq.apache.org/maven/apidocs/org/apache/activemq/transport/WriteTimeoutFilter.html&quot;&nbsp;target=&quot;_top&quot;&nbsp;rel=&quot;nofollow&quot;&nbsp;link=&quot;external&quot;&gt;http://activemq.apache.org/maven/apidocs/org/apache/activemq/transport/WriteTimeoutFilter.html&lt;/a&gt;&lt;br&gt;<br>
+&lt;br&gt;&lt;/div&gt;&lt;div&gt;As&nbsp;for&nbsp;maximum&nbsp;packet&nbsp;age&nbsp;-&nbsp;the&nbsp;client&nbsp;connection&nbsp;has&nbsp;state&nbsp;&amp;quot;ESTABLISHED&amp;quot;&nbsp;during&nbsp;all&nbsp;15&nbsp;minutes,&nbsp;not&nbsp;TIME_WAIT.&lt;br&gt;&lt;/div&gt;&lt;div&gt;&lt;br&gt;There&nbsp;is&nbsp;a&nbsp;setting&nbsp;in&nbsp;linux&nbsp;which&nbsp;can&nbsp;configure&nbsp;TCP&nbsp;retransmissions&nbsp;timeouts&nbsp;:&nbsp;/proc/sys/net/ipv4/tcp_retries2.&nbsp;By&nbsp;default&nbsp;the&nbsp;value&nbsp;is&nbsp;15&nbsp;and&nbsp;it&amp;#39;s&nbsp;about&nbsp;900&nbsp;seconds:&lt;br&gt;<br>
+&lt;a&nbsp;href=&quot;http://stackoverflow.com/questions/5907527/application-control-of-tcp-retransmission-on-linux&quot;&nbsp;target=&quot;_top&quot;&nbsp;rel=&quot;nofollow&quot;&nbsp;link=&quot;external&quot;&gt;http://stackoverflow.com/questions/5907527/application-control-of-tcp-retransmission-on-linux&lt;/a&gt;&lt;br&gt;&lt;/div&gt;&lt;div&gt;It&amp;#39;s&nbsp;not&nbsp;recommended&nbsp;to&nbsp;set&nbsp;the&nbsp;value&nbsp;&amp;lt;&nbsp;100&nbsp;seconds&nbsp;and&nbsp;we&nbsp;cannot&nbsp;actually&nbsp;change&nbsp;it&nbsp;because&nbsp;there&nbsp;are&nbsp;lots&nbsp;of&nbsp;other&nbsp;applications&nbsp;on&nbsp;the&nbsp;machine&nbsp;and&nbsp;we&nbsp;do&nbsp;not&nbsp;know&nbsp;consequences&nbsp;of&nbsp;such&nbsp;changes.&lt;br&gt;<br>
+&lt;br&gt;&lt;/div&gt;&lt;div&gt;So&nbsp;for&nbsp;me&nbsp;it&nbsp;looks&nbsp;like&nbsp;the&nbsp;RabbitMQ&nbsp;client&nbsp;library&nbsp;should&nbsp;provide&nbsp;possibility&nbsp;to&nbsp;set&nbsp;such&nbsp;write&nbsp;timeout&nbsp;-&nbsp;maybe&nbsp;using&nbsp;the&nbsp;same&nbsp;Heartbeat&nbsp;thread&nbsp;(for&nbsp;now&nbsp;this&nbsp;thread&nbsp;is&nbsp;blocked&nbsp;on&nbsp;&amp;quot;writeFrame&amp;quot;&nbsp;method&nbsp;like&nbsp;all&nbsp;other&nbsp;threads&nbsp;waiting&nbsp;freeing&nbsp;the&nbsp;lock&nbsp;on&nbsp;outputStream&nbsp;object).&lt;br&gt;<br>
+&lt;br&gt;&lt;/div&gt;&lt;div&gt;By&nbsp;the&nbsp;way&nbsp;I&nbsp;still&nbsp;cannot&nbsp;imagine&nbsp;any&nbsp;workaround&nbsp;for&nbsp;this&nbsp;issue&nbsp;but&nbsp;it&amp;#39;s&nbsp;really&nbsp;critical&nbsp;for&nbsp;us.&nbsp;Do&nbsp;you&nbsp;think&nbsp;there&nbsp;are&nbsp;some?&lt;br&gt;&lt;/div&gt;&lt;div&gt;&lt;br&gt;&lt;/div&gt;Regards,&lt;br&gt;&lt;/div&gt;Oleg&lt;br&gt;&lt;div&nbsp;class=&quot;gmail_extra&quot;&gt;&lt;br&gt;<br>
+&lt;br&gt;&lt;div&nbsp;class=&quot;gmail_quote&quot;&gt;2013/10/7&nbsp;Michael&nbsp;Klishin&nbsp;[via&nbsp;RabbitMQ]&nbsp;&lt;span&nbsp;dir=&quot;ltr&quot;&gt;&amp;lt;&lt;a&nbsp;href=&quot;/user/SendEmail.jtp?type=node&amp;node=30320&amp;i=0&quot;&nbsp;target=&quot;_top&quot;&nbsp;rel=&quot;nofollow&quot;&nbsp;link=&quot;external&quot;&gt;[hidden&nbsp;email]&lt;/a&gt;&amp;gt;&lt;/span&gt;&lt;br&gt;<br>
+&lt;blockquote&nbsp;style='border-left:2px&nbsp;solid&nbsp;#CCCCCC;padding:0&nbsp;1em'&nbsp;class=&quot;gmail_quote&quot;&nbsp;style=&quot;margin:0px&nbsp;0px&nbsp;0px&nbsp;0.8ex;border-left:1px&nbsp;solid&nbsp;rgb(204,204,204);padding-left:1ex&quot;&gt;&lt;div&nbsp;class=&quot;&quot;&gt;&lt;div&nbsp;class=&quot;h5&quot;&gt;<br>
+<br>
+&nbsp&nbsp&nbsp&nbsp&nbsp&nbsp&nbsp&nbspOn&nbsp;oct&nbsp;7,&nbsp;2013,&nbsp;at&nbsp;4:26&nbsp;p.m.,&nbsp;Oleg&nbsp;Lyalikov&nbsp;&amp;lt;&lt;a&nbsp;href=&quot;http://user/SendEmail.jtp?type=node&amp;amp;node=30283&amp;amp;i=0&quot;&nbsp;rel=&quot;nofollow&quot;&nbsp;link=&quot;external&quot;&nbsp;target=&quot;_blank&quot;&gt;[hidden&nbsp;email]&lt;/a&gt;&amp;gt;&nbsp;wrote:<br>
+&lt;br&gt;&lt;div&gt;&lt;div&gt;&lt;div&nbsp;class='shrinkable-quote'&gt;&lt;br&gt;&amp;gt;&nbsp;&amp;quot;main&amp;quot;&nbsp;prio=10&nbsp;tid=0xf7505800&nbsp;nid=0x2c3e&nbsp;runnable&nbsp;[0xf7728000]<br>
+&lt;br&gt;&amp;gt;&nbsp; &nbsp;java.lang.Thread.State:&nbsp;RUNNABLE<br>
+&lt;br&gt;&amp;gt;&nbsp; &nbsp; &nbsp; &nbsp; at&nbsp;java.net.SocketOutputStream.socketWrite0(Native&nbsp;Method)<br>
+&lt;br&gt;&amp;gt;&nbsp; &nbsp; &nbsp; &nbsp; at<br>
+&lt;br&gt;&amp;gt;&nbsp;java.net.SocketOutputStream.socketWrite(SocketOutputStream.java:109)<br>
+&lt;br&gt;&amp;gt;&nbsp; &nbsp; &nbsp; &nbsp; at&nbsp;java.net.SocketOutputStream.write(SocketOutputStream.java:153)<br>
+&lt;br&gt;&amp;gt;&nbsp; &nbsp; &nbsp; &nbsp; at<br>
+&lt;br&gt;&amp;gt;&nbsp;java.io.BufferedOutputStream.flushBuffer(BufferedOutputStream.java:82)<br>
+&lt;br&gt;&amp;gt;&nbsp; &nbsp; &nbsp; &nbsp; at&nbsp;java.io.BufferedOutputStream.flush(BufferedOutputStream.java:140)<br>
+&lt;br&gt;&amp;gt;&nbsp; &nbsp; &nbsp; &nbsp; -&nbsp;locked&nbsp;&amp;lt;0xb4532608&amp;gt;&nbsp;(a&nbsp;java.io.BufferedOutputStream)<br>
+&lt;br&gt;&amp;gt;&nbsp; &nbsp; &nbsp; &nbsp; at&nbsp;java.io.DataOutputStream.flush(DataOutputStream.java:123)<br>
+&lt;br&gt;&amp;gt;&nbsp; &nbsp; &nbsp; &nbsp; at<br>
+&lt;br&gt;&amp;gt;&nbsp;com.rabbitmq.client.impl.SocketFrameHandler.flush(SocketFrameHandler.java:142)<br>
+&lt;br&gt;&amp;gt;&nbsp; &nbsp; &nbsp; &nbsp; at<br>
+&lt;br&gt;&amp;gt;&nbsp;com.rabbitmq.client.impl.AMQConnection.flush(AMQConnection.java:488)<br>
+&lt;br&gt;&amp;gt;&nbsp; &nbsp; &nbsp; &nbsp; at&nbsp;com.rabbitmq.client.impl.AMQCommand.transmit(AMQCommand.java:125)<br>
+&lt;br&gt;&amp;gt;&nbsp; &nbsp; &nbsp; &nbsp; at<br>
+&lt;br&gt;&amp;gt;&nbsp;com.rabbitmq.client.impl.AMQChannel.quiescingTransmit(AMQChannel.java:316)<br>
+&lt;br&gt;&amp;gt;&nbsp; &nbsp; &nbsp; &nbsp; -&nbsp;locked&nbsp;&amp;lt;0xb4532ee8&amp;gt;&nbsp;(a&nbsp;java.lang.Object)<br>
+&lt;br&gt;&amp;gt;&nbsp; &nbsp; &nbsp; &nbsp; at&nbsp;com.rabbitmq.client.impl.AMQChannel.transmit(AMQChannel.java:292)<br>
+&lt;br&gt;&amp;gt;&nbsp; &nbsp; &nbsp; &nbsp; -&nbsp;locked&nbsp;&amp;lt;0xb4532ee8&amp;gt;&nbsp;(a&nbsp;java.lang.Object)<br>
+&lt;br&gt;&amp;gt;&nbsp; &nbsp; &nbsp; &nbsp; at&nbsp;com.rabbitmq.client.impl.ChannelN.basicPublish(ChannelN.java:634)<br>
+&lt;br&gt;&amp;gt;&nbsp; &nbsp; &nbsp; &nbsp; at&nbsp;com.rabbitmq.client.impl.ChannelN.basicPublish(ChannelN.java:617)<br>
+&lt;br&gt;&amp;gt;&nbsp; &nbsp; &nbsp; &nbsp; at&nbsp;com.rabbitmq.client.impl.ChannelN.basicPublish(ChannelN.java:608)<br>
+&lt;/div&gt;&lt;/div&gt;If&nbsp;SocketOutputStream#socketWrite0&nbsp;takes&nbsp;minutes&nbsp;to&nbsp;timeout,&nbsp;it&nbsp;may&nbsp;be<br>
+&lt;/div&gt;worth&nbsp;trying&nbsp;setting&nbsp;SO_LINGER&nbsp;on&nbsp;the&nbsp;socket&nbsp;(SO_TIMEOUT&nbsp;sounds&nbsp;like<br>
+&lt;br&gt;what&nbsp;you&nbsp;want&nbsp;but&nbsp;I&nbsp;believe&nbsp;it&nbsp;only&nbsp;covers&nbsp;read&nbsp;operations):<br>
+&lt;br&gt;&lt;br&gt;&lt;a&nbsp;href=&quot;http://docs.oracle.com/javase/7/docs/api/java/net/Socket.html#setSoLinger(boolean,%20int&quot;&nbsp;rel=&quot;nofollow&quot;&nbsp;link=&quot;external&quot;&nbsp;target=&quot;_blank&quot;&gt;http://docs.oracle.com/javase/7/docs/api/java/net/Socket.html#setSoLinger(boolean,%20int&lt;/a&gt;)<br>
+&lt;br&gt;&lt;br&gt;To&nbsp;do&nbsp;so,&nbsp;for&nbsp;example,&nbsp;you&nbsp;can&nbsp;subclass&nbsp;default&nbsp;ConnectionFactory&nbsp;and&nbsp;override<br>
+&lt;br&gt;#configureSocket:<br>
+&lt;br&gt;&lt;br&gt;&lt;a&nbsp;href=&quot;http://hg.rabbitmq.com/rabbitmq-java-client/file/46578678645e/src/com/rabbitmq/client/ConnectionFactory.java#l476&quot;&nbsp;rel=&quot;nofollow&quot;&nbsp;link=&quot;external&quot;&nbsp;target=&quot;_blank&quot;&gt;http://hg.rabbitmq.com/rabbitmq-java-client/file/46578678645e/src/com/rabbitmq/client/ConnectionFactory.java#l476&lt;/a&gt;&lt;br&gt;<br>
+&lt;br&gt;Note&nbsp;that&nbsp;SO_LINGER&nbsp;is&nbsp;not&nbsp;free&nbsp;of&nbsp;downsides:<br>
+&lt;br&gt;&lt;br&gt;&lt;a&nbsp;href=&quot;http://blog.netherlabs.nl/articles/2009/01/18/the-ultimate-so_linger-page-or-why-is-my-tcp-not-reliable&quot;&nbsp;rel=&quot;nofollow&quot;&nbsp;link=&quot;external&quot;&nbsp;target=&quot;_blank&quot;&gt;http://blog.netherlabs.nl/articles/2009/01/18/the-ultimate-so_linger-page-or-why-is-my-tcp-not-reliable&lt;/a&gt;&lt;br&gt;<br>
+&lt;a&nbsp;href=&quot;http://stackoverflow.com/questions/3757289/tcp-option-so-linger-zero-when-its-required&quot;&nbsp;rel=&quot;nofollow&quot;&nbsp;link=&quot;external&quot;&nbsp;target=&quot;_blank&quot;&gt;http://stackoverflow.com/questions/3757289/tcp-option-so-linger-zero-when-its-required&lt;/a&gt;&lt;br&gt;<br>
+&lt;br&gt;You&nbsp;can&nbsp;try&nbsp;reducing&nbsp;maximum&nbsp;packet&nbsp;age&nbsp;for&nbsp;the&nbsp;server,&nbsp;this&nbsp;should&nbsp;reduce&nbsp;the&nbsp;amount&nbsp;of<br>
+&lt;br&gt;time&nbsp;spent&nbsp;in&nbsp;TIME_WAIT.<br>
+&lt;br&gt;&lt;br&gt;MK<br>
+&lt;br&gt;&lt;br&gt;&lt;br&gt;&lt;br&gt;&lt;br&gt;&lt;/div&gt;&lt;/div&gt;_______________________________________________<br>
+&lt;br&gt;rabbitmq-discuss&nbsp;mailing&nbsp;list<br>
+&lt;br&gt;&lt;a&nbsp;href=&quot;http://user/SendEmail.jtp?type=node&amp;amp;node=30283&amp;amp;i=1&quot;&nbsp;rel=&quot;nofollow&quot;&nbsp;link=&quot;external&quot;&nbsp;target=&quot;_blank&quot;&gt;[hidden&nbsp;email]&lt;/a&gt;<br>
+&lt;br&gt;&lt;a&nbsp;href=&quot;https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss&quot;&nbsp;rel=&quot;nofollow&quot;&nbsp;link=&quot;external&quot;&nbsp;target=&quot;_blank&quot;&gt;https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss&lt;/a&gt;&lt;br&gt;&lt;div&gt;&lt;br&gt;&lt;img&nbsp;src=&quot;http://images/icon_attachment.gif&quot;&gt;&nbsp;&lt;b&gt;signature.asc&lt;/b&gt;&nbsp;(506&nbsp;bytes)&nbsp;&lt;a&nbsp;href=&quot;http://rabbitmq.1065348.n5.nabble.com/attachment/30283/0/signature.asc&quot;&nbsp;rel=&quot;nofollow&quot;&nbsp;link=&quot;external&quot;&nbsp;target=&quot;_blank&quot;&gt;Download&nbsp;Attachment&lt;/a&gt;&lt;/div&gt;<br>
+<br>
+<br>
+&nbsp&nbsp&nbsp&nbsp&nbsp&nbsp&nbsp&nbsp<br>
+&nbsp&nbsp&nbsp&nbsp&nbsp&nbsp&nbsp&nbsp<br>
+&nbsp&nbsp&nbsp&nbsp&nbsp&nbsp&nbsp&nbsp<br>
+&nbsp&nbsp&nbsp&nbsp&nbsp&nbsp&nbsp&nbsp&lt;br&gt;<br>
+&nbsp&nbsp&nbsp&nbsp&nbsp&nbsp&nbsp&nbsp&lt;br&gt;<br>
+&nbsp&nbsp&nbsp&nbsp&nbsp&nbsp&nbsp&nbsp&lt;hr&nbsp;color=&quot;#cccccc&quot;&nbsp;noshade&nbsp;size=&quot;1&quot;&gt;<br>
+&nbsp&nbsp&nbsp&nbsp&nbsp&nbsp&nbsp&nbsp&lt;div&nbsp;style=&quot;color:rgb(68,68,68);font:12px&nbsp;tahoma,geneva,helvetica,arial,sans-serif&quot;&gt;<br>
+&nbsp&nbsp&nbsp&nbsp&nbsp&nbsp&nbsp&nbsp&nbsp&nbsp&nbsp&nbsp&nbsp&nbsp&nbsp&nbsp&lt;div&nbsp;style=&quot;font-weight:bold&quot;&gt;If&nbsp;you&nbsp;reply&nbsp;to&nbsp;this&nbsp;email,&nbsp;your&nbsp;message&nbsp;will&nbsp;be&nbsp;added&nbsp;to&nbsp;the&nbsp;discussion&nbsp;below:&lt;/div&gt;<br>
+&nbsp&nbsp&nbsp&nbsp&nbsp&nbsp&nbsp&nbsp&nbsp&nbsp&nbsp&nbsp&nbsp&nbsp&nbsp&nbsp&lt;a&nbsp;href=&quot;http://rabbitmq.1065348.n5.nabble.com/Long-timeout-if-server-host-becomes-unreachable-tp30275p30283.html&quot;&nbsp;target=&quot;_blank&quot;&nbsp;rel=&quot;nofollow&quot;&nbsp;link=&quot;external&quot;&gt;http://rabbitmq.1065348.n5.nabble.com/Long-timeout-if-server-host-becomes-unreachable-tp30275p30283.html&lt;/a&gt;<br>
+&nbsp&nbsp&nbsp&nbsp&nbsp&nbsp&nbsp&nbsp&lt;/div&gt;<br>
+&nbsp&nbsp&nbsp&nbsp&nbsp&nbsp&nbsp&nbsp&lt;div&nbsp;style=&quot;color:rgb(102,102,102);font:11px/1.5em&nbsp;tahoma,geneva,helvetica,arial,sans-serif;margin-top:0.4em&quot;&gt;<br>
+&nbsp&nbsp&nbsp&nbsp&nbsp&nbsp&nbsp&nbsp&nbsp&nbsp&nbsp&nbsp&nbsp&nbsp&nbsp&nbsp<br>
+&nbsp&nbsp&nbsp&nbsp&nbsp&nbsp&nbsp&nbsp&nbsp&nbsp&nbsp&nbsp&nbsp&nbsp&nbsp&nbspTo&nbsp;unsubscribe&nbsp;from&nbsp;Long&nbsp;timeout&nbsp;if&nbsp;server&nbsp;host&nbsp;becomes&nbsp;unreachable,&nbsp;&lt;a&nbsp;href=&quot;&quot;&nbsp;target=&quot;_blank&quot;&nbsp;rel=&quot;nofollow&quot;&nbsp;link=&quot;external&quot;&gt;click&nbsp;here&lt;/a&gt;.&lt;br&gt;<br>
+<br>
+&nbsp&nbsp&nbsp&nbsp&nbsp&nbsp&nbsp&nbsp&nbsp&nbsp&nbsp&nbsp&nbsp&nbsp&nbsp&nbsp&lt;a&nbsp;href=&quot;http://rabbitmq.1065348.n5.nabble.com/template/NamlServlet.jtp?macro=macro_viewer&amp;amp;id=instant_html%21nabble%3Aemail.naml&amp;amp;base=nabble.naml.namespaces.BasicNamespace-nabble.view.web.template.NabbleNamespace-nabble.view.web.template.NodeNamespace&amp;amp;breadcrumbs=notify_subscribers%21nabble%3Aemail.naml-instant_emails%21nabble%3Aemail.naml-send_instant_email%21nabble%3Aemail.naml&quot;&nbsp;rel=&quot;nofollow&quot;&nbsp;style=&quot;font:9px&nbsp;serif&quot;&nbsp;target=&quot;_blank&quot;&nbsp;link=&quot;external&quot;&gt;NAML&lt;/a&gt;<br>
+&nbsp&nbsp&nbsp&nbsp&nbsp&nbsp&nbsp&nbsp&lt;/div&gt;&lt;/blockquote&gt;&lt;/div&gt;&lt;br&gt;&lt;/div&gt;&lt;/div&gt;<br>
+<br>
+<br>
+&nbsp&nbsp&nbsp&nbsp&nbsp&nbsp&nbsp&nbsp<br>
+&nbsp&nbsp&nbsp&nbsp&nbsp&nbsp&nbsp&nbsp<br>
+&nbsp&nbsp&nbsp&nbsp&nbsp&nbsp&nbsp&nbsp<br>
+&lt;br/&gt;&lt;hr&nbsp;align=&quot;left&quot;&nbsp;width=&quot;300&quot;&nbsp;/&gt;<br>
+View&nbsp;this&nbsp;message&nbsp;in&nbsp;context:&nbsp;&lt;a&nbsp;href=&quot;http://rabbitmq.1065348.n5.nabble.com/Long-timeout-if-server-host-becomes-unreachable-tp30275p30320.html&quot;&gt;Re:&nbsp;Long&nbsp;timeout&nbsp;if&nbsp;server&nbsp;host&nbsp;becomes&nbsp;unreachable&lt;/a&gt;&lt;br/&gt;<br>
+Sent&nbsp;from&nbsp;the&nbsp;&lt;a&nbsp;href=&quot;http://rabbitmq.1065348.n5.nabble.com/&quot;&gt;RabbitMQ&nbsp;mailing&nbsp;list&nbsp;archive&lt;/a&gt;&nbsp;at&nbsp;Nabble.com.&lt;br/&gt;
+</tt>

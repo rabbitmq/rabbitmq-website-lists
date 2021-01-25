@@ -1,0 +1,277 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Limit QueueingConsumer Memory Usage
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20Limit%20QueueingConsumer%20Memory%20Usage&In-Reply-To=B61B9153-2239-4E6A-B759-9669BC046CC8%40gmail.com">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="004071.html">
+   <LINK REL="Next"  HREF="004084.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Limit QueueingConsumer Memory Usage</H1>
+    <B>Lars George</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20Limit%20QueueingConsumer%20Memory%20Usage&In-Reply-To=B61B9153-2239-4E6A-B759-9669BC046CC8%40gmail.com"
+       TITLE="[rabbitmq-discuss] Limit QueueingConsumer Memory Usage">lars at worldlingo.com
+       </A><BR>
+    <I>Tue Jul 14 16:15:34 BST 2009</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="004071.html">[rabbitmq-discuss] Limit QueueingConsumer Memory Usage
+</A></li>
+        <LI>Next message: <A HREF="004084.html">[rabbitmq-discuss] Limit QueueingConsumer Memory Usage
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#4072">[ date ]</a>
+              <a href="thread.html#4072">[ thread ]</a>
+              <a href="subject.html#4072">[ subject ]</a>
+              <a href="author.html#4072">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi Ben,
+
+The code is really straight forward. Here is the Listener:
+
+  public static void main(String[] args) {
+    try {
+      ConnectionParameters params = new ConnectionParameters();
+      params.setUsername(&quot;guest&quot;);
+      params.setPassword(&quot;guest&quot;);
+      params.setVirtualHost(&quot;/&quot;);
+      params.setRequestedHeartbeat(0);
+      ConnectionFactory factory = new ConnectionFactory(params);
+      Connection conn = factory.newConnection(&quot;queue1.internal&quot;);
+      Channel channel = conn.createChannel();
+     
+      channel.basicQos(1);
+     
+      int wait = -1;
+      if (args.length &gt; 0) wait = Integer.parseInt(args[0]);
+      boolean noAck = false;
+      boolean exit = false;
+      TestConsumer consumer = new TestConsumer(channel);
+      channel.basicConsume(&quot;test&quot;, noAck, consumer);
+      while (!exit) {
+        TestConsumer.Delivery delivery;
+        try {
+          delivery = consumer.nextDelivery();
+        } catch (InterruptedException ie) {
+          continue;
+        }
+        byte[] body = delivery.getBody();
+        String msg = new String(body);
+        System.out.println(&quot;msg -&gt; &quot; + msg);
+        // (process the message components ...)
+        channel.basicAck(delivery.getEnvelope().getDeliveryTag(), false);
+        exit = msg != null &amp;&amp; msg.startsWith(&quot;STOP&quot;);
+        if (wait &gt; -1) {
+          System.out.println(&quot;waiting secs -&gt; &quot; + wait);
+          Thread.sleep(wait * 1000);
+        }
+      }
+      channel.close();
+      conn.close();
+    } catch (Exception e) {
+      e.printStackTrace();
+    }
+  }
+
+
+And the Publisher looks like this:
+
+  public static void main(String[] args) {
+    try {
+      ConnectionParameters params = new ConnectionParameters();
+      params.setUsername(&quot;guest&quot;);
+      params.setPassword(&quot;guest&quot;);
+      params.setVirtualHost(&quot;/&quot;);
+      params.setRequestedHeartbeat(0);
+      ConnectionFactory factory = new ConnectionFactory(params);
+      Connection conn = factory.newConnection(&quot;queue1.internal&quot;);
+      Channel channel = conn.createChannel();
+ 
+      channel.exchangeDeclare(&quot;test-rabbitmq&quot;, &quot;fanout&quot;);
+      channel.queueDeclare(&quot;test&quot;);
+      channel.queueBind(&quot;test&quot;, &quot;test-rabbitmq&quot;, &quot;test&quot;);
+
+      int num = 1;
+      if (args.length &gt; 1) num = Integer.parseInt(args[1]);
+      for (int n = 0; n &lt; num; n++) {
+        String msg = args[0] + &quot;-&quot; + (n+1) + &quot;/&quot; + num;
+        byte[] body = msg.getBytes();
+        channel.basicPublish(&quot;test-rabbitmq&quot;, &quot;test&quot;, null, body);
+        System.out.println(&quot;Sending -&gt; &quot; + msg);
+      }
+     
+      channel.close();
+      conn.close();
+    } catch (IOException e) {
+      e.printStackTrace();
+    }
+  }
+
+So the way I test this is run three Listeners, one with an additional 
+&quot;5&quot; as the parameter to make is sleep 5 seconds between takes.
+
+java -cp 
+\workspace\test-rabbitmq\lib\rabbitmq-client.jar;\workspace\test-rabbitmq\bin;\workspace\test-rabbitmq\lib\commons-io-1.4.jar 
+Listener
+java -cp 
+\workspace\test-rabbitmq\lib\rabbitmq-client.jar;\workspace\test-rabbitmq\bin;\workspace\test-rabbitmq\lib\commons-io-1.4.jar 
+Listener
+java -cp 
+\workspace\test-rabbitmq\lib\rabbitmq-client.jar;\workspace\test-rabbitmq\bin;\workspace\test-rabbitmq\lib\commons-io-1.4.jar 
+Listener 5
+
+The I start the Publisher and push 10000 messages
+
+java -cp 
+\workspace\test-rabbitmq\lib\rabbitmq-client.jar;\workspace\test-rabbitmq\lib\commons-io-1.4.jar;\workspace\test-rabbitmq\bin 
+Publisher test 10000
+
+The idea is that the one Listener that waits 5 seconds should only ever 
+receive 1, or 30 or whatever prefetch size is, messages. But I have 
+instrumented the QueueingConsumer with logging and named it TestConsumer 
+just adding this
+
+  @Override
+  public void handleDelivery(String consumerTag, Envelope envelope,
+      AMQP.BasicProperties properties, byte[] body) throws IOException {
+    _queue.add(ValueOrException.&lt;Delivery, ShutdownSignalException&gt;
+      makeValue(new Delivery(envelope, properties, body)));
+    System.out.println(&quot;new queue size -&gt; &quot; + _queue.size());
+  }
+
+to print out the size of the in memory queue. And it runs without 
+bounds. If you like I can send you all three classes directly. Let me know.
+
+Regards,
+Lars
+
+
+Ben Hood wrote:
+&gt;<i> Lars,
+</I>&gt;<i>
+</I>&gt;<i> On 14 Jul 2009, at 07:06, Lars George &lt;<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">lars at worldlingo.com</A>&gt; wrote:
+</I>&gt;<i>
+</I>&gt;&gt;<i> Hi Amit,
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> We upgraded to 1.6.0 and I added for example channel.basicQos(30); 
+</I>&gt;&gt;<i> but to no avail. My test program still fills the local queue way past 
+</I>&gt;&gt;<i> the 30 message limit using the QueueingConsumer and noAck set to false.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Is this in a later version? Am I doing something wrong?
+</I>&gt;&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> Interesting. Can you send a cut down version of the code that 
+</I>&gt;<i> reproduces the behaviour and to make sure that are you are definetly 
+</I>&gt;<i> not auto-acking anything?
+</I>&gt;<i>
+</I>&gt;<i> Ben
+</I>&gt;<i>
+</I>&gt;&gt;<i> Regards,
+</I>&gt;&gt;<i> Lars
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> amit bhatnagar wrote:
+</I>&gt;&gt;&gt;<i> Check out Channel.BasicQos() and set a prefetch count.
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i> Have a look here for a good description of the prefetch:
+</I>&gt;&gt;&gt;<i> <A HREF="http://hopper.squarespace.com/blog/2009/1/26/work-distribution-in-rabbitmq.html">http://hopper.squarespace.com/blog/2009/1/26/work-distribution-in-rabbitmq.html</A> 
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i> fta:
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i> &quot;This command allows a consumer to choose a prefetch window that
+</I>&gt;&gt;&gt;<i> specifies the amount of unacknowledged messages it is prepared to
+</I>&gt;&gt;&gt;<i> receive. By setting the prefetch count to a non-zero value, the broker
+</I>&gt;&gt;&gt;<i> will not deliver any messages to the consumer that would breach that
+</I>&gt;&gt;&gt;<i> limit. To move the window forwards, the consumer has to acknowledge
+</I>&gt;&gt;&gt;<i> the receipt of a message (or a group of messages). By acknowledging a
+</I>&gt;&gt;&gt;<i> message, the consumer gains credit in the broker which makes it
+</I>&gt;&gt;&gt;<i> eligible to receive more messages. This credit-based flow control
+</I>&gt;&gt;&gt;<i> allows the broker to distribute work proportional to the individual
+</I>&gt;&gt;&gt;<i> processing ability of each worker, as opposed to a simple round robin
+</I>&gt;&gt;&gt;<i> mechanism.&quot;
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i> On Jul 10, 4:32 am, Lars George &lt;<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">l... at worldlingo.com</A>&gt; wrote:
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;&gt;<i> Hi,
+</I>&gt;&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;&gt;<i> I would like to use a blocking provider, but the QueueingConsumer is
+</I>&gt;&gt;&gt;&gt;<i> somewhat limiting as it receives whatever the queue sends and 
+</I>&gt;&gt;&gt;&gt;<i> caches it
+</I>&gt;&gt;&gt;&gt;<i> locally, in the app servers memory. If that is a very large number 
+</I>&gt;&gt;&gt;&gt;<i> then
+</I>&gt;&gt;&gt;&gt;<i> you can quickly run out of memory and kill the Java process with an 
+</I>&gt;&gt;&gt;&gt;<i> OOME.
+</I>&gt;&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;&gt;<i> Is there a way to implement a Consumer that say only receives N queue
+</I>&gt;&gt;&gt;&gt;<i> items before it waits until they get processed locally? I mean from 
+</I>&gt;&gt;&gt;&gt;<i> the
+</I>&gt;&gt;&gt;&gt;<i> internal BlockingQueue and using handleDelivery() this is doable but
+</I>&gt;&gt;&gt;&gt;<i> then you would block the main loop in the AMPQ connection - and miss
+</I>&gt;&gt;&gt;&gt;<i> heart beats etc.?
+</I>&gt;&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;&gt;<i> Is there a better way with this or do I have to go with a dumb while
+</I>&gt;&gt;&gt;&gt;<i> (true) { channel.basicGet() } loop. With that you have the issue to
+</I>&gt;&gt;&gt;&gt;<i> somehow gracefully handle the null delivery and not create a loop that
+</I>&gt;&gt;&gt;&gt;<i> consumes all CPU cycles with no actual work being done.
+</I>&gt;&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;&gt;<i> Thanks,
+</I>&gt;&gt;&gt;&gt;<i> Lars
+</I>&gt;&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;&gt;<i> lars.vcf
+</I>&gt;&gt;&gt;&gt;<i> &lt; 1KViewDownload
+</I>&gt;&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;&gt;<i> _______________________________________________
+</I>&gt;&gt;&gt;&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;&gt;&gt;&gt;<i> <A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-disc... at lists.rabbitmq.comhttp</A>://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss 
+</I>&gt;&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i> _______________________________________________
+</I>&gt;&gt;&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;&gt;&gt;<i> <A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;&gt;&gt;<i> <A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;<i> &lt;lars.vcf&gt;
+</I>&gt;&gt;<i> _______________________________________________
+</I>&gt;&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;&gt;<i> <A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;&gt;<i> <A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>&gt;<i>
+</I>-------------- next part --------------
+A non-text attachment was scrubbed...
+Name: lars.vcf
+Type: text/x-vcard
+Size: 301 bytes
+Desc: not available
+Url : <A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20090714/c59bd0a2/attachment.vcf">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20090714/c59bd0a2/attachment.vcf</A> 
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="004071.html">[rabbitmq-discuss] Limit QueueingConsumer Memory Usage
+</A></li>
+	<LI>Next message: <A HREF="004084.html">[rabbitmq-discuss] Limit QueueingConsumer Memory Usage
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#4072">[ date ]</a>
+              <a href="thread.html#4072">[ thread ]</a>
+              <a href="subject.html#4072">[ subject ]</a>
+              <a href="author.html#4072">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

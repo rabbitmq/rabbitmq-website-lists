@@ -1,0 +1,264 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Question on RabbitMQ and file I/O	characteristics
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Question%20on%20RabbitMQ%20and%20file%20I/O%0A%09characteristics&In-Reply-To=%3CCACLE7izYTbUj9LguaP%3DhZ2x04%2B86jd2U9caAa7E6Y5KQEhfhWg%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="029115.html">
+   <LINK REL="Next"  HREF="029136.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Question on RabbitMQ and file I/O	characteristics</H1>
+    <B>Matt Pietrek</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Question%20on%20RabbitMQ%20and%20file%20I/O%0A%09characteristics&In-Reply-To=%3CCACLE7izYTbUj9LguaP%3DhZ2x04%2B86jd2U9caAa7E6Y5KQEhfhWg%40mail.gmail.com%3E"
+       TITLE="[rabbitmq-discuss] Question on RabbitMQ and file I/O	characteristics">mpietrek at skytap.com
+       </A><BR>
+    <I>Tue Aug  6 18:42:54 BST 2013</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="029115.html">[rabbitmq-discuss] Question on RabbitMQ and file I/O	characteristics
+</A></li>
+        <LI>Next message: <A HREF="029136.html">[rabbitmq-discuss] Question on RabbitMQ and file I/O	characteristics
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#29120">[ date ]</a>
+              <a href="thread.html#29120">[ thread ]</a>
+              <a href="subject.html#29120">[ subject ]</a>
+              <a href="author.html#29120">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>1) Does that make sense?
+
+For the most part, yes. Thank you.
+
+2) What does your publishing really look like? And consuming come to that.
+
+So the app is something I call &quot;echotest&quot;. It spins up two ioloops in
+separate threads ('main', 'echo'). Each ioloop thread listens on its own
+queue.
+
+The &quot;on_message&quot; methods in both 'main' and 'echo' do effectively the
+following:
+
+- Write a new message to the other queue
+- Acknowledge the incoming message
+
+The net effect is that messages 'ping-pong' between the two ioloop threads
+as fast as possible. In the 'main' ioloop init, it sends an initial message
+to kick things off.
+
+I've added counters and timing logic to calculate the current message rate.
+
+In terms of the queue config, the queues are declared like this:
+
+    channel.queue_declare(queue=echo_queue_name, durable=True,
+arguments={&quot;x-ha-policy&quot;: &quot;all&quot;})
+
+Broker config is two clustered 3.0.2 nodes.
+
+For writing messages, it looks like this:
+
+    channel.basic_publish(exchange='',
+        routing_key=echo_queue_name,
+        body=json.dumps(payload_dict),
+        mandatory=True,
+        properties=BasicProperties(delivery_mode=2))
+
+I also have a global switch (USE_TRANSACTIONS) that lets me switch between
+using transactions and not. When set, it adds tx_select() when opening the
+channels and tx_commit after publishing messages. For the tests I was
+running, I wasn't using transactions. If I do run with transactions the
+numbers are very similar (surprising I know, but I stepped through the code
+to verify that the tx_xxx calls are only made when I intend them to be.)
+
+I absolutely realize this particular setup isn't optimal for driving high
+broker load. For the moment, I'm more interested in how many &quot;RPC&quot;-style
+calls/second we could expect between two given endpoints.
+
+Thanks for your help in digging into this!
+
+Matt
+
+
+On Tue, Aug 6, 2013 at 8:47 AM, Simon MacMullen &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">simon at rabbitmq.com</A>&gt; wrote:
+
+&gt;<i> At this point we probably need to look at what exactly your tests are
+</I>&gt;<i> doing.
+</I>&gt;<i>
+</I>&gt;<i> You mention that you are publishing in transactions. Does that mean you
+</I>&gt;<i> publish each message in a separate transaction? If so then the publishes
+</I>&gt;<i> from each channel can't be coalesced together for obvious reasons.
+</I>&gt;<i>
+</I>&gt;<i> If you are then publishing in multiple channels simultaneously then maybe
+</I>&gt;<i> those can coalesce together - although each queue has its own journal so if
+</I>&gt;<i> you are publishing to a lot of queues this might not be the case. Message
+</I>&gt;<i> contents get written to the (global) message store and thus obviously can
+</I>&gt;<i> be coalesced, but the queue index journals are separate.
+</I>&gt;<i>
+</I>&gt;<i> So:
+</I>&gt;<i>
+</I>&gt;<i> 1) Does that make sense?
+</I>&gt;<i> 2) What does your publishing really look like? And consuming come to that.
+</I>&gt;<i>
+</I>&gt;<i> Cheers, Simon
+</I>&gt;<i>
+</I>&gt;<i> PS: for reference, I can publish nearly 4000 persistent confirmed messages
+</I>&gt;<i> per second into a single queue at once, with about 90 writes/sec. So
+</I>&gt;<i> coalescing does happen...
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> On 05/08/13 18:11, Matt Pietrek wrote:
+</I>&gt;<i>
+</I>&gt;&gt;<i> Thanks for the background Simon.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> One statement caught my attention though:
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i>  &gt; At 40 msg/s you are publishing slowly enough that RabbitMQ probably
+</I>&gt;&gt;<i> won't start to coalesce these events together.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> In my original message I didn't lay out all my results - I was trying to
+</I>&gt;&gt;<i> keep the question simple. That said, the 4 write/sec pattern held up at
+</I>&gt;&gt;<i> higher rates. For instance, on a machine with a faster disk, the same
+</I>&gt;&gt;<i> test could do 400 messages/sec, and per tools like sar, were seeing 1600
+</I>&gt;&gt;<i> disk writes/sec.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> As you can imagine, at those I/O rater we're rapidly coming close to the
+</I>&gt;&gt;<i> disk's ability to keep up, thus the question about the writes/message
+</I>&gt;&gt;<i> rates.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> So with this additional context, any additional insight?
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Thanks,
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Matt
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> On Mon, Aug 5, 2013 at 2:59 AM, Simon MacMullen &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">simon at rabbitmq.com</A>
+</I>&gt;&gt;<i> &lt;mailto:<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">simon at rabbitmq.com</A>&gt;&gt; wrote:
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i>     That filename is typical of those of a queue index journal. That's
+</I>&gt;&gt;<i>     the file that records the state of messages in the queue - when a
+</I>&gt;&gt;<i>     message has been published, when it's been confirmed (transactional
+</I>&gt;&gt;<i>     publish is internally implemented in terms of confirms), when it's
+</I>&gt;&gt;<i>     been delivered, and when it's been acknowledged (I assume you are
+</I>&gt;&gt;<i>     using acks).
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i>     So it is very possible to get four disk writes to the journal per
+</I>&gt;&gt;<i>     message for publish / confirm / deliver / ack.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i>     At 40 msg/s you are publishing slowly enough that RabbitMQ probably
+</I>&gt;&gt;<i>     won't start to coalesce these events together. So as you start to
+</I>&gt;&gt;<i>     publish faster you should start to see fewer writes per message -
+</I>&gt;&gt;<i>     eventually you should see many messages per write.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i>     Therefore I wouldn't try to scale the numbers you're seeing up to
+</I>&gt;&gt;<i>     predict anything - you're likely to be much better off running some
+</I>&gt;&gt;<i>     benchmark with MulticastMain or similar.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i>     Cheers, Simon
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i>     On 03/08/2013 01:08, Matt Pietrek wrote:
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i>         Just want to run this past the RabbitMQ devs and see if this
+</I>&gt;&gt;<i>         jibes with
+</I>&gt;&gt;<i>         their expectations.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i>         Our typical cluster runs RabbitMQ 3.02 on Ubuntu 10.04 on two
+</I>&gt;&gt;<i> nodes.
+</I>&gt;&gt;<i>         All queues are mirrored. All our channels are opened in
+</I>&gt;&gt;<i>         transactional
+</I>&gt;&gt;<i>         mode. (We know, this causes things to go slower - That's OK with
+</I>&gt;&gt;<i>         us, we
+</I>&gt;&gt;<i>         really want to avoid message loss.)
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i>         What I'm seeing is that for each message written to the broker,
+</I>&gt;&gt;<i>         we see
+</I>&gt;&gt;<i>         approximately four disk writes. That is, if the broker is doing 40
+</I>&gt;&gt;<i>         messages/sec, we see ~160 disk writes. We're getting these
+</I>&gt;&gt;<i>         number from
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i>         Is this about what should be expected when running this way?
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i>         If it helps, I dug in a bit more to see what the files were. The
+</I>&gt;&gt;<i>         vast
+</I>&gt;&gt;<i>         majority of the activity seems to be to files like this:
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i>         msg_store_persistent/743.rdq
+</I>&gt;&gt;<i>         queues/__**E10F54B1OGM7M4LTRX5Z3L4K0/__**journal.jif
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i>         Any insight would be very valuable for our planning processes.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i>         Thanks,
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i>         Matt
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i>         ______________________________**___________________
+</I>&gt;&gt;<i>         rabbitmq-discuss mailing list
+</I>&gt;&gt;<i>         <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.__rabbi</A>**tmq.com &lt;<A HREF="http://rabbitmq.com">http://rabbitmq.com</A>&gt;
+</I>&gt;&gt;<i>         &lt;mailto:rabbitmq-discuss@**lists.rabbitmq.com&lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>&gt;
+</I>&gt;&gt;<i> &gt;
+</I>&gt;&gt;<i>         <A HREF="https://lists.rabbitmq.com/__**cgi-bin/mailman/listinfo/__**">https://lists.rabbitmq.com/__**cgi-bin/mailman/listinfo/__**</A>
+</I>&gt;&gt;<i> rabbitmq-discuss&lt;<A HREF="https://lists.rabbitmq.com/__cgi-bin/mailman/listinfo/__rabbitmq-discuss">https://lists.rabbitmq.com/__cgi-bin/mailman/listinfo/__rabbitmq-discuss</A>&gt;
+</I>&gt;&gt;<i>         &lt;<A HREF="https://lists.rabbitmq.com/**cgi-bin/mailman/listinfo/**">https://lists.rabbitmq.com/**cgi-bin/mailman/listinfo/**</A>
+</I>&gt;&gt;<i> rabbitmq-discuss&lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>&gt;
+</I>&gt;&gt;<i> &gt;
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> --
+</I>&gt;<i> Simon MacMullen
+</I>&gt;<i> RabbitMQ, Pivotal
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20130806/f69f68f1/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20130806/f69f68f1/attachment.htm</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="029115.html">[rabbitmq-discuss] Question on RabbitMQ and file I/O	characteristics
+</A></li>
+	<LI>Next message: <A HREF="029136.html">[rabbitmq-discuss] Question on RabbitMQ and file I/O	characteristics
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#29120">[ date ]</a>
+              <a href="thread.html#29120">[ thread ]</a>
+              <a href="subject.html#29120">[ subject ]</a>
+              <a href="author.html#29120">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

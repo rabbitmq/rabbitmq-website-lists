@@ -1,0 +1,201 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] amqp_rpc_server
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20amqp_rpc_server&In-Reply-To=%3CCAEr978SMGksECtK-ox4RXRr073o8%3DposS0E_mis%2BTBOwi-RV5g%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="028642.html">
+   <LINK REL="Next"  HREF="028753.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] amqp_rpc_server</H1>
+    <B>Carlo Bertoldi</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20amqp_rpc_server&In-Reply-To=%3CCAEr978SMGksECtK-ox4RXRr073o8%3DposS0E_mis%2BTBOwi-RV5g%40mail.gmail.com%3E"
+       TITLE="[rabbitmq-discuss] amqp_rpc_server">mcbain at tiscali.it
+       </A><BR>
+    <I>Thu Jul 18 09:20:31 BST 2013</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="028642.html">[rabbitmq-discuss] amqp_rpc_server
+</A></li>
+        <LI>Next message: <A HREF="028753.html">[rabbitmq-discuss] amqp_rpc_server
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#28664">[ date ]</a>
+              <a href="thread.html#28664">[ thread ]</a>
+              <a href="subject.html#28664">[ subject ]</a>
+              <a href="author.html#28664">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Ok :)
+I've added start_link functions to both client and server, so the
+caller has the possibility do decide what he needs, without breaking
+the old behaviour.
+
+Here are the patches:
+
+--- amqp_rpc_client_orig.erl 2013-07-18 10:13:40.000000000 +0200
++++ amqp_rpc_client.erl 2013-07-18 10:13:04.000000000 +0200
+@@ -1,4 +1,4 @@
+- %% The contents of this file are subject to the Mozilla Public License
++%% The contents of this file are subject to the Mozilla Public License
+ %% Version 1.1 (the &quot;License&quot;); you may not use this file except in
+ %% compliance with the License. You may obtain a copy of the License at
+ %% <A HREF="http://www.mozilla.org/MPL/">http://www.mozilla.org/MPL/</A>
+@@ -25,7 +25,7 @@
+
+ -behaviour(gen_server).
+
+--export([start/2, stop/1]).
++-export([start/2, start_link/2, stop/1]).
+ -export([call/2]).
+ -export([init/1, terminate/2, code_change/3, handle_call/3,
+          handle_cast/2, handle_info/2]).
+@@ -53,6 +53,18 @@
+     {ok, Pid} = gen_server:start(?MODULE, [Connection, Queue], []),
+     Pid.
+
++%% @spec (Connection, Queue) -&gt; RpcClient
++%% where
++%%      Connection = pid()
++%%      Queue = binary()
++%%      RpcClient = pid()
++%% @doc Starts, and link to, a new RPC client instance that sends requests
++%% to a specified queue. This function returns the pid of the RPC client
++%% process that can be used to invoke RPCs and stop the client.
++start_link(Connection, Queue) -&gt;
++    {ok, Pid} = gen_server:start_link(?MODULE, [Connection, Queue], []),
++    Pid.
++
+ %% @spec (RpcClient) -&gt; ok
+ %% where
+ %%      RpcClient = pid()
+
+
+--- amqp_rpc_server_orig.erl 2013-07-18 10:13:54.000000000 +0200
++++ amqp_rpc_server.erl 2013-07-18 10:12:54.000000000 +0200
+@@ -27,7 +27,7 @@
+
+ -export([init/1, terminate/2, code_change/3, handle_call/3,
+          handle_cast/2, handle_info/2]).
+--export([start/3]).
++-export([start/3, start_link/3]).
+ -export([stop/1]).
+
+ -record(state, {channel,
+@@ -51,6 +51,20 @@
+     {ok, Pid} = gen_server:start(?MODULE, [Connection, Queue, Fun], []),
+     Pid.
+
++%% @spec (Connection, Queue, RpcHandler) -&gt; RpcServer
++%% where
++%%      Connection = pid()
++%%      Queue = binary()
++%%      RpcHandler = function()
++%%      RpcServer = pid()
++%% @doc Starts, and links to, a new RPC server instance that receives
++%% requests via a specified queue and dispatches them to a specified
++%% handler function. This function returns the pid of the RPC server that
++%% can be used to stop the server.
++start_link(Connection, Queue, Fun) -&gt;
++    {ok, Pid} = gen_server:start_link(?MODULE, [Connection, Queue, Fun], []),
++    Pid.
++
+ %% @spec (RpcServer) -&gt; ok
+ %% where
+ %%      RpcServer = pid()
+
+On Wed, Jul 17, 2013 at 9:47 PM, Matthias Radestock
+&lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">matthias at rabbitmq.com</A>&gt; wrote:
+&gt;<i> On 17/07/13 13:51, Carlo Bertoldi wrote:
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i>   I'm looking through the amqp_rpm_server, in particular the start
+</I>&gt;&gt;<i> function. I wonder why you used a start instead of a start_link.
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> Laziness. There is nothing stopping you from linking to the returned pid
+</I>&gt;<i> yourself, though obviously at the risk of getting the wrong exit code if the
+</I>&gt;<i> process dies immediately after starting up successfully.
+</I>&gt;<i>
+</I>&gt;<i> Matthias.
+</I>
+
+
+-- 
+&#200; molto pi&#249; bello sapere qualcosa di tutto, che sapere tutto di una cosa.
+
+Blaise Pascal
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="028642.html">[rabbitmq-discuss] amqp_rpc_server
+</A></li>
+	<LI>Next message: <A HREF="028753.html">[rabbitmq-discuss] amqp_rpc_server
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#28664">[ date ]</a>
+              <a href="thread.html#28664">[ thread ]</a>
+              <a href="subject.html#28664">[ subject ]</a>
+              <a href="author.html#28664">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

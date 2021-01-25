@@ -1,0 +1,125 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Message timeouts
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Message%20timeouts&In-Reply-To=%3CA9B0DFE2-DA9D-4FE0-BD67-29174617F598%40rabbitmq.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="016722.html">
+   <LINK REL="Next"  HREF="016825.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Message timeouts</H1>
+    <B>Steve Powell</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Message%20timeouts&In-Reply-To=%3CA9B0DFE2-DA9D-4FE0-BD67-29174617F598%40rabbitmq.com%3E"
+       TITLE="[rabbitmq-discuss] Message timeouts">steve at rabbitmq.com
+       </A><BR>
+    <I>Mon Dec  5 15:56:53 GMT 2011</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="016722.html">[rabbitmq-discuss] Message timeouts
+</A></li>
+        <LI>Next message: <A HREF="016825.html">[rabbitmq-discuss] Message timeouts
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#16742">[ date ]</a>
+              <a href="thread.html#16742">[ thread ]</a>
+              <a href="subject.html#16742">[ subject ]</a>
+              <a href="author.html#16742">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Sorry Alex, I'm sure you do. I'm learning and trying to understand your
+situation.
+
+Although it is reasonable to create a &quot;leased&quot; queue (with an 'x-expires'
+argument) for replies to Rpc requests (on the grounds that the clients cannot
+be replied upon to drain them), I do not think it reasonable to do this for the
+server queues unless you can tolerate requests being (quietly) lost.
+
+If you don't want the server queue requests to be 'lost' then don't allow the
+queues to expire!
+
+On the other hand your clients apparently wait forever.  Is there a reason I
+don't understand why the server queues expire but the clients don't have a
+timeout for the responses?
+
+Well, I think I can answer my own question -- please confirm if this is right:
+
+You want requests to either be processed or (reliably) not processed.  You
+never want the clients to be in any doubt about whether the request was
+processed or not.  So you wait forever in the client.  However, requests that
+get discarded never return so the client doesn't know.  So you want expiry to
+trigger replies to the clients.  (Per-queue message TTLs also don't return.)
+
+If the server dies there is still the possibility that it did so after pulling
+the request from the queue and before posting a reply -- unless the requests are
+'transactionally' processed. So it looks like you need the request processing to
+be a transaction so that all requests not in the queue (when it expires) have
+definitely been processed.
+
+Let's see -- how would we do this without a dead-letter mechanism?  Well, apart
+from making the server transactional, it might be useful to have an 'offline'
+server that can take over any server's queue when it fails and either deal with
+the requests [by issuing an 'offline' response?] or arrange for the server to
+be restarted (and/or upgraded).
+
+In one of your original posts: 
+
+&gt;<i> &quot;I want to keep my &quot;rpc&quot; queue alive even when the RPC server software is
+</I>&gt;<i> being upgraded so that users will only see a delay in the responses (and no
+</I>&gt;<i> lost requests)&quot;
+</I>
+it looks like you could actually schedule a takeover of the 'offline' server
+from the RpcServer, and have complete control of the policy for handling
+requests in 'dead' server queues.
+
+A dead-letter mechanism would be convenient in this case, because you would not
+then have to 'take-over' any queues and the 'offline' server could be run
+permanently, without a need to monitor the servers for failure.
+
+Have I understood now?
+
+Steve Powell  (a learning bunny)
+----------some more definitions from the SPD----------
+avoirdupois (phr.) 'Would you like peas with that?'
+distribute (v.) To denigrate an award ceremony.
+definite (phr.) 'It's hard of hearing, I think.'
+modest (n.) The most mod.
+
+On 5 Dec 2011, at 02:48, Alex Gr&#246;nholm wrote:
+
+&gt;<i> Dear Steve,
+</I>&gt;<i> 
+</I>&gt;<i> I know how to create queues properly. That was never the issue. The issue was that if I created a leased queue, take the consumer offline and leave it that way and the queue expires, the client is never notified that the message was dropped and it will continue to wait for a response forever. That is not how I want it to work. I expect the server to send some return message when the queue dies. The mandatory flag does not help since it only returns the message if it's not routed to a queue (which it is). But like I said before, the dead lettering feature should help with this.
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>
+</PRE>
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="016722.html">[rabbitmq-discuss] Message timeouts
+</A></li>
+	<LI>Next message: <A HREF="016825.html">[rabbitmq-discuss] Message timeouts
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#16742">[ date ]</a>
+              <a href="thread.html#16742">[ thread ]</a>
+              <a href="subject.html#16742">[ subject ]</a>
+              <a href="author.html#16742">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

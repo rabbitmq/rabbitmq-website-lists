@@ -1,0 +1,141 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] RabbitMQ scaling with OpenStack
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20RabbitMQ%20scaling%20with%20OpenStack&In-Reply-To=%3CB9C05679-73E3-4E3E-9224-5AFB78FAABD7%40rabbitmq.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="025350.html">
+   <LINK REL="Next"  HREF="025357.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] RabbitMQ scaling with OpenStack</H1>
+    <B>Ask Solem</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20RabbitMQ%20scaling%20with%20OpenStack&In-Reply-To=%3CB9C05679-73E3-4E3E-9224-5AFB78FAABD7%40rabbitmq.com%3E"
+       TITLE="[rabbitmq-discuss] RabbitMQ scaling with OpenStack">ask at rabbitmq.com
+       </A><BR>
+    <I>Fri Feb  8 12:46:56 GMT 2013</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="025350.html">[rabbitmq-discuss] RabbitMQ scaling with OpenStack
+</A></li>
+        <LI>Next message: <A HREF="025357.html">[rabbitmq-discuss] Testing lightweight publisher confirms
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#25422">[ date ]</a>
+              <a href="thread.html#25422">[ thread ]</a>
+              <a href="subject.html#25422">[ subject ]</a>
+              <a href="author.html#25422">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>
+On Feb 5, 2013, at 5:50 PM, Ray Pekowski &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">pekowski at gmail.com</A>&gt; wrote:
+
+&gt;<i> Ask Solem-3 wrote
+</I>&gt;&gt;&gt;<i> On Jan 22, 2013, at 1:58 PM, Ask Solem 
+</I>&gt;&gt;<i> &lt;ask at rabbitmq.com&gt;
+</I>&gt;&gt;<i> wrote:
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;<i> I've spent some time reviewing the code, but it's really hard to follow,
+</I>&gt;&gt;<i> and it's
+</I>&gt;&gt;<i> reinventing a lot of things that Kombu already supports.   Having two sets
+</I>&gt;&gt;<i> of
+</I>&gt;&gt;<i> implementations means that we both have to debug and maintain it, this
+</I>&gt;&gt;<i> code could
+</I>&gt;&gt;<i> definitely be reduced by a lot.
+</I>&gt;<i> 
+</I>&gt;<i> Thank you for taking the time to review the code.  Yes, it is confusing and
+</I>&gt;<i> perhaps impossible to fully understand without also reading amqp.py
+</I>&gt;<i> (<A HREF="https://github.com/openstack/nova/blob/master/nova/openstack/common/rpc/amqp.py">https://github.com/openstack/nova/blob/master/nova/openstack/common/rpc/amqp.py</A>),
+</I>&gt;<i> which is a common module between the kombu and Qpid implementations for
+</I>&gt;<i> OpenStack.
+</I>
+Yeah, but it seems that you are re-implementing things already in Kombu on top of it,
+which maybe could have been moved into the qpid implementation.
+
+E.g. the reconnecting at failover, there could be improvements added to kombu
+that you would not be able to take advantage of.
+
+
+&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> Ask Solem-3 wrote
+</I>&gt;&gt;<i> One thing that I'm unable to understand is whether it's creating a channel
+</I>&gt;&gt;<i> or not
+</I>&gt;&gt;<i> (other than the Connection.default_channel), and if so if it creates a
+</I>&gt;&gt;<i> channel for
+</I>&gt;&gt;<i> every request.  This would be bad since creating channels is very
+</I>&gt;&gt;<i> expensive (at least in amqplib/py-amqp).
+</I>&gt;<i> 
+</I>&gt;<i> It does not create a new channel on each request.  The channel object is
+</I>&gt;<i> held in a impl_kombu.Connection class instance and instances of
+</I>&gt;<i> impl_kombu.Connection are pooled.  You can find the pool implementation in
+</I>&gt;<i> amqp.py that I mentioned earlier.
+</I>
+Right, I saw the pool, but it was not obvious how channels are handled.
+Kombu also comes with a connection pool, and you can pass a connection
+to any method requiring a channel and it will use a 'default channel' that is closed
+with the connection.
+&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> Ask Solem-3 wrote
+</I>&gt;&gt;<i> Also, it seems that the reply messages are persistent, do they have to be?
+</I>&gt;<i> 
+</I>&gt;<i> The reply messages are RPC replies are implemented in the DirectPublisher
+</I>&gt;<i> class which has {'durable': False} for its exchange and queue options.  The
+</I>&gt;<i> RPC call is done via the TopicPublisher class and it has the durable option
+</I>&gt;<i> that defaults to False, but can be overridden using a OpenStack nova.conf
+</I>&gt;<i> file configuration setting.
+</I>
+But durable is not the same as being persistent, which depends on the delivery_mode
+property of the message.  Persistent messages are default in Kombu, but you can
+change that by using .publish(delivery_mode=1)
+&gt;<i> 
+</I>&gt;<i> BTW, one of the questions that has come up is whether it makes sense for the
+</I>&gt;<i> RPC reply queues to mirrored.  Is HA generally thought of as important for
+</I>&gt;<i> RPC replies?  I just am not sure.  Our current implementation has mirroring
+</I>&gt;<i> turned off for reply queues, but we are trying to figure out if that was
+</I>&gt;<i> just an oversight.
+</I>&gt;<i> 
+</I>
+If the RPC replies must be available from multiple processes (e.g. any process can
+request the reply for a request by id) then I think you should consider storing the
+replies in a database instead.
+
+If not I recommend that you use one queue per client for RPC replies, this will
+minimize the number of queues used for replies, and optimally they should
+be non-persistent and not mirrored, but that depends on the application
+(openstack could leave this configurable for those who need it)
+</PRE>
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="025350.html">[rabbitmq-discuss] RabbitMQ scaling with OpenStack
+</A></li>
+	<LI>Next message: <A HREF="025357.html">[rabbitmq-discuss] Testing lightweight publisher confirms
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#25422">[ date ]</a>
+              <a href="thread.html#25422">[ thread ]</a>
+              <a href="subject.html#25422">[ subject ]</a>
+              <a href="author.html#25422">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,241 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] SimpleConsumer EOFException
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20SimpleConsumer%20EOFException&In-Reply-To=%3C6199b13c-e77d-4452-b1af-48747838d7ef%40ub4g2000pbc.googlegroups.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="018037.html">
+   <LINK REL="Next"  HREF="018242.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] SimpleConsumer EOFException</H1>
+    <B>Susheel Daswani</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20SimpleConsumer%20EOFException&In-Reply-To=%3C6199b13c-e77d-4452-b1af-48747838d7ef%40ub4g2000pbc.googlegroups.com%3E"
+       TITLE="[rabbitmq-discuss] SimpleConsumer EOFException">sdaswani at gmail.com
+       </A><BR>
+    <I>Thu Feb  9 18:12:49 GMT 2012</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="018037.html">[rabbitmq-discuss] SimpleConsumer EOFException
+</A></li>
+        <LI>Next message: <A HREF="018242.html">[rabbitmq-discuss] SimpleConsumer EOFException
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#18050">[ date ]</a>
+              <a href="thread.html#18050">[ thread ]</a>
+              <a href="subject.html#18050">[ subject ]</a>
+              <a href="author.html#18050">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Thanks Emile - I will look into AMQP heartbeats.
+
+Another issue I've run into is my Queuing Consumer isn't connecting
+reliably. I will start up a Queuing Consumer and it may or may not
+connect, depending on how it is feeling ;) . When it doesn't connect,
+I usually won't see any exception, though it will sometimes error out
+with the EOFException I previously wrote about. FYI I am sure there
+are messages to be consumed as I can see them from our web admin
+interface.
+
+Here is my code, which I pretty created from following the examples
+online (e.g., <A HREF="http://www.rabbitmq.com/tutorials/tutorial-one-java.html">http://www.rabbitmq.com/tutorials/tutorial-one-java.html</A>):
+
+package com.atti.ratingstrends.rabbitreceiver;
+
+import com.rabbitmq.client.ConnectionFactory;
+import com.rabbitmq.client.Connection;
+import com.rabbitmq.client.Channel;
+import com.rabbitmq.client.QueueingConsumer;
+
+public class Receiver {
+
+    private String _uri;
+    private String _queueName;
+    private Connection _connection;
+    private Channel _channel;
+    private QueueingConsumer _consumer;
+
+    // Used during construction and attempts to re-establish
+    private void initConsumer()
+        throws java.net.URISyntaxException, java.io.IOException,
+               java.security.NoSuchAlgorithmException,
+               java.security.KeyManagementException {
+
+        // cleanup
+        if (_connection != null)
+            _connection.close();
+        if (_channel != null)
+            _channel.close();
+
+        ConnectionFactory factory = new ConnectionFactory();
+        factory.setUri(_uri);
+        _connection = factory.newConnection();
+
+        _channel = _connection.createChannel();
+        _channel.queueDeclare(_queueName, false, false, false, null);
+
+        _consumer = new QueueingConsumer(_channel);
+        _channel.basicConsume(_queueName, true, _consumer);
+    }
+
+    /**
+       @param uri The full amqp uri for the RabbitMQ you want to
+access.
+       @param queueName The name of the queue you want to access.
+     */
+    // Not opting for a static factory method. May want to subclass
+and
+    // not many variations of this class expected.
+    public Receiver(String uri, String queueName)
+        throws java.net.URISyntaxException, java.io.IOException,
+               java.security.NoSuchAlgorithmException,
+               java.security.KeyManagementException {
+
+        if (queueName == null || queueName.equals(&quot;&quot;))
+            throw new java.io.IOException(&quot;Queue name must not be null
+or empty.&quot;);
+        _queueName = queueName;
+        _uri = uri;
+
+        initConsumer();
+    }
+
+    /** Will block.
+     */
+    public String getNextMessageBody() throws
+java.lang.InterruptedException {
+        try {
+            QueueingConsumer.Delivery delivery =
+_consumer.nextDelivery();
+            return new String(delivery.getBody());
+        }
+        // Catching Runtime Exceptions are bad, but here, I don't
+understand
+        // why we are seeing EOF exceptions, since the RabbitMQ should
+never
+        // EOF. So attempt to restart the connection ONCE.
+        catch (com.rabbitmq.client.ShutdownSignalException io) {
+            if (io.getReason() instanceof java.io.EOFException) {
+                System.out.println(&quot;Receiver.getNextMessageBody(): The
+RabbitMQ threw an EOF - attempting to re-start connection:&quot; + io);
+                try {
+                    initConsumer();
+                    QueueingConsumer.Delivery delivery =
+_consumer.nextDelivery();
+                    return new String(delivery.getBody());
+                }
+                catch (Exception e) {
+                    System.out.println(&quot;Receiver.getNextMessageBody():
+The RabbitMQ threw an EOF - restart attempt failed!&quot;);
+                    throw io;
+                }
+            }
+            throw io;
+        }
+    }
+
+    /** Caution - will empty all old messages.
+     * @returns The number of messages purge.
+     * @throws java.io.IOException - if an error is encountered.
+     */
+    public int purge() throws java.io.IOException {
+        return _channel.queuePurge(_queueName).getMessageCount();
+    }
+}
+
+Does it look like I am doing anything wrong that would cause the
+connection issue?
+
+Thanks!
+Susheel
+
+On Feb 9, 2:49&#160;am, Emile Joubert &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">em... at rabbitmq.com</A>&gt; wrote:
+&gt;<i> Hi Susheel,
+</I>&gt;<i>
+</I>&gt;<i> On 08/02/12 21:48, Susheel Daswani wrote:
+</I>&gt;<i>
+</I>&gt;<i> &gt; java.io.EOFException
+</I>&gt;<i> &gt; &#160; &#160;at com.rabbitmq.client.QueueingConsumer.handle(QueueingConsumer.java:
+</I>&gt;<i>
+</I>&gt;<i> An EOF exception on a socket points to a network problem. You could try
+</I>&gt;<i> to eliminate the network by running the test over localhost, or enable
+</I>&gt;<i> AMQP heartbeats.
+</I>&gt;<i>
+</I>&gt;<i> -Emile
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-disc... at lists.rabbitmq.comhttps</A>://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss
+</I></PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="018037.html">[rabbitmq-discuss] SimpleConsumer EOFException
+</A></li>
+	<LI>Next message: <A HREF="018242.html">[rabbitmq-discuss] SimpleConsumer EOFException
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#18050">[ date ]</a>
+              <a href="thread.html#18050">[ thread ]</a>
+              <a href="subject.html#18050">[ subject ]</a>
+              <a href="author.html#18050">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

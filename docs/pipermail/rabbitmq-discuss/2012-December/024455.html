@@ -1,0 +1,173 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Creating an auth plugin (Kerberos)
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Creating%20an%20auth%20plugin%20%28Kerberos%29&In-Reply-To=%3CC6E90E05-4AE0-490E-9E45-EC9DE96F03BA%40rabbitmq.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="024452.html">
+   <LINK REL="Next"  HREF="024456.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Creating an auth plugin (Kerberos)</H1>
+    <B>Tim Watson</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Creating%20an%20auth%20plugin%20%28Kerberos%29&In-Reply-To=%3CC6E90E05-4AE0-490E-9E45-EC9DE96F03BA%40rabbitmq.com%3E"
+       TITLE="[rabbitmq-discuss] Creating an auth plugin (Kerberos)">tim at rabbitmq.com
+       </A><BR>
+    <I>Tue Dec 11 17:07:02 GMT 2012</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="024452.html">[rabbitmq-discuss] Creating an auth plugin (Kerberos)
+</A></li>
+        <LI>Next message: <A HREF="024456.html">[rabbitmq-discuss] Creating an auth plugin (Kerberos)
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#24455">[ date ]</a>
+              <a href="thread.html#24455">[ thread ]</a>
+              <a href="subject.html#24455">[ subject ]</a>
+              <a href="author.html#24455">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>
+On 11 Dec 2012, at 16:20, Simon Lundstr&#246;m wrote:
+
+&gt;<i> That was easy. The only hard thing was to get it to compile correctly on
+</I>&gt;<i> OS X = ).
+</I>
+Glad it was, and *not at all surprised* it's a pain on OSX - I frequently have issues there as well with .dylib vs .so and whatnot when making linked-in drivers.
+
+&gt;<i> (Note to future readers see
+</I>&gt;<i> &lt;<A HREF="http://stackoverflow.com/questions/8288358/erlang-nif-test-os-x-lion">http://stackoverflow.com/questions/8288358/erlang-nif-test-os-x-lion</A>&gt;)
+</I>&gt;<i> 
+</I>
+Thanks for sharing that with the list!
+
+&gt;<i> The NIF needs to be loaded at some point and from the examples and
+</I>&gt;<i> documentation I've found that it's done via -on_load, like this:
+</I>&gt;<i> &lt;<A HREF="https://github.com/simmel/rabbitmq-auth-backend-kerberos/blob/use_nif/src/rabbit_auth_backend_kerberos.erl#L10-L14">https://github.com/simmel/rabbitmq-auth-backend-kerberos/blob/use_nif/src/rabbit_auth_backend_kerberos.erl#L10-L14</A>&gt;
+</I>&gt;<i> 
+</I>
+That *is* the correct way to load a NIF.
+
+&gt;<i> However, I've tried using -on_load before in my plugin and it didn't
+</I>&gt;<i> work. I suspected that the -behaviour had some magic which involved
+</I>&gt;<i> -on_load and using -on_load in your model bricks that. I worked around
+</I>&gt;<i> needing -on_load and forgot about it. However, now I need it again. This
+</I>&gt;<i> is from the error log:
+</I>&gt;<i> 
+</I>
+-behaviour doesn't affect NIFs at all AFAIK - that behaviour attribute just tells the compiler to puke unless certain functions are defined and exported, and generates a behaviour_info/2 function. Hmn, perhaps that latter part *does* interfere with NIFs, but I've never heard of that before.
+
+&gt;<i> When logging in via AMQP:
+</I>&gt;<i> 
+</I>&gt;<i> =ERROR REPORT==== 11-Dec-2012::09:57:02 ===
+</I>&gt;<i> closing AMQP connection &lt;0.287.0&gt; (130.237.168.221:48736 -&gt; 77.238.35.76:5671):
+</I>&gt;<i> {channel0_error,starting,
+</I>&gt;<i>    {error,undef,'connection.start_ok',
+</I>&gt;<i>        [{rabbit_auth_backend_kerberos,check_user_login,
+</I>&gt;<i>             [&lt;&lt;&quot;simlu&quot;&gt;&gt;,[{password,&lt;&lt;&quot;notmypassword&quot;&gt;&gt;}]]},
+</I>
+
+That's not saying check_user_login is undefined. In fact, check_user_login is not even part of the NIF infrastructure. It looks like it's saying 'connection.start_ok' is undefined. Hmn - doesn't make much sense to me I'm afraid. What happens if you move the NIF part out into another module, using the -on_load attribute there and then just call that utility module from your plugin?
+
+-module(kinit).
+
+-export([init/0, kinit/2]).
+-on_load(init/0).
+
+init() -&gt;
+  Kinit = code:priv_dir(?APPLICATION) ++ &quot;/kinit.so&quot;,
+  erlang:load_nif(Kinit, 0).
+
+kinit(User, Password) -&gt; exit(nif_library_not_loaded).
+
+
+And then in rabbit_auth_backend_kerberos just call:
+
+case kinit:kinit(User, PassWd) of .....
+
+Anyway, if you put the NIF part into another module, you *should* be able to test it outside of rabbit my doing something like:
+
+$ erl -sname foo
+banner. .....
+% ok = application:start(rabbit_auth_backend_kerberos).
+ok
+% X = kinit:kinit(&quot;auser&quot;, &quot;password&quot;).
+&lt;&lt; a term &gt;&gt;
+% io:format(&quot;~p~n&quot;, [X]).
+
+
+Then if it *still* doesn't work when you're running it inside rabbit we might need to consider other things that could be going wrong (such as the NIF init magic). 
+
+Cheers,
+Tim
+
+&gt;<i>         {rabbit_access_control,'-check_user_login/2-fun-0-',4},
+</I>&gt;<i>         {lists,foldl,3},
+</I>&gt;<i>         {rabbit_reader,auth_phase,2},
+</I>&gt;<i>         {rabbit_reader,handle_method0,3},
+</I>&gt;<i>         {rabbit_reader,handle_input,3},
+</I>&gt;<i>         {rabbit_reader,recvloop,2},
+</I>&gt;<i>         {rabbit_reader,start_connection,7}]}}
+</I>&gt;<i> 
+</I>&gt;<i> when using the API (this is in the sasl log):
+</I>&gt;<i> 
+</I>&gt;<i> =CRASH REPORT==== 11-Dec-2012::11:51:04 ===
+</I>&gt;<i>  crasher:
+</I>&gt;<i>    initial call: mochiweb_acceptor:init/3
+</I>&gt;<i>    pid: &lt;0.256.0&gt;
+</I>&gt;<i>    registered_name: []
+</I>&gt;<i>    exception error: undefined function rabbit_auth_backend_kerberos:check_user_login/2
+</I>&gt;<i>      in function  rabbit_access_control:'-check_user_login/2-fun-0-'/4
+</I>&gt;<i>      in call from lists:foldl/3
+</I>&gt;<i>      in call from rabbit_mgmt_app:'-make_loop/0-fun-0-'/4
+</I>&gt;<i>      in call from mochiweb_http:headers/5
+</I>&gt;<i>    ancestors: [rabbit_mochiweb_web_mgmt,rabbit_mochiweb_sup,&lt;0.132.0&gt;]
+</I>&gt;<i>    messages: []
+</I>&gt;<i>    links: [&lt;0.252.0&gt;]
+</I>&gt;<i>    dictionary: []
+</I>&gt;<i>    trap_exit: false
+</I>&gt;<i>    status: running
+</I>&gt;<i>    heap_size: 4181
+</I>&gt;<i>    stack_size: 24
+</I>&gt;<i>    reductions: 1467
+</I>&gt;<i>  neighbours:
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> Thanks,
+</I>&gt;<i> - Simon
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>
+</PRE>
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="024452.html">[rabbitmq-discuss] Creating an auth plugin (Kerberos)
+</A></li>
+	<LI>Next message: <A HREF="024456.html">[rabbitmq-discuss] Creating an auth plugin (Kerberos)
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#24455">[ date ]</a>
+              <a href="thread.html#24455">[ thread ]</a>
+              <a href="subject.html#24455">[ subject ]</a>
+              <a href="author.html#24455">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

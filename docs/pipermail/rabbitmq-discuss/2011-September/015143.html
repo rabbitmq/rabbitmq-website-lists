@@ -1,0 +1,166 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] RabbitMQ and Stomp topic behavior
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20RabbitMQ%20and%20Stomp%20topic%20behavior&In-Reply-To=%3C0EDF155E-7730-4C81-880C-1C1FBB6EBAD3%40rabbitmq.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="015243.html">
+   <LINK REL="Next"  HREF="015146.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] RabbitMQ and Stomp topic behavior</H1>
+    <B>Steve Powell</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20RabbitMQ%20and%20Stomp%20topic%20behavior&In-Reply-To=%3C0EDF155E-7730-4C81-880C-1C1FBB6EBAD3%40rabbitmq.com%3E"
+       TITLE="[rabbitmq-discuss] RabbitMQ and Stomp topic behavior">steve at rabbitmq.com
+       </A><BR>
+    <I>Sun Sep 18 13:56:52 BST 2011</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="015243.html">[rabbitmq-discuss] Mochiweb MAX_RECV_BODY and JSON_RPC plugin
+</A></li>
+        <LI>Next message: <A HREF="015146.html">[rabbitmq-discuss] ldap authentication
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#15143">[ date ]</a>
+              <a href="thread.html#15143">[ thread ]</a>
+              <a href="subject.html#15143">[ subject ]</a>
+              <a href="author.html#15143">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Massimo,
+After quite a  time of trials and tribulations I have found a bug 
+in the RabbitMQ STOMP adapter which appears to cause 
+crashes under high message load.
+    The bug is related to the (rather primitive) throttling which 
+kicks in when reaching the memory limit.
+
+After fixing this, I have successfully run your testcase, and 
+RabbitMQ STOMP does manage to survive during the throwing 
+away of large numbers of unsubscribed topic SENDs. I had to 
+make one alteration to the configuration in order to get the test 
+to stay up. I set the vm_high_watermark to 0.2 (instead of the 
+default of 0.4).
+
+This setting determines the proportion of available memory 
+above which the 'memory-alarm' is triggered. The reader 
+process in RabbitMQ-STOMP will then block processing 
+further bytes from clients, until the memory alarm is switched 
+off.  Because message processing is proceeding at a very 
+high rate (that is why memory is being used up), the 
+input-queues for Erlang processes are likely to be large, 
+and so even blocking input will not result in a lowering of 
+memory consumption -- memory requirements increase in 
+the pipeline flow -- and so the actual memory consumed is 
+likely to reach 0.6/0.7 of available memory (found by observation).  
+This is why setting it to 0.4 (the default) doesn't work.  Memory 
+for Erlang can then be completely exhausted, resulting in 
+crashes (which normally result in long pauses and large 
+amounts of dump-data written to disk). Any recovery after 
+that is likely not to succeed for very long, since the pause 
+allows time for more requests to be put in. (The benchmark 
+test runs with non-blocking io; I'm not sure what that means, 
+but if it means that requests will be put in even if the socket 
+blocks then this is going to increase the load during the 
+pauses.)
+
+As I say, setting it to 0.2 worked, and I suspect that 0.3 would 
+still work.
+
+However,...
+
+The test doesn't really tell us much.  This is a poor benchmark, 
+because it consists of a single producer sending a 20-byte 
+message to a topic to which no-one is currently subscribed.  
+This is therefore a measure of how fast a broker can throw 
+away messages.  RabbitMQ does reasonably well here, but 
+cannot determine that there are no subscribers until it reaches 
+the actual rabbit exchange, so it goes through AMQP 
+processing.  In general, especially in the presence of potential 
+durable topic subscriptions, it is hard to see how to fix this -- 
+though if it were a common scenario perhaps some sort of 
+status of the broker subscription space could be cached near 
+to the client, allowing us to throw away messages close to 
+the client: but then we need to update the cache when 
+(remote) subscribers come on line, or risk throwing away 
+messages in error.  This is very complex, and only for a gain 
+in a low probability use-case.
+
+I notice that the benchmark test runs for a very long time 
+(hours on my little 2Gb 2Core Linux VM) and produces a noisy 
+graph as result (there are lots of zeros in it because RabbitMQ 
+blocks reads quite often). The graph doesn't help us to guess 
+at an average rate.  I attach the benchmark json output, so 
+you can view it with generic_report, or something.
+
+The bug fix is rabbit bugzilla 24426, which after QA will 
+probably go into the next release.
+
+Thanks for spotting this,
+
+Steve Powell
+<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">steve at rabbitmq.com</A>
+[wrk: +44-2380-111-528] [mob: +44-7815-838-558]
+
+
+Previously:
+&gt;&gt;&gt;<i> <A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/2011-August/014555.html">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/2011-August/014555.html</A>
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;<i> _______________________________________________
+</I>&gt;&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>&gt;<i> 
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20110918/b99c1f02/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20110918/b99c1f02/attachment.htm</A>&gt;
+-------------- next part --------------
+A non-text attachment was scrubbed...
+Name: rabbitmq-2.6.1-hwm-0.2.json
+Type: application/octet-stream
+Size: 567890 bytes
+Desc: not available
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20110918/b99c1f02/attachment.obj">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20110918/b99c1f02/attachment.obj</A>&gt;
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20110918/b99c1f02/attachment-0001.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20110918/b99c1f02/attachment-0001.htm</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="015243.html">[rabbitmq-discuss] Mochiweb MAX_RECV_BODY and JSON_RPC plugin
+</A></li>
+	<LI>Next message: <A HREF="015146.html">[rabbitmq-discuss] ldap authentication
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#15143">[ date ]</a>
+              <a href="thread.html#15143">[ thread ]</a>
+              <a href="subject.html#15143">[ subject ]</a>
+              <a href="author.html#15143">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

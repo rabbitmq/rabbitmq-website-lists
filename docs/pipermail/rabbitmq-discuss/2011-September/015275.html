@@ -1,0 +1,368 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] acks from temporary queues
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20acks%20from%20temporary%20queues&In-Reply-To=%3C20110926162824.GC9030%40southbank.eng.vmware.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="015274.html">
+   <LINK REL="Next"  HREF="015276.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] acks from temporary queues</H1>
+    <B>Alexandru Scvor&#355;ov</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20acks%20from%20temporary%20queues&In-Reply-To=%3C20110926162824.GC9030%40southbank.eng.vmware.com%3E"
+       TITLE="[rabbitmq-discuss] acks from temporary queues">alexandru at rabbitmq.com
+       </A><BR>
+    <I>Mon Sep 26 17:28:24 BST 2011</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="015274.html">[rabbitmq-discuss] acks from temporary queues
+</A></li>
+        <LI>Next message: <A HREF="015276.html">[rabbitmq-discuss] acks from temporary queues
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#15275">[ date ]</a>
+              <a href="thread.html#15275">[ thread ]</a>
+              <a href="subject.html#15275">[ subject ]</a>
+              <a href="author.html#15275">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi Jonathan,
+
+&gt;<i> This is a point of confusion for me then. In a previous note where I
+</I>&gt;<i> mentioned setting autoAck to false and manually using basicAck,
+</I>&gt;<i> Matthias replied as follows:
+</I>
+Uf, I forgot about the persister in the last message.  Sorry.
+
+&gt;<i> If in the fanout context I could have used consumer acks to hold off
+</I>&gt;<i> broker acks to the publisher, I would have expected that I could
+</I>&gt;<i> effectively block confirms until after I sent basicAcks from the
+</I>&gt;<i> consumer to the broker and then on up to the publisher. From
+</I>&gt;<i> Matthias's note (and my tests), however, it appears that the broker
+</I>&gt;<i> sends an ack back to the publisher as soon as it takes control of the
+</I>&gt;<i> message and so issues a confirm without waiting on anything from the
+</I>&gt;<i> consumer. 
+</I>
+He's right.  I was hoping the immediate flag will hold off the confirm,
+but, of course, it won't.
+
+&gt;<i> In the direct exchange context, however, I took your notes
+</I>&gt;<i> to be indicating that the broker there will wait for an ack from the
+</I>&gt;<i> consumer, such that if the consumer died while in process, but before
+</I>&gt;<i> sending the ack, the broker would return a basic.return along with the
+</I>&gt;<i> confirm. If this is not the case, then, my sense is that I will have
+</I>&gt;<i> to have the consumers publish a response directly back to original
+</I>&gt;<i> publisher as Matthias notes--while using the fanout broadcast to keep
+</I>&gt;<i> track of the number of expected responses (as you indicate).
+</I>
+You will have to have consumers send something to the original
+publisher and a fanout to keep track of responses.  You'll only need a
+timeout of some sort, so that if any of the consumers takes to long to
+respond, you react somehow (that probably means the consumer died
+processing the message).
+
+You'll still need the mandatory, immediate flags to at least see that
+the consumer was alive and was consuming from the queue at the time the
+message was sent.
+
+&gt;<i> Does that make sense? Basically, it still orbits around a question of
+</I>&gt;<i> how and/or if consumer acks can be made to effect a producer. I am
+</I>&gt;<i> guessing that my implementation will have to require the return
+</I>&gt;<i> publications (responses), but any clarification you could add to the
+</I>&gt;<i> consumer ack, confirm chain would be greatly appreciated.
+</I>
+You'll need to publish back.  The only things confirms will give you in
+this case is the guarantee that basic.returns happen before confirms.
+So, once you receive the confirm, you know the message has reached the
+consumer.
+
+There's also no need to delay acknowledgement on the consumer side.
+
+Sorry for the confusion.
+
+Alex
+
+
+On Mon, Sep 26, 2011 at 09:04:06AM -0700, gneeri wrote:
+&gt;<i> Hi Alex,
+</I>&gt;<i> 
+</I>&gt;<i> This is a point of confusion for me then. In a previous note where I
+</I>&gt;<i> mentioned setting autoAck to false and manually using basicAck,
+</I>&gt;<i> Matthias replied as follows:
+</I>&gt;<i> 
+</I>&gt;<i> &quot;Confirms mean one thing and one thing only: that the broker has
+</I>&gt;<i> accepted
+</I>&gt;<i> responsibility for the message.
+</I>&gt;<i> 
+</I>&gt;<i> &quot;They concern the interaction between producers and the broker, and
+</I>&gt;<i> have
+</I>&gt;<i> nothing to do with consumer acks.&quot;
+</I>&gt;<i> 
+</I>&gt;<i> If in the fanout context I could have used consumer acks to hold off
+</I>&gt;<i> broker acks to the publisher, I would have expected that I could
+</I>&gt;<i> effectively block confirms until after I sent basicAcks from the
+</I>&gt;<i> consumer to the broker and then on up to the publisher. From
+</I>&gt;<i> Matthias's note (and my tests), however, it appears that the broker
+</I>&gt;<i> sends an ack back to the publisher as soon as it takes control of the
+</I>&gt;<i> message and so issues a confirm without waiting on anything from the
+</I>&gt;<i> consumer. In the direct exchange context, however, I took your notes
+</I>&gt;<i> to be indicating that the broker there will wait for an ack from the
+</I>&gt;<i> consumer, such that if the consumer died while in process, but before
+</I>&gt;<i> sending the ack, the broker would return a basic.return along with the
+</I>&gt;<i> confirm. If this is not the case, then, my sense is that I will have
+</I>&gt;<i> to have the consumers publish a response directly back to original
+</I>&gt;<i> publisher as Matthias notes--while using the fanout broadcast to keep
+</I>&gt;<i> track of the number of expected responses (as you indicate).
+</I>&gt;<i> 
+</I>&gt;<i> Does that make sense? Basically, it still orbits around a question of
+</I>&gt;<i> how and/or if consumer acks can be made to effect a producer. I am
+</I>&gt;<i> guessing that my implementation will have to require the return
+</I>&gt;<i> publications (responses), but any clarification you could add to the
+</I>&gt;<i> consumer ack, confirm chain would be greatly appreciated.
+</I>&gt;<i> 
+</I>&gt;<i> Thanks,
+</I>&gt;<i> Jonathan
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> On Sep 26, 11:34&#160;am, Alexandru Scvor&#355;ov &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">alexan... at rabbitmq.com</A>&gt;
+</I>&gt;<i> wrote:
+</I>&gt;<i> &gt; Hi Jonathan,
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; &gt; &quot;In addition, when processing &quot;please log out this user&quot; messages, a
+</I>&gt;<i> &gt; &gt; machine should *not* acknowledge that it has received the message
+</I>&gt;<i> &gt; &gt; until after it publishes its response (this way, if the machine dies
+</I>&gt;<i> &gt; &gt; while processing, the sender will get a basic.return for it).&quot;
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; &gt; Am I correct in understanding from this that, in the direct exchange
+</I>&gt;<i> &gt; &gt; context, I can control when the consumer machine sends back its ack,
+</I>&gt;<i> &gt; &gt; by calling something like basicAck at some point in the consumption/
+</I>&gt;<i> &gt; &gt; delivery code?
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; The exchange type has nothing to do with it. &#160;When you consume from a
+</I>&gt;<i> &gt; queue, you specify the autoAck parameter. &#160;If this is set to true
+</I>&gt;<i> &gt; (which it is, by default), then the server will not wait for the
+</I>&gt;<i> &gt; consumer to acknowledge receipt of the message (so, it's effectively
+</I>&gt;<i> &gt; auto-ack'ing all messages). &#160;If it's set to false, the broker will not
+</I>&gt;<i> &gt; consider the message delivered to the consumer until it explicitly ack's
+</I>&gt;<i> &gt; the message. &#160;See the API guide for an example (I assume you're using
+</I>&gt;<i> &gt; the Java client, but the other clients have very similar APIs):
+</I>&gt;<i> &gt; &#160;<A HREF="http://www.rabbitmq.com/api-guide.html#consuming">http://www.rabbitmq.com/api-guide.html#consuming</A>
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; &gt; If so, I would expect that I could skip the return
+</I>&gt;<i> &gt; &gt; publishing (i.e., the response) from the consumer to the producer and
+</I>&gt;<i> &gt; &gt; simply check confirms and confirms + basic.returns for each message
+</I>&gt;<i> &gt; &gt; sent directly to each machine. Moreover, if, prior to publishing, I
+</I>&gt;<i> &gt; &gt; associate the machine (or direct queue corresponding to it) to the
+</I>&gt;<i> &gt; &gt; message to be sent, I should be able to find out which machines
+</I>&gt;<i> &gt; &gt; present which form of response (i.e., confirm or confirm +
+</I>&gt;<i> &gt; &gt; basic.return). Does this make sense or am I still reading too much
+</I>&gt;<i> &gt; &gt; into the consumer ack (such that, for example, the confirmation
+</I>&gt;<i> &gt; &gt; received by the publisher just represents the handoff of the message
+</I>&gt;<i> &gt; &gt; to the queue and not its uptake by the consumer)?
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; Oh. &#160;I missed that. &#160;Yes, I think that would work.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; Cheers,
+</I>&gt;<i> &gt; Alex
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; On Mon, Sep 26, 2011 at 08:04:28AM -0700, gneeri wrote:
+</I>&gt;<i> &gt; &gt; Hi Alex,
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; &gt; Thanks so much for the detailed reply. I had begun thinking along
+</I>&gt;<i> &gt; &gt; these lines, but really appreciate the level of detail regarding the
+</I>&gt;<i> &gt; &gt; specific types of publish requests, queues and exchanges. This is
+</I>&gt;<i> &gt; &gt; really helpful and will likely save me many hours of trial and error.
+</I>&gt;<i> &gt; &gt; I do have just one quick question though regarding the following:
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; &gt; &quot;In addition, when processing &quot;please log out this user&quot; messages, a
+</I>&gt;<i> &gt; &gt; machine should *not* acknowledge that it has received the message
+</I>&gt;<i> &gt; &gt; until after it publishes its response (this way, if the machine dies
+</I>&gt;<i> &gt; &gt; while processing, the sender will get a basic.return for it).&quot;
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; &gt; Am I correct in understanding from this that, in the direct exchange
+</I>&gt;<i> &gt; &gt; context, I can control when the consumer machine sends back its ack,
+</I>&gt;<i> &gt; &gt; by calling something like basicAck at some point in the consumption/
+</I>&gt;<i> &gt; &gt; delivery code? If so, I would expect that I could skip the return
+</I>&gt;<i> &gt; &gt; publishing (i.e., the response) from the consumer to the producer and
+</I>&gt;<i> &gt; &gt; simply check confirms and confirms + basic.returns for each message
+</I>&gt;<i> &gt; &gt; sent directly to each machine. Moreover, if, prior to publishing, I
+</I>&gt;<i> &gt; &gt; associate the machine (or direct queue corresponding to it) to the
+</I>&gt;<i> &gt; &gt; message to be sent, I should be able to find out which machines
+</I>&gt;<i> &gt; &gt; present which form of response (i.e., confirm or confirm +
+</I>&gt;<i> &gt; &gt; basic.return). Does this make sense or am I still reading too much
+</I>&gt;<i> &gt; &gt; into the consumer ack (such that, for example, the confirmation
+</I>&gt;<i> &gt; &gt; received by the publisher just represents the handoff of the message
+</I>&gt;<i> &gt; &gt; to the queue and not its uptake by the consumer)?
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; &gt; Thanks again, really, I very much appreciate your help.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; &gt; Cheers,
+</I>&gt;<i> &gt; &gt; Jonathan
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; &gt; On Sep 26, 5:54&#160;am, Alexandru Scvor&#355;ov &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">alexan... at rabbitmq.com</A>&gt; wrote:
+</I>&gt;<i> &gt; &gt; &gt; Hi Jonathan,
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt; 1. Do consumer acks have more significance in transactions, such that
+</I>&gt;<i> &gt; &gt; &gt; &gt; I could use those to effect the functionality I'm looking for?
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; &gt; &gt; Not really, no. &#160;I don't think there's anyway to get what you want
+</I>&gt;<i> &gt; &gt; &gt; automatically.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt; 2. If not, is there any way (apart from the admin HTTP API) for
+</I>&gt;<i> &gt; &gt; &gt; &gt; determining the number of consumers (e.g., bound queues) for a given
+</I>&gt;<i> &gt; &gt; &gt; &gt; exchange? This way I could test the number of reply messages as you
+</I>&gt;<i> &gt; &gt; &gt; &gt; suggest; otherwise, with needing to register and account for a dynamic
+</I>&gt;<i> &gt; &gt; &gt; &gt; array of servers, I would lose a good deal of what I had hoped would
+</I>&gt;<i> &gt; &gt; &gt; &gt; be the benefit of a fanout broadcast.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; &gt; &gt; There's no AMQP way of finding how many queues are bound to an exchange.
+</I>&gt;<i> &gt; &gt; &gt; As you say, there's the management API, but using that is likely to lead
+</I>&gt;<i> &gt; &gt; &gt; to races (what happens if you query the number of queues, then one of
+</I>&gt;<i> &gt; &gt; &gt; the machines dies before it sends its acknowledgement?).
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; &gt; &gt; You could kind of get what you want with AMQP. &#160;Use a fanout exchange
+</I>&gt;<i> &gt; &gt; &gt; like you want for broadcast messages, but use a direct exchange for
+</I>&gt;<i> &gt; &gt; &gt; direct communication between machines. &#160;You could use the fanout
+</I>&gt;<i> &gt; &gt; &gt; exchange to make sure that all the machines know about each other (in
+</I>&gt;<i> &gt; &gt; &gt; particular, that each knows the queues the others bound to the direct
+</I>&gt;<i> &gt; &gt; &gt; exchange, so that they can communicate directly). &#160;And you could use the
+</I>&gt;<i> &gt; &gt; &gt; direct exchange to publish persistent, confirm, mandatory, immediate messages
+</I>&gt;<i> &gt; &gt; &gt; directly to other machines. &#160;With these messages, the sender will be
+</I>&gt;<i> &gt; &gt; &gt; notified if the other machine received the message (only a confirm is
+</I>&gt;<i> &gt; &gt; &gt; received for the publish), or if the other machine went offline in the past
+</I>&gt;<i> &gt; &gt; &gt; (a basic.return and a confirm is received). &#160;This way, the sending
+</I>&gt;<i> &gt; &gt; &gt; machine would know which other machines received its message and, so,
+</I>&gt;<i> &gt; &gt; &gt; will know to wait for the correct number of responses. &#160;The queue bound
+</I>&gt;<i> &gt; &gt; &gt; to the direct exchange would have to be durable, auto-delete for this to
+</I>&gt;<i> &gt; &gt; &gt; work (durable for confirms to work and auto-delete so that once the sole
+</I>&gt;<i> &gt; &gt; &gt; consumer dies, the queue is deleted and publishing to it will result in
+</I>&gt;<i> &gt; &gt; &gt; a basic.return). &#160;In addition, when processing &quot;please log out this
+</I>&gt;<i> &gt; &gt; &gt; user&quot; messages, a machine should *not* acknowledge that it has
+</I>&gt;<i> &gt; &gt; &gt; received the message until after it publishes its response (this way, if
+</I>&gt;<i> &gt; &gt; &gt; the machine dies while processing, the sender will get a basic.return for
+</I>&gt;<i> &gt; &gt; &gt; it).
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; &gt; &gt; Hope this helps.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; &gt; &gt; Cheers,
+</I>&gt;<i> &gt; &gt; &gt; Alex
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; &gt; &gt; On Fri, Sep 23, 2011 at 04:44:14PM -0700, gneeri wrote:
+</I>&gt;<i> &gt; &gt; &gt; &gt; Hi Matthias,
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt; Thanks for clarifying that. From the explication of the rules for
+</I>&gt;<i> &gt; &gt; &gt; &gt; confirms, it had appeared to me that the relationships to queues and
+</I>&gt;<i> &gt; &gt; &gt; &gt; consumers had more weight in the confirmation process. That not being
+</I>&gt;<i> &gt; &gt; &gt; &gt; the case, I have 2 brief follow up questions:
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt; 1. Do consumer acks have more significance in transactions, such that
+</I>&gt;<i> &gt; &gt; &gt; &gt; I could use those to effect the functionality I'm looking for?
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt; 2. If not, is there any way (apart from the admin HTTP API) for
+</I>&gt;<i> &gt; &gt; &gt; &gt; determining the number of consumers (e.g., bound queues) for a given
+</I>&gt;<i> &gt; &gt; &gt; &gt; exchange? This way I could test the number of reply messages as you
+</I>&gt;<i> &gt; &gt; &gt; &gt; suggest; otherwise, with needing to register and account for a dynamic
+</I>&gt;<i> &gt; &gt; &gt; &gt; array of servers, I would lose a good deal of what I had hoped would
+</I>&gt;<i> &gt; &gt; &gt; &gt; be the benefit of a fanout broadcast.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt; Thanks in advance,
+</I>&gt;<i> &gt; &gt; &gt; &gt; Jonathan
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt; On Sep 23, 6:55&#160;pm, Matthias Radestock &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">matth... at rabbitmq.com</A>&gt; wrote:
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; On 23/09/11 21:26, gneeri wrote:
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; &gt; My expectation, then, is that producer would publish its message and
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; &gt; then be blocked until the delayed consumer returns an ack
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; Confirms mean one thing and one thing only: that the broker has accepted
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; responsibility for the message.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; They concern the interaction between producers and the broker, and &#160;have
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; nothing to do with consumer acks.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; Yes, there are some conditions in which a consumer ack can trigger a
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; confirm in RabbitMQ, but that is an implementation detail and not
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; something you'd want to design an application around.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; &gt; My hope is that I will not have to aggregate a list of servers and
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; &gt; pass along a single message to each server, but perhaps that is what
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; &gt; will be required.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; You can still send a single message via a fanout exchange. But the
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; consumers then in turn need to send a message back to the sender. Your
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; sender will need to know how many consumers there are so it knows when
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; it has gotten all responses..
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; Regards,
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; Matthias.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; _______________________________________________
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; rabbitmq-discuss mailing list
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-disc... at lists.rabbitmq.comhttps</A>://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss
+</I>&gt;<i> &gt; &gt; &gt; &gt; _______________________________________________
+</I>&gt;<i> &gt; &gt; &gt; &gt; rabbitmq-discuss mailing list
+</I>&gt;<i> &gt; &gt; &gt; &gt; <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-disc... at lists.rabbitmq.com</A>
+</I>&gt;<i> &gt; &gt; &gt; &gt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; &gt; &gt; _______________________________________________
+</I>&gt;<i> &gt; &gt; &gt; rabbitmq-discuss mailing list
+</I>&gt;<i> &gt; &gt; &gt; <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-disc... at lists.rabbitmq.comhttps</A>://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss
+</I>&gt;<i> &gt; &gt; _______________________________________________
+</I>&gt;<i> &gt; &gt; rabbitmq-discuss mailing list
+</I>&gt;<i> &gt; &gt; <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-disc... at lists.rabbitmq.com</A>
+</I>&gt;<i> &gt; &gt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; _______________________________________________
+</I>&gt;<i> &gt; rabbitmq-discuss mailing list
+</I>&gt;<i> &gt; <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-disc... at lists.rabbitmq.comhttps</A>://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I></PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="015274.html">[rabbitmq-discuss] acks from temporary queues
+</A></li>
+	<LI>Next message: <A HREF="015276.html">[rabbitmq-discuss] acks from temporary queues
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#15275">[ date ]</a>
+              <a href="thread.html#15275">[ thread ]</a>
+              <a href="subject.html#15275">[ subject ]</a>
+              <a href="author.html#15275">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

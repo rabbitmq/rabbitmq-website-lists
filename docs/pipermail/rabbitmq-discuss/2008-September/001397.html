@@ -1,0 +1,156 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Broadcasting and STOMP (was Re: python stomp	examples)
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20Broadcasting%20and%20STOMP%20%28was%20Re%3A%20python%20stomp%0A%09examples%29&In-Reply-To=2e45e80809081004p2277392bt3fd688c9471925d1%40mail.gmail.com">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001395.html">
+   <LINK REL="Next"  HREF="001398.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Broadcasting and STOMP (was Re: python stomp	examples)</H1>
+    <B>Tony Garnock-Jones</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20Broadcasting%20and%20STOMP%20%28was%20Re%3A%20python%20stomp%0A%09examples%29&In-Reply-To=2e45e80809081004p2277392bt3fd688c9471925d1%40mail.gmail.com"
+       TITLE="[rabbitmq-discuss] Broadcasting and STOMP (was Re: python stomp	examples)">tonyg at lshift.net
+       </A><BR>
+    <I>Tue Sep  9 13:37:13 BST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001395.html">[rabbitmq-discuss] python stomp examples
+</A></li>
+        <LI>Next message: <A HREF="001398.html">[rabbitmq-discuss] Broadcasting and STOMP (was Re: python stomp	examples)
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1397">[ date ]</a>
+              <a href="thread.html#1397">[ thread ]</a>
+              <a href="subject.html#1397">[ subject ]</a>
+              <a href="author.html#1397">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi Joe,
+
+Novak Joe wrote:
+&gt;<i>   this 'just worked' and I could see the messages also propagating to
+</I>&gt;<i> the bundled ruby listener that ships with the stomp adapter for
+</I>&gt;<i> rabbitmq.
+</I>
+Hooray!
+
+&gt;<i>   If both are subscribed to the 'carl' channel, my intuition tells me
+</I>&gt;<i> that both should be able to hear each and every message.
+</I>&gt;<i>   Why does this not seem to actually be the case?  (sorry if this is a
+</I>&gt;<i> really naive question)
+</I>&gt;<i>   Is there some additional header I need to send in order to broadcast
+</I>&gt;<i> messages, or is broadcasting a horse of a different color?
+</I>
+This is a good question. Here's where STOMP's definition gets weaker,
+and where we start to see AMQP's semantics leaking through.
+
+The way AMQP works is that messages are
+
+ - sent by /producers/ to /exchanges/, and from there are
+ - forwarded to /queues/ along /bindings/, from which they are
+ - distributed round-robin(ish) to /consumers/
+
+As messages pass through an exchange, they are duplicated, and a /copy/
+is sent down each activated binding.
+
+In contrast, when messages leave a queue for a consumer, they are not
+duplicated. One message, sitting on a queue, is delivered to only one of
+the available consumers. Only if that consumer rejects the message
+somehow (e.g. by crashing or otherwise disconnecting before it
+acknowledges the message) will the message be sent on by the queue to
+some other consumer.
+
+With the STOMP adapter, a plain old
+
+  SUBSCRIBE
+  destination: myqueue
+
+will create a new consumer. If there are multiple clients, all
+SUBSCRIBEing to the same queue, then there will be multiple consumers
+all on the same queue, leading to round-robin delivery to those clients.
+
+In order to get broadcast behaviour, you need to use a feature
+(originally contributed by Artur, now present in the trunk) which
+exposes a little more of AMQP's semantics through STOMP:
+
+  SUBSCRIBE
+  id: da9d4779-92b9-4cef-86c0-800bdc977f15
+  destination:
+  exchange: amq.topic
+  routing_key: #
+
+The empty-string used for the &quot;destination&quot; header tells the adapter to
+create a private queue for this one subscription, which will last for
+the duration of your connection, or until you UNSUBSCRIBE.
+
+The &quot;id&quot; header should be some string unique to the current connection
+(!) which names the subscription. I've used a fresh GUID here, but
+anything connection-unique is acceptable.
+
+If you omit the &quot;id&quot; header, the current implementation has a wart
+meaning you won't be able to issue more than one SUBSCRIBE with an empty
+destination string; we could remove that if absolutely required, but in
+my view it's all round simplest and best just to require an &quot;id&quot; header.
+
+The &quot;exchange&quot; header tells the adapter to bind the new private queue to
+the named exchange. All AMQP brokers come with preconfigured
+&quot;amq.direct&quot;, &quot;amq.topic&quot; and &quot;amq.fanout&quot; exchanges, with semantics
+described by the AMQP specification (section 3.1.3 of
+<A HREF="http://jira.amqp.org/confluence/download/attachments/720900/amqp0-8.pdf?version=1">http://jira.amqp.org/confluence/download/attachments/720900/amqp0-8.pdf?version=1</A>).
+The &quot;routing_key&quot; header is used as described in &#167;3.1.3 to select which
+messages are copied into the queue by the exchange.
+
+The STOMP gateway doesn't provide a way of creating a new exchange, yet;
+you have to use a real AMQP client (one that can issue
+&quot;exchange.declare&quot; commands) for that, currently. Suggestions welcome!
+
+To unsubscribe from a private queue,
+
+  UNSUBSCRIBE
+  id: da9d4779-92b9-4cef-86c0-800bdc977f15
+
+as usual, supplying the same &quot;id&quot; you supplied to the SUBSCRIBE.
+
+The private queue will be deleted when the UNSUBSCRIBE has completed.
+
+I've just committed
+<A HREF="http://hg.rabbitmq.com/rabbitmq-stomp/rev/8972d204473a,">http://hg.rabbitmq.com/rabbitmq-stomp/rev/8972d204473a,</A> which contains
+some (ruby!) examples of topic broadcast, private-queue creation, and
+unsubscription.
+
+Regards,
+  Tony
+-- 
+ [][][] Tony Garnock-Jones     | Mob: +44 (0)7905 974 211
+   [][] LShift Ltd             | Tel: +44 (0)20 7729 7060
+ []  [] <A HREF="http://www.lshift.net/">http://www.lshift.net/</A> | Email: <A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">tonyg at lshift.net</A>
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001395.html">[rabbitmq-discuss] python stomp examples
+</A></li>
+	<LI>Next message: <A HREF="001398.html">[rabbitmq-discuss] Broadcasting and STOMP (was Re: python stomp	examples)
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1397">[ date ]</a>
+              <a href="thread.html#1397">[ thread ]</a>
+              <a href="subject.html#1397">[ subject ]</a>
+              <a href="author.html#1397">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

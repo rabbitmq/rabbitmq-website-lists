@@ -1,0 +1,119 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Millions of Queues
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20Millions%20of%20Queues&In-Reply-To=499B81DC.5010805%40lindenlab.com">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003046.html">
+   <LINK REL="Next"  HREF="003054.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Millions of Queues</H1>
+    <B>Martin Sustrik</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20Millions%20of%20Queues&In-Reply-To=499B81DC.5010805%40lindenlab.com"
+       TITLE="[rabbitmq-discuss] Millions of Queues">sustrik at imatix.com
+       </A><BR>
+    <I>Wed Feb 18 06:03:29 GMT 2009</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003046.html">[rabbitmq-discuss] Millions of Queues
+</A></li>
+        <LI>Next message: <A HREF="003054.html">[rabbitmq-discuss] Millions of Queues
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3047">[ date ]</a>
+              <a href="thread.html#3047">[ thread ]</a>
+              <a href="subject.html#3047">[ subject ]</a>
+              <a href="author.html#3047">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Ryan,
+
+&gt;&gt;&gt;<i> Also, regarding the 20/80 million queues/bindings, would it be 
+</I>&gt;&gt;&gt;<i> possible to partition these s.t. rather than having a single RabbitMQ 
+</I>&gt;&gt;&gt;<i> cluster with that number of queues/bindings you could have n 
+</I>&gt;&gt;&gt;<i> individual RabbitMQ servers, each with 1/nth of the queues/bindings? 
+</I>&gt;&gt;&gt;<i> That might involve your producers having to publish messages to more 
+</I>&gt;&gt;&gt;<i> than one broker, and consumers consuming from more than one broker, 
+</I>&gt;&gt;&gt;<i> but depending on the exact nature of your app that may not be too 
+</I>&gt;&gt;&gt;<i> arduous.
+</I>&gt;&gt;&gt;<i>     
+</I>&gt;&gt;<i> Yes, we could do this, but it kind of defeats the point of having a 
+</I>&gt;&gt;<i> cluster if we have to partition very much manually.  To be more clear 
+</I>&gt;&gt;<i> about our use case, we want to create a chat room system, where each 
+</I>&gt;&gt;<i> user is a member of K rooms.  The way we're thinking of modeling this is 
+</I>&gt;&gt;<i> that each room is represented as a (direct) routing key, and each user 
+</I>&gt;&gt;<i> has an individual queue which is then bound to K routing keys.  There's 
+</I>&gt;&gt;<i> not really any pattern between users and rooms, so if we partitioned the 
+</I>&gt;&gt;<i> queues (and thus users) among clusters, any message sent to an 
+</I>&gt;&gt;<i> individual room would have to get sent to every cluster on the (small) 
+</I>&gt;&gt;<i> chance that a listening user was in that cluster.  It'd work for a 
+</I>&gt;&gt;<i> while, but it can't possibly scale indefinitely.  Is there perhaps a 
+</I>&gt;&gt;<i> better way to structure this application?
+</I>&gt;&gt;<i>   
+</I>&gt;<i> 
+</I>&gt;<i> Answering my own question, another way to structure this would be to 
+</I>&gt;<i> partition on routing key, such that when sending to or binding to a 
+</I>&gt;<i> particular routing key, the client connects to the same cluster.  The 
+</I>&gt;<i> downside of this is that, at the extreme, each chat room participant 
+</I>&gt;<i> will have to maintain as many connections as rooms they are in (since at 
+</I>&gt;<i> the extreme each chat room would be hosted in its own cluster).  But 
+</I>&gt;<i> assuming K (the number of chat rooms a user can be in) is finite, then 
+</I>&gt;<i> it's not as bad as replicating every message across the entire cluster.
+</I>
+This is a classic example of application that requires pub/sub 
+federation. I don't believe it's implemented in RabbitMQ yet, but it 
+should be doable.
+
+The idea is that one broker can subscribes for messages to another 
+broker, passing any binds/unbinds to the parent broker.
+
+That way you are able to build a tree hierarchy of brokers in your 
+datacenter. Thus, root broker would speak to 10 subordinated brokers and 
+each of them to 10 more subordinated brokers in its turn. Level 3 of the 
+federation would have 100 brokers sharing the queues fairly (80M queues 
+/ 100 = 80,000 queues which seems viable). If user subscribes for 
+particular topic (bind (myqueue, chatroom)) the bind gets propagated to 
+from level 3 broker to level 2 broker and finally to the root broker. At 
+that point, incoming messages are routed from root broker to level 2 
+broker, then to level 3 broker (where the queue resides) and finally to 
+the user.
+
+As for memory requirements, say there are 80M users each being 
+subscribed in average to 4 chatrooms. Total number of chatrooms is K. K 
+is much less than 80M. On each level 3 broker, there are 80,000 queues, 
+so there are 320,000 bindings. On level 2 broker there are 10 
+subordinated brokers meaning only 10 queues. Thus, the number of 
+bindings will be limited by K - at most K*10 bindings. Same applies to 
+the root broker.
+
+No idea whether this helps.
+Martin
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003046.html">[rabbitmq-discuss] Millions of Queues
+</A></li>
+	<LI>Next message: <A HREF="003054.html">[rabbitmq-discuss] Millions of Queues
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3047">[ date ]</a>
+              <a href="thread.html#3047">[ thread ]</a>
+              <a href="subject.html#3047">[ subject ]</a>
+              <a href="author.html#3047">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

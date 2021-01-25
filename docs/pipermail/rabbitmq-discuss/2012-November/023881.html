@@ -1,0 +1,199 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] How robust is clustering,	and under what conditions?
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20How%20robust%20is%20clustering%2C%0A%09and%20under%20what%20conditions%3F&In-Reply-To=%3C50A4E107.4030701%40rabbitmq.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="023876.html">
+   <LINK REL="Next"  HREF="023891.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] How robust is clustering,	and under what conditions?</H1>
+    <B>Simon MacMullen</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20How%20robust%20is%20clustering%2C%0A%09and%20under%20what%20conditions%3F&In-Reply-To=%3C50A4E107.4030701%40rabbitmq.com%3E"
+       TITLE="[rabbitmq-discuss] How robust is clustering,	and under what conditions?">simon at rabbitmq.com
+       </A><BR>
+    <I>Thu Nov 15 12:33:11 GMT 2012</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="023876.html">[rabbitmq-discuss] How robust is clustering,	and under what conditions?
+</A></li>
+        <LI>Next message: <A HREF="023891.html">[rabbitmq-discuss] How robust is clustering,	and under what conditions?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#23881">[ date ]</a>
+              <a href="thread.html#23881">[ thread ]</a>
+              <a href="subject.html#23881">[ subject ]</a>
+              <a href="author.html#23881">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>On 15/11/12 12:04, Eugene Kirpichov wrote:
+&gt;<i> Is RabbitMQ HA and clustering sufficiently reliable to use it in
+</I>&gt;<i> scenarios where the network is good, but nodes can reboot at any time?
+</I>
+We believe so.
+
+&gt;<i> My understanding was that this is what &quot;HA&quot; is supposed to mean, but
+</I>&gt;<i> then I read this:
+</I>&gt;<i>
+</I>&gt;<i> <A HREF="http://stackoverflow.com/questions/8654053/rabbitmq-cluster-is-not-reconnecting-after-network-failure">http://stackoverflow.com/questions/8654053/rabbitmq-cluster-is-not-reconnecting-after-network-failure</A>
+</I>
+This one was a network partition - clusters don't handle partitions well.
+
+&gt;<i> <A HREF="http://rabbitmq.1065348.n5.nabble.com/Cluster-nodes-stop-start-order-can-lead-to-failures-td21965.html">http://rabbitmq.1065348.n5.nabble.com/Cluster-nodes-stop-start-order-can-lead-to-failures-td21965.html</A>
+</I>
+This one is the stop-start ordering problem (discussed below).
+
+&gt;<i> <A HREF="http://rabbitmq.1065348.n5.nabble.com/Cluster-busting-shut-off-all-nodes-at-the-same-time-td22971.html:">http://rabbitmq.1065348.n5.nabble.com/Cluster-busting-shut-off-all-nodes-at-the-same-time-td22971.html:</A>
+</I>
+As was this.
+
+&gt;<i> <A HREF="http://rabbitmq.1065348.n5.nabble.com/Repairing-a-a-crashed-cluster-td22466.html">http://rabbitmq.1065348.n5.nabble.com/Repairing-a-a-crashed-cluster-td22466.html</A>
+</I>
+This one was unclear (&quot;something happened&quot;), but I took the question to 
+be about removing a node from a cluster when that node cannot come up. 
+This is handled badly in 2.x, but 3.0 will have a rabbitmqctl subcommand 
+to do that.
+
+&gt;<i> <A HREF="http://grokbase.com/t/rabbitmq/rabbitmq-discuss/125nxzf5nh/highly-available-cluster">http://grokbase.com/t/rabbitmq/rabbitmq-discuss/125nxzf5nh/highly-available-cluster</A>
+</I>
+This is another stop-start ordering problem.
+
+&gt;<i> And now I'm not so sure. It seems that there are a lot of scenarios
+</I>&gt;<i> where merely rebooting the nodes in some order brings the cluster into a
+</I>&gt;<i> state from which there is no automatic way out.
+</I>
+So the most common problem you cited above looks like this (let's 
+suppose we have a two node cluster AB for simplicity):
+
+1) Stop B
+2) Stop A
+3) Start B
+4) Start A
+
+3) will fail. More precisely, it will wait for 30 seconds to see if 4) 
+happens, and if not then it will fail.
+
+Why? Well, a lot could have happened between 1) and 2). You could have 
+declared or deleted all sorts of queues, changed everybody's password, 
+all sorts of things. B has no way to know; it was down.
+
+It *can't* (responsibly) start up by itself. So it has to wait around 
+for A to become available.
+
+To be more general, the last node to be stopped has to be the first one 
+to be started. No other node knows what's happened in the mean time!
+
+&gt;<i> Questions:
+</I>&gt;<i> 1) Is there a set of assumptions or procedures under which I can be
+</I>&gt;<i> *certain* that my RabbitMQ cluster will actually tolerate unexpected
+</I>&gt;<i> node failures? Maybe something like &quot;no more than 1 node down at the
+</I>&gt;<i> same time&quot;, or &quot;at least X seconds between reboots&quot;, or &quot;after a node
+</I>&gt;<i> reboots, restart all rabbit instances&quot; or &quot;have at most 2 nodes&quot; etc.?
+</I>&gt;<i> I'm asking because I need to at least document this to my customers.
+</I>
+* Avoid network partitions. You can recover (see 
+<A HREF="http://next.rabbitmq.com/partitions.html">http://next.rabbitmq.com/partitions.html</A>) but it's a good way to 
+introduce problems.
+
+* If you stop all nodes, the first (disc) node to start should be the 
+last one to stop.
+
+* If you have RAM nodes, start them after you've started some disc nodes.
+
+&gt;<i> 2) To what degree are the issues described in those threads fixed in the
+</I>&gt;<i> next release of RabbitMQ - 3.0.0, and how soon is it expected to be
+</I>&gt;<i> production-ready?
+</I>
+3.0.0 will not remove this stop-start ordering constraint. I don't see 
+how anything can.
+
+However, it will have some enhancements to make clustering problems 
+easier to detect and fix (such as a removing a dead node without its 
+cooperation, making sure you don't get into a state where nodes disagree 
+on whether they are clustered with each other) and it will also detect 
+and warn more clearly about network partitions.
+
+It should be available any day now.
+
+Cheers, Simon
+
+-- 
+Simon MacMullen
+RabbitMQ, VMware
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="023876.html">[rabbitmq-discuss] How robust is clustering,	and under what conditions?
+</A></li>
+	<LI>Next message: <A HREF="023891.html">[rabbitmq-discuss] How robust is clustering,	and under what conditions?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#23881">[ date ]</a>
+              <a href="thread.html#23881">[ thread ]</a>
+              <a href="subject.html#23881">[ subject ]</a>
+              <a href="author.html#23881">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

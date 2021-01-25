@@ -1,0 +1,169 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] RabbitMQ 1.6.0 Memory Usage
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20RabbitMQ%201.6.0%20Memory%20Usage&In-Reply-To=">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="004952.html">
+   <LINK REL="Next"  HREF="004947.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] RabbitMQ 1.6.0 Memory Usage</H1>
+    <B>Gavin M. Roy</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20RabbitMQ%201.6.0%20Memory%20Usage&In-Reply-To="
+       TITLE="[rabbitmq-discuss] RabbitMQ 1.6.0 Memory Usage">gmr at myyearbook.com
+       </A><BR>
+    <I>Wed Sep 23 22:52:45 BST 2009</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="004952.html">[rabbitmq-discuss] Problem opening an SSL connection
+</A></li>
+        <LI>Next message: <A HREF="004947.html">[rabbitmq-discuss] RabbitMQ 1.6.0 Memory Usage
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#4946">[ date ]</a>
+              <a href="thread.html#4946">[ thread ]</a>
+              <a href="subject.html#4946">[ subject ]</a>
+              <a href="author.html#4946">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>I wanted to get some feedback on what I am noticing with Rabbit and memory
+use.  In this test case, I loaded up 4 million messages that were roughly 12
+bytes or so of data, not counting protocol overhead.  At various stages of
+processing I had everything from 0 consumers to 80 consumers running against
+RabbitMQ using basic_consume.  The machine that Rabbit is running on is
+dedicated to Rabbit and Alice (<A HREF="http://github.com/auser/alice">http://github.com/auser/alice</A>)
+Some odd things:
+
+
+   - In the 6am hour where you see swap spike (red in graph), consumers
+   stopped consuming.  I could not find out at the time if it was client or
+   Rabbit that stopped dispatching messages.  Restarting consumers resumed the
+   previous rates of message consumption.
+   - At the time where you see the last major purple graph spike to 10G
+   free, we had consumed all of the messages in the broker.  The broker is
+   currently sitting idle with no messages, but still has 2+GB of ram
+   allocated.
+
+I did notice there seems to be some sort of cleanup worker that runs roughly
+every 30 minutes, but it's not reclaimed any of the 2+GB of allocation since
+the broker has gone idle. Is this expected behavior? If not, is there any
+data I can collect on the issue?  I threw together the following just in
+case:
+
+root     29339 20.4 16.7 2905892 2747280 ?     Sl   Sep17 1795:48
+/usr/local/lib/erlang/erts-5.7.1/bin/beam.smp -W w -K true -A30 -- -root
+/usr/local/lib/erlang -progname erl -- -home /root -pa ./../ebin -noshell
+-noinput
+root     29383  0.0  0.0   3772   412 ?        Ss   Sep17   0:00  \_
+/usr/local/lib/erlang/lib/os_mon-2.2.1/priv/bin/cpu_sup
+root     29384  0.0  0.0  10492   452 ?        Ss   Sep17   0:00  \_
+inet_gethost 4
+root     29385  0.0  0.0  12584   544 ?        S    Sep17   0:00      \_
+inet_gethost 4
+root     29707  0.2  1.6 411776 274180 ?       Sl   Sep17  23:58
+/usr/local/lib/erlang/erts-5.7.1/bin/beam.smp -- -root /usr/local/lib/erlang
+-progname erl -- -home /root -pa /opt/alice/ebin -pa
+/opt/alice/deps/mochiweb/e
+root     29721  0.0  0.0  63868  1092 ?        Ss   Sep17   0:00  \_ sh -s
+disksup
+root     29722  0.0  0.0   3776   512 ?        Ss   Sep17   0:00  \_
+/usr/local/lib/erlang/lib/os_mon-2.2.1/priv/bin/memsup
+root     29723  0.0  0.0   3772   408 ?        Ss   Sep17   0:00  \_
+/usr/local/lib/erlang/lib/os_mon-2.2.1/priv/bin/cpu_sup
+root     29724  0.0  0.0  10492   452 ?        Ss   Sep17   0:00  \_
+inet_gethost 4
+root     29726  0.0  0.0  16784   708 ?        S    Sep17   0:00      \_
+inet_gethost 4
+
+[<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">gmr at mq07</A> sbin]$ cat /proc/29339/cmdline
+/usr/local/lib/erlang/erts-5.7.1/bin/beam.smp-Ww-Ktrue-A30---root/usr/local/lib/erlang-prognameerl---home/root-pa./../ebin-noshell-noinput-srabbit-snamerabbit-bootstart_sasl-kernelinet_default_listen_options[{nodelay,true},{sndbuf,16384},{recbuf,4096}]-kernelinet_default_connect_options[{nodelay,true}]-rabbittcp_listeners[{&quot;0.0.0.0&quot;,
+5672}]-saslerrlog_typeerror-kernelerror_logger{file,&quot;/var/log/rabbitmq/rabbit.log&quot;}-saslsasl_error_logger{file,&quot;/var/log/rabbitmq/rabbit-sasl.log&quot;}-os_monstart_cpu_suptrue-os_monstart_disksupfalse-os_monstart_memsupfalse-os_monstart_os_supfalse-os_monmemsup_system_onlytrue-os_monsystem_memory_high_watermark0.95-mnesiadir&quot;/var/lib/rabbitmq/mnesia/rabbit&quot;-pa/opt/rabbitmq/ebin-rabbitstomp_listeners[{&quot;0.0.0.0&quot;,61613}]extra_startup_steps[{&quot;STOMP-listeners&quot;,rabbit_stomp,kickstart,[]}]-noshell-noinpu
+
+[<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">root at mq07</A> 29339]# cat stat
+29339 (beam.smp) S 1 29338 29338 0 -1 4202496 22132538291 532 1213 0 4362715
+6412157 4 4 25 0 42 0 1106285920 2975633408 686920 18446744073709551615
+4194304 5988780 140733909286688 18446744073709551615 206557725890 0 65536
+4096 66182 18446744073709551615 0 0 17 4 0 0 0
+
+[<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">root at mq07</A> 29339]# cat statm
+726473 686920 393 439 0 721753 0
+
+[<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">root at mq07</A> sbin]# ./rabbitmqctl status
+Status of node <A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at mq07</A> ...
+[{running_applications,[{rabbit,&quot;RabbitMQ&quot;,&quot;1.6.0&quot;},
+                        {mnesia,&quot;MNESIA  CXC 138 12&quot;,&quot;4.4.9&quot;},
+                        {os_mon,&quot;CPO  CXC 138 46&quot;,&quot;2.2.1&quot;},
+                        {sasl,&quot;SASL  CXC 138 11&quot;,&quot;2.1.6&quot;},
+                        {stdlib,&quot;ERTS  CXC 138 10&quot;,&quot;1.16.1&quot;},
+                        {kernel,&quot;ERTS  CXC 138 10&quot;,&quot;2.13.1&quot;}]},
+ {nodes,[<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at mq07</A>]},
+ {running_nodes,[<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at mq07</A>]}]
+...done.
+[<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">root at mq07</A> sbin]# ./rabbitmqctl list_queues
+Listing queues ...
+Notification 0
+...done.
+[<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">root at mq07</A> sbin]# ./rabbitmqctl list_connections
+Listing connections ...
+guest 10.100.10.85 8820
+guest 10.100.10.85 8805
+guest 10.100.10.85 8806
+guest 10.100.10.85 8821
+guest 10.100.10.85 8807
+guest 10.100.10.85 8808
+guest 10.100.10.85 8822
+guest 10.100.10.85 8809
+guest 10.100.10.85 8810
+guest 10.100.10.85 8824
+guest 10.100.10.85 8811
+guest 10.100.10.85 8812
+guest 10.100.10.85 8813
+guest 10.100.10.85 8814
+guest 10.100.10.85 8815
+guest 10.100.10.85 8816
+guest 10.100.10.85 8823
+guest 10.100.10.85 8817
+guest 10.100.10.85 8818
+guest 10.100.10.85 8819
+...done.
+
+Regards,
+
+Gavin
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: <A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20090923/0b3cf448/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20090923/0b3cf448/attachment.htm</A> 
+-------------- next part --------------
+A non-text attachment was scrubbed...
+Name: graph.png
+Type: image/png
+Size: 64848 bytes
+Desc: not available
+Url : <A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20090923/0b3cf448/attachment.png">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20090923/0b3cf448/attachment.png</A> 
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="004952.html">[rabbitmq-discuss] Problem opening an SSL connection
+</A></li>
+	<LI>Next message: <A HREF="004947.html">[rabbitmq-discuss] RabbitMQ 1.6.0 Memory Usage
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#4946">[ date ]</a>
+              <a href="thread.html#4946">[ thread ]</a>
+              <a href="subject.html#4946">[ subject ]</a>
+              <a href="author.html#4946">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

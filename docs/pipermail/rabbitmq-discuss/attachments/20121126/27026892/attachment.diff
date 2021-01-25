@@ -1,0 +1,61 @@
+diff --git a/src/supervisor2.erl b/src/supervisor2.erl
+index 3d3623d75266b25a7ee5576bde223abb47827dfa..5092d29b5f2a7ddf9422664d1d901defe5cf6f3d 100644
+--- a/src/supervisor2.erl
++++ b/src/supervisor2.erl
+@@ -502,14 +502,14 @@ handle_cast(null, State) ->
+ 
+     {noreply, State}.
+ 
+-handle_info({delayed_restart, {RestartType, Reason, Child}}, State)
++handle_info({delayed_restart, {RestartType, Child}}, State)
+   when ?is_simple(State) ->
+-    {ok, NState} = do_restart(RestartType, Reason, Child, State),
++    {ok, NState} = do_restart(RestartType, {supervisor2, delayed_restart}, Child, State),
+     {noreply, NState};
+-handle_info({delayed_restart, {RestartType, Reason, Child}}, State) ->
++handle_info({delayed_restart, {RestartType, Child}}, State) ->
+     case get_child(Child#child.name, State) of
+         {value, Child1} ->
+-            {ok, NState} = do_restart(RestartType, Reason, Child1, State),
++            {ok, NState} = do_restart(RestartType, {supervisor2, delayed_restart}, Child1, State),
+             {noreply, NState};
+         _ ->
+             {noreply, State}
+@@ -699,13 +699,14 @@ do_restart(temporary, Reason, Child, State) ->
+     {ok, NState}.
+ 
+ do_restart_delay({RestartType, Delay}, Reason, Child, State) ->
+-    case restart1(Child, State) of
++    RestartAfterDelay = Reason =:= {supervisor2, delayed_restart},
++    case restart1(Child, RestartAfterDelay, State) of
+         {ok, NState} ->
+             {ok, NState};
+         {terminate, NState} ->
+             _TRef = erlang:send_after(trunc(Delay*1000), self(),
+                                       {delayed_restart,
+-                                       {{RestartType, Delay}, Reason, Child}}),
++                                       {{RestartType, Delay}, Child}}),
+             {ok, state_del_child(Child, NState)}
+     end.
+ 
+@@ -727,7 +728,19 @@ restart(Child, State) ->
+     end.
+ 
+ restart1(Child, State) ->
+-    case add_restart(State) of
++    %% if the child fails to start after the delay we try to restart it
++    %% using the normal algorithm (with restarts counting)
++    restart1(Child, false, State).
++
++restart1(Child, RestartAfterDelay, State) ->
++    %% A start of a child after delay should not be treated as
++    %% restart because it inserts delays between launches of children
++    %% when their count exceeds MaxR.
++    RestartState = case RestartAfterDelay of
++                       true  -> {ok, State};
++                       false -> add_restart(State)
++                   end,
++    case RestartState of
+ 	{ok, NState} ->
+ 	    restart(NState#state.strategy, Child, NState, fun restart1/2);
+ 	{terminate, _NState} ->

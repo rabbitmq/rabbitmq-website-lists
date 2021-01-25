@@ -1,0 +1,154 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] RabbitMQ Clustering with Federation
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20RabbitMQ%20Clustering%20with%20Federation&In-Reply-To=%3C7db0a8da-c006-49c1-82ff-143c595395bf%40googlegroups.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="029022.html">
+   <LINK REL="Next"  HREF="029026.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] RabbitMQ Clustering with Federation</H1>
+    <B>Robert Parker</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20RabbitMQ%20Clustering%20with%20Federation&In-Reply-To=%3C7db0a8da-c006-49c1-82ff-143c595395bf%40googlegroups.com%3E"
+       TITLE="[rabbitmq-discuss] RabbitMQ Clustering with Federation">reparker23 at gmail.com
+       </A><BR>
+    <I>Wed Jul 31 17:35:56 BST 2013</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="029022.html">[rabbitmq-discuss] Duplicated message and unknown delivery tag	after ack
+</A></li>
+        <LI>Next message: <A HREF="029026.html">[rabbitmq-discuss] Message sending/receiving overhead.
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#29023">[ date ]</a>
+              <a href="thread.html#29023">[ thread ]</a>
+              <a href="subject.html#29023">[ subject ]</a>
+              <a href="author.html#29023">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>I'm having some trouble getting the right architecture configured to 
+support rabbitmq federation in a clustered high availability environment. 
+ Our basic setup is four clusters of two nodes each which are separated by 
+a WAN.  
+
+&quot;home&quot; is the &quot;home&quot; cluster and &quot;remote1&quot;, &quot;remote2&quot; and &quot;remote3&quot; are 
+remote clusters.  There are a lot of queues being created and published to 
+via the API identically on all clusters but I only want to federate ONE of 
+the queues, which is called &quot;EventListener&quot; back to the &quot;home&quot; cluster from 
+all the &quot;remote&quot; clusters.  I want messages published to this queue on each 
+remote cluster to be federated to the home cluster to be consumed by a 
+separate event listener service that only lives at the &quot;home&quot; site.
+
+Each cluster is configured with:
+
+# run on node 1
+rabbitmqctl stop_app
+rabbitmqctl reset
+rabbitmqctl join_cluster <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at node2</A>
+rabbitmqctl start_app
+
+
+We have configured three hardware load balancer VIPs that load balance 
+connections on port 5672 between both nodes in each cluster, and have 
+configured federation upstreams to use these and also configured our 
+application to use these VIPs for queue/exchange creation and for 
+publishing messages.  Here's our federation config script thats run on 
+node1 of the home cluster only:
+
+          # run on home cluster node1
+
+rabbitmq-plugins enable rabbitmq_federation
+rabbitmq-plugins enable rabbitmq_federation_management
+rabbitmq-plugins enable rabbitmq_management
+service rabbitmq-server restart
+rabbitmqctl set_parameter federation-upstream remote1-upstream 
+'{&quot;uri&quot;:&quot;<A HREF="amqp://remote1-vip&quot;,&quot;expires&quot;:3600000}'">amqp://remote1-vip&quot;,&quot;expires&quot;:3600000}'</A>
+rabbitmqctl set_parameter federation-upstream remote2-upstream 
+'{&quot;uri&quot;:&quot;<A HREF="amqp://remote2-vip&quot;,&quot;expires&quot;:3600000}'">amqp://remote2-vip&quot;,&quot;expires&quot;:3600000}'</A>
+rabbitmqctl set_parameter federation-upstream remote3-upstream 
+'{&quot;uri&quot;:&quot;<A HREF="amqp://remote-3-vip&quot;,&quot;expires&quot;:3600000}'">amqp://remote-3-vip&quot;,&quot;expires&quot;:3600000}'</A>
+rabbitmqctl set_policy federate-EventListener &quot;^EventListener$&quot; 
+'{&quot;federation-upstream-set&quot;:&quot;all&quot;}' 0
+rabbitmqctl list_exchanges name policy | grep federate
+rabbitmqctl eval 'rabbit_federation_status:status().'
+
+
+However I am noticing that the &quot;rabbitmqctl eval 
+'rabbit_federation_status:status().&quot; command only shows federation config 
+on node2 of the home cluster despite having been configured on node1:
+
+[<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">root at node1</A> ~]# rabbitmqctl eval 'rabbit_federation_status:status().'
+[]
+...done.
+
+[<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">root at node2</A> ~]# rabbitmqctl eval 'rabbit_federation_status:status().'
+[[{exchange,&lt;&lt;&quot;EventListener&quot;&gt;&gt;},
+  {vhost,&lt;&lt;&quot;/&quot;&gt;&gt;},
+  {connection,&lt;&lt;&quot;remote3-upstream&quot;&gt;&gt;},
+  {upstream_exchange,&lt;&lt;&quot;EventListener&quot;&gt;&gt;},
+  {status,normal},
+  {timestamp,{{2013,7,31},{11,16,19}}}],
+ [{exchange,&lt;&lt;&quot;EventListener&quot;&gt;&gt;},
+  {vhost,&lt;&lt;&quot;/&quot;&gt;&gt;},
+  {connection,&lt;&lt;&quot;remote2-upstream&quot;&gt;&gt;},
+  {upstream_exchange,&lt;&lt;&quot;EventListener&quot;&gt;&gt;},
+  {status,normal},
+  {timestamp,{{2013,7,31},{11,16,19}}}],
+ [{exchange,&lt;&lt;&quot;EventListener&quot;&gt;&gt;},
+  {vhost,&lt;&lt;&quot;/&quot;&gt;&gt;},
+  {connection,&lt;&lt;&quot;remote1-upstream&quot;&gt;&gt;},
+  {upstream_exchange,&lt;&lt;&quot;EventListener&quot;&gt;&gt;},
+  {status,normal},
+  {timestamp,{{2013,7,31},{11,16,19}}}]]
+...done.
+
+
+And I'm noticing that messages published to the queues via the load 
+balancer VIPs to the remote clusters are not showing up in the 
+&quot;EventListener&quot; queue of the home cluster.
+
+Is this not the right way to set this up?  Is it possible to configure this 
+without using an external load balancer and still achieve high 
+availability?  If I federate to a single node of a cluster directly, what 
+happens if that node goes down?  Do I have to configure redundant 
+federation between every node of home cluster to every node of each remote 
+cluster? If I don't use a load balancer VIP to publish to from my 
+application, if the single node of the cluster I've configured goes down, 
+it wont help me that the other node is still available.
+
+Whats the best practice, if anything, on this kind of config?
+
+
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20130731/df32e120/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20130731/df32e120/attachment.htm</A>&gt;
+</PRE>
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="029022.html">[rabbitmq-discuss] Duplicated message and unknown delivery tag	after ack
+</A></li>
+	<LI>Next message: <A HREF="029026.html">[rabbitmq-discuss] Message sending/receiving overhead.
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#29023">[ date ]</a>
+              <a href="thread.html#29023">[ thread ]</a>
+              <a href="subject.html#29023">[ subject ]</a>
+              <a href="author.html#29023">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

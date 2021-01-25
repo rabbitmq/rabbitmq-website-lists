@@ -1,0 +1,191 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] latency in starting/stopping a rabbitmq node
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20latency%20in%20starting/stopping%20a%20rabbitmq%20node&In-Reply-To=%3C20110909101252.GA10002%40southbank.eng.vmware.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="014988.html">
+   <LINK REL="Next"  HREF="015008.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] latency in starting/stopping a rabbitmq node</H1>
+    <B>Alexandru Scvor&#355;ov</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20latency%20in%20starting/stopping%20a%20rabbitmq%20node&In-Reply-To=%3C20110909101252.GA10002%40southbank.eng.vmware.com%3E"
+       TITLE="[rabbitmq-discuss] latency in starting/stopping a rabbitmq node">alexandru at rabbitmq.com
+       </A><BR>
+    <I>Fri Sep  9 11:12:52 BST 2011</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="014988.html">[rabbitmq-discuss] latency in starting/stopping a rabbitmq node
+</A></li>
+        <LI>Next message: <A HREF="015008.html">[rabbitmq-discuss] latency in starting/stopping a rabbitmq node
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#14993">[ date ]</a>
+              <a href="thread.html#14993">[ thread ]</a>
+              <a href="subject.html#14993">[ subject ]</a>
+              <a href="author.html#14993">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi Praveen,
+
+&gt;<i> However I realized when i wanted to shutdown the broker before starting a
+</I>&gt;<i> new test, the stop command (rabbitmqctl stop) took a long time
+</I>&gt;<i> to complete.
+</I>
+We are aware of this problem.  The fix is currently going through QA and
+will probably be in the next release, which should be around fairly
+soon.
+
+&gt;<i> Query 1)
+</I>&gt;<i> I am curious as to what causes the latency to stop the broker when issued a
+</I>&gt;<i> rabbitmqctl stop command. It seems to be something to do with the number of
+</I>&gt;<i> queues created as the stop time increase proportionally as the number of
+</I>&gt;<i> queues increases.
+</I>
+Internally, when we terminate a queue, we do a few file operations.  This
+is usually not a problem, but when you close a connection with 100 000s
+of queues, the same order of file operations get scheduled.  Erlang's
+IO system then does some expensive operations of this long queue and
+it ends up processing the operations in quadratic time.  The fix going
+through QA brings this down to linear time; for instance, I can delete
+40k queues in 20s (compared to 211s on the latest release).
+
+&gt;<i> Query 2)
+</I>&gt;<i> In the case of durable queues, I measured the time taken to restart the
+</I>&gt;<i> broker after stopping it (a clean and unclean stop).
+</I>&gt;<i> I found that even after a clean/unclean stop the time to restart the broker
+</I>&gt;<i> was just about 20 seconds on an average.
+</I>&gt;<i> However, in the case where i created 50000 durable queues and did an unclean
+</I>&gt;<i> stop(just aborted the broker) and tried to restart the broker it didn't
+</I>&gt;<i> start for over to 6 minutes (when I gave up)...
+</I>&gt;<i> It was hung in the step of &quot;starting exchange,queue and binding recovery..&quot;
+</I>&gt;<i> It will be great if someone could explain why this could be caused.
+</I>
+I can't reproduce this.  Declaring 100 000 durable queues, killing the broker
+and re-starting it seems to work fine.  It takes about 1 min on my
+machine.
+
+Is it really hung?  Is it using the CPU or disk at all at this time?  Is
+there anything in the logs (both the rabbit and SASL logs)?
+
+&gt;<i> It will be great if someone could answer the above queries or provide me
+</I>&gt;<i> with some pointers about the same.
+</I>
+There's not much you can do at the moment except avoiding terminating a
+large number of queues at the same time.
+
+Hope this clears things up.
+
+Cheers,
+Alex
+
+On Thu, Sep 08, 2011 at 07:38:14PM -0700, Praveen M wrote:
+&gt;<i> Hi,
+</I>&gt;<i> 
+</I>&gt;<i> I'm a rabbitmq newbie and am trying to run some experiments to figure out if
+</I>&gt;<i> rabbitmq would serve my use case.
+</I>&gt;<i> 
+</I>&gt;<i> I would like to create queues in the order of 100,000s. (one for each of my
+</I>&gt;<i> customers).
+</I>&gt;<i> 
+</I>&gt;<i> I ran various tests,
+</I>&gt;<i> 
+</I>&gt;<i> I'm using the latest 2.6.0 server and 2.6.0 client, and the following tests
+</I>&gt;<i> in durable queues mode and in non-durable queues mode.
+</I>&gt;<i> 
+</I>&gt;<i> Tests,
+</I>&gt;<i> 1) to create 1000 queues , produce, consume
+</I>&gt;<i> 2) to create 10000 queues , produce, consume
+</I>&gt;<i> 3) to create 50000 queues, produce and consume.
+</I>&gt;<i> 
+</I>&gt;<i> It works like a charm and the memory usage even with 50,000 queues seem very
+</I>&gt;<i> reasonable. (the order of 1-1.7G)
+</I>&gt;<i> 
+</I>&gt;<i> However I realized when i wanted to shutdown the broker before starting a
+</I>&gt;<i> new test, the stop command (rabbitmqctl stop) took a long time
+</I>&gt;<i> to complete.
+</I>&gt;<i> 
+</I>&gt;<i> I made a small chart of how long the stop command on the broker takes to
+</I>&gt;<i> execute after the test creates 'N' queues listed below.
+</I>&gt;<i> Also, in the case of durable queues, i found some weird numbers for the time
+</I>&gt;<i> taken to restart the queues after a clean/unclean(aborting broker) stop
+</I>&gt;<i> 
+</I>&gt;<i> *NON_DURABLE_QUEUES TEST*
+</I>&gt;<i> *No of Queues Stop Time*
+</I>&gt;<i> 1000 10.7 seconds
+</I>&gt;<i> 10000 2 minutes
+</I>&gt;<i> 50000 11 minutes
+</I>&gt;<i> 
+</I>&gt;<i> *
+</I>&gt;<i> *
+</I>&gt;<i> *DURABLE_QUEUES TEST
+</I>&gt;<i> *No of Queues Start Time Stop Time*
+</I>&gt;<i> 1000 2 seconds 10 seconds
+</I>&gt;<i> 10000 24 seconds 2 minutes
+</I>&gt;<i> 10000 after crash it recovers in 20 seconds (on improper shutdown).
+</I>&gt;<i> 50000 even at 6 minutes the queues doesn't start on a improper shutdown
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> Query 1)
+</I>&gt;<i> I am curious as to what causes the latency to stop the broker when issued a
+</I>&gt;<i> rabbitmqctl stop command. It seems to be something to do with the number of
+</I>&gt;<i> queues created as the stop time increase proportionally as the number of
+</I>&gt;<i> queues increases.
+</I>&gt;<i> 
+</I>&gt;<i> Query 2)
+</I>&gt;<i> In the case of durable queues, I measured the time taken to restart the
+</I>&gt;<i> broker after stopping it (a clean and unclean stop).
+</I>&gt;<i> I found that even after a clean/unclean stop the time to restart the broker
+</I>&gt;<i> was just about 20 seconds on an average.
+</I>&gt;<i> However, in the case where i created 50000 durable queues and did an unclean
+</I>&gt;<i> stop(just aborted the broker) and tried to restart the broker it didn't
+</I>&gt;<i> start for over to 6 minutes (when I gave up)...
+</I>&gt;<i> It was hung in the step of &quot;starting exchange,queue and binding recovery..&quot;
+</I>&gt;<i> It will be great if someone could explain why this could be caused.
+</I>&gt;<i> 
+</I>&gt;<i> It will be great if someone could answer the above queries or provide me
+</I>&gt;<i> with some pointers about the same.
+</I>&gt;<i> 
+</I>&gt;<i> Thank you for your help,
+</I>&gt;<i> -- 
+</I>&gt;<i> -Praveen
+</I>
+&gt;<i> _______________________________________________
+</I>&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>
+</PRE>
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="014988.html">[rabbitmq-discuss] latency in starting/stopping a rabbitmq node
+</A></li>
+	<LI>Next message: <A HREF="015008.html">[rabbitmq-discuss] latency in starting/stopping a rabbitmq node
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#14993">[ date ]</a>
+              <a href="thread.html#14993">[ thread ]</a>
+              <a href="subject.html#14993">[ subject ]</a>
+              <a href="author.html#14993">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

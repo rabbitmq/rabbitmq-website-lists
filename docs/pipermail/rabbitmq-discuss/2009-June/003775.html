@@ -1,0 +1,132 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] .NET client SimpleRpcServer question
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20.NET%20client%20SimpleRpcServer%20question&In-Reply-To=4A2D70A5.6040907%40lshift.net">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003751.html">
+   <LINK REL="Next"  HREF="003781.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] .NET client SimpleRpcServer question</H1>
+    <B>Ryan Davis</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20.NET%20client%20SimpleRpcServer%20question&In-Reply-To=4A2D70A5.6040907%40lshift.net"
+       TITLE="[rabbitmq-discuss] .NET client SimpleRpcServer question">ryan at acceleration.net
+       </A><BR>
+    <I>Tue Jun  9 17:02:22 BST 2009</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003751.html">[rabbitmq-discuss] .NET client SimpleRpcServer question
+</A></li>
+        <LI>Next message: <A HREF="003781.html">[rabbitmq-discuss] .NET client SimpleRpcServer question
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3775">[ date ]</a>
+              <a href="thread.html#3775">[ thread ]</a>
+              <a href="subject.html#3775">[ subject ]</a>
+              <a href="author.html#3775">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Matthias Radestock wrote:
+&gt;<i> Looking at the code, I am pretty sure that Close() is meant to be
+</I>&gt;<i> called from inside the HandleCall/Cast functions. 
+</I>Really?  The code comment on Close() says &quot;Shut down the server, causing
+MainLoop() to return to its caller.&quot;, which is exactly what I want.  I
+dug deeper into SimpleRpcServer, and what I really need is to break from
+MainLoop's foreach after the body of the loop has executed.  The
+m_subscription is used after HandleCall / HandleCast / ProcessRequest,
+and I don't see how I could close it in HandleCall without creating
+problems later on down the line. 
+
+If I call Close() at any point in HandleCall/Cast, then the byte[]
+intended for the RPC caller will be lost, and I expect it would throw a
+nullref when it tries to BasicPublish those bytes.
+If I call Close() at the end of ProcessRequest, then the message will be
+processed and the ack will be lost.  This isn't so bad as I have other
+logic checking for duplicates, but I expect it would throw a nullref
+when it tries to ack in MainLoop.
+If I call Close() at the beginning of ProcessRequest, then the message
+will not be processed and the ack will be lost.  This isn't so bad as we
+should have a redelivery, but I expect it would throw a nullref when it
+tries to ack in MainLoop.
+
+&gt;<i> It would be useful to get a stack trace with line numbers to work out
+</I>&gt;<i> exactly where the NPE occurs.
+</I>I'm afraid I might be a minor version behind at this point.
+System.NullReferenceException: Object reference not set to an instance of an object.
+   at RabbitMQ.Client.Impl.ModelBase.BasicCancel(String consumerTag) in d:\Projects\rabbitmq-dotnet-client-1.5.3\src\client\impl\ModelBase.cs:line 668
+   at RabbitMQ.Client.MessagePatterns.Subscription.Close() in d:\Projects\rabbitmq-dotnet-client-1.5.3\src\client\messagepatterns\Subscription.cs:line 223
+   at RabbitMQ.Client.MessagePatterns.Subscription.System.IDisposable.Dispose() in d:\Projects\rabbitmq-dotnet-client-1.5.3\src\client\messagepatterns\Subscription.cs:line 454
+   at RabbitMQ.Client.MessagePatterns.SimpleRpcServer.MainLoop() in d:\Projects\rabbitmq-dotnet-client-1.5.3\src\client\messagepatterns\SimpleRpcServer.cs:line 205
+
+Line 668 is:
+ModelShutdown -= new
+ModelShutdownEventHandler(k.m_consumer.HandleModelShutdown);
+
+I think I'm calling subscription.Close() multiple times, since my code
+is essentially:
+
+using(var subscription = new Subscription(model, &quot;queue&quot;, false))
+using (RpcServer = new MyRpcServer(subscription, this)) {
+ RpcServer.MainLoop();
+}
+
+So I think I'm calling subscription.Close() 3 times in 2 threads:
+# controller thread: calls RpcServer.Close()
+# worker thread: when the using() invokes subscription.Dispose()
+# worker thread: when the using() invokes RpcServer.Dispose()
+
+Subscription.Close() is checking if m_consumer is null before calling
+BasicCancel, so it looks like a race condition between the controlling
+thread calling RpcServer.Close() and the worker thread cleaning up with
+Dispose(), but I don't follow how the foreach in MainLoop would
+terminate and start Disposing of things before the controller thread had
+gotten through subscription.Close() to set m_consumer to null.
+
+I've got a unit test that reproduces this behavior, so I'll  be playing
+with this today, stepping through to better understand what is happening.
+
+As a side note, the docs on
+<A HREF="http://www.rabbitmq.com/build-dotnet-client.html">http://www.rabbitmq.com/build-dotnet-client.html</A> could use mention of
+the local.build file.
+
+Thanks,
+
+Ryan Davis
+Acceleration.net
+Director of Programming Services
+2831 NW 41st street, suite B
+Gainesville, FL 32606
+
+Office: 352-335-6500 x 124
+Fax: 352-335-6506
+
+
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003751.html">[rabbitmq-discuss] .NET client SimpleRpcServer question
+</A></li>
+	<LI>Next message: <A HREF="003781.html">[rabbitmq-discuss] .NET client SimpleRpcServer question
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3775">[ date ]</a>
+              <a href="thread.html#3775">[ thread ]</a>
+              <a href="subject.html#3775">[ subject ]</a>
+              <a href="author.html#3775">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

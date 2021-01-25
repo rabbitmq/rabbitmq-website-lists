@@ -1,0 +1,182 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Long timeout if server host becomes	unreachable
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Long%20timeout%20if%20server%20host%20becomes%0A%09unreachable&In-Reply-To=%3CCAOQRttp7E6Oot0Fzo%2BCBEr6KgvMj%2Bve0zSA7OJHjcFguYXWqgA%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="030823.html">
+   <LINK REL="Next"  HREF="030826.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Long timeout if server host becomes	unreachable</H1>
+    <B>Oleg Lyalikov</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Long%20timeout%20if%20server%20host%20becomes%0A%09unreachable&In-Reply-To=%3CCAOQRttp7E6Oot0Fzo%2BCBEr6KgvMj%2Bve0zSA7OJHjcFguYXWqgA%40mail.gmail.com%3E"
+       TITLE="[rabbitmq-discuss] Long timeout if server host becomes	unreachable">oleg.lyalikov at gmail.com
+       </A><BR>
+    <I>Tue Oct  8 11:11:48 BST 2013</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="030823.html">[rabbitmq-discuss] Long timeout if server host becomes	unreachable
+</A></li>
+        <LI>Next message: <A HREF="030826.html">[rabbitmq-discuss] Long timeout if server host becomes	unreachable
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#30824">[ date ]</a>
+              <a href="thread.html#30824">[ thread ]</a>
+              <a href="subject.html#30824">[ subject ]</a>
+              <a href="author.html#30824">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Yes, I used heartbeats with low value, the stack trace for that thread was
+in my first post, it is blocked on the same write action:
+
+&quot;pool-2-thread-1&quot; prio=10 tid=0xac167000 nid=0x2c60 waiting for monitor
+entry [0xac77d000]
+   java.lang.Thread.State: BLOCKED (on object monitor)
+        at java.io.BufferedOutputStream.write(BufferedOutputStream.java:94)
+        - waiting to lock &lt;0xb4532608&gt; (a java.io.BufferedOutputStream)
+        at java.io.DataOutputStream.writeByte(DataOutputStream.java:153)
+        at com.rabbitmq.client.impl.Frame.writeTo(Frame.java:189)
+        at
+com.rabbitmq.client.impl.SocketFrameHandler.writeFrame(SocketFrameHandler.java:137)
+
+        - locked &lt;0xb45325f0&gt; (a java.io.DataOutputStream)
+        at
+com.rabbitmq.client.impl.HeartbeatSender$HeartbeatRunnable.run(HeartbeatSender.java:133)
+
+        at
+java.util.concurrent.Executors$RunnableAdapter.call(Executors.java:471)
+
+I understand that connection can be easily used from different threads (and
+we actually use it that way) but there should be possibility to close
+connection in such blocked socket.write operation. As I mentioned ActiveMQ
+has such setting, there was the same socketWrite0 blocking call and they
+have a solution (it's open source so could be checked if it is suitable for
+RabbitMQ).
+
+For me the client should have possibility to set such timeout or at least
+have some workaround - I don't see any now.
+
+Oleg
+
+2013/10/8 Michael Klishin [via RabbitMQ] &lt;
+<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">ml-node+s1065348n30321h88 at n5.nabble.com</A>&gt;
+
+&gt;<i> On oct 8, 2013, at 1:49 p.m., Oleg Lyalikov &lt;[hidden email]&lt;<A HREF="http://user/SendEmail.jtp?type=node&amp;node=30321&amp;i=0">http://user/SendEmail.jtp?type=node&amp;node=30321&amp;i=0</A>&gt;&gt;
+</I>&gt;<i> wrote:
+</I>&gt;<i>
+</I>&gt;<i> &gt; So for me it looks like the RabbitMQ client library should provide
+</I>&gt;<i> possibility to set such write timeout - maybe using the same Heartbeat
+</I>&gt;<i> thread (for now this thread is blocked on &quot;writeFrame&quot; method like all
+</I>&gt;<i> other threads waiting freeing the lock on outputStream object).
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; By the way I still cannot imagine any workaround for this issue but it's
+</I>&gt;<i> really critical for us. Do you think there are some?
+</I>&gt;<i>
+</I>&gt;<i> Have you tried using heartbeats with a low value (say, single digit
+</I>&gt;<i> seconds)? It was created
+</I>&gt;<i> exactly for the case when a peer goes away and TCP retransmission covers
+</I>&gt;<i> the fact.
+</I>&gt;<i>
+</I>&gt;<i> RabbitMQ Java client pretty much has to synchronize writes to the socket.
+</I>&gt;<i> You can share connection
+</I>&gt;<i> between threads w/o realizing so, e.g. by publishing from a consumer
+</I>&gt;<i> callback such
+</I>&gt;<i> as handleDelivery.
+</I>&gt;<i>
+</I>&gt;<i> MK
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;<i> [hidden email] &lt;<A HREF="http://user/SendEmail.jtp?type=node&amp;node=30321&amp;i=1">http://user/SendEmail.jtp?type=node&amp;node=30321&amp;i=1</A>&gt;
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>&gt;<i>
+</I>&gt;<i> *signature.asc* (506 bytes) Download Attachment&lt;<A HREF="http://rabbitmq.1065348.n5.nabble.com/attachment/30321/0/signature.asc">http://rabbitmq.1065348.n5.nabble.com/attachment/30321/0/signature.asc</A>&gt;
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> ------------------------------
+</I>&gt;<i>  If you reply to this email, your message will be added to the discussion
+</I>&gt;<i> below:
+</I>&gt;<i>
+</I>&gt;<i> <A HREF="http://rabbitmq.1065348.n5.nabble.com/Long-timeout-if-server-host-becomes-unreachable-tp30275p30321.html">http://rabbitmq.1065348.n5.nabble.com/Long-timeout-if-server-host-becomes-unreachable-tp30275p30321.html</A>
+</I>&gt;<i>  To unsubscribe from Long timeout if server host becomes unreachable, click
+</I>&gt;<i> here&lt;<A HREF="http://rabbitmq.1065348.n5.nabble.com/template/NamlServlet.jtp?macro=unsubscribe_by_code&amp;node=30275&amp;code=b2xlZy5seWFsaWtvdkBnbWFpbC5jb218MzAyNzV8MzI1NzkxMjU5">http://rabbitmq.1065348.n5.nabble.com/template/NamlServlet.jtp?macro=unsubscribe_by_code&amp;node=30275&amp;code=b2xlZy5seWFsaWtvdkBnbWFpbC5jb218MzAyNzV8MzI1NzkxMjU5</A>&gt;
+</I>&gt;<i> .
+</I>&gt;<i> NAML&lt;<A HREF="http://rabbitmq.1065348.n5.nabble.com/template/NamlServlet.jtp?macro=macro_viewer&amp;id=instant_html%21nabble%3Aemail.naml&amp;base=nabble.naml.namespaces.BasicNamespace-nabble.view.web.template.NabbleNamespace-nabble.view.web.template.NodeNamespace&amp;breadcrumbs=notify_subscribers%21nabble%3Aemail.naml-instant_emails%21nabble%3Aemail.naml-send_instant_email%21nabble%3Aemail.naml">http://rabbitmq.1065348.n5.nabble.com/template/NamlServlet.jtp?macro=macro_viewer&amp;id=instant_html%21nabble%3Aemail.naml&amp;base=nabble.naml.namespaces.BasicNamespace-nabble.view.web.template.NabbleNamespace-nabble.view.web.template.NodeNamespace&amp;breadcrumbs=notify_subscribers%21nabble%3Aemail.naml-instant_emails%21nabble%3Aemail.naml-send_instant_email%21nabble%3Aemail.naml</A>&gt;
+</I>&gt;<i>
+</I>
+
+
+
+--
+View this message in context: <A HREF="http://rabbitmq.1065348.n5.nabble.com/Long-timeout-if-server-host-becomes-unreachable-tp30275p30322.html">http://rabbitmq.1065348.n5.nabble.com/Long-timeout-if-server-host-becomes-unreachable-tp30275p30322.html</A>
+Sent from the RabbitMQ mailing list archive at Nabble.com.
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20131008/f3c477fa/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20131008/f3c477fa/attachment.htm</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="030823.html">[rabbitmq-discuss] Long timeout if server host becomes	unreachable
+</A></li>
+	<LI>Next message: <A HREF="030826.html">[rabbitmq-discuss] Long timeout if server host becomes	unreachable
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#30824">[ date ]</a>
+              <a href="thread.html#30824">[ thread ]</a>
+              <a href="subject.html#30824">[ subject ]</a>
+              <a href="author.html#30824">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

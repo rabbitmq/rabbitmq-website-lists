@@ -1,0 +1,282 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Weird Crash (1M to 10M messages over STOMP?)	- Recovery logic for durable messages/queues/exchanges?
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20Weird%20Crash%20%281M%20to%2010M%20messages%20over%20STOMP%3F%29%0A%09-%20Recovery%20logic%20for%20durable%20messages/queues/exchanges%3F&In-Reply-To=">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="004472.html">
+   <LINK REL="Next"  HREF="004433.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Weird Crash (1M to 10M messages over STOMP?)	- Recovery logic for durable messages/queues/exchanges?</H1>
+    <B>Darien Kindlund</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20Weird%20Crash%20%281M%20to%2010M%20messages%20over%20STOMP%3F%29%0A%09-%20Recovery%20logic%20for%20durable%20messages/queues/exchanges%3F&In-Reply-To="
+       TITLE="[rabbitmq-discuss] Weird Crash (1M to 10M messages over STOMP?)	- Recovery logic for durable messages/queues/exchanges?">darien at kindlund.com
+       </A><BR>
+    <I>Fri Aug  7 21:39:40 BST 2009</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="004472.html">[rabbitmq-discuss] Receiving Undelivered Persistent Messages
+</A></li>
+        <LI>Next message: <A HREF="004433.html">[rabbitmq-discuss] Weird Crash (1M to 10M messages over STOMP?) -	Recovery logic for durable messages/queues/exchanges?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#4432">[ date ]</a>
+              <a href="thread.html#4432">[ thread ]</a>
+              <a href="subject.html#4432">[ subject ]</a>
+              <a href="author.html#4432">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi Matthias &amp; Tony,
+
+Back to the main crash issue.  It happened again.  The short version:
+This crash may have to do with sending large messages over STOMP --
+I'm not sure.  I've proposed a couple of unit test cases below and am
+curious if you're able to replicate the issue, based upon those tests.
+
+Here's the details:
+
+1) Primary indication that RabbitMQ died, is when issuing a
+'rabbitmqctl' command:
+# rabbitmqctl list_exchanges
+Listing exchanges ...
+Error: {badrpc,nodedown}
+
+2) Listing all the erlang relevant processes shows just this:
+# ps ax | grep erla
+14488 ?        S      0:00 /usr/lib/erlang/erts-5.5.5/bin/epmd -daemon
+
+So epmd is still alive, but everything else is dead.
+
+3) Checking the rabbit.log file shows these entries as the last messages:
+# tail -f /var/log/rabbitmq/rabbit.log
+Rolling persister log to
+&quot;/var/lib/rabbitmq/mnesia/rabbit/rabbit_persister.LOG.previous&quot;
+
+=INFO REPORT==== 7-Aug-2009::14:48:16 ===
+Rolling persister log to
+&quot;/var/lib/rabbitmq/mnesia/rabbit/rabbit_persister.LOG.previous&quot;
+
+=INFO REPORT==== 7-Aug-2009::14:48:40 ===
+Rolling persister log to
+&quot;/var/lib/rabbitmq/mnesia/rabbit/rabbit_persister.LOG.previous&quot;
+
+=INFO REPORT==== 7-Aug-2009::14:49:22 ===
+Rolling persister log to
+&quot;/var/lib/rabbitmq/mnesia/rabbit/rabbit_persister.LOG.previous&quot;
+
+4) The rabbit-sasl.log file shows *nothing*.
+
+5) Matthias, I'll send you another email containing the tar.gz of the
+mnesia directory, so that you can see what the state of the database
+looks like after this crash.  And before start up.
+
+&gt;<i> Darien Kindlund wrote:
+</I>&gt;&gt;<i> Understood. &#160;Yes, I've checked and there were no
+</I>&gt;&gt;<i> connection/re-connection attempts, when I had witnessed the the
+</I>&gt;&gt;<i> persistent messages in the durable queue were still marked as
+</I>&gt;&gt;<i> un-ack'd.
+</I>&gt;<i>
+</I>&gt;<i> And you are sure that the server actually restarted?
+</I>
+Yes, I manually killed all erlang related processes, then proceeded to
+issue a '/etc/init.d/rabbitmq start'.
+Then, I checked the /var/log/rabbitmq/startup_log file, which showed:
+# cat startup_log
+Starting all nodes...
+Starting node <A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at manager...</A>
+RabbitMQ 1.6.0 (AMQP 8-0)
+Copyright (C) 2007-2009 LShift Ltd., Cohesive Financial Technologies
+LLC., and Rabbit Technologies Ltd.
+Licensed under the MPL.  See <A HREF="http://www.rabbitmq.com/">http://www.rabbitmq.com/</A>
+
+node        : <A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at manager</A>
+log         : /var/log/rabbitmq/rabbit.log
+sasl log    : /var/log/rabbitmq/rabbit-sasl.log
+database dir: /var/lib/rabbitmq/mnesia/rabbit
+
+starting database             ...done
+starting core processes       ...done
+starting recovery             ...done
+starting persister            ...done
+starting guid generator       ...done
+starting builtin applications ...done
+starting TCP listeners        ...done
+starting STOMP-listeners      ...done
+
+broker running
+OK
+done.
+
+&gt;<i> Also, how easy is it to reproduce this problem? Does it happen with,
+</I>&gt;<i> say, a clean installation (empty db dir, no log files) when you publish
+</I>&gt;<i> a few persistent messages, consume (but not ack) them, and then restart
+</I>&gt;<i> the broker?
+</I>
+I'm not sure.  I've been using v1.6.0 since it was released, and this
+is really the first time I've encountered any type of problem.
+
+There has been one major, noticeable change that I've been
+experimenting with... which may explain the crash:
+Lately, I've been increasing the message sizes, which may have played
+a role in this crash.
+I'm still using the STOMP adapter, so this problem may only be present
+when sending large messages via STOMP -- I'm not sure.
+
+&gt;<i> If you can construct such a test case for us then we'll try to replicate
+</I>&gt;<i> it on our systems.
+</I>
+I'll see what I can do; one basic set of unit tests, is see if
+RabbitMQ behaves differently, when you feed it different message sizes
+over AMQP and STOMP:
+
+For starters, try the following unit tests:
+
+Message Size | Protocol
+10K | AMQP
+100K | AMQP
+1M | AMQP
+10M | AMQP
+100M | AMQP
+1G | AMQP
+
+10K | STOMP
+100K | STOMP
+1M | STOMP
+10M | STOMP
+100M | STOMP
+1G | STOMP
+
+In my case, I think I'm getting errors with either the 1M or 10M
+message size over STOMP.  In fact, I'm almost positive that this crash
+was caused by sending a large message via STOMP.  Furthermore, it
+looks like when the STOMP adapter fails, there's no sufficient crash
+log reported.
+
+Is there some sort of (implicit) upper limit on the allowable message
+size when sending over STOMP?
+
+&gt;&gt;<i> Okay, so 'queue.purge' will flush all 'ready' and 'un-ack'd' messages
+</I>&gt;&gt;<i> from a particular queue -- or just un-ack'd messages?
+</I>&gt;<i>
+</I>&gt;<i> Good question :) In AMQP 0-8 the spec requires that queue.purge removes
+</I>&gt;<i> *all* messages. In 0-9-1 this got changed to the more sensible &quot;all
+</I>&gt;<i> messages not awaiting acknowledgement&quot;, and that is what RabbitMQ
+</I>&gt;<i> implements.
+</I>
+Okay, so that explains why the queue.purge did nothing.
+
+&gt;&gt;<i> Is there a command in the AMQP spec that will instruct RabbitMQ to re-mark all
+</I>&gt;&gt;<i> un-ack'd messages as ready?
+</I>&gt;<i>
+</I>&gt;<i> There have been several discussions about this on the mailing list.
+</I>&gt;<i> AMQP's 'basic.reject' command, which, if RabbitMQ implemented it (which
+</I>&gt;<i> it doesn't, yet) would allow a client to reject, and thus make available
+</I>&gt;<i> to other consumers, specific messages it has received.
+</I>&gt;<i>
+</I>&gt;<i> But that falls short of what you are after, since you want some agent
+</I>&gt;<i> other than the consumer to initiate the reclaim of messages.
+</I>&gt;<i>
+</I>&gt;&gt;<i> If no such command exists, I'm thinking it would be useful to include
+</I>&gt;&gt;<i> such a command in future versions of the spec, so that people could
+</I>&gt;&gt;<i> develop 'message recovery logic', when dealing with buggy consumers
+</I>&gt;&gt;<i> that are connected but are not actually properly processing the
+</I>&gt;&gt;<i> messages.
+</I>&gt;<i>
+</I>&gt;<i> Do you want to have a stab at defining the syntax and semantics of this
+</I>&gt;<i> new command? Take a look at the 0-9-1 xml spec
+</I>&gt;<i> (<A HREF="http://jira.amqp.org/confluence/download/attachments/720900/amqp0-9-1.xml">http://jira.amqp.org/confluence/download/attachments/720900/amqp0-9-1.xml</A>),
+</I>&gt;<i> to get an idea of the flavour in which AMQP commands are defined, and
+</I>&gt;<i> follow that as closely as possible.
+</I>&gt;<i>
+</I>&gt;<i> I'd be happy to review and discuss your proposal.
+</I>
+Hrm, I'll try and get an idea of how it would work at a high-level,
+before trying to capture the behavior in the XML spec.
+
+&gt;<i> One issue you are going to have to think about is what to do with
+</I>&gt;<i> acknowledgments sent by the original consumer for a message that has
+</I>&gt;<i> been &quot;reclaimed&quot;. Do we treat the message as ack'ed at that point? Or
+</I>&gt;<i> not? Should the ack fail (as it would if a consumer tried to ack a
+</I>&gt;<i> message it didn't receive)? If we treat the message as ack'ed, what then
+</I>&gt;<i> happens when another consumer to which the reclaimed message was sent
+</I>&gt;<i> tries to ack it?
+</I>
+My first thought is that an ACK from the original consumer a
+&quot;reclaimed&quot; message should be silently ignored -- similar to a NO-OP.
+To be clear, the use case would look like:
+
+1) Consumers A &amp; B are subscribed to the same durable queue, receiving
+the same persistent messages.
+2) Consumer A gets a single message; Consumer B is still waiting for more data.
+3) *** Some other external monitoring program, which is watching the
+queue (via the same interface as rabbitmqctl), sees that consumer A
+has taking too long to process the message decides to issue some sort
+of &quot;reclaim&quot; for that message, which causes Consumer B to receive it.
+4) RabbitMQ updates its message tracking logic, and still marks the
+message as un-ack'd -- but expects Consumer B to issue the ACK -- not
+Consumer A.
+5) Let's say Consumer A finally finishes and issues an ACK; RabbitMQ
+silently ignores the ACK and still keeps the message as un-ack'd.
+6) Consumer B issues the ACK, which RabbitMQ respects and flushes the
+message from the queue.
+
+However, I could see other use-cases, where perhaps, you may want
+Consumer A's ACK (in #5) to actually flush the queue, and simply NO-OP
+on Consumer B's ACK (in #6).  This behavior could be dictated by a
+property associated with the queue (e.g., like durable=True).
+
+I'll have to think about it a bit more, since I'm sure there are more use-cases.
+
+&gt;&gt;<i> If I run into this issue in the future, would it help if I could
+</I>&gt;&gt;<i> provide you a copy of the mnesia directory once RabbitMQ has
+</I>&gt;&gt;<i> unexpectedly crashed?
+</I>&gt;<i>
+</I>&gt;<i> Possibly. Though looking at the code I am struggling to see how mnesia
+</I>&gt;<i> or the persister could have anything to do with the behaviour you are
+</I>&gt;<i> observing. You see, messages don't actually carry an 'unacknowledged'
+</I>&gt;<i> mark. Instead when a message is sent to a consumer it is moved to a
+</I>&gt;<i> different part of the state of the queue process, associated with that
+</I>&gt;<i> particular consumer. rabbitmqctl quite literally counts the messages in
+</I>&gt;<i> all these so-called consumer records to determined the unack'ed message
+</I>&gt;<i> count. The consumer records do not survive a server restart. So for the
+</I>&gt;<i> count to return a non-zero number after a restart the queue process must
+</I>&gt;<i> have created some consumer records, which means some consumers must have
+</I>&gt;<i> connected. Now, there could of course be all kinds of bugs lurking in
+</I>&gt;<i> the code, including the queue processes conjuring up consumer records
+</I>&gt;<i> from thin air, but atm I cannot see how a bug in the persistence
+</I>&gt;<i> mechanism would result in the behaviour you have described.
+</I>
+Okay, I'm sending you a copy of the mnesia directory in a separate
+email directly to you.  If you need additional information about the
+server's environment, let me know.
+
+-- Darien
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="004472.html">[rabbitmq-discuss] Receiving Undelivered Persistent Messages
+</A></li>
+	<LI>Next message: <A HREF="004433.html">[rabbitmq-discuss] Weird Crash (1M to 10M messages over STOMP?) -	Recovery logic for durable messages/queues/exchanges?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#4432">[ date ]</a>
+              <a href="thread.html#4432">[ thread ]</a>
+              <a href="subject.html#4432">[ subject ]</a>
+              <a href="author.html#4432">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

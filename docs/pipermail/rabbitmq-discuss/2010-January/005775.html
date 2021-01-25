@@ -1,0 +1,118 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] High CPU Usage
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20High%20CPU%20Usage&In-Reply-To=7fd310d10912301525k231677f3j7f1c0b1d627549fc%40mail.gmail.com">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="005962.html">
+   <LINK REL="Next"  HREF="005776.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] High CPU Usage</H1>
+    <B>Matthew Sackman</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20High%20CPU%20Usage&In-Reply-To=7fd310d10912301525k231677f3j7f1c0b1d627549fc%40mail.gmail.com"
+       TITLE="[rabbitmq-discuss] High CPU Usage">matthew at lshift.net
+       </A><BR>
+    <I>Wed Jan  6 11:16:51 GMT 2010</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="005962.html">[rabbitmq-discuss] adjusting timeout for non-acked messages to be requeued
+</A></li>
+        <LI>Next message: <A HREF="005776.html">[rabbitmq-discuss] Transactions on acks
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#5775">[ date ]</a>
+              <a href="thread.html#5775">[ thread ]</a>
+              <a href="subject.html#5775">[ subject ]</a>
+              <a href="author.html#5775">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi Bryan,
+
+On Wed, Dec 30, 2009 at 05:25:57PM -0600, Bryan Murphy wrote:
+&gt;<i> I want to set up 3 queues, High, Medium, and Low where I always pull
+</I>&gt;<i> messages from the higher priority queues first.  Right now, I more or less
+</I>&gt;<i> do the following:
+</I>&gt;<i> 
+</I>&gt;<i> while (true)
+</I>&gt;<i> {
+</I>&gt;<i>   result = null;
+</I>&gt;<i> 
+</I>&gt;<i>   foreach (var queue in queues)
+</I>&gt;<i>   {
+</I>&gt;<i>     result = model.BasicGet(queue, false);
+</I>&gt;<i> 
+</I>&gt;<i>     if (result != null)
+</I>&gt;<i>       break;
+</I>&gt;<i>   }
+</I>&gt;<i> 
+</I>&gt;<i>   if (result != null)
+</I>&gt;<i>     DoSomething(result);
+</I>&gt;<i> 
+</I>&gt;<i>   Thread.Sleep(15); // 15ms
+</I>&gt;<i> }
+</I>&gt;<i> 
+</I>&gt;<i> Functionally this achieves what I'm trying to accomplish, however, the CPU
+</I>&gt;<i> usage of the RabbitMQ server goes through the roof once I spin up a few
+</I>&gt;<i> listeners.
+</I>
+Hmmm. Which version of Rabbit are you using. I've just done some maths
+and this loop may be doing about 143 calls to basic.get per second
+(assuming 2ms for each basic.get). I'm just wondering whether you're
+using a version before 1.7.0 in which the queues are hibernating and
+thawing too frequently, thus burning up a lot of CPU. On the other hand,
+if this was the case, then I'd expect adding more listeners would
+improve the situation, not make it worse.
+
+&gt;<i> Is there another way I can accomplish the same thing that doesn't hit the
+</I>&gt;<i> RabbitMQ server so hard?
+</I>
+Yes. 3 channels, each one consumes from 1 queue. Then (assuming you're
+using the Java client), use the QueueingConsumer, and translate your
+foreach to the nextDelivery with a timeout of 0. Also set qos.prefetch
+to 1.
+
+Thus the logic is effectively pushed client side.
+
+However, this is not quite the same. With this version, each listener
+would buffer up to 1 message from the high queue, 1 from the medium
+queue and 1 from the low queue. Thus some other listener could come
+along, find that there are no messages at all to process, because
+they're currently being buffered by the other listeners. Those listeners
+will eventually get to those buffered messages when they finish
+processing they're current message, get back to their loop, and find the
+lower priority messages. So it could simply mean that lower priority
+messages are ignored for longer than they otherwise would be.
+
+Oh, and you'll probably want some logic so that if all three queues are
+empty, you don't sit spinning.
+
+Matthew
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="005962.html">[rabbitmq-discuss] adjusting timeout for non-acked messages to be requeued
+</A></li>
+	<LI>Next message: <A HREF="005776.html">[rabbitmq-discuss] Transactions on acks
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#5775">[ date ]</a>
+              <a href="thread.html#5775">[ thread ]</a>
+              <a href="subject.html#5775">[ subject ]</a>
+              <a href="author.html#5775">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,205 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] RabbitMQ clustering fail over issue
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20RabbitMQ%20clustering%20fail%20over%20issue&In-Reply-To=%3CCAH75Yb4sUZDMriNKhQUbLw%2B5cUXVnvNez9UZUsPp4UatwVPrbw%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="030810.html">
+   <LINK REL="Next"  HREF="030790.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] RabbitMQ clustering fail over issue</H1>
+    <B>Rajasekhar P</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20RabbitMQ%20clustering%20fail%20over%20issue&In-Reply-To=%3CCAH75Yb4sUZDMriNKhQUbLw%2B5cUXVnvNez9UZUsPp4UatwVPrbw%40mail.gmail.com%3E"
+       TITLE="[rabbitmq-discuss] RabbitMQ clustering fail over issue">sekhar434145 at gmail.com
+       </A><BR>
+    <I>Mon Oct  7 18:18:23 BST 2013</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="030810.html">[rabbitmq-discuss] mqtt websocket client
+</A></li>
+        <LI>Next message: <A HREF="030790.html">[rabbitmq-discuss] RabbitMQ clustering fail over issue
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#30789">[ date ]</a>
+              <a href="thread.html#30789">[ thread ]</a>
+              <a href="subject.html#30789">[ subject ]</a>
+              <a href="author.html#30789">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Created Cluster with two rabbitMQ nodes. Configuration is as below for
+rabbit1 and rabbit2 nodes.
+
+    1&gt; CachingConnectionFactory connectionFactory = new
+CachingConnectionFactory();
+    connectionFactory.setAddresses(&quot;rabbit1:5672,rabbit2:5672&quot;);
+
+2&gt; node types
+rabbit1 - disc node
+rabbit2 - ram node
+3&gt; producer and consumer programs sits on rabbit2 node(ie&gt; ram node)
+
+    4&gt; Producer sample code -
+    String QueueName = &quot;Queue.&quot;;
+    for(int m=0; m&lt;50000; m++){
+    // send message
+
+System.out.println(this.rabbitTemplate.getConnectionFactory().getHost());
+    this.rabbitTemplate.convertAndSend(m);
+    /*Thread.sleep(100);*/
+    }
+
+    5&gt; consumer code -
+    String QueueName = &quot;Queue.&quot;;
+    public void run() {
+    System.out.println(&quot;Consumer running host : &quot; +
+this.connectionFactory.getHost());
+    SimpleMessageListenerContainer container = new
+SimpleMessageListenerContainer();
+    container.setConnectionFactory(this.connectionFactory);
+    container.setQueueNames(this.queueName);
+    container.setMessageListener(new MessageListenerAdapter(new
+TestMessageHandler(this.connectionFactory.getHost()), new
+JsonMessageConverter()));
+    container.start();
+    }
+
+    TestMessageHandler class sample code-
+
+    public TestMessageHandler(String hostName){
+    System.out.println(&quot;Host: &quot; + hostName);
+    this.hostName = hostName;
+    }
+
+    // Handle message
+    public void handleMessage(int message) {
+    System.out.println(&quot;handleMessage Host: &quot; + this.hostName);
+    System.out.println(&quot;Int : &quot; + message);
+    }
+
+    6&gt; Each node executed below policy
+    cmd&gt; rabbitmqctl set_policy ha-all &quot;^Queue\.&quot; &quot;{&quot;&quot;ha-mode&quot;&quot;:&quot;&quot;all&quot;&quot;}&quot;
+
+    7&gt; Started producer and consumer simultaneously. Could see host name as
+&quot;rabbit1&quot; then stopped &quot;rabbit1&quot; node with &quot;rabbitmqctl stop_app&quot; command
+to test fail-over scenario. Then got the below error
+
+        WARN  [.listener.SimpleMessageListenerContainer]: Consumer raised
+exception, processing can restart if the connection factory supports it
+        com.rabbitmq.client.ShutdownSignalException: connection error;
+reason: {#method&lt;connection.close&gt;(reply-code=541,
+reply-text=INTERNAL_ERROR, class-id=0, method-id=0), null, &quot;&quot;}
+        at
+com.rabbitmq.client.impl.AMQConnection.startShutdown(AMQConnection.java:678)
+        at
+com.rabbitmq.client.impl.AMQConnection.shutdown(AMQConnection.java:668)
+        at
+com.rabbitmq.client.impl.AMQConnection.handleConnectionClose(AMQConnection.java:624)
+        at
+com.rabbitmq.client.impl.AMQConnection.processControlCommand(AMQConnection.java:598)
+        at
+com.rabbitmq.client.impl.AMQConnection$1.processAsync(AMQConnection.java:96)
+        at
+com.rabbitmq.client.impl.AMQChannel.handleCompleteInboundCommand(AMQChannel.java:144)
+        at
+com.rabbitmq.client.impl.AMQChannel.handleFrame(AMQChannel.java:91)
+        at
+com.rabbitmq.client.impl.AMQConnection$MainLoop.run(AMQConnection.java:523)
+        INFO  [.listener.SimpleMessageListenerContainer]: Restarting
+Consumer: tag=[amq.ctag-5CJ3YJYfMZDnJOnXsds6_Q], channel=Cached Rabbit
+Channel: AMQChannel(<A HREF="amqp://guest@192.168.97.70:5672/,1">amqp://guest@192.168.97.70:5672/,1</A>),
+acknowledgeMode=AUTO local queue size=0
+
+    after this warning, again am getting host name as &quot;rabbit1&quot; only.
+actually it should be &quot;rabbit2&quot; as per my understanding but its not
+happening.
+
+        So, here are my Queries -
+
+            1&gt; Why am getting host name as &quot;rabbit1&quot; even after stopping?
+            2&gt; To test the fail-over do we require any load balancer?
+            3&gt; If my steps are wrong for testing fail-over case, please
+provide steps for the same?
+            4&gt; How to distribute queues/messages to particular node, as
+below, 1-500 messages/queues to node1, 501-1000 messages/queues to node2,
+etc.
+            5&gt; Please let me know is there any other approach to test
+fail-over scenario?
+
+Appreciate any help on this.
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20131007/37cb72ff/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20131007/37cb72ff/attachment.htm</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="030810.html">[rabbitmq-discuss] mqtt websocket client
+</A></li>
+	<LI>Next message: <A HREF="030790.html">[rabbitmq-discuss] RabbitMQ clustering fail over issue
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#30789">[ date ]</a>
+              <a href="thread.html#30789">[ thread ]</a>
+              <a href="subject.html#30789">[ subject ]</a>
+              <a href="author.html#30789">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

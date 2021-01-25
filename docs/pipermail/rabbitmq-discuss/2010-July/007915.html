@@ -1,0 +1,181 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] RabbitMQ persistence and multi producers-	multi consumers
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20RabbitMQ%20persistence%20and%20multi%20producers-%0A%09multi%20consumers&In-Reply-To=%3CAANLkTikP91qk3ShQoepdXtdB3SkC0Cy4kWKZuKkJZOdW%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="007914.html">
+   <LINK REL="Next"  HREF="007916.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] RabbitMQ persistence and multi producers-	multi consumers</H1>
+    <B>Francisco Gonzalez-Blanch</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20RabbitMQ%20persistence%20and%20multi%20producers-%0A%09multi%20consumers&In-Reply-To=%3CAANLkTikP91qk3ShQoepdXtdB3SkC0Cy4kWKZuKkJZOdW%40mail.gmail.com%3E"
+       TITLE="[rabbitmq-discuss] RabbitMQ persistence and multi producers-	multi consumers">fblanch at gmail.com
+       </A><BR>
+    <I>Fri Jul  9 12:49:01 BST 2010</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="007914.html">[rabbitmq-discuss] RabbitMQ persistence and multi producers-	multi consumers
+</A></li>
+        <LI>Next message: <A HREF="007916.html">[rabbitmq-discuss] RabbitMQ persistence and multi producers- multi consumers
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#7915">[ date ]</a>
+              <a href="thread.html#7915">[ thread ]</a>
+              <a href="subject.html#7915">[ subject ]</a>
+              <a href="author.html#7915">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Thanks for the answers!  But If the producer is launched first and then the
+consumer, i'm losing all the initial messages until the consumer is created.
+I attach you the code snippets with the test.
+
+
+/** Producer  **/
+
+ConnectionFactory factory = new ConnectionFactory();
+
+        factory.setUsername(&quot;guest&quot;);
+        factory.setPassword(&quot;guest&quot;);
+        factory.setVirtualHost(&quot;/&quot;);
+        factory.setRequestedHeartbeat(0);
+        factory.setHost(&quot;127.0.0.1&quot;);
+        factory.setPort(5672);
+
+        Connection conn = factory.newConnection();
+
+        Channel channel = conn.createChannel();
+        String exchangeName = &quot;myExchangeFanOut&quot;;
+        String routingKey = &quot;testRoute&quot;;
+
+        for(int i= 0; i&lt;1000000;i++){
+            StringBuilder miCadena = new StringBuilder(&quot;Message num: &quot;);
+            miCadena.append(i);
+            byte[] messageBodyBytes = miCadena.toString().getBytes();
+            channel.basicPublish(exchangeName, routingKey,
+MessageProperties.PERSISTENT_TEXT_PLAIN, messageBodyBytes) ;
+            System.out.println(&quot;Sending message num: &quot; + i);
+        }
+        channel.close();
+        conn.close();
+
+/** Consumer **/
+
+ConnectionFactory factory = new ConnectionFactory();
+
+        factory.setUsername(&quot;guest&quot;);
+        factory.setPassword(&quot;guest&quot;);
+        factory.setVirtualHost(&quot;/&quot;);
+        factory.setRequestedHeartbeat(0);
+        factory.setHost(&quot;127.0.0.1&quot;);
+        factory.setPort(5672);
+
+        Connection conn = factory.newConnection();
+
+        Channel channel = conn.createChannel();
+        String exchangeName = &quot;myExchangeFanOut&quot;;
+        String queueName = &quot;myQueue&quot;;
+        String routingKey = &quot;testRoute&quot;;
+        boolean durable = true;
+        channel.exchangeDeclare(exchangeName, &quot;fanout&quot;, durable);
+        channel.queueDeclare(queueName, durable, true, true,null); //
+parametros
+        channel.queueBind(queueName, exchangeName, routingKey);
+
+        boolean noAck = false;
+        QueueingConsumer consumer = new QueueingConsumer(channel);
+        channel.basicConsume(queueName, noAck, consumer);
+        boolean runInfinite = true;
+
+        while (runInfinite) {
+            QueueingConsumer.Delivery delivery;
+            try {
+                delivery = consumer.nextDelivery();
+            } catch (InterruptedException ie) {
+                continue;
+            }
+            System.out.println(&quot;Processing received message. &quot; + new
+String(delivery.getBody()));
+            channel.basicAck(delivery.getEnvelope().getDeliveryTag(),
+false);
+        }
+
+        channel.close();
+        conn.close();
+
+
+In addition i have another question , is it possible to make that not all
+the consumers get all the messages  with a fanout exchange, i mean is it
+possible to balance the messages in between the consumers. Thanks a lot.
+regards!
+
+Francisco Gonz&#225;lez-Blanch Rodr&#237;guez
+
+
+On Fri, Jul 9, 2010 at 1:39 PM, Ovidiu Deac &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">ovidiudeac at gmail.com</A>&gt; wrote:
+
+&gt;<i> If nobody extracts the message from the queue the message won't be lost.
+</I>&gt;<i>
+</I>&gt;<i> On Fri, Jul 9, 2010 at 1:09 PM, Francisco Gonzalez-Blanch
+</I>&gt;<i> &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">fblanch at gmail.com</A>&gt; wrote:
+</I>&gt;<i> &gt; Hi all,
+</I>&gt;<i> &gt; I'm a newbie in rabbitmq and i'm working on a distributed data processing
+</I>&gt;<i> &gt; application using rabbitmq as distributed task queue. I want to ask you
+</I>&gt;<i> &gt; about where can i find information about how to make persistent queues,
+</I>&gt;<i> and
+</I>&gt;<i> &gt; how to make that, if a producer sends messages to queue and no one is
+</I>&gt;<i> listen
+</I>&gt;<i> &gt; to it and then a consumer is attached , the consumer gets all the
+</I>&gt;<i> messages,
+</I>&gt;<i> &gt; even the ones that were produced before the consumer was attached. Thank
+</I>&gt;<i> you
+</I>&gt;<i> &gt; very much.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; _______________________________________________
+</I>&gt;<i> &gt; rabbitmq-discuss mailing list
+</I>&gt;<i> &gt; <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;<i> &gt; <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt;
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20100709/3cf288ce/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20100709/3cf288ce/attachment.htm</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="007914.html">[rabbitmq-discuss] RabbitMQ persistence and multi producers-	multi consumers
+</A></li>
+	<LI>Next message: <A HREF="007916.html">[rabbitmq-discuss] RabbitMQ persistence and multi producers- multi consumers
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#7915">[ date ]</a>
+              <a href="thread.html#7915">[ thread ]</a>
+              <a href="subject.html#7915">[ subject ]</a>
+              <a href="author.html#7915">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

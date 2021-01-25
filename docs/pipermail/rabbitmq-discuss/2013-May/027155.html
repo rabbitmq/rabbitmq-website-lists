@@ -1,0 +1,235 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Multiple local-usernames for federation
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Multiple%20local-usernames%20for%20federation&In-Reply-To=%3CCAAs9BZPs%2BbH76uy0a06Q%3DXDsL2m8qK08S%3Dhw3OfW_8pZ%2B4E9yw%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="027152.html">
+   <LINK REL="Next"  HREF="027156.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Multiple local-usernames for federation</H1>
+    <B>Roman Gaufman</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Multiple%20local-usernames%20for%20federation&In-Reply-To=%3CCAAs9BZPs%2BbH76uy0a06Q%3DXDsL2m8qK08S%3Dhw3OfW_8pZ%2B4E9yw%40mail.gmail.com%3E"
+       TITLE="[rabbitmq-discuss] Multiple local-usernames for federation">hackeron at gmail.com
+       </A><BR>
+    <I>Tue May 14 14:24:11 BST 2013</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="027152.html">[rabbitmq-discuss] Multiple local-usernames for federation
+</A></li>
+        <LI>Next message: <A HREF="027156.html">[rabbitmq-discuss] Multiple local-usernames for federation
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#27155">[ date ]</a>
+              <a href="thread.html#27155">[ thread ]</a>
+              <a href="subject.html#27155">[ subject ]</a>
+              <a href="author.html#27155">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>&gt;<i>
+</I>&gt;<i>  Meaning that messages published in London and Moscow can be consumed in
+</I>&gt;&gt;<i> Cloud.
+</I>&gt;&gt;<i>
+</I>&gt;<i>
+</I>Yes but I want it biodirectional, I tried to simplify the example, but I
+guess that wasn't helpful. What I want is:
+
+   1. Cloud posts to local topic exchange &quot;oracle.london&quot; - this message is
+   consumed by the London server.
+   2. London posts to a local topic exchange  &quot;oracle.london&quot; - this
+   message is consumed by the Cloud server.
+   3. Moscow posts to a local topic exchange &quot;oracle.moscow&quot; - this message
+   is consumed by the Cloud server.
+   4. etc.
+
+So Cloud consumes everything and the Local servers consume messages sent to
+them by the Cloud - messages are not sent between servers otherwise. So
+Cloud -&gt; Local Servers and Local Servers -&gt; Cloud (but not Local Server -&gt;
+Local Server).
+
+ Did you do that on the Cloud machine? It sounds like you did - but here
+&gt;&gt;<i> you're telling it to connect to itself?
+</I>&gt;&gt;<i>
+</I>&gt;<i>
+</I>No, the cloud is not connecting to itself, the Cloud is connecting to each
+&quot;Local&quot; server (London and Moscow) and the &quot;Local&quot; servers connect to the
+cloud.
+
+Here are more details as to what I did (just with different
+usernames/passwords) - I have 3 physical machines on the same VPN:
+
+Cloud: 10.9.0.1
+London: 10.9.0.2
+Moscow: 10.9.0.3
+
+They each have a RabbitMQ instance, on each one I do:
+
+   1. Create vhost: oracle
+   2. Create new users: moscow:password, london:password, cloud:password
+   3. Set permissions for all users for the oracle vhost: .* .* .*
+   4. Set local username and nodename
+      1. Cloud: rabbitmqctl -p oracle set_parameter federation
+      local-username '&quot;Cloud&quot;'
+      2. London: rabbitmqctl -p oracle set_parameter federation
+      local-nodename '&quot;London&quot;'
+      3. Moscow: rabbitmqctl -p oracle set_parameter federation
+      local-nodename '&quot;Moscow&quot;'
+   5. Create a federation upstream
+      1. Cloud - set London and Moscow as upstreams (with the appropriate
+      user/pass)
+         1. rabbitmqctl set_parameter federation-upstream London
+         '{&quot;uri&quot;:&quot;<A HREF="amqp://london:password@10.9.0.2/oracle&quot;}'">amqp://london:password@10.9.0.2/oracle&quot;}'</A>
+         2. rabbitmqctl set_parameter federation-upstream
+         Moscow '{&quot;uri&quot;:&quot;<A HREF="amqp://moscow:password@10.9.0.3/oracle&quot;}'">amqp://moscow:password@10.9.0.3/oracle&quot;}'</A>
+      2. Local Servers - Set Cloud as the upstream with unique user/pass
+         1. London: rabbitmqctl set_parameter federation-upstream Cloud
+         '{&quot;uri&quot;:&quot;<A HREF="amqp://london:password@10.9.0.1/oracle&quot;}'">amqp://london:password@10.9.0.1/oracle&quot;}'</A>
+         2. Moscow: rabbitmqctl set_parameter federation-upstream Cloud
+         '{&quot;uri&quot;:&quot;<A HREF="amqp://moscow:password@10.9.0.1/oracle&quot;}'">amqp://moscow:password@10.9.0.1/oracle&quot;}'</A>
+      6. Create a federation upstream set
+      1. Cloud:
+         1. rabbitmqctl -p oracle set_parameter federation-upstream-set
+         London '[{&quot;upstream&quot;: &quot;London&quot;}]'
+         2. rabbitmqctl -p oracle set_parameter federation-upstream-set
+         Moscow '[{&quot;upstream&quot;: &quot;Moscow&quot;}]'
+      2. London: rabbitmqctl -p oracle set_parameter
+      federation-upstream-set Cloud '[{&quot;upstream&quot;: &quot;Cloud&quot;}]'
+      3. Moscow: rabbitmqctl -p oracle set_parameter
+      federation-upstream-set Cloud '[{&quot;upstream&quot;: &quot;Cloud&quot;}]'
+   7. Create a federation policy
+      1. Cloud:
+         1. rabbitmqctl -p oracle set_policy London &quot;^oracle.london&quot;
+         '{&quot;federation-upstream-set&quot;: &quot;London&quot;}'
+         2. rabbitmqctl -p oracle set_policy Moscow &quot;^oracle.moscow&quot;
+         '{&quot;federation-upstream-set&quot;: &quot;Moscow&quot;}'
+      2. London: rabbitmqctl -p oracle set_policy London &quot;^oracle.london&quot;
+      '{&quot;federation-upstream-set&quot;: &quot;Cloud&quot;}'
+      3. Moscow: rabbitmqctl -p oracle set_policy Moscow &quot;^oracle.moscow&quot;
+      '{&quot;federation-upstream-set&quot;: &quot;Cloud&quot;}'
+
+Now the problem comes when I set a federation upstream on the &quot;Local&quot;
+servers (London and Moscow), I want to have a different username/password
+on each. But it seems the &quot;Cloud&quot; upstream must always have the same
+username/password? - Unless I am misunderstanding something?
+
+
+&gt;<i>
+</I>&gt;<i> I think what you want to do is:
+</I>&gt;<i>
+</I>&gt;<i> * Create the London / Moscow users on the London / Moscow boxes
+</I>&gt;<i> * Add upstreams for London / Moscow on Cloud, pointing to the London /
+</I>&gt;<i> Moscow machines
+</I>&gt;<i> * Set the federation policy on Cloud
+</I>&gt;<i> * If you have deleted / restricted the &quot;guest&quot; account on Cloud, then set
+</I>&gt;<i> &quot;local-username&quot; to another account that is able to publish messages
+</I>
+
+Yes, I did all that, but I want to federate in both directions. If I do the
+above, all messages I write to the Local servers (London, Moscow) I can
+consume on the Cloud server, however if I write from the Cloud server, I
+cannot consume the messages on the Local servers.
+
+To do that, I need to add federation upstreams on the local servers:
+
+rabbitmqctl set_parameter federation-upstream Cloud '{&quot;uri&quot;:&quot;amqp://
+london:<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">password at 10.9.0.1</A>/oracle&quot;}'
+rabbitmqctl set_parameter federation-upstream Cloud '{&quot;uri&quot;:&quot;amqp://
+moscow:<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">password at 10.9.0.1</A>/oracle&quot;}'
+
+But I cannot do that because RabbitMQ only accepts a single local-username
+:<i>( - Am I missing something?
+</I>
+
+
+&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> Cheers, Simon
+</I>&gt;<i>
+</I>&gt;<i> --
+</I>&gt;<i> Simon MacMullen
+</I>&gt;<i> RabbitMQ, Pivotal
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20130514/d97f7602/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20130514/d97f7602/attachment.htm</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="027152.html">[rabbitmq-discuss] Multiple local-usernames for federation
+</A></li>
+	<LI>Next message: <A HREF="027156.html">[rabbitmq-discuss] Multiple local-usernames for federation
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#27155">[ date ]</a>
+              <a href="thread.html#27155">[ thread ]</a>
+              <a href="subject.html#27155">[ subject ]</a>
+              <a href="author.html#27155">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

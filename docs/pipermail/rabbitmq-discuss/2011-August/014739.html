@@ -1,0 +1,114 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] possible rabbitmq bug
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20possible%20rabbitmq%20bug&In-Reply-To=%3CB96FCD1E-0A21-48E6-8F6C-8FB9E348E9B7%40codestud.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="014738.html">
+   <LINK REL="Next"  HREF="014740.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] possible rabbitmq bug</H1>
+    <B>Chris Behrens</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20possible%20rabbitmq%20bug&In-Reply-To=%3CB96FCD1E-0A21-48E6-8F6C-8FB9E348E9B7%40codestud.com%3E"
+       TITLE="[rabbitmq-discuss] possible rabbitmq bug">cbehrens at codestud.com
+       </A><BR>
+    <I>Fri Aug 26 09:08:05 BST 2011</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="014738.html">[rabbitmq-discuss] possible rabbitmq bug
+</A></li>
+        <LI>Next message: <A HREF="014740.html">[rabbitmq-discuss] possible rabbitmq bug
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#14739">[ date ]</a>
+              <a href="thread.html#14739">[ thread ]</a>
+              <a href="subject.html#14739">[ subject ]</a>
+              <a href="author.html#14739">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi,
+
+The queue _is_ deleted for auto_delete=True when the connection is closed in all cases.  However, it is _not_ deleted when the channel is closed... *unless* I've called basic_consume().  It seems that even if I've called basic_get() or not consumed at all... closing the channel that declared a auto_delete=True queue should behave the same as closing the connection.  I should also note the queue was declared exclusive=True, which means that once I've closed the channel that declared the queue, there's no possible way for anyone else to consume it anyway.  Right?  Closing the channel should delete this queue, should it not?
+
+Thanks,
+
+- Chris
+
+On Aug 26, 2011, at 12:48 AM, Valentin Bernard wrote:
+
+&gt;<i> Hi,
+</I>&gt;<i> 
+</I>&gt;<i> I have also run into this, but Ask Solem recently shed light on that
+</I>&gt;<i> behavior on the mailing list:
+</I>&gt;<i> &quot;Note that auto_delete queues are not deleted until the last consumer
+</I>&gt;<i> stops consuming from it, and an auto_delete queue is *not*
+</I>&gt;<i> deleted if there have never been any consumers consuming from it.&quot;
+</I>&gt;<i> 
+</I>&gt;<i> Yet, that does not explain why your queue is still deleted when you're
+</I>&gt;<i> closing the connection... or I'm missing something too?
+</I>&gt;<i> 
+</I>&gt;<i> Regards,
+</I>&gt;<i> 
+</I>&gt;<i> Valentin.
+</I>&gt;<i> 
+</I>&gt;<i> On Aug 25, 6:56 pm, Chris Behrens &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">cbehr... at codestud.com</A>&gt; wrote:
+</I>&gt;&gt;<i> Hi,
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;<i> I've been working with various python modules (carrot, kombu.. all using the python amqplib underneath) and I have spotted what I think may be a bug with rabbit.  I'd love to hear if anyone else is run into this or if I'm just plain wrong.
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;<i> I've been creating code that will re-use rabbit connections (they're pooled) to avoid the unnecessary cost of closing and reopening connections all of the time.  I create a channel on which I declare an exchange/queue with auto_delete=True.  If I do absolutely nothing more with this channel, and then close the channel, rabbit continues to have an empty queue sitting around _until_ the connection is closed.  It seems that closing the channel should nuke the queue, but it doesn't.   (This is not a very good use case I realize, but it can happen if I have some error handling in between declaring the queue and consuming it which ends up closing the channel before consuming.)
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;<i> More of a problem is that this is also the behavior if I consume with methods that result in a basic_get amqp command (NOT a basic_consume command).  Ie, if I create a channel, declare a queue auto_delete=True, use _only_ basic_get() to consume the queue and then close the channel when the queue is empty, the queue is also NOT nuked in this scenario.  This causes a huge problem when re-using connections that have declared random queue names.  Every time a connection is pulled from the pool and used, I have a random queue name lying around...  _until_ the connection is closed.   Shouldn't closing the channel end up removing the empty queue, as there's no more consumer for it?
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;<i> NOTE:  This problem goes away once you call basic_consume(), instead.  Once you've called basic_cancel(), you can basic_cancel() it, and the queue goes away.  Alternatively, instead of calling basic_cancel(), I can just close the channel, and the queue will go away.  So, the workaround to my problem is to always use basic_consume() instead of basic_get() (which is more efficient, anyway).... BUT I still have this rare corner case described first above.  Ie, if I declare an auto_delete queue on a channel, and immediately close the channel... the queue is left around when it should be removed.
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;<i> The complete workaround is to close the connection to rabbit, but then that means I can't use a pool of connections and recycle them anymore, obviously.  I lose the efficiency gained by not having to close/reopen connections all of the time.
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;<i> Comments?
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;<i> Thanks,
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;<i> - Chris
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;<i> _______________________________________________
+</I>&gt;&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-disc... at lists.rabbitmq.comhttps</A>://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>
+</PRE>
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="014738.html">[rabbitmq-discuss] possible rabbitmq bug
+</A></li>
+	<LI>Next message: <A HREF="014740.html">[rabbitmq-discuss] possible rabbitmq bug
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#14739">[ date ]</a>
+              <a href="thread.html#14739">[ thread ]</a>
+              <a href="subject.html#14739">[ subject ]</a>
+              <a href="author.html#14739">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

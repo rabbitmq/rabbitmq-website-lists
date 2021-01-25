@@ -1,0 +1,69 @@
+﻿using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Text;
+
+using RabbitMQ.Client;
+
+namespace ML.Mlp.Test.Win5
+{
+    class Program
+    {
+        static void Main(string[] args)
+        {
+            string input;
+            do
+            {
+                byte[] data = new byte[2097152];
+                for (int i = 0; i < data.Length; i++)
+                    data[i] = 0;
+
+                ConnectionFactory factory = new ConnectionFactory();
+                IProtocol protocol = Protocols.FromEnvironment();
+                IConnection connection = factory.CreateConnection(protocol, "uswmapmlpd01.amrs.win.ml.com", 5672);
+                IModel channel = connection.CreateModel();
+
+                channel.ExchangeDeclare("test", ExchangeType.Topic, false, true, false, false, false, null);
+
+                channel.QueueDeclare("test", false, true, false, false, false, null);
+                channel.QueueBind("test", "test", "test", false, null);
+
+                Console.WriteLine("{0}: Sending {1}-byte messages", DateTime.Now, data.Length);
+
+                for (int i = 0; i < 10; i++)
+                    channel.BasicPublish("test", "test", null, data);
+
+                Console.WriteLine("{0}: Sent {1}-byte messages", DateTime.Now, data.Length);
+
+                try
+                {
+                    byte[] body = null;
+                    do
+                    {
+                        BasicGetResult result = channel.BasicGet("test", false);                        
+                        if (result != null)
+                        {
+                            channel.BasicAck(result.DeliveryTag, false);
+                            body = result.Body;
+
+                            Console.WriteLine("{0}: Got {1}-byte message", DateTime.Now, data.Length);
+                        }
+                        else
+                            body = null;
+                    } while (body != null);
+
+                    channel.QueueDelete("test", false, false, true);
+                    channel.QueueDelete("test2", false, false, true);
+                    channel.QueueDelete("test3", false, false, true);
+
+                    Console.WriteLine("Received all messages");
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine(DateTime.Now.ToString());
+                    Console.WriteLine(ex.ToString());
+                }
+            } while ((input = Console.ReadLine()) != "q");
+        }
+    }
+}

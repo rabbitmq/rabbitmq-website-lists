@@ -1,0 +1,137 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Duplicate Messages received after	basicRecoveryAsync() is called.
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20Duplicate%20Messages%20received%20after%0A%09basicRecoveryAsync%28%29%20is%20called.&In-Reply-To=4B87B3C3.9080203%40lshift.net">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="006491.html">
+   <LINK REL="Next"  HREF="006487.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Duplicate Messages received after	basicRecoveryAsync() is called.</H1>
+    <B>John Mann</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20Duplicate%20Messages%20received%20after%0A%09basicRecoveryAsync%28%29%20is%20called.&In-Reply-To=4B87B3C3.9080203%40lshift.net"
+       TITLE="[rabbitmq-discuss] Duplicate Messages received after	basicRecoveryAsync() is called.">jmann at versatile.com
+       </A><BR>
+    <I>Fri Feb 26 15:10:23 GMT 2010</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="006491.html">[rabbitmq-discuss] RabbitMQ on VM.
+</A></li>
+        <LI>Next message: <A HREF="006487.html">[rabbitmq-discuss] Duplicate Messages received after	basicRecoveryAsync() is called.
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#6486">[ date ]</a>
+              <a href="thread.html#6486">[ thread ]</a>
+              <a href="subject.html#6486">[ subject ]</a>
+              <a href="author.html#6486">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>On Feb 26, 2010, at 6:42 AM, Matthias Radestock wrote:
+
+&gt;<i> John Mann wrote:
+</I>&gt;&gt;<i> From the client perspective, receiving messages that I've already
+</I>&gt;&gt;<i> acknowledged is confusing.
+</I>&gt;<i> 
+</I>&gt;<i> Here is a possible trace, as observed at the server, with delivery tags and acks included:
+</I>&gt;<i> 
+</I>&gt;<i> -&gt; publish(A)
+</I>&gt;<i> &lt;- deliver(1, A)
+</I>&gt;<i> -&gt; publish(B)
+</I>&gt;<i> &lt;- deliver(2, B)
+</I>&gt;<i> -&gt; recover
+</I>&gt;<i> &lt;- deliver(3, A)
+</I>&gt;<i> &lt;- deliver(4, B)
+</I>&gt;<i> -&gt; ack(2)
+</I>&gt;<i> -&gt; ack(3)
+</I>&gt;<i> 
+</I>&gt;<i> As you can see, the ack(2) isn't received by the server until after it has re-delivered both messages.
+</I>
+Ah!  I get it.
+
+&gt;<i> 
+</I>&gt;&gt;<i> Is there a way to recover unacknowledged messages without also
+</I>&gt;&gt;<i> receiving previously acknowledged messages?
+</I>&gt;<i> 
+</I>&gt;<i> 'recover' should be a synchronous operation, and such an operation is introduced in the 0-9-1 version of the AMQP spec, which rabbit will implement soon.
+</I>&gt;<i> 
+</I>&gt;<i> The recover-ok reply of the synchronous operation acts as a marker in the delivery stream - all unacked messages received by the client before it are recovered.
+</I>&gt;<i> 
+</I>&gt;<i> There is still a problem though: there is no easy way to tell in the client API which messages were received before or after the recover-ok. I will raise a bug for that.
+</I>
+Yup, that's my problem.  I knew that the basicRecoverAsync method was asynchronous (the name helps! :) ), but I didn't know what to wait on.
+
+&gt;<i> Can you elaborate on what you are trying to accomplish?
+</I>
+I have a component (RabbitMQConsumer) that is responsible for listening for messages from a RabbitMQ queue.  Upon receiving a message, the RabbitMQConsumer invokes a method on a configurable listener class that implements the RawConsumer interface. 
+
+Here is the meat of the RabbitMQConsumer class:
+
+...
+while (isRunning()) {
+  try {
+     deliverToRawConsumer(consumer.nextDelivery());
+  } catch (InterruptedException e) {
+     break;
+  }
+}
+...
+
+private void deliverToRawConsumer(QueueingConsumer.Delivery delivery) {
+  String rawMessage = new String(delivery.getBody());
+
+  try {
+     rawConsumer.consume(rawMessage);
+
+     acknowledgeMessageDelivery(delivery);
+  }
+  catch (Exception e) {
+     LOG.error(&quot;Problem consuming message.&quot;, e);
+     LOG.info(&quot;Not acknowledging message delivery.&quot;);
+  }
+}
+
+By design, the RabbitMQConsumer does not acknowledge a message if the RawConsumer throws an exception. 
+
+The problem is that the behavior of the RawConsumer class can change during runtime.  This means that it can throw an exception while consuming some messages, then later in time it can &quot;recover&quot;.  When it recovers, I need to be able to retry all of the previously unacknowledged messages.
+
+&gt;<i> Would closing and re-opening the channel be an option?
+</I>
+I think I can do that.  Are there any pitfalls in this approach.  I don't want to lose any messages.
+
+&gt;<i> PS: could we continue this discussion on rabbitmq-discuss?
+</I>
+Good idea.  Done.
+
+Thanks Matthias.
+
+-John
+
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="006491.html">[rabbitmq-discuss] RabbitMQ on VM.
+</A></li>
+	<LI>Next message: <A HREF="006487.html">[rabbitmq-discuss] Duplicate Messages received after	basicRecoveryAsync() is called.
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#6486">[ date ]</a>
+              <a href="thread.html#6486">[ thread ]</a>
+              <a href="subject.html#6486">[ subject ]</a>
+              <a href="author.html#6486">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

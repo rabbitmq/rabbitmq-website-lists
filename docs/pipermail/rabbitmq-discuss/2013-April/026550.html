@@ -1,0 +1,155 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Proposed change to shovel
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Proposed%20change%20to%20shovel&In-Reply-To=%3C48163C85-04EB-4B77-BD97-C96E1BD1B7B0%40dushin.net%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="026764.html">
+   <LINK REL="Next"  HREF="026551.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Proposed change to shovel</H1>
+    <B>Fred Dushin</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Proposed%20change%20to%20shovel&In-Reply-To=%3C48163C85-04EB-4B77-BD97-C96E1BD1B7B0%40dushin.net%3E"
+       TITLE="[rabbitmq-discuss] Proposed change to shovel">fred at dushin.net
+       </A><BR>
+    <I>Thu Apr 18 16:04:57 BST 2013</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="026764.html">[rabbitmq-discuss] .NET Client ConnectionFactory threading	issues
+</A></li>
+        <LI>Next message: <A HREF="026551.html">[rabbitmq-discuss] Proposed change to shovel
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#26550">[ date ]</a>
+              <a href="thread.html#26550">[ thread ]</a>
+              <a href="subject.html#26550">[ subject ]</a>
+              <a href="author.html#26550">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi,
+
+I would like to consider a change to the shovel plugin, to allow the shovel to failover more predictably against the list of broker endpoints in the rabbitmq_shovel configuration.  Essentially, the idea is to try each endpoint in order of the declaration, and to use the first endpoint to which a connection can be made, instead of selecting an endpoint at random.
+
+This does slightly violate the spirit of Erlang's &quot;let it fail&quot; philosophy, and I am not sure if the random endpoint selection in the current code is really more designed for clustered environments.  Perhaps it would make more sense to make the iterative failover strategy an &quot;opt-in&quot; feature, if not simply for the sake of backwards-compatibility.
+
+I am providing a patch, but not suggesting that this actual change go into production code, as I really did the change for testing purposes.  I'm really more interested in whether others would find the patch useful, and whether there would be a way for us to fold a feature like this into the shovel.  If there is interest, I would be happy to contribute something more production-worthy, for review.
+
+Thanks,
+
+-Fred
+
+Here is the patch (based off 3.0.1 tag):
+
+# HG changeset patch
+# User Fred Dushin &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">fred at dushin.net</A>&gt;
+# Date 1366295416 14400
+# Branch fdushin-failover
+# Node ID 0436511e18908fd8d38d5f56a1a3b0e5af807206
+# Parent  cdf80b9ac08a61de718314baaff13f8ca5740c4c
+Added changes to make failover to additional endpoints deterministic.
+
+diff --git a/src/rabbit_shovel_worker.erl b/src/rabbit_shovel_worker.erl
+--- a/src/rabbit_shovel_worker.erl
++++ b/src/rabbit_shovel_worker.erl
+@@ -53,9 +53,9 @@
+   random:seed(A, B, C),
+   #shovel{sources = Sources, destinations = Destinations} = Config,
+   {InboundConn, InboundChan, InboundParams} =
+-        make_conn_and_chan(Sources#endpoint.amqp_params),
++        make_conn_and_chan(lists:reverse(Sources#endpoint.amqp_params)),
+   {OutboundConn, OutboundChan, OutboundParams} =
+-        make_conn_and_chan(Destinations#endpoint.amqp_params),
++        make_conn_and_chan(lists:reverse(Destinations#endpoint.amqp_params)),
+
+   create_resources(InboundChan,
+                    Sources#endpoint.resource_declarations),
+@@ -240,11 +240,27 @@
+       amqp_channel:call(Chan, #'channel.flow'{active = Active}),
+   ok.
+
+-make_conn_and_chan(AmqpParams) -&gt;
+-    AmqpParam = lists:nth(random:uniform(length(AmqpParams)), AmqpParams),
++amqp_params_to_string(#amqp_params_network{host=Host, port=Port, virtual_host=VirtualHost}) -&gt;
++    io_lib:format(&quot;Host: ~p Port: ~p VirtualHost: ~p&quot;, [Host, Port, VirtualHost]);
++amqp_params_to_string(#amqp_params_direct{virtual_host=VirtualHost}) -&gt;
++    io_lib:format(&quot;(Direct) Virtual Host: ~p&quot;, [VirtualHost]).
++
++make_conn_and_chan([]) -&gt;
++    throw(no_endpoints);
++make_conn_and_chan([AmqpParam|Rest]) -&gt;
++    try
++        get_conn_and_chan(AmqpParam)
++    catch
++        Type:Reason -&gt;
++            error_logger:error_msg(&quot;Shovel failed to connect to ~s: ~p:~p&quot;, [amqp_params_to_string(AmqpParam), Type, Reason]),
++            make_conn_and_chan(Rest)
++    end.
++
++get_conn_and_chan(AmqpParam) -&gt;
+   {ok, Conn} = amqp_connection:start(AmqpParam),
+   link(Conn),
+   {ok, Chan} = amqp_connection:open_channel(Conn),
++    error_logger:info_msg(&quot;Shovel connected to ~s.&quot;, [amqp_params_to_string(AmqpParam)]),
+   {Conn, Chan, AmqpParam}.
+
+create_resources(Chan, Declarations) -&gt;
+
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20130418/ef9dd494/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20130418/ef9dd494/attachment.htm</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="026764.html">[rabbitmq-discuss] .NET Client ConnectionFactory threading	issues
+</A></li>
+	<LI>Next message: <A HREF="026551.html">[rabbitmq-discuss] Proposed change to shovel
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#26550">[ date ]</a>
+              <a href="thread.html#26550">[ thread ]</a>
+              <a href="subject.html#26550">[ subject ]</a>
+              <a href="author.html#26550">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,250 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Running RabbitMQ as a different user
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Running%20RabbitMQ%20as%20a%20different%20user&In-Reply-To=%3CCB16273E.2444D%25mpietrek%40skytap.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="016936.html">
+   <LINK REL="Next"  HREF="016929.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Running RabbitMQ as a different user</H1>
+    <B>Matt Pietrek</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Running%20RabbitMQ%20as%20a%20different%20user&In-Reply-To=%3CCB16273E.2444D%25mpietrek%40skytap.com%3E"
+       TITLE="[rabbitmq-discuss] Running RabbitMQ as a different user">mpietrek at skytap.com
+       </A><BR>
+    <I>Tue Dec 20 20:06:14 GMT 2011</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="016936.html">[rabbitmq-discuss] Running RabbitMQ as a different user
+</A></li>
+        <LI>Next message: <A HREF="016929.html">[rabbitmq-discuss] Issues with RPM installation
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#16947">[ date ]</a>
+              <a href="thread.html#16947">[ thread ]</a>
+              <a href="subject.html#16947">[ subject ]</a>
+              <a href="author.html#16947">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>As a follow up to this thread, and in case somebody else can learn from my
+learning experience, here are the steps that seem to work for me to run
+RabbitMQ as a non-root/non-rabbitmq user.
+
+In addition, I needed to set up clustering, management plugins, and make
+rabbitmq not autostart at boot. This is using RabbitMQ 2.7 on Ubuntu 10.04.
+YMMV. 
+
+If anybody sees any pitfalls with the approach below, please feel free to
+holler.
+
+---- SETUP ----
+# Do a fresh install
+sudo apt-get install -y rabbitmq-server
+
+# Enable management plugin
+sudo rabbitmq-plugins enable rabbitmq_management
+
+# Shut down the rabbitmq server
+sudo rabbitmqctl stop
+
+# Remove the mnesia directory, which was created as user rabbitmq, not what
+we want.
+sudo rm -rf /var/lib/rabbitmq/mnesia
+
+# Prevent rabbitmq from auto starting on boot
+sudo update-rc.d -f rabbitmq-server remove
+
+# Rename the rabbitmq supplied commands that enforce user==rabbitmq or root
+# This prevents innocent people from inadvertently using them. Entirely
+optional.
+sudo mv /usr/sbin/rabbitmqctl /usr/sbin/rabbitmqctl_dont_use
+sudo mv /usr/sbin/rabbitmq-plugins /usr/sbin/rabbitmq-plugins_dont_use
+sudo mv /usr/sbin/rabbitmq-server /usr/sbin/rabbitmq-server_dont_use
+
+# Change ownership of all files previously created by RabbitMQ to
+desired_user
+sudo chown -R desired_user:desired_user /var/lib/rabbitmq
+sudo chown -R desired_user: desired_user /var/log/rabbitmq
+----
+
+
+---- Launching as desired_user ----
+export RABBITMQ_CONFIG_FILE=/home/desired_user/config/rabbitmq
+export RABBITMQ_SERVER_ERL_ARGS=&quot;-setcookie rabbit&quot;
+export RABBITMQ_CTL_ERL_ARGS=&quot;-setcookie rabbit&quot;
+
+# Note that this is not the &quot;normal&quot; rabbitmq-server script in /usr/sbin/
+/usr/lib/rabbitmq/bin/rabbitmq-server start
+----
+
+Finally, in /home/desired_user/config/rabbitmq.Config:
+
+[
+  {rabbit,
+    [{cluster_nodes, ['<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at play</A>', '<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at play2</A>']}
+    ]
+  }
+].
+
+Matt
+
+On 12/19/11 3:53 PM, &quot;Jason J. W. Williams&quot; &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">jasonjwwilliams at gmail.com</A>&gt;
+wrote:
+
+&gt;<i> I believe what you're looking for then is this section from the
+</I>&gt;<i> RabbitMQ clustering guide:
+</I>&gt;<i> 
+</I>&gt;<i> &quot;As an alternative, you can insert the option &quot;-setcookie cookie&quot; in
+</I>&gt;<i> the erl call in the rabbitmq-server and rabbitmqctl scripts.&quot;
+</I>&gt;<i> 
+</I>&gt;<i> <A HREF="http://www.rabbitmq.com/clustering.html">http://www.rabbitmq.com/clustering.html</A>
+</I>&gt;<i> 
+</I>&gt;<i> For what it's worth, we create a rabbitmq user on every system (for us
+</I>&gt;<i> it's in LDAP, but you could write it out to the passwd file) and set
+</I>&gt;<i> its home directory to /var/lib/rabbitmq. We then write out the
+</I>&gt;<i> .erlang.cookie file into /var/lib/rabbitmq on every Rabbit node using
+</I>&gt;<i> Chef (with permissions 0600). We're running Ubuntu 10.04.x LTS.
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> -J
+</I>&gt;<i> 
+</I>&gt;<i> On Mon, Dec 19, 2011 at 3:47 PM, Matt Pietrek &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">mpietrek at skytap.com</A>&gt; wrote:
+</I>&gt;&gt;<i>  Thanks Jason.
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;<i>  That's helpful, but in my admittedly limited knowledge, I don't believe that
+</I>&gt;&gt;<i>  it's as simple as that. In particular I don't understand how handle files
+</I>&gt;&gt;<i>  being installed with rabbitmq as the owner.
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;<i>  A little more context that I forgot to mention earlier:
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;<i>  I need to cluster multiple nodes so explicitly specifying the cookie is
+</I>&gt;&gt;<i>  necessary so they're synced. Also, specifying the cookie via an environment
+</I>&gt;&gt;<i>  variable is preferred to having an additional cookie file that I need to
+</I>&gt;&gt;<i>  copy to multiple machines.
+</I>&gt;&gt;<i>  I need to be able to launch everything from scratch via my own script file
+</I>&gt;&gt;<i>  (which will be on all nodes.)
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;<i>  My current thinking is that my startup script will set some RABBITMQ
+</I>&gt;&gt;<i>  environment variables (RABBITMQ_CONFIG_FILE, RABBITMQ_SERVER_START_ARGS,
+</I>&gt;&gt;<i>  RABBITMQ_CTL_ERL_ARGS,). The script will then directly run rabbit-server in
+</I>&gt;&gt;<i>  /usr/lib/rabbitmq/bin. Also, RABBITMQ_CONFIG_FILE will point to the
+</I>&gt;&gt;<i>  rabbitmq.config file that I've dropped on all nodes to set up auto
+</I>&gt;&gt;<i>  clustering.)
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;<i>  Thanks again,
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;<i>  Matt
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;<i>  On 12/19/11 2:31 PM, &quot;Jason J. W. Williams&quot; &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">jasonjwwilliams at gmail.com</A>&gt;
+</I>&gt;&gt;<i>  wrote:
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;<i>  Hi Matt,
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;<i>  This should do it on Ubuntu:
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;<i>  sudo -H -u &lt;user&gt; /opt/rabbitmq-server/sbin/rabbitmq-server
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;<i>  The Erlang process needs to find the Erlang cookie and will check the
+</I>&gt;&gt;<i>  home directory of the executing user. You can also specify the
+</I>&gt;&gt;<i>  explicit location of the Erlang cookie in the RabbitMQ arguments, but
+</I>&gt;&gt;<i>  we find using the HOME environment simpler.
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;<i>  -J
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;<i>  On Mon, Dec 19, 2011 at 2:58 PM, Matt Pietrek &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">mpietrek at skytap.com</A>&gt; wrote:
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;<i>  We have a production environment where all of our services run in a special,
+</I>&gt;&gt;<i>  non-root account an an Ubuntu 10.04 environment. I'm experimenting with how
+</I>&gt;&gt;<i>  to make RabbitMQ 2.7 run in this special account, rather than as the
+</I>&gt;&gt;<i>  &quot;rabbitmq&quot; user, and not having much luck.
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;<i>  Extensive searching of the mailing list makes me think I'm close, but I
+</I>&gt;&gt;<i>  suspect I'm missing something fundamental.
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;<i>  I believe part of the answer involves explicitly setting the &quot;-cookie&quot;
+</I>&gt;&gt;<i>  option in RABBITMQ_SERVER_START_ARGS and RABBITMQ_CTL_ERL_ARGS environment
+</I>&gt;&gt;<i>  variables.
+</I>&gt;&gt;<i>  I also suspect that the answer also involves running the &quot;low level&quot; scripts
+</I>&gt;&gt;<i>  in /usr/lib/rabbitmq/bin/, rather than the scripts in /usr/sbin/.
+</I>&gt;&gt;<i>  Further, I suspect that some directories may need to have their ownership
+</I>&gt;&gt;<i>  and/or attributes changed to something other than &quot;rabbitmq&quot;.
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;<i>  So what I'm looking for is a list of what exactly I need to do, both at
+</I>&gt;&gt;<i>  launch time, as well as possibly at install time.
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;<i>  FWIW, we need to launch rabbitmq-server ourselves, rather than having it
+</I>&gt;&gt;<i>  auto start on boot. I know how to accomplish this, but it might be useful
+</I>&gt;&gt;<i>  context when deciding how to approach the above.
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;<i>  Thanks much,
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;<i>  Matt
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;<i>  _______________________________________________
+</I>&gt;&gt;<i>  rabbitmq-discuss mailing list
+</I>&gt;&gt;<i>  <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;&gt;<i>  <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;<i> 
+</I>&gt;<i> 
+</I>
+
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20111220/9ba97419/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20111220/9ba97419/attachment.htm</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="016936.html">[rabbitmq-discuss] Running RabbitMQ as a different user
+</A></li>
+	<LI>Next message: <A HREF="016929.html">[rabbitmq-discuss] Issues with RPM installation
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#16947">[ date ]</a>
+              <a href="thread.html#16947">[ thread ]</a>
+              <a href="subject.html#16947">[ subject ]</a>
+              <a href="author.html#16947">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

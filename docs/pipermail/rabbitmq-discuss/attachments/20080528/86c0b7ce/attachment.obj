@@ -1,0 +1,104 @@
+diff -r c684d51bea0d priv/tests-ruby/persistent-receiver.rb
+--- /dev/null	Thu Jan 01 00:00:00 1970 +0000
++++ b/priv/tests-ruby/persistent-receiver.rb	Wed May 28 14:50:30 2008 +0200
+@@ -0,0 +1,13 @@
++require 'rubygems'
++require 'stomp'
++
++conn = Stomp::Connection.open('guest', 'guest', 'localhost')
++#conn.subscribe('/queue/durable', :'auto-delete' => false, :durable => true)
++conn.subscribe('/queue/durable')
++
++puts "Waiting for messages..."
++
++while true
++  mesg = conn.receive
++  puts mesg.body if mesg
++end
+diff -r c684d51bea0d priv/tests-ruby/persistent-sender.rb
+--- /dev/null	Thu Jan 01 00:00:00 1970 +0000
++++ b/priv/tests-ruby/persistent-sender.rb	Wed May 28 14:50:30 2008 +0200
+@@ -0,0 +1,14 @@
++require 'rubygems'
++require 'stomp'
++
++# Use this case to test durable queues
++#
++# Start the sender    - 11 messages will be sent to /queue/durable and the sender exits
++# Start the receiver  - 0 messages should be received - interrupt the receive loop, 
++#                       The queue should be now be created as durable and non auto-delete
++# Start the sender    - 11 messages will be sent to /queue/durable and the sender exits
++# Start the receiver  - 11 messages should be received and the receiver - interrupt the receive loop
++
++client = Stomp::Client.new("guest", "guest", "localhost", 61613)
++10.times { |i| client.send '/queue/durable', "Test Message number #{i} sent at #{Time.now}", 'delivery-mode' => '2'}
++client.send '/queue/durable', "All Done!"
+diff -r c684d51bea0d src/rabbit_stomp.erl
+--- a/src/rabbit_stomp.erl	Wed May 07 16:57:40 2008 +0100
++++ b/src/rabbit_stomp.erl	Wed May 28 14:50:30 2008 +0200
+@@ -458,10 +458,10 @@ process_command("SUBSCRIBE",
+ 					      nowait = true},
+ 			     send_method(#'queue.declare'{ticket = Ticket,
+ 							  queue = Queue,
+-							  passive = false,
+-							  durable = false,
+-							  exclusive = falxse,
+-							  auto_delete = true,
++							  passive = stomp_frame:boolean_header(Frame, "passive", false),
++							  durable = stomp_frame:boolean_header(Frame, "durable", false),
++							  exclusive = stomp_frame:boolean_header(Frame, "exclusive", false),
++							  auto_delete = stomp_frame:boolean_header(Frame, "auto-delete", true),
+ 							  nowait = true,
+ 							  arguments =
+ 							    make_string_table(fun user_header_key/1,
+@@ -501,3 +501,5 @@ process_command(Command, _Frame, State) 
+     {ok, send_error("Bad command",
+ 		    "Could not interpret command " ++ Command ++ "\n",
+ 		    State)}.
++
++%% vi:noet:ts=8:sts=4:sw=4:cindent
+diff -r c684d51bea0d src/stomp_frame.erl
+--- a/src/stomp_frame.erl	Wed May 07 16:57:40 2008 +0100
++++ b/src/stomp_frame.erl	Wed May 28 14:50:30 2008 +0200
+@@ -33,7 +33,7 @@
+ -export([parse_headers/2, initial_headers_state/0]).
+ -export([parse_body/2, initial_body_state/1]).
+ -export([parse/2, initial_state/0]).
+--export([header/2, header/3, integer_header/2, integer_header/3, binary_header/2, binary_header/3]).
++-export([header/2, header/3, boolean_header/2, boolean_header/3, integer_header/2, integer_header/3, binary_header/2, binary_header/3]).
+ -export([serialize/1]).
+ 
+ -record(hstate, {state, acc, key, command, headers}).
+@@ -92,6 +92,26 @@ header(#stomp_frame{headers = Headers}, 
+ 	    Str;
+ 	_ ->
+ 	    DefaultValue
++    end.
++
++boolean_header(#stomp_frame{headers = Headers}, Key) ->
++    boolean_header(Headers, Key);
++boolean_header(Headers, Key) ->
++    case lists:keysearch(Key, 1, Headers) of
++	{value, {_, "true"}} ->
++	    {ok, true};
++	{value, {_, "false"}} ->
++	    {ok, false};
++	_ ->
++	    not_found
++    end.
++
++boolean_header(H, Key, D) ->
++    case boolean_header(H, Key) of
++	{ok, V} ->
++	    V;
++	not_found ->
++	    D
+     end.
+ 
+ integer_header(#stomp_frame{headers = Headers}, Key) ->
+@@ -195,3 +215,5 @@ serialize_header({K, V}) when is_integer
+     [K, $:, integer_to_list(V), $\n];
+ serialize_header({K, V}) when is_list(V) ->
+     [K, $:, V, $\n].
++
++%% vi:noet:ts=8:sts=4:sw=4:cindent

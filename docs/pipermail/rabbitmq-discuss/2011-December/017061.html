@@ -1,0 +1,234 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Possible bug when disposing connections in	.NET client 2.7.0/1
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Possible%20bug%20when%20disposing%20connections%20in%0A%09.NET%20client%202.7.0/1&In-Reply-To=%3C8cd5cf33-b465-4de1-af1b-4e8023bb241c%40m7g2000vbc.googlegroups.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="017059.html">
+   <LINK REL="Next"  HREF="017068.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Possible bug when disposing connections in	.NET client 2.7.0/1</H1>
+    <B>Dave Stevens</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Possible%20bug%20when%20disposing%20connections%20in%0A%09.NET%20client%202.7.0/1&In-Reply-To=%3C8cd5cf33-b465-4de1-af1b-4e8023bb241c%40m7g2000vbc.googlegroups.com%3E"
+       TITLE="[rabbitmq-discuss] Possible bug when disposing connections in	.NET client 2.7.0/1">daverstevens at gmail.com
+       </A><BR>
+    <I>Thu Dec 29 22:16:47 GMT 2011</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="017059.html">[rabbitmq-discuss] Possible bug when disposing connections in .NET client 2.7.0/1
+</A></li>
+        <LI>Next message: <A HREF="017068.html">[rabbitmq-discuss] Possible bug when disposing connections in	.NET client 2.7.0/1
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#17061">[ date ]</a>
+              <a href="thread.html#17061">[ thread ]</a>
+              <a href="subject.html#17061">[ subject ]</a>
+              <a href="author.html#17061">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Yes, heartbeat is what is causing this. Version 2.7.1 of the .NET
+client is itself calling System.Net.Sockets.TcpClient.Close() 3 times
+per connection shutdown (4 if shutdown times out).
+ConnectionBase.FinishClose() is called 3 different times when shutting
+down.See MainLoop(), HeartbeatReadLoop(), and HeartbeatWriteLoop() of
+ConnectionBase.cs lines 629, 566 and&#160;538 respectively.
+I am required to set the Heartbeat due to another issue where
+exclusive queues are not being removed at the broker when connections
+died. This prevents components from being able to restart with the
+same queue name.
+See <A HREF="http://stackoverflow.com/questions/8296201/when-does-an-amqp-rabbitmq-channel-with-no-connections-die/8299475">http://stackoverflow.com/questions/8296201/when-does-an-amqp-rabbitmq-channel-with-no-connections-die/8299475</A>
+
+I believe that even with this, ConnectionBase.FinishClose() will be
+called once successfully which would allow the models to shutdown
+properly. I believe this is a bug though as FinishClose() should not
+be called more than once or it is possible that certain event handlers
+will be called more than once, Session.OnSessionShutdown specifically.
+This may impact certain reconnect implementations.
+
+On Dec 29, 4:38&#160;pm, Simone Busoli &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">simone.bus... at gmail.com</A>&gt; wrote:
+&gt;<i> What happens if you remove the heartbeat setting?
+</I>&gt;<i> On Dec 29, 2011 5:43 PM, &quot;Dave Stevens&quot; &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">daverstev... at gmail.com</A>&gt; wrote:
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> &gt; I get the same exception with this:
+</I>&gt;<i>
+</I>&gt;<i> &gt; &#160; &#160; &#160; &#160; [Test(Description = &quot;ObjectDispositionException&quot;)]
+</I>&gt;<i> &gt; &#160; &#160; &#160; &#160; public void TestFail()
+</I>&gt;<i> &gt; &#160; &#160; &#160; &#160; {
+</I>&gt;<i> &gt; &#160; &#160; &#160; &#160; &#160; &#160; var cf = new ConnectionFactory
+</I>&gt;<i> &gt; &#160; &#160; &#160; &#160; &#160; &#160; &#160; &#160; &#160; &#160; &#160; &#160; &#160;{
+</I>&gt;<i> &gt; &#160; &#160; &#160; &#160; &#160; &#160; &#160; &#160; &#160; &#160; &#160; &#160; &#160; &#160; &#160;HostName = &quot;10.10.8.96&quot;,
+</I>&gt;<i> &gt; &#160; &#160; &#160; &#160; &#160; &#160; &#160; &#160; &#160; &#160; &#160; &#160; &#160; &#160; &#160;Port = 5672,
+</I>&gt;<i> &gt; &#160; &#160; &#160; &#160; &#160; &#160; &#160; &#160; &#160; &#160; &#160; &#160; &#160; &#160; &#160;RequestedHeartbeat = 2
+</I>&gt;<i> &gt; &#160; &#160; &#160; &#160; &#160; &#160; &#160; &#160; &#160; &#160; &#160; &#160; &#160;};
+</I>&gt;<i> &gt; &#160; &#160; &#160; &#160; &#160; &#160; using (var connection = cf.CreateConnection())
+</I>&gt;<i> &gt; &#160; &#160; &#160; &#160; &#160; &#160; using (var model = connection.CreateModel())
+</I>&gt;<i> &gt; &#160; &#160; &#160; &#160; &#160; &#160; {
+</I>&gt;<i> &gt; &#160; &#160; &#160; &#160; &#160; &#160; &#160; &#160; Thread.Sleep(TimeSpan.FromSeconds(1));
+</I>&gt;<i> &gt; &#160; &#160; &#160; &#160; &#160; &#160; }
+</I>&gt;<i> &gt; &#160; &#160; &#160; &#160; }
+</I>&gt;<i>
+</I>&gt;<i> &gt; On Thu, Dec 29, 2011 at 2:59 AM, Simone Busoli &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">simone.bus... at gmail.com</A>&gt;
+</I>&gt;<i> &gt; wrote:
+</I>&gt;<i>
+</I>&gt;<i> &gt; &gt; Hi Dave, although counterintuitive the documentation of the .NET client
+</I>&gt;<i> &gt; states that explicitly. The connection closure/disposal is not idempotent,
+</I>&gt;<i> &gt; i.e. you shall not call it twice.
+</I>&gt;<i>
+</I>&gt;<i> &gt; &gt; On Dec 29, 2011 1:41 AM, &quot;Dave Stevens&quot; &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">daverstev... at gmail.com</A>&gt; wrote:
+</I>&gt;<i>
+</I>&gt;<i> &gt; &gt;&gt; I am getting the following exception when disposing a connection. I
+</I>&gt;<i> &gt; &gt;&gt; had previously noticed this when going from RabbitMQ Client 2.5.1 to
+</I>&gt;<i> &gt; &gt;&gt; 2.7.0 which caused me to back out the update. I ended up going to
+</I>&gt;<i> &gt; &gt;&gt; 2.7.1 because I thought I found a shutdown issue in my own code. The
+</I>&gt;<i> &gt; &gt;&gt; exception did not present itself again until I started testing some
+</I>&gt;<i> &gt; &gt;&gt; reconnect logic. I first noticed it again after simply pulling the
+</I>&gt;<i> &gt; &gt;&gt; plug on my network.
+</I>&gt;<i>
+</I>&gt;<i> &gt; &gt;&gt; System.ObjectDisposedException: Cannot access a disposed object.
+</I>&gt;<i> &gt; &gt;&gt; Object name: 'System.Net.Sockets.Socket'.
+</I>&gt;<i> &gt; &gt;&gt; at System.Net.Sockets.Socket.SetSocketOption(SocketOptionLevel
+</I>&gt;<i> &gt; &gt;&gt; optionLevel, SocketOptionName optionName, Object optionValue)
+</I>&gt;<i> &gt; &gt;&gt; at RabbitMQ.Client.Impl.SocketFrameHandler_0_9.Close()
+</I>&gt;<i> &gt; &gt;&gt; at RabbitMQ.Client.Impl.ConnectionBase.FinishClose()
+</I>&gt;<i> &gt; &gt;&gt; at RabbitMQ.Client.Impl.ConnectionBase.HeartbeatWriteLoop()
+</I>&gt;<i> &gt; &gt;&gt; at System.Threading.ThreadHelper.ThreadStart_Context(Object state)
+</I>&gt;<i> &gt; &gt;&gt; at System.Threading.ExecutionContext.runTryCode(Object userData)
+</I>&gt;<i> &gt; &gt;&gt; at
+</I>&gt;<i>
+</I>&gt;<i> &gt; System.Runtime.CompilerServices.RuntimeHelpers.ExecuteCodeWithGuaranteedCle anup(TryCode
+</I>&gt;<i> &gt; &gt;&gt; code, CleanupCode backoutCode, Object userData)
+</I>&gt;<i> &gt; &gt;&gt; at System.Threading.ExecutionContext.RunInternal(ExecutionContext
+</I>&gt;<i> &gt; &gt;&gt; executionContext, ContextCallback callback, Object state)
+</I>&gt;<i> &gt; &gt;&gt; at System.Threading.ExecutionContext.Run(ExecutionContext
+</I>&gt;<i> &gt; &gt;&gt; executionContext, ContextCallback callback, Object state, Boolean
+</I>&gt;<i> &gt; &gt;&gt; ignoreSyncCtx)
+</I>&gt;<i> &gt; &gt;&gt; at System.Threading.ExecutionContext.Run(ExecutionContext
+</I>&gt;<i> &gt; &gt;&gt; executionContext, ContextCallback callback, Object state)
+</I>&gt;<i> &gt; &gt;&gt; at System.Threading.ThreadHelper.ThreadStart()
+</I>&gt;<i>
+</I>&gt;<i> &gt; &gt;&gt; This code is reproducible consistently with the following:
+</I>&gt;<i>
+</I>&gt;<i> &gt; &gt;&gt; using System;
+</I>&gt;<i> &gt; &gt;&gt; using System.Threading;
+</I>&gt;<i> &gt; &gt;&gt; using NUnit.Framework;
+</I>&gt;<i> &gt; &gt;&gt; using RabbitMQ.Client;
+</I>&gt;<i> &gt; &gt;&gt; using RabbitMQ.Client.Framing.v0_9;
+</I>&gt;<i>
+</I>&gt;<i> &gt; &gt;&gt; namespace BT.ThirdPartyProxy.Functional.Test.FunctionalTests
+</I>&gt;<i> &gt; &gt;&gt; {
+</I>&gt;<i> &gt; &gt;&gt; &#160; &#160;[TestFixture]
+</I>&gt;<i> &gt; &gt;&gt; &#160; &#160;public class TestingObjectDispositionException
+</I>&gt;<i> &gt; &gt;&gt; &#160; &#160;{
+</I>&gt;<i> &gt; &gt;&gt; &#160; &#160; &#160; &#160;[Test(Description = &quot;ObjectDispositionException&quot;)]
+</I>&gt;<i> &gt; &gt;&gt; &#160; &#160; &#160; &#160;public void TestFail()
+</I>&gt;<i> &gt; &gt;&gt; &#160; &#160; &#160; &#160;{
+</I>&gt;<i> &gt; &gt;&gt; &#160; &#160; &#160; &#160; &#160; &#160;var cf = new ConnectionFactory
+</I>&gt;<i> &gt; &gt;&gt; &#160; &#160; &#160; &#160; &#160; &#160; &#160; &#160; &#160; &#160; &#160; &#160; {
+</I>&gt;<i> &gt; &gt;&gt; &#160; &#160; &#160; &#160; &#160; &#160; &#160; &#160; &#160; &#160; &#160; &#160; &#160; &#160; HostName = INSERT_IP_HERE,
+</I>&gt;<i> &gt; &gt;&gt; &#160; &#160; &#160; &#160; &#160; &#160; &#160; &#160; &#160; &#160; &#160; &#160; &#160; &#160; Port = 5672,
+</I>&gt;<i> &gt; &gt;&gt; &#160; &#160; &#160; &#160; &#160; &#160; &#160; &#160; &#160; &#160; &#160; &#160; &#160; &#160; RequestedHeartbeat = 2
+</I>&gt;<i> &gt; &gt;&gt; &#160; &#160; &#160; &#160; &#160; &#160; &#160; &#160; &#160; &#160; &#160; &#160; };
+</I>&gt;<i> &gt; &gt;&gt; &#160; &#160; &#160; &#160; &#160; &#160;using (var connection = cf.CreateConnection())
+</I>&gt;<i> &gt; &gt;&gt; &#160; &#160; &#160; &#160; &#160; &#160;using (var model = connection.CreateModel())
+</I>&gt;<i> &gt; &gt;&gt; &#160; &#160; &#160; &#160; &#160; &#160;{
+</I>&gt;<i> &gt; &gt;&gt; &#160; &#160; &#160; &#160; &#160; &#160; &#160; &#160;Thread.Sleep(TimeSpan.FromSeconds(1));
+</I>&gt;<i> &gt; &gt;&gt; &#160; &#160; &#160; &#160; &#160; &#160; &#160; &#160;model.Close(Constants.ReplySuccess, &quot;Goodbye&quot;);
+</I>&gt;<i> &gt; &gt;&gt; &#160; &#160; &#160; &#160; &#160; &#160; &#160; &#160;connection.Close(Constants.ReplySuccess, &quot;Goodbye&quot;);
+</I>&gt;<i> &gt; &gt;&gt; &#160; &#160; &#160; &#160; &#160; &#160; &#160; &#160;Thread.Sleep(TimeSpan.FromSeconds(1));
+</I>&gt;<i> &gt; &gt;&gt; &#160; &#160; &#160; &#160; &#160; &#160;}
+</I>&gt;<i> &gt; &gt;&gt; &#160; &#160; &#160; &#160;}
+</I>&gt;<i> &gt; &gt;&gt; &#160; &#160;}
+</I>&gt;<i> &gt; &gt;&gt; }
+</I>&gt;<i>
+</I>&gt;<i> &gt; &gt;&gt; I am using RabbitMQ.Client.dll 2.7.1.0 in .NET 4.0 app on Windows
+</I>&gt;<i> &gt; &gt;&gt; server 2003 going against RabbitMQ 2.7.0 running on Ubuntu.
+</I>&gt;<i>
+</I>&gt;<i> &gt; &gt;&gt; Status of node <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at xxx</A> ...
+</I>&gt;<i> &gt; &gt;&gt; [{pid,1344},
+</I>&gt;<i> &gt; &gt;&gt; &#160;{running_applications,
+</I>&gt;<i> &gt; &gt;&gt; &#160; &#160; [{rabbitmq_management,&quot;RabbitMQ Management Console&quot;,&quot;2.7.0&quot;},
+</I>&gt;<i> &gt; &gt;&gt; &#160; &#160; &#160;{rabbitmq_management_agent,&quot;RabbitMQ Management Agent&quot;,&quot;2.7.0&quot;},
+</I>&gt;<i> &gt; &gt;&gt; &#160; &#160; &#160;{amqp_client,&quot;RabbitMQ AMQP Client&quot;,&quot;2.7.0&quot;},
+</I>&gt;<i> &gt; &gt;&gt; &#160; &#160; &#160;{rabbit,&quot;RabbitMQ&quot;,&quot;2.7.0&quot;},
+</I>&gt;<i> &gt; &gt;&gt; &#160; &#160; &#160;{os_mon,&quot;CPO &#160;CXC 138 46&quot;,&quot;2.2.5&quot;},
+</I>&gt;<i> &gt; &gt;&gt; &#160; &#160; &#160;{sasl,&quot;SASL &#160;CXC 138 11&quot;,&quot;2.1.9.3&quot;},
+</I>&gt;<i> &gt; &gt;&gt; &#160; &#160; &#160;{rabbitmq_mochiweb,&quot;RabbitMQ Mochiweb Embedding&quot;,&quot;2.7.0&quot;},
+</I>&gt;<i> &gt; &gt;&gt; &#160; &#160; &#160;{webmachine,&quot;webmachine&quot;,&quot;1.7.0-rmq2.7.0-hg&quot;},
+</I>&gt;<i> &gt; &gt;&gt; &#160; &#160; &#160;{mochiweb,&quot;MochiMedia Web Server&quot;,&quot;1.3-rmq2.7.0-git&quot;},
+</I>&gt;<i> &gt; &gt;&gt; &#160; &#160; &#160;{inets,&quot;INETS &#160;CXC 138 49&quot;,&quot;5.5.2&quot;},
+</I>&gt;<i> &gt; &gt;&gt; &#160; &#160; &#160;{mnesia,&quot;MNESIA &#160;CXC 138 12&quot;,&quot;4.4.17&quot;},
+</I>&gt;<i> &gt; &gt;&gt; &#160; &#160; &#160;{stdlib,&quot;ERTS &#160;CXC 138 10&quot;,&quot;1.17.3&quot;},
+</I>&gt;<i> &gt; &gt;&gt; &#160; &#160; &#160;{kernel,&quot;ERTS &#160;CXC 138 10&quot;,&quot;2.14.3&quot;}]},
+</I>&gt;<i> &gt; &gt;&gt; &#160;{os,{unix,linux}},
+</I>&gt;<i> &gt; &gt;&gt; &#160;{erlang_version,
+</I>&gt;<i> &gt; &gt;&gt; &#160; &#160; &quot;Erlang R14B02 (erts-5.8.3) [source] [64-bit] [smp:8:8] [rq:8]
+</I>&gt;<i> &gt; &gt;&gt; [async-threads:30] [kernel-poll:true]\n&quot;},
+</I>&gt;<i> &gt; &gt;&gt; &#160;{memory,
+</I>&gt;<i> &gt; &gt;&gt; &#160; &#160; [{total,31177024},
+</I>&gt;<i> &gt; &gt;&gt; &#160; &#160; &#160;{processes,11828776},
+</I>&gt;<i> &gt; &gt;&gt; &#160; &#160; &#160;{processes_used,11772888},
+</I>&gt;<i> &gt; &gt;&gt; &#160; &#160; &#160;{system,19348248},
+</I>&gt;<i> &gt; &gt;&gt; &#160; &#160; &#160;{atom,1355273},
+</I>&gt;<i> &gt; &gt;&gt; &#160; &#160; &#160;{atom_used,1339382},
+</I>&gt;<i> &gt; &gt;&gt; &#160; &#160; &#160;{binary,84928},
+</I>&gt;<i> &gt; &gt;&gt; &#160; &#160; &#160;{code,14547474},
+</I>&gt;<i> &gt; &gt;&gt; &#160; &#160; &#160;{ets,1099944}]},
+</I>&gt;<i> &gt; &gt;&gt; &#160;{vm_memory_high_watermark,0.39999999995232727},
+</I>&gt;<i> &gt; &gt;&gt; &#160;{vm_memory_limit,5034326425}]
+</I>&gt;<i> &gt; &gt;&gt; ...done.
+</I>&gt;<i> &gt; &gt;&gt; _______________________________________________
+</I>&gt;<i> &gt; &gt;&gt; rabbitmq-discuss mailing list
+</I>&gt;<i> &gt; &gt;&gt; <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-disc... at lists.rabbitmq.com</A>
+</I>&gt;<i> &gt; &gt;&gt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-disc... at lists.rabbitmq.comhttps</A>://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss
+</I></PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="017059.html">[rabbitmq-discuss] Possible bug when disposing connections in .NET client 2.7.0/1
+</A></li>
+	<LI>Next message: <A HREF="017068.html">[rabbitmq-discuss] Possible bug when disposing connections in	.NET client 2.7.0/1
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#17061">[ date ]</a>
+              <a href="thread.html#17061">[ thread ]</a>
+              <a href="subject.html#17061">[ subject ]</a>
+              <a href="author.html#17061">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

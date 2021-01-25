@@ -1,0 +1,120 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Incorrect number of messages saved to the queue after RabbitMQ broker failure
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Incorrect%20number%20of%20messages%20saved%20to%20the%0A%20queue%20after%20RabbitMQ%20broker%20failure&In-Reply-To=%3C20110309003408.GA23760%40wellquite.org%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="011699.html">
+   <LINK REL="Next"  HREF="011703.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Incorrect number of messages saved to the queue after RabbitMQ broker failure</H1>
+    <B>Matthew Sackman</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Incorrect%20number%20of%20messages%20saved%20to%20the%0A%20queue%20after%20RabbitMQ%20broker%20failure&In-Reply-To=%3C20110309003408.GA23760%40wellquite.org%3E"
+       TITLE="[rabbitmq-discuss] Incorrect number of messages saved to the queue after RabbitMQ broker failure">matthew at rabbitmq.com
+       </A><BR>
+    <I>Wed Mar  9 00:34:08 GMT 2011</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="011699.html">[rabbitmq-discuss] Incorrect number of messages saved to the queue	after RabbitMQ broker failure
+</A></li>
+        <LI>Next message: <A HREF="011703.html">[rabbitmq-discuss] Network routing in RabbitMQ
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#11698">[ date ]</a>
+              <a href="thread.html#11698">[ thread ]</a>
+              <a href="subject.html#11698">[ subject ]</a>
+              <a href="author.html#11698">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>On Tue, Mar 08, 2011 at 04:16:48PM -0800, venkat veludandi wrote:
+&gt;<i> After consuming few published messages, if I bring down the RabbitMQ broker (hard failure) and bring it back, the number of messages saved to queue is incorrect.
+</I>&gt;<i> For example, I publish 100 messages. After consuming 10 messages, I bring down the broker and bring it back. Run: rabbitmqctl list_queues messages_ready, I see the count of messages_ready as 100 instead of 90. 
+</I>&gt;<i> Could you please let me know if there is&#160;anything wrong with the following Producer and consumer code:
+</I>
+Ok, so the publishing side of things is fine: by the time you get the
+tx.commit_ok back, the server has correctly written the messages to
+disk.
+
+On the acking side, because you're not using transactions, there is no
+guarantee given as to when the ack is written to disk. Consequently,
+as your test shows, ack'd messages can come back to life in the event of
+a hard kill. However, in this case you will find that messages you
+subsequently consume upon recovery will have the is_delivered property
+set (indeed, it will in fact be set for all messages recovered by the
+queue as the queue, in the case of a hard kill, has to be conservative
+and assume that all messages in the queue _may_ have been previously
+delivered).
+
+To eliminate this problem, you can issue acks within a transaction.
+Then, once again, by the time you get the tx.commit_ok back, you know
+the ack has been recorded.
+
+On the whole, we do not advise people to try and seek exactly-once
+semantics. It is very difficult if not impossible to get anywhere near
+exactly-once - this isn't just with RabbitMQ: this is a standard
+theoretical result. You can easily have &quot;at least once&quot; and &quot;at most
+once&quot; delivery. The former is generally preferred as it means you won't
+lose messages, but your consumers have to deal with the possibility of
+duplication. This is usually possible.
+
+Thus once you've embraced this, you will find performance is several
+orders of magnitude better if you use confirms when publishing[0], and
+normal acks when consuming. At that point there is likely no need to use
+transactions at all. Try to ensure your downstream operations are
+idempotent and thus can naturally cope with duplication of the
+occasional message.
+
+Matthew
+
+[0] <A HREF="http://www.rabbitmq.com/extensions.html#confirms">http://www.rabbitmq.com/extensions.html#confirms</A>
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="011699.html">[rabbitmq-discuss] Incorrect number of messages saved to the queue	after RabbitMQ broker failure
+</A></li>
+	<LI>Next message: <A HREF="011703.html">[rabbitmq-discuss] Network routing in RabbitMQ
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#11698">[ date ]</a>
+              <a href="thread.html#11698">[ thread ]</a>
+              <a href="subject.html#11698">[ subject ]</a>
+              <a href="author.html#11698">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

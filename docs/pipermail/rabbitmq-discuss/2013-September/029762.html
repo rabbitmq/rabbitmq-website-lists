@@ -1,0 +1,105 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Lower delivery rate than publish rate - why?
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Lower%20delivery%20rate%20than%20publish%20rate%20-%20why%3F&In-Reply-To=%3CA33C4206-6774-413D-A179-6B36A9D9F3B0%40rabbitmq.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="029756.html">
+   <LINK REL="Next"  HREF="030465.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Lower delivery rate than publish rate - why?</H1>
+    <B>Tim Watson</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Lower%20delivery%20rate%20than%20publish%20rate%20-%20why%3F&In-Reply-To=%3CA33C4206-6774-413D-A179-6B36A9D9F3B0%40rabbitmq.com%3E"
+       TITLE="[rabbitmq-discuss] Lower delivery rate than publish rate - why?">tim at rabbitmq.com
+       </A><BR>
+    <I>Mon Sep  2 08:31:02 BST 2013</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="029756.html">[rabbitmq-discuss] Lower delivery rate than publish rate - why?
+</A></li>
+        <LI>Next message: <A HREF="030465.html">[rabbitmq-discuss] Lower delivery rate than publish rate - why?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#29762">[ date ]</a>
+              <a href="thread.html#29762">[ thread ]</a>
+              <a href="subject.html#29762">[ subject ]</a>
+              <a href="author.html#29762">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi Tyson,
+
+Thanks for providing lots of background and environment information - that really helps. One thing you haven't mentioned is how your consumers are actually set up. Are you using basic.get or basic.consume, do they use basic.qos prefetch counts and how are ACKs being handled? Do individual consumer threads consume from multiple queues simultaneously, or is there a 1-2-1 correlation between channel, consumer and/or processing in the clients? Are consumers always connected to the node on which the master queue process (for the queue they're consuming from) resides, or the node hasting the queue slave/replica, or do you not know (because e.g., they connect via a load balancer)? In terms of that last question too - do you have any network kit between the broker and the consumers?  All of these things can impact on performance in a variety of ways.
+
+Note that for a given queue, when consumers are unable to keep up with publishing, the broker will attempt to rate limit the producer(s) in order to give consumers time to catch up.
+
+I also note that you're using a rather old version of Erlang/OTP - if it is possible to upgrade to a later release (i.e., R16B01 or at least one of the R15 releases) then it's definitely a good idea to do so, since lots of improvements and bug fixes have come in since R14. I don't however, think that the version of Erlang you're using is likely to be solely responsible for the behaviour you're observing.   
+
+Cheers,
+Tim
+
+On 1 Sep 2013, at 21:11, Tyson Stewart wrote:
+
+&gt;<i> I have yet more details to add in case they help.
+</I>&gt;<i> Technically, it's a 3-node cluster, but we took one of the nodes down last week and have not added it back in because we've had some problems with RabbitMQ becoming unresponsive when making those kinds of changes to an active cluster. So we have two reporting nodes and one down node.
+</I>&gt;<i> This morning, all 15 consumers maintained 30 messages per second pretty constantly, but then we hit some delivery threshold (I'm not exactly sure where), and they started the sawtooth behavior again and has been that way since. 
+</I>&gt;<i> We see publish spikes of 2-3x the normal rate every other minute, but the consumers bounce from 40 messages/second to 0 four to five times per minute, so it's not a direct correlation between the publish spikes and delivery drops.
+</I>&gt;<i> 
+</I>&gt;<i> On Saturday, August 31, 2013 6:30:24 PM UTC-5, Tyson Stewart wrote:
+</I>&gt;<i> Hello everyone!
+</I>&gt;<i> 
+</I>&gt;<i> We've been experiencing some behavior that I don't understand, and none of my searching or documentation-reading has been fruitful, so I'm here to ask you all for expert knowledge.
+</I>&gt;<i> 
+</I>&gt;<i> Broadly, we're seeing a lower delivery rate than publish rate. I've attached an image to this message that shows how we're able to keep up when the publish rate is less than 600 messages/second, but above that, consumption falls behind publication. Around 16:00 on that chart, we doubled the number of consumers, and it made no difference that we could tell. The erratic behavior of the publish rate is us turning off publishes of the most active queue because we were falling far enough behind that we became worried. When the backlog would get low enough, we would turn it back on, and we did that a few times.
+</I>&gt;<i> 
+</I>&gt;<i> Here are some vitals to our cluster:
+</I>&gt;<i> 2 nodes
+</I>&gt;<i> Each node is a m1.xlarge instance hosted in EC2
+</I>&gt;<i> We have 133 queues in the cluster (see note below)
+</I>&gt;<i> All queues are mirrored (they all use a policy that makes them highly available)
+</I>&gt;<i> All queues are durable; we use AWS provisioned IOPS to guarantee enough throughput
+</I>&gt;<i> We only use the direct exchange
+</I>&gt;<i> Regarding the number of queues, there are four kinds: the &quot;main&quot; queues, retry-a queues, retry-b queues, and poison queues. Messages that fail for whatever reason during consumption will get put into the retry queues, and if they fail long enough, they'll wind up in the poison queue where they will stay until we do something with them manually much later. The main queues then see the majority of activity.
+</I>&gt;<i> 
+</I>&gt;<i> The average message size is less than 1MB. At nearly one million messages, we were still under 1GB of memory usage, and our high watermark is 5.9GB. 
+</I>&gt;<i> 
+</I>&gt;<i> Disk IOPS don't appear to be the problem. Metrics indicated we still had plenty of headroom. Furthermore, if IOPS were the limitation, I would have expected the delivery rate to increase as the publish rate decreased while the consumers worked through the queue. It did not, however, as shown on the chart.
+</I>&gt;<i> 
+</I>&gt;<i> My question primarily is: What do you think is limiting our consumption rate? I'm curious about what affects consumption rate in general, though. Any advice would be appreciated at this point. Questions for clarification are also welcome!
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20130902/3d771e2a/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20130902/3d771e2a/attachment.htm</A>&gt;
+</PRE>
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="029756.html">[rabbitmq-discuss] Lower delivery rate than publish rate - why?
+</A></li>
+	<LI>Next message: <A HREF="030465.html">[rabbitmq-discuss] Lower delivery rate than publish rate - why?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#29762">[ date ]</a>
+              <a href="thread.html#29762">[ thread ]</a>
+              <a href="subject.html#29762">[ subject ]</a>
+              <a href="author.html#29762">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

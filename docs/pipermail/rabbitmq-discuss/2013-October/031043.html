@@ -1,0 +1,224 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Crash with RabbitMQ 3.1.5
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Crash%20with%20RabbitMQ%203.1.5&In-Reply-To=%3CCANM2fusqD7a5AGwrB7DVutjKBKa9Cet6jP10AMdExLNwUiauRA%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="031169.html">
+   <LINK REL="Next"  HREF="031045.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Crash with RabbitMQ 3.1.5</H1>
+    <B>David Harrison</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Crash%20with%20RabbitMQ%203.1.5&In-Reply-To=%3CCANM2fusqD7a5AGwrB7DVutjKBKa9Cet6jP10AMdExLNwUiauRA%40mail.gmail.com%3E"
+       TITLE="[rabbitmq-discuss] Crash with RabbitMQ 3.1.5">dave.l.harrison at gmail.com
+       </A><BR>
+    <I>Wed Oct 16 15:14:12 BST 2013</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="031169.html">[rabbitmq-discuss] Riak exchange fails in exchange.declare
+</A></li>
+        <LI>Next message: <A HREF="031045.html">[rabbitmq-discuss] Crash with RabbitMQ 3.1.5
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#31043">[ date ]</a>
+              <a href="thread.html#31043">[ thread ]</a>
+              <a href="subject.html#31043">[ subject ]</a>
+              <a href="author.html#31043">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi there,
+
+Hoping someone can help me out.  We recently experienced 2 crashes with our
+RabbitMQ cluster.  After the first crash, we moved the Mnesia directories
+elsewhere, and started RabbitMQ again.  This got us up and running.  Second
+time it happened, we had the original nodes plus an additional 5 nodes we
+had added to the cluster that we were planning to leave in place while
+shutting the old nodes down.
+
+During the crash symptoms were as follows:
+
+- Escalating (and sudden) CPU utilisation on some (but not all) nodes
+- Escalation memory usage (not necessarily aligned to the spiking CPU)
+- Increasing time to publish on queues (and specifically on a test queue we
+have setup that exists only to test publishing and consuming from the
+cluster hosts)
+- Running `rabbitmqctl cluster status` gets increasingly slow (some nodes
+eventually taking up to 10m to return with the response data - some were
+fast and took 5s)
+- Management plugin stops responding / or responding so slowly it's no
+longer loading any data at all (probably same thing that causes the
+preceeding item)
+- Can't force nodes to forget other nodes (calling `rabbitmqctl
+forget_cluster_node` doesn't return)
+
+- When trying to shut down a node, running `rabbitmqctl stop_app` appears
+to block on epmd and doesn't return
+--- When that doesn't return we eventually have to ctrl-c the command
+--- We have to issue a kill signal to rabbit to stop it
+--- Do the same to the epmd process
+--- However the other nodes all still think that the killed node is active
+(based on `rabbitmqctl cluster status` -- both nodes slow to run this, and
+fast to run it saw the same view of the cluster that included the dead node)
+
+
+Config / details as follows (we use mirrored queues -- 5 hosts, all disc
+nodes, with a global policy that all queues are mirrored &quot;ha-mode:all&quot;),
+running on Linux
+
+[
+        {rabbit, [
+                {cluster_nodes, {['<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at b05.internal</A>',
+'<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at b06.internal</A>','<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at b07.internal</A>','<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at b08.internal</A>
+','<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at b09.internal</A>'], disc}},
+                {cluster_partition_handling, pause_minority}
+        ]}
+]
+
+And the env:
+
+NODENAME=&quot;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at b09.internal</A>&quot;
+SERVER_ERL_ARGS=&quot;-kernel inet_dist_listen_min 27248 -kernel
+inet_dist_listen_max 27248&quot;
+
+The erl_crash.dump slogan error was : eheap_alloc: Cannot allocate
+2850821240 bytes of memory (of type &quot;old_heap&quot;).
+
+System version : Erlang R14B04 (erts-5.8.5) [source] [64-bit] [smp:2:2]
+[rq:2] [async-threads:0] [kernel-poll:false]
+
+Compiled Fri Dec 16 03:22:15 2011
+Taints (none)
+Memory allocated 6821368760 bytes
+Atoms 22440
+Processes 4899
+ETS tables 80
+Timers 23
+Funs 3994
+
+When I look at the Process Information it seems there's a small number with
+ALOT of messages queued, and the rest are an order of magnitude lower:
+
+Pid Name/Spawned as State Reductions Stack+heap MsgQ Length
+&lt;0.400.0&gt; proc_lib:init_p/5 Scheduled 146860259 59786060 37148
+&lt;0.373.0&gt; proc_lib:init_p/5 Scheduled 734287949 1346269 23360
+&lt;0.366.0&gt; proc_lib:init_p/5 Waiting 114695635 5135590 19744
+&lt;0.444.0&gt; proc_lib:init_p/5 Waiting 154538610 832040 3326
+
+when I view the second process (first one crashes erlang on me), I see a
+large number of sender_death events (not sure if these are common or highly
+unusual ?)
+
+{'$gen_cast',{gm,{sender_death,&lt;2710.20649.64&gt;}}}
+
+mixed in with other more regular events:
+
+{'$gen_cast',
+    {gm,{publish,&lt;2708.20321.59&gt;,
+            {message_properties,undefined,false},
+            {basic_message,
+&lt;.. snip..&gt;
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20131017/16a02719/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20131017/16a02719/attachment.htm</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="031169.html">[rabbitmq-discuss] Riak exchange fails in exchange.declare
+</A></li>
+	<LI>Next message: <A HREF="031045.html">[rabbitmq-discuss] Crash with RabbitMQ 3.1.5
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#31043">[ date ]</a>
+              <a href="thread.html#31043">[ thread ]</a>
+              <a href="subject.html#31043">[ subject ]</a>
+              <a href="author.html#31043">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,306 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Producer eating up RAM
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20Producer%20eating%20up%20RAM&In-Reply-To=376f3e6f0910041803w3c0f1930w1bcec749a7c83e91%40mail.gmail.com">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="005022.html">
+   <LINK REL="Next"  HREF="005025.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Producer eating up RAM</H1>
+    <B>Suhail Doshi</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20Producer%20eating%20up%20RAM&In-Reply-To=376f3e6f0910041803w3c0f1930w1bcec749a7c83e91%40mail.gmail.com"
+       TITLE="[rabbitmq-discuss] Producer eating up RAM">suhail at mixpanel.com
+       </A><BR>
+    <I>Mon Oct  5 02:08:02 BST 2009</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="005022.html">[rabbitmq-discuss] Producer eating up RAM
+</A></li>
+        <LI>Next message: <A HREF="005025.html">[rabbitmq-discuss] Producer eating up RAM
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#5023">[ date ]</a>
+              <a href="thread.html#5023">[ thread ]</a>
+              <a href="subject.html#5023">[ subject ]</a>
+              <a href="author.html#5023">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Here's part of the queue code we use:
+-export([amqp_lifecycle/0, send_message/5, log/2]).
+
+-include_lib(&quot;rabbitmq-erlang-client/rabbitmq_server/include/rabbit.hrl&quot;).
+-include_lib(&quot;rabbitmq-erlang-client/rabbitmq_server/include/rabbit_framing.hrl&quot;).
+-include(&quot;rabbitmq-erlang-client/include/amqp_client.hrl&quot;).
+
+-record(rabbit_info, {channel, ticket, exchange, routing_key}).
+
+amqp_lifecycle() -&gt;
+    User = &quot;user&quot;,
+    Password = &quot;pass&quot;,
+    Realm = &lt;&lt;&quot;realm&quot;&gt;&gt;, %% virtual_host
+    Connection = amqp_connection:start(User, Password, &quot;127.0.0.1&quot;, Realm),
+    Channel = amqp_connection:open_channel(Connection),
+    Access = #'access.request'{
+        realm = Realm,
+        exclusive = false,
+        passive = true,
+        active = true,
+        write = true,
+        read = true
+    },
+    #'access.request_ok'{ticket = Ticket} = amqp_channel:call(Channel,
+Access),
+
+    Q = &lt;&lt;&quot;q&quot;&gt;&gt;,
+    X = &lt;&lt;&quot;x&quot;&gt;&gt;,
+    BindKey = &lt;&lt;&quot;b&quot;&gt;&gt;,
+
+    QueueDeclare = #'queue.declare'{ticket = Ticket, queue = Q,
+                                    passive = false, durable = true,
+                                    exclusive = false, auto_delete = false,
+                                    nowait = false, arguments = []},
+
+    #'queue.declare_ok'{queue = Q} = amqp_channel:call(Channel,
+QueueDeclare),
+
+    ExchangeDeclare = #'exchange.declare'{ticket = Ticket,
+                                          exchange = X, type = &lt;&lt;&quot;direct&quot;&gt;&gt;,
+                                          passive = false, durable = true,
+                                          auto_delete = false, internal =
+false,
+                                          nowait = false, arguments = []},
+
+    #'exchange.declare_ok'{} = amqp_channel:call(Channel, ExchangeDeclare),
+    QueueBind = #'queue.bind'{ticket = Ticket,
+                              queue = Q,
+                              exchange = X,
+                              routing_key = BindKey,
+                              nowait = false, arguments = []},
+    #'queue.bind_ok'{} = amqp_channel:call(Channel, QueueBind),
+
+    RabbitInfo = #'rabbit_info'{
+        channel = Channel,
+        ticket = Ticket,
+        exchange = X,
+        routing_key = BindKey
+    },
+    RabbitInfo.
+
+send_message(Channel, Ticket, X, RoutingKey, Payload) -&gt;
+    BasicPublish = #'basic.publish'{ticket = Ticket,
+                                    exchange = X,
+                                    routing_key = RoutingKey,
+                                    mandatory = false,
+                                    immediate = false},
+    BasicProperties = amqp_util:basic_properties(),
+    Properties = BasicProperties#'P_basic'{delivery_mode=2}, %% Persistence
+plz
+    Content = #content{class_id = 60,
+         properties = Properties,
+         properties_bin = none,
+         payload_fragments_rev = [Payload]
+        },
+    amqp_channel:cast(Channel, BasicPublish, Content).
+
+On Sun, Oct 4, 2009 at 6:03 PM, Suhail Doshi &lt;<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">suhail at mixpanel.com</A>&gt; wrote:
+
+&gt;<i> Problem is, it only happens every 5+ hours and not sure how to duplicate it
+</I>&gt;<i> but here is a crash dump:
+</I>&gt;<i> =erl_crash_dump:0.1
+</I>&gt;<i> Sat Oct  3 20:18:09 2009
+</I>&gt;<i> Slogan: eheap_alloc: Cannot allocate 6960012640 bytes of memory (of type
+</I>&gt;<i> &quot;heap&quot;).
+</I>&gt;<i> System version: Erlang R13B01 (erts-5.7.2) [source] [64-bit] [smp:4:4]
+</I>&gt;<i> [rq:4] [async-threads:0] [hipe] [kernel-poll:false]
+</I>&gt;<i> Compiled: Tue Jun 23 19:56:26 2009
+</I>&gt;<i> Atoms: 7552
+</I>&gt;<i> =memory
+</I>&gt;<i> total: 11040213416
+</I>&gt;<i> processes: 10989180488
+</I>&gt;<i> processes_used: 10989135536
+</I>&gt;<i> system: 51032928
+</I>&gt;<i> atom: 507961
+</I>&gt;<i> atom_used: 494181
+</I>&gt;<i> binary: 43474800
+</I>&gt;<i> code: 4668039
+</I>&gt;<i> ets: 311600
+</I>&gt;<i> =hash_table:atom_tab
+</I>&gt;<i> size: 4813
+</I>&gt;<i> used: 3776
+</I>&gt;<i> objs: 7552
+</I>&gt;<i> depth: 8
+</I>&gt;<i> =index_table:atom_tab
+</I>&gt;<i> size: 8192
+</I>&gt;<i> limit: 1048576
+</I>&gt;<i> entries: 7552
+</I>&gt;<i> =hash_table:module_code
+</I>&gt;<i> size: 97
+</I>&gt;<i> used: 71
+</I>&gt;<i> objs: 119
+</I>&gt;<i> depth: 4
+</I>&gt;<i> =index_table:module_code
+</I>&gt;<i> size: 1024
+</I>&gt;<i> limit: 65536
+</I>&gt;<i> entries: 119
+</I>&gt;<i> =hash_table:export_list
+</I>&gt;<i> size: 2411
+</I>&gt;<i> used: 1770
+</I>&gt;<i> objs: 3269
+</I>&gt;<i> depth: 8
+</I>&gt;<i> =index_table:export_list
+</I>&gt;<i> size: 4096
+</I>&gt;<i> limit: 65536
+</I>&gt;<i> entries: 3269
+</I>&gt;<i> =hash_table:secondary_export_table
+</I>&gt;<i> size: 97
+</I>&gt;<i> used: 0
+</I>&gt;<i> objs: 0
+</I>&gt;<i> depth: 0
+</I>&gt;<i> =hash_table:process_reg
+</I>&gt;<i> size: 47
+</I>&gt;<i> used: 31
+</I>&gt;<i> objs: 43
+</I>&gt;<i> depth: 4
+</I>&gt;<i> =hash_table:fun_table
+</I>&gt;<i> size: 397
+</I>&gt;<i> used: 301
+</I>&gt;<i> objs: 566
+</I>&gt;<i> depth: 6
+</I>&gt;<i> =hash_table:node_table
+</I>&gt;<i> size: 11
+</I>&gt;<i> used: 1
+</I>&gt;<i> objs: 1
+</I>&gt;<i> depth: 1
+</I>&gt;<i> =hash_table:dist_table
+</I>&gt;<i> size: 11
+</I>&gt;<i> used: 1
+</I>&gt;<i> objs: 1
+</I>&gt;<i> depth: 1
+</I>&gt;<i> =allocated_areas
+</I>&gt;<i> sys_misc: 80890
+</I>&gt;<i> static: 991232
+</I>&gt;<i> atom_space: 98328 84868
+</I>&gt;<i> atom_table: 104153
+</I>&gt;<i> module_table: 9084
+</I>&gt;<i> export_table: 52172
+</I>&gt;<i> register_table: 468
+</I>&gt;<i> fun_table: 3266
+</I>&gt;<i> module_refs: 2048
+</I>&gt;<i> loaded_code: 4228461
+</I>&gt;<i> dist_table: 507
+</I>&gt;<i> node_table: 227
+</I>&gt;<i> bits_bufs_size: 0
+</I>&gt;<i> bif_timer: 80192
+</I>&gt;<i> link_lh: 0
+</I>&gt;<i> proc: 75296 39952
+</I>&gt;<i> atom_entry: 305480 305160
+</I>&gt;<i> export_entry: 316248 315192
+</I>&gt;<i> module_entry: 7784 7720
+</I>&gt;<i> reg_proc: 2480 1800
+</I>&gt;<i> atom_entry: 305480 305160
+</I>&gt;<i> export_entry: 316248 315192
+</I>&gt;<i> module_entry: 7784 7720
+</I>&gt;<i> reg_proc: 2480 1800
+</I>&gt;<i> monitor_sh: 4400 512
+</I>&gt;<i> nlink_sh: 11368 6328
+</I>&gt;<i> fun_entry: 51328 50096
+</I>&gt;<i> db_tab: 6624 5640
+</I>&gt;<i> driver_event_data_state: 56 56
+</I>&gt;<i> driver_select_data_state: 1352 200
+</I>&gt;<i> =allocator:sys_alloc
+</I>&gt;<i> option e: true
+</I>&gt;<i> option m: libc
+</I>&gt;<i> option tt: 131072
+</I>&gt;<i> option tp: 0
+</I>&gt;<i> =allocator:temp_alloc[0]
+</I>&gt;<i> versions: 2.1 2.2
+</I>&gt;<i> option e: true
+</I>&gt;<i> option t: false
+</I>&gt;<i> option ramv: false
+</I>&gt;<i> option sbct: 524288
+</I>&gt;<i> option asbcst: 4145152
+</I>&gt;<i> option rsbcst: 90
+</I>&gt;<i> option rsbcmt: 80
+</I>&gt;<i> option rmbcmt: 100
+</I>&gt;<i> option mmbcs: 131072
+</I>&gt;<i> option mmsbc: 256
+</I>&gt;<i> option mmmbc: 10
+</I>&gt;<i> option lmbcs: 10485760
+</I>&gt;<i> option smbcs: 1048576
+</I>&gt;<i> option mbcgs: 10
+</I>&gt;<i> option mbsd: 3
+</I>&gt;<i> option as: gf
+</I>&gt;<i> mbcs blocks: 0 136 136
+</I>&gt;<i> mbcs blocks size: 0 46568 46568
+</I>&gt;<i> mbcs carriers: 1 1 1
+</I>&gt;<i> mbcs mseg carriers: 0
+</I>&gt;<i> mbcs sys_alloc carriers: 1
+</I>&gt;<i> mbcs carriers size: 131112 131112 131112
+</I>&gt;<i> mbcs mseg carriers size: 0
+</I>&gt;<i> mbcs sys_alloc carriers size: 131112
+</I>&gt;<i> sbcs blocks: 0 0 0
+</I>&gt;<i> sbcs blocks size: 0 0 0
+</I>&gt;<i> sbcs carriers: 0 0 0
+</I>&gt;<i> sbcs mseg carriers: 0
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> On Sun, Oct 4, 2009 at 2:17 PM, Ben Hood &lt;<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">0x6e6562 at gmail.com</A>&gt; wrote:
+</I>&gt;<i>
+</I>&gt;&gt;<i> Suhail,
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> On Sun, Oct 4, 2009 at 8:43 PM, Suhail Doshi &lt;<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">suhail at mixpanel.com</A>&gt; wrote:
+</I>&gt;&gt;<i> &gt; Any ideas why my producer would suddenly jump and consume all the RAM
+</I>&gt;&gt;<i> &gt; available? I am getting a serious amount of volume of items hitting the
+</I>&gt;&gt;<i> &gt; queue.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> In general, a producer is a client process running outside of
+</I>&gt;&gt;<i> RabbitMQ, so it is difficult to see how RabbitMQ is affecting the
+</I>&gt;&gt;<i> memory consumption of this process. Maybe you can post a cut down
+</I>&gt;&gt;<i> version of your producer application that reproduces the symptoms.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Ben
+</I>&gt;&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> --
+</I>&gt;<i> <A HREF="http://mixpanel.com">http://mixpanel.com</A>
+</I>&gt;<i> Blog: <A HREF="http://blog.mixpanel.com">http://blog.mixpanel.com</A>
+</I>&gt;<i>
+</I>
+
+
+-- 
+<A HREF="http://mixpanel.com">http://mixpanel.com</A>
+Blog: <A HREF="http://blog.mixpanel.com">http://blog.mixpanel.com</A>
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: <A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20091004/015f5d84/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20091004/015f5d84/attachment.htm</A> 
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="005022.html">[rabbitmq-discuss] Producer eating up RAM
+</A></li>
+	<LI>Next message: <A HREF="005025.html">[rabbitmq-discuss] Producer eating up RAM
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#5023">[ date ]</a>
+              <a href="thread.html#5023">[ thread ]</a>
+              <a href="subject.html#5023">[ subject ]</a>
+              <a href="author.html#5023">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

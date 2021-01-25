@@ -1,0 +1,119 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Lingering temporary queues in 3.2.3
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Lingering%20temporary%20queues%20in%203.2.3&In-Reply-To=%3C9D5ECADE-65CE-494C-B14E-E3DC0592EACD%40jefftrout.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="034289.html">
+   <LINK REL="Next"  HREF="034291.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Lingering temporary queues in 3.2.3</H1>
+    <B>Jeff</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Lingering%20temporary%20queues%20in%203.2.3&In-Reply-To=%3C9D5ECADE-65CE-494C-B14E-E3DC0592EACD%40jefftrout.com%3E"
+       TITLE="[rabbitmq-discuss] Lingering temporary queues in 3.2.3">jeff at jefftrout.com
+       </A><BR>
+    <I>Mon Mar  3 17:31:59 GMT 2014</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="034289.html">[rabbitmq-discuss] |Spam| MQ Cluster Replication Traffic	Questions
+</A></li>
+        <LI>Next message: <A HREF="034291.html">[rabbitmq-discuss] Lingering temporary queues in 3.2.3
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#34288">[ date ]</a>
+              <a href="thread.html#34288">[ thread ]</a>
+              <a href="subject.html#34288">[ subject ]</a>
+              <a href="author.html#34288">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>So we upgraded to 3.2.3 recently and we noticed a ton of amq.gen queues being created, and they were marked durable and none had consumers and no messages. We&#8217;d clear them out and they&#8217;d trickle back in.
+
+I was able to track this down to a bug in an application where it sent a message to a queue named &#8220;&#8221; (empty string). 
+No error frame is returned, and the bad message is just dropped, but that queue remains.
+
+Not sure if this is a bug in the stomp adaptor or elsewhere.  I
+
+Here&#8217;s a small script to invoke it.
+
+use Net::Stomp;
+use Data::Dumper;
+
+my $stomp = new Net::Stomp({ hostname =&gt; &quot;rabbit&quot;, port =&gt; 61613 });
+
+if(!$stomp-&gt;connect({ &quot;login&quot; =&gt; &quot;guest&quot;, &quot;passcode&quot; =&gt; &quot;guest&quot; }))
+{
+	print &quot;failed to connect\n&quot;;
+	exit -1;
+}
+		
+	
+# reply to should be blank
+$stomp-&gt;send({ &quot;destination&quot; =&gt; &quot;&quot;, 
+					body =&gt; &quot;hi mom&quot; });
+	
+# you now have an amq.gen queue that is durable sitting around with
+# no message and no consumers.# you should now 
+	
+here&#8217;s some output:
+<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">root at fs2</A>:~# rabbitmqctl list_queues | grep amq.gen
+<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">root at fs2</A>:~# perl phantomq.pl
+<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">root at fs2</A>:~# rabbitmqctl list_queues | grep amq.gen
+amq.gen-EWgqTaiR-xL8bq_UumaXLg	0
+<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">root at fs2</A>:~# curl -s -u indie:indie &quot;<A HREF="http://fs2:15672/api/queues/%2F/amq.gen-EWgqTaiR-xL8bq_UumaXLg">http://fs2:15672/api/queues/%2F/amq.gen-EWgqTaiR-xL8bq_UumaXLg</A>&quot;
+{&quot;memory&quot;:14016,&quot;messages&quot;:0,&quot;messages_details&quot;:{&quot;rate&quot;:0.0},&quot;messages_ready&quot;:0,&quot;messages_ready_details&quot;:{&quot;rate&quot;:0.0},&quot;messages_unacknowledged&quot;:0,&quot;messages_unacknowledged_details&quot;:{&quot;rate&quot;:0.0},&quot;idle_since&quot;:&quot;2014-03-03 12:26:37&quot;,&quot;policy&quot;:&quot;ha-all&quot;,&quot;exclusive_consumer_tag&quot;:&quot;&quot;,&quot;consumers&quot;:0,&quot;slave_nodes&quot;:[&quot;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at fs1</A>&quot;],&quot;synchronised_slave_nodes&quot;:[&quot;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at fs1</A>&quot;],&quot;backing_queue_status&quot;:{&quot;q1&quot;:0,&quot;q2&quot;:0,&quot;delta&quot;:[&quot;delta&quot;,&quot;undefined&quot;,0,&quot;undefined&quot;],&quot;q3&quot;:0,&quot;q4&quot;:0,&quot;len&quot;:0,&quot;pending_acks&quot;:0,&quot;target_ram_count&quot;:&quot;infinity&quot;,&quot;ram_msg_count&quot;:0,&quot;ram_ack_count&quot;:0,&quot;next_seq_id&quot;:0,&quot;persistent_count&quot;:0,&quot;avg_ingress_rate&quot;:0.0,&quot;avg_egress_rate&quot;:0.0,&quot;avg_ack_ingress_rate&quot;:0.0,&quot;avg_ack_egress_rate&quot;:0.0,&quot;mirror_seen&quot;:0,&quot;mirror_senders&quot;:0},&quot;status&quot;:&quot;running&quot;,&quot;incoming&quot;:[],&quot;deliveries&quot;:[],&quot;consumer_details&quot;:[],&quot;name&quot;:&quot;amq.gen-EWgqTaiR-xL8bq_UumaXLg&quot;,&quot;vhost&quot;:&quot;/&quot;,&quot;durable&quot;:true,&quot;auto_delete&quot;:false,&quot;arguments&quot;:{},&quot;node&quot;:&quot;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at fs2</A>&quot;}
+
+--
+Jeff Trout &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">jeff at jefftrout.com</A>&gt;
+
+
+
+
+
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="034289.html">[rabbitmq-discuss] |Spam| MQ Cluster Replication Traffic	Questions
+</A></li>
+	<LI>Next message: <A HREF="034291.html">[rabbitmq-discuss] Lingering temporary queues in 3.2.3
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#34288">[ date ]</a>
+              <a href="thread.html#34288">[ thread ]</a>
+              <a href="subject.html#34288">[ subject ]</a>
+              <a href="author.html#34288">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

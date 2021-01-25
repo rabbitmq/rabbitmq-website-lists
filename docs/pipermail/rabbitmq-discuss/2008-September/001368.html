@@ -1,0 +1,191 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] [BUG] Erlang RabbitMQ client requires	installed server code
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20%5BBUG%5D%20Erlang%20RabbitMQ%20client%20requires%0A%09installed%20server%20code&In-Reply-To=48C39615.7070509%40lshift.net">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001364.html">
+   <LINK REL="Next"  HREF="001373.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] [BUG] Erlang RabbitMQ client requires	installed server code</H1>
+    <B>Edwin Fine</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20%5BBUG%5D%20Erlang%20RabbitMQ%20client%20requires%0A%09installed%20server%20code&In-Reply-To=48C39615.7070509%40lshift.net"
+       TITLE="[rabbitmq-discuss] [BUG] Erlang RabbitMQ client requires	installed server code">rabbitmq-discuss_efine at usa.net
+       </A><BR>
+    <I>Sun Sep  7 22:32:26 BST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001364.html">[rabbitmq-discuss] [BUG] Erlang RabbitMQ client requires	installed server code
+</A></li>
+        <LI>Next message: <A HREF="001373.html">[rabbitmq-discuss] [BUG] Erlang RabbitMQ client requires	installed server code
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1368">[ date ]</a>
+              <a href="thread.html#1368">[ thread ]</a>
+              <a href="subject.html#1368">[ subject ]</a>
+              <a href="author.html#1368">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Matthias,
+
+&gt;<i> src/rabbit_amqqueue.erl
+</I>&gt;<i> src/rabbit_channel.erl
+</I>&gt;<i> These should not be required since they are only used by the direct
+</I>client.
+
+   - As the most up to date client code currently stands, amqp_channel calls
+   rabbit_amqqueue in a handle_info function. Although this handle_info
+   function is used only by the direct client, I am uncomfortable with having
+   server-specific code mixed in with pure client code. There should be a clean
+   separation of concerns and all &quot;direct&quot; code, which calls into the
+   server-specific code, should be in one module, and the network-only code in
+   another.
+
+
+   - amqp_network_driver calls rabbit_framing_channel, which in turn calls
+   rabbit_channel. So indirectly, the network client uses rabbit_channel and
+   needs it in the common distribution.
+
+I wrote a small program that uses xref to compute all the dependencies
+(transitive closure, I think) of the network client code, after commenting
+out all code (that I could find, anyway) used for or by the direct driver.
+This commented-out code needs to be separated so that there is a network
+client, an orthogonal direct client, and functions in a common app that is
+used both by clients and the server. I will look into how this can be done
+cleanly.
+
+The output is as follows (I removed dependencies of test code and direct
+code modules):
+
+['$M_EXPR',amqp_channel,amqp_connection,amqp_network_driver,
+ amqp_rpc_client,amqp_rpc_handler,amqp_rpc_util,amqp_util,
+ dict,gen_event,gen_server,gen_tcp,hessian,io,lists,
+ prim_inet,queue,rabbit_binary_generator,rabbit_framing,
+ rabbit_framing_channel,rabbit_heartbeat,rabbit_misc,
+ rabbit_reader,rabbit_writer]
+
+So, ignoring modules provided by Erlang/OTP, and the network client modules
+themselves, the following modules are needed by the network client:
+
+hessian
+rabbit_binary_generator
+rabbit_framing
+rabbit_framing_channel
+rabbit_heartbeat
+rabbit_misc
+rabbit_reader
+rabbit_writer
+
+I'd say that would be the basis of a common app.
+
+Regards,
+Edwin
+
+On Sun, Sep 7, 2008 at 4:51 AM, Matthias Radestock &lt;<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">matthias at lshift.net</A>&gt;wrote:
+
+&gt;<i> Edwin,
+</I>&gt;<i>
+</I>&gt;<i> Edwin Fine wrote:
+</I>&gt;<i>
+</I>&gt;&gt;<i> A network client should not require server code to be installed on the
+</I>&gt;&gt;<i> same node. This is certainly true of other clients I have used.
+</I>&gt;&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> Bear in mind that the Erlang client code base can operate in both direct
+</I>&gt;<i> and networked mode. For the former you definitely need a server.
+</I>&gt;<i>
+</I>&gt;<i>  I respectfully suggest that the above RabbitMQ server modules, and their
+</I>&gt;&gt;<i> dependencies, be bundled with the Erlang client. Ideally, I would think it
+</I>&gt;&gt;<i> would be best perhaps to put them a separate Erlang library application
+</I>&gt;&gt;<i> (maybe &quot;rabbitmq_common&quot;) that is used both by the server and the Erlang
+</I>&gt;&gt;<i> client.
+</I>&gt;&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> The above is on our todo list. Refactoring the code is the easy part. The
+</I>&gt;<i> challenges are in:
+</I>&gt;<i>
+</I>&gt;<i> - updating the module structure of the VCS - is rabbitmq_common going to be
+</I>&gt;<i> a separate HG module?
+</I>&gt;<i>
+</I>&gt;<i> - figuring out how rabbitmq_common will be distributed. This can be a
+</I>&gt;<i> combination of all of the following: a) separately, b) as part of the Erlang
+</I>&gt;<i> client and server source packages, c) as part of the Erlang client and
+</I>&gt;<i> server binary packages. Then there also the Debian and RPM packages to
+</I>&gt;<i> consider - are we going to have a separate packages for rabbitmq_common or
+</I>&gt;<i> will it be bundled with the existing packages?
+</I>&gt;<i>
+</I>&gt;<i> Depending on the above choices a significant amount of work needs to be put
+</I>&gt;<i> into revising the build system, the packaging system, our automated
+</I>&gt;<i> deployment system, the documentation, and parts of the web site.
+</I>&gt;<i>
+</I>&gt;<i> That's why it hasn't happened yet.
+</I>&gt;<i>
+</I>&gt;<i>  Further to my previous email, a minimal list of required modules for
+</I>&gt;&gt;<i> the proposed &quot;rabbit_common&quot; application are listed below (these are
+</I>&gt;&gt;<i> the ones I needed to get things up and running). I am going to make
+</I>&gt;&gt;<i> my own rabbit_common OTP application, and change the Erlang client to
+</I>&gt;&gt;<i> depend on it rather than the server. I will also see what it takes to
+</I>&gt;&gt;<i> change the rabbit 1.4.0 server itself to factor out the common code
+</I>&gt;&gt;<i> and to use this rabbit_common application. Perhaps I can use Dialyzer
+</I>&gt;&gt;<i> to ensure that I get all dependencies. If this would be of interest I
+</I>&gt;&gt;<i> would be glad to share it.
+</I>&gt;&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> We definitely appreciate your help in this. Please give the above points
+</I>&gt;<i> some thought. Also, rather than basing your work on 1.4.0, I'd suggest
+</I>&gt;<i> working off the current 'default' branches in hg.
+</I>&gt;<i>
+</I>&gt;<i> Some comments on the list of files you came up with:
+</I>&gt;<i>
+</I>&gt;<i>  src/rabbit_misc.erl
+</I>&gt;&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> This should probably be split into the truly common part, the server part
+</I>&gt;<i> and the client part.
+</I>&gt;<i>
+</I>&gt;<i> &gt; include/rabbit.hrl
+</I>&gt;<i>
+</I>&gt;<i> Ditto, though this is less important.
+</I>&gt;<i>
+</I>&gt;<i>  src/rabbit_amqqueue.erl
+</I>&gt;&gt;<i>
+</I>&gt;<i> &gt; src/rabbit_channel.erl
+</I>&gt;<i>
+</I>&gt;<i> These should not be required since they are only used by the direct client.
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> Regards,
+</I>&gt;<i>
+</I>&gt;<i> Matthias.
+</I>&gt;<i>
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: <A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20080907/f1905a1e/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20080907/f1905a1e/attachment.htm</A> 
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001364.html">[rabbitmq-discuss] [BUG] Erlang RabbitMQ client requires	installed server code
+</A></li>
+	<LI>Next message: <A HREF="001373.html">[rabbitmq-discuss] [BUG] Erlang RabbitMQ client requires	installed server code
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1368">[ date ]</a>
+              <a href="thread.html#1368">[ thread ]</a>
+              <a href="subject.html#1368">[ subject ]</a>
+              <a href="author.html#1368">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

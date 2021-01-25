@@ -1,0 +1,184 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] amqp_channel_open issue
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20amqp_channel_open%20issue&In-Reply-To=">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="006294.html">
+   <LINK REL="Next"  HREF="006303.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] amqp_channel_open issue</H1>
+    <B>raghu a</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20amqp_channel_open%20issue&In-Reply-To="
+       TITLE="[rabbitmq-discuss] amqp_channel_open issue">a.raghu001 at gmail.com
+       </A><BR>
+    <I>Wed Feb 10 17:41:49 GMT 2010</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="006294.html">[rabbitmq-discuss] Error while Consuming data from the rabbitmq server( along with bug21673 ) &amp; erlang R13B03
+</A></li>
+        <LI>Next message: <A HREF="006303.html">[rabbitmq-discuss] amqp_channel_open issue
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#6295">[ date ]</a>
+              <a href="thread.html#6295">[ thread ]</a>
+              <a href="subject.html#6295">[ subject ]</a>
+              <a href="author.html#6295">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi,
+
+I am very new to RabbitMQ. we are using Rabbit MQ C API to talk with the
+broker.
+We are playing with the examples(with few modifications) given by RabbitMQ.
+We created one producer and one consumer with the same connection but
+difference channels.
+In the following code amqp_channel_open(conn, 2) statement is causing the my
+main thread to block
+but if i move this statement before creating of consumer thread then every
+thing seems to be working.
+
+My code is as follows.
+static void send_batch(amqp_connection_
+state_t conn,
+                       char const *queue_name,
+                       int rate_limit,
+                       int message_count)
+{
+  char message[256] = &quot;test&quot;;
+  die_on_error(amqp_basic_publish(conn,
+                                    2,
+                                    amqp_cstring_bytes(&quot;amq.direct&quot;),
+                                    amqp_cstring_bytes(queue_name),
+                                    0,
+                                    0,
+                                    NULL,
+                                    (amqp_bytes_t) {.len = sizeof(message),
+.bytes = message}),
+                 &quot;Publishing&quot;);
+    printf(&quot;Message sent by producer\n&quot;);
+}
+
+static void run(amqp_connection_state_t conn)
+{
+  amqp_frame_t frame;
+  int result;
+  size_t body_received;
+  size_t body_target;
+  int  received = 0;
+  while (1) {
+    amqp_maybe_release_buffers(conn);
+    result = amqp_simple_wait_frame(conn, &amp;frame);
+    if (result &lt;= 0) return;
+    if (frame.frame_type != AMQP_FRAME_METHOD)
+      continue;
+    if (frame.payload.method.id != AMQP_BASIC_DELIVER_METHOD)
+      continue;
+    result = amqp_simple_wait_frame(conn, &amp;frame);
+    if (result &lt;= 0) return;
+    if (frame.frame_type != AMQP_FRAME_HEADER) {
+      abort();
+    }
+    body_target = frame.payload.properties.body_size;
+    body_received = 0;
+    while (body_received &lt; body_target) {
+      result = amqp_simple_wait_frame(conn, &amp;frame);
+      if (result &lt;= 0) return;
+      if (frame.frame_type != AMQP_FRAME_BODY) {
+    abort();
+      }
+      body_received += frame.payload.body_fragment.len;
+      assert(body_received &lt;= body_target);
+    }
+    received++;
+    printf(&quot;received=%d\n&quot;,received);
+  }
+}
+void*  consume(void* conn){
+  run(*((amqp_connection_state_t*)conn));
+}
+int main(int argc, char const * const *argv) {
+  char const *hostname=&quot;127.0.0.1&quot;;
+  int port=&quot;5672&quot;;
+  char const *exchange;
+  char const *bindingkey;
+  int sockfd;
+  amqp_connection_state_t conn;
+  amqp_bytes_t queuename;
+  exchange = &quot;amq.direct&quot;; //argv[3];
+  bindingkey = &quot;test queue&quot;; //argv[4];
+  int rate_limit = 100;
+  int message_count = 10000;
+  conn = amqp_new_connection();
+  die_on_error(sockfd = amqp_open_socket(hostname, port), &quot;Opening socket&quot;);
+  amqp_set_sockfd(conn, sockfd);
+  die_on_amqp_error(amqp_login(conn, &quot;/&quot;, 0, 131072, 0,
+AMQP_SASL_METHOD_PLAIN, &quot;guest&quot;, &quot;guest&quot;),
+            &quot;Logging in&quot;);
+  amqp_channel_open(conn, 1);
+  die_on_amqp_error(amqp_rpc_reply, &quot;Opening channel&quot;);
+  {
+    amqp_queue_declare_ok_t *r = amqp_queue_declare(conn, 1,
+AMQP_EMPTY_BYTES, 0, 0, 0, 1,
+                            AMQP_EMPTY_TABLE);
+    die_on_amqp_error(amqp_rpc_reply, &quot;Declaring queue&quot;);
+    queuename = amqp_bytes_malloc_dup(r-&gt;queue);
+    if (queuename.bytes == NULL) {
+      die_on_error(-ENOMEM, &quot;Copying queue name&quot;);
+    }
+  }
+  amqp_queue_bind(conn, 1, queuename, amqp_cstring_bytes(exchange),
+amqp_cstring_bytes(bindingkey),
+          AMQP_EMPTY_TABLE);
+  die_on_amqp_error(amqp_rpc_reply, &quot;Binding queue&quot;);
+
+  amqp_basic_consume(conn, 1, queuename, AMQP_EMPTY_BYTES, 0, 1, 0);
+  die_on_amqp_error(amqp_rpc_reply, &quot;Consuming&quot;);
+  pthread_t threadId;
+  pthread_create(&amp;threadId,NULL,consume,(void*)&amp;conn);
+  sleep(1);
+  amqp_channel_open(conn, 2);
+  send_batch(conn, &quot;test queue&quot;, rate_limit, message_count);
+  die_on_amqp_error(amqp_channel_close(conn, 1, AMQP_REPLY_SUCCESS),
+&quot;Closing channel&quot;);
+  die_on_amqp_error(amqp_connection_close(conn, AMQP_REPLY_SUCCESS),
+&quot;Closing connection&quot;);
+  amqp_destroy_connection(conn);
+  die_on_error(close(sockfd), &quot;Closing socket&quot;);
+  return 0;
+}
+
+Please provide me the reasons for blocking.
+
+Thanks,
+Ragavendra.
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: <A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20100210/f6ed3703/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20100210/f6ed3703/attachment.htm</A> 
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="006294.html">[rabbitmq-discuss] Error while Consuming data from the rabbitmq server( along with bug21673 ) &amp; erlang R13B03
+</A></li>
+	<LI>Next message: <A HREF="006303.html">[rabbitmq-discuss] amqp_channel_open issue
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#6295">[ date ]</a>
+              <a href="thread.html#6295">[ thread ]</a>
+              <a href="subject.html#6295">[ subject ]</a>
+              <a href="author.html#6295">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

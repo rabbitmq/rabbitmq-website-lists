@@ -1,0 +1,189 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Just publishing messages causes	rabbit_writer:mainloop to hang and simultaneous pub problem
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20Just%20publishing%20messages%20causes%0A%09rabbit_writer%3Amainloop%20to%20hang%20and%20simultaneous%20pub%20problem&In-Reply-To=50ec7a2e0804141059m78951951lb0a83c78ea950b57%40mail.gmail.com">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000714.html">
+   <LINK REL="Next"  HREF="000738.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Just publishing messages causes	rabbit_writer:mainloop to hang and simultaneous pub problem</H1>
+    <B>Ben Hood</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20Just%20publishing%20messages%20causes%0A%09rabbit_writer%3Amainloop%20to%20hang%20and%20simultaneous%20pub%20problem&In-Reply-To=50ec7a2e0804141059m78951951lb0a83c78ea950b57%40mail.gmail.com"
+       TITLE="[rabbitmq-discuss] Just publishing messages causes	rabbit_writer:mainloop to hang and simultaneous pub problem">0x6e6562 at gmail.com
+       </A><BR>
+    <I>Mon Apr 14 22:00:46 BST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000714.html">[rabbitmq-discuss] Just publishing messages causes	rabbit_writer:mainloop to hang and simultaneous pub problem
+</A></li>
+        <LI>Next message: <A HREF="000738.html">[rabbitmq-discuss] Just publishing messages causes	rabbit_writer:mainloop to hang and simultaneous pub problem
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#715">[ date ]</a>
+              <a href="thread.html#715">[ thread ]</a>
+              <a href="subject.html#715">[ subject ]</a>
+              <a href="author.html#715">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Joe,
+
+A cursory glance indicates that you are using the wrong routing key to  
+publish to the exchange.
+
+If you use a.b.c.d instead of a.b.c.*, then when a queue binds itself  
+to a.b.c.*, messages will be delivered to it.
+
+Hence why you are getting a get_empty.
+
+So just change the routing key in the amqp_async_pub module.
+
+As for the errors you are seeing, the reason is because you are  
+passing in integers as the publish payload.
+
+The API however, expects payload fragments to be opaque binaries  
+rather than any Erlang type.
+
+So to fix this problem, just convert whatever payload fragment you  
+want to send to a binary.
+
+In your case you are sending integers, so you could pass in something  
+like &lt;&lt;MyInteger:32&gt;&gt; instead of MyInteger.
+
+This may be a question for the design of the API. It may well be  
+worthwile performing a guard condition (i.e. is_binary(Payload)) on  
+the submission of a message. I'll look into this.
+
+BTW, if you don't supply a host name when starting the connection, the  
+client will start in a direct mode using native Erlang message passing  
+rather than AMQP wire framing. This means that the client and server  
+run in the same interpreter and eliminate the network overhead.
+
+HTH,
+
+Ben
+
+On 14 Apr 2008, at 18:59, Joe Lee wrote:
+
+&gt;<i> Here are the files.  I think problem maybe how the Payload in  
+</I>&gt;<i> amqp_async_pub is assigned setup.  I maybe wrong.
+</I>&gt;<i>
+</I>&gt;<i> Joe
+</I>&gt;<i>
+</I>&gt;<i> On Mon, Apr 14, 2008 at 11:39 AM, Ben Hood &lt;<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">0x6e6562 at gmail.com</A>&gt; wrote:
+</I>&gt;<i> Hi Joe,
+</I>&gt;<i>
+</I>&gt;<i> Could you send the complete source code of the test that causes  
+</I>&gt;<i> these problems so that we can have a look at this, please?
+</I>&gt;<i>
+</I>&gt;<i> Thx,
+</I>&gt;<i>
+</I>&gt;<i> Ben
+</I>&gt;<i>
+</I>&gt;<i> On 14 Apr 2008, at 16:20, Joe Lee wrote:
+</I>&gt;&gt;<i> I tried to send messages sequentially to a single rabbitmq server  
+</I>&gt;&gt;<i> running on 127.0.0.1.  After sending messages around 32000, erlang  
+</I>&gt;&gt;<i> client node publishing the message crashed.  When I looked at the  
+</I>&gt;&gt;<i> crash dump, I see close to 32767 rabbit_writer:mainloop/1 process  
+</I>&gt;&gt;<i> still in waiting status.  I am not sure why so many  
+</I>&gt;&gt;<i> rabbit_writer:mainloop processes are still hanging around.   
+</I>&gt;&gt;<i> Furthermore, I started another node to get published message from  
+</I>&gt;&gt;<i> rabbitmq server, rabbitmq server sends basic.get_empty.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> crash_dump.erl says:
+</I>&gt;&gt;<i> Maximum number of Erlang Process has reached 32768
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Process status in erlang crash dump:
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> &lt;0.32765.6&gt;    rabbit_writer:mainloop/1    Waiting    136    233    0
+</I>&gt;&gt;<i> &lt;0.32766.13&gt;    rabbit_writer:mainloop/1    Waiting    132     
+</I>&gt;&gt;<i> 233    0
+</I>&gt;&gt;<i> &lt;0.32767.1&gt;    rabbit_writer:mainloop/1    Waiting    136    233    0
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> I tried spawning 3 erlang processes simultaneously to publish  
+</I>&gt;&gt;<i> message using pmap to a single rabbitmq_server running on 127.0.0.1  
+</I>&gt;&gt;<i> and rabbitmq server throws badarg error.  Here is the error below:
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> =ERROR REPORT==== 14-Apr-2008::19:43:23 ===
+</I>&gt;&gt;<i> Error in process &lt;0.68.0&gt; on node '<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">test at home</A>' with exit value:  
+</I>&gt;&gt;<i> {badarg,[{erlang,size,[1]}, 
+</I>&gt;&gt;<i> {rabbit_binary_generator,build_content_frames,5}, 
+</I>&gt;&gt;<i> {rabbit_binary_generator,build_simple_content_frames,3}, 
+</I>&gt;&gt;<i> {rabbit_writer,assemble_frames,4}, 
+</I>&gt;&gt;<i> {rabbit_writer,internal_send_command_async...
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> =ERROR REPORT==== 14-Apr-2008::19:43:23 ===
+</I>&gt;&gt;<i> Error in process &lt;0.70.0&gt; on node '<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">test at home</A>' with exit value:  
+</I>&gt;&gt;<i> {badarg,[{erlang,size,[3]}, 
+</I>&gt;&gt;<i> {rabbit_binary_generator,build_content_frames,5}, 
+</I>&gt;&gt;<i> {rabbit_binary_generator,build_simple_content_frames,3}, 
+</I>&gt;&gt;<i> {rabbit_writer,assemble_frames,4}, 
+</I>&gt;&gt;<i> {rabbit_writer,internal_send_command_async...
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> =ERROR REPORT==== 14-Apr-2008::19:43:23 ===
+</I>&gt;&gt;<i> Error in process &lt;0.69.0&gt; on node '<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">test at home</A>' with exit value:  
+</I>&gt;&gt;<i> {badarg,[{erlang,size,[2]}, 
+</I>&gt;&gt;<i> {rabbit_binary_generator,build_content_frames,5}, 
+</I>&gt;&gt;<i> {rabbit_binary_generator,build_simple_content_frames,3}, 
+</I>&gt;&gt;<i> {rabbit_writer,assemble_frames,4}, 
+</I>&gt;&gt;<i> {rabbit_writer,internal_send_command_async...
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Have a look into this one: closed
+</I>&gt;&gt;<i> Have a look into this one: closed
+</I>&gt;&gt;<i> Have a look into this one: closed
+</I>&gt;&gt;<i> (<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">test at home</A>)2&gt;
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> I am not sure what these errors mean.  Can someone tell me what I  
+</I>&gt;&gt;<i> am doing wrong?
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Thank you,
+</I>&gt;&gt;<i> Joe
+</I>&gt;&gt;<i> _______________________________________________
+</I>&gt;&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;&gt;<i> <A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;&gt;<i> <A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;<i> <A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;<i> <A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> &lt; 
+</I>&gt;<i> amqp_async_consume 
+</I>&gt;<i> .erl&gt;&lt;amqp_async_pub.erl&gt;&lt;my_pmap.erl&gt;&lt;rabbit_test.erl&gt;
+</I>
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: <A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20080414/844847af/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20080414/844847af/attachment.htm</A> 
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000714.html">[rabbitmq-discuss] Just publishing messages causes	rabbit_writer:mainloop to hang and simultaneous pub problem
+</A></li>
+	<LI>Next message: <A HREF="000738.html">[rabbitmq-discuss] Just publishing messages causes	rabbit_writer:mainloop to hang and simultaneous pub problem
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#715">[ date ]</a>
+              <a href="thread.html#715">[ thread ]</a>
+              <a href="subject.html#715">[ subject ]</a>
+              <a href="author.html#715">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

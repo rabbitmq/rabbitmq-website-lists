@@ -1,0 +1,231 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Creating an auth plugin (Kerberos)
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Creating%20an%20auth%20plugin%20%28Kerberos%29&In-Reply-To=%3C20121113143505.GL360%40kaka.it.su.se%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="023804.html">
+   <LINK REL="Next"  HREF="023822.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Creating an auth plugin (Kerberos)</H1>
+    <B>Simon Lundstr&#246;m</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Creating%20an%20auth%20plugin%20%28Kerberos%29&In-Reply-To=%3C20121113143505.GL360%40kaka.it.su.se%3E"
+       TITLE="[rabbitmq-discuss] Creating an auth plugin (Kerberos)">simlu at su.se
+       </A><BR>
+    <I>Tue Nov 13 14:35:05 GMT 2012</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="023804.html">[rabbitmq-discuss] Creating an auth plugin (Kerberos)
+</A></li>
+        <LI>Next message: <A HREF="023822.html">[rabbitmq-discuss] Creating an auth plugin (Kerberos)
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#23812">[ date ]</a>
+              <a href="thread.html#23812">[ thread ]</a>
+              <a href="subject.html#23812">[ subject ]</a>
+              <a href="author.html#23812">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>On Tue, 2012-11-13 at 11:07:34 +0000, Simon MacMullen wrote:
+&gt;<i> There are two extension points within RabbitMQ here.
+</I>&gt;<i> 
+</I>&gt;<i> The EXTERNAL plugin is an example of how to implement a SASL
+</I>&gt;<i> mechanism (rabbit_auth_mechanism behaviour), i.e. control the
+</I>&gt;<i> exchange of information on the wire within AMQP, leading to authN.
+</I>&gt;<i> By default &quot;the exchange of information ion the wire&quot; means &quot;send
+</I>&gt;<i> username and password&quot;, but it doesn't have to.
+</I>&gt;<i> 
+</I>&gt;<i> The rabbit_auth_backend behaviour then does two thing:
+</I>&gt;<i> 
+</I>&gt;<i> * Determines how to do authN for a user when we've already decided
+</I>&gt;<i> how to do the wire level stuff (e.g. look up in internal DB, make an
+</I>&gt;<i> LDAP query).
+</I>&gt;<i> 
+</I>&gt;<i> * Determines how to do authZ once we have a #user{} record.
+</I>&gt;<i> 
+</I>&gt;<i> - in other words it's a &quot;user database&quot;.
+</I>&gt;<i> 
+</I>&gt;<i> Note that all the existing rabbit_auth_mechanism implementations
+</I>&gt;<i> call into rabbit_access_control:check_user_pass_login/2 or similar -
+</I>&gt;<i> that's the entry point to go and find out which rabbit_auth_backends
+</I>&gt;<i> are configured and go and query them for authentication.
+</I>&gt;<i> 
+</I>&gt;<i> I suspect to do Kerberos you will need both behaviours - from a
+</I>&gt;<i> quick google I *think* you need to control the wire level protocol
+</I>&gt;<i> with rabbit_auth_mechanism, and then create a #user{} based on that.
+</I>
+Now I understand it much better. For Kerberos authentication I don't
+need to use SASL EXTERNAL but if we were to implement Kerberos GSSAPI
+authentication we would have to use SASL EXTERNAL. It's easy to confuse
+Kerberos auth and Kerberos GSSAPI auth (I've done it many times and it
+always comes up in discussions on Kerberos authentication).
+
+If we would implement GSSAPI support for the RabbitMQ authentication
+plugin then all client libraries would have to support it too. Even
+though we'd love to use GSSAPI, it's just too much work (for us, right
+now atleast).
+
+Might be something that VMware and or some other organisation is
+interested in implementing though? We'll happily add it to &quot;our&quot; plugin!
+
+&gt;<i> &gt;1.2, If I use `-behaviour(rabbit_auth_backend).` I must implement
+</I>&gt;<i> &gt;check_vhost_access and check_resource_access. What is the appropriate
+</I>&gt;<i> &gt;way to handle this?
+</I>&gt;<i> &gt;* Don't use `-behaviour(rabbit_auth_backend).`?
+</I>&gt;<i> &gt;* Implement check_vhost_access and check_resource_access but just have
+</I>&gt;<i> &gt;them call rabbit_access_control:check_vhost_access?
+</I>&gt;<i> &gt;Later we are planning on implementing an authZ *only* plugin for
+</I>&gt;<i> &gt;RabbitMQ, will this break if we want to have a plugin which only
+</I>&gt;<i> &gt;implements check_vhost_access and check_resource_access?
+</I>&gt;<i> 
+</I>&gt;<i> Well, how do you want it to work? At the moment rabbit_auth_backend
+</I>&gt;<i> ties together authN and authZ, because if a backend is the authority
+</I>&gt;<i> that says that a user exists, it is likely to the be the only thing
+</I>&gt;<i> which can sensibly decide what that user is allowed to do.
+</I>&gt;<i> 
+</I>&gt;<i> You *could* decouple these by having one rabbit_auth_backend which
+</I>&gt;<i> implements check_user_login/2 and returns a #user{} with its
+</I>&gt;<i> auth_backend field set to a different rabbit_auth_backend that would
+</I>&gt;<i> then do authZ. We could add more support for that in RabbitMQ, but
+</I>&gt;<i> I'm not sure how your use case works.
+</I>
+Ah, that is exactly what I want. Aaah, so that's what the auth_backend
+parameter in #user{} was!
+So if I make what auth_backend rabbitmq-auth-backend-kerberos should use
+as an option in the config I should be pretty much good to go.
+
+Also, I'm intersted in the order/priority of auth_backends in
+rabbitmq.config that I asked about in the reply to Emiles reply.
+Because if I can just fall back on other configured backends then making
+the auth_backend in #user{} configurable might not even be necessary?
+
+As I would like it to work is that one could have multiple backends
+configured in auth_backend in rabbitmq.config and they could handle both
+or one of authN and authZ.
+
+&gt;<i> &gt;2, I have started to create my code and the idea is to use open_port to open an
+</I>&gt;<i> &gt;external binary to do the actual Kerberos &quot;talk&quot;. As a start I've made my to
+</I>&gt;<i> &gt;check the exit status of /bin/true. See
+</I>&gt;<i> &gt;&lt;<A HREF="https://github.com/simmel/rabbitmq-auth-backend-kerberos">https://github.com/simmel/rabbitmq-auth-backend-kerberos</A>&gt;. The code compiles,
+</I>&gt;<i> &gt;heh, and RabbitMQ starts and &quot;accepts&quot; the connection but some how it fails
+</I>&gt;<i> &gt;anyway.
+</I>&gt;<i> 
+</I>&gt;<i> I ran your code. Check the SASL log (confusingly that's nothing to
+</I>&gt;<i> do with the SASL protocol, it's Erlang's &quot;System Application Support
+</I>&gt;<i> Libraries&quot;.
+</I>
+Aaah! I thought it was SASL and even then I didn't look there this time
+(because the last issue I had when developing the plugin it didn't log
+anything there).
+
+&gt;<i> In RabbitMQ terms it's the &quot;log of things which
+</I>&gt;<i> crashed&quot;. You should see:
+</I>&gt;<i> 
+</I>&gt;<i> =CRASH REPORT==== 13-Nov-2012::11:04:03 ===
+</I>&gt;<i>   crasher:
+</I>&gt;<i>     initial call: rabbit_reader:init/4
+</I>&gt;<i>     pid: &lt;0.334.0&gt;
+</I>&gt;<i>     registered_name: []
+</I>&gt;<i>     exception exit: {unexpected_message,{'EXIT',#Port&lt;0.25776&gt;,normal}}
+</I>&gt;<i>       in function  rabbit_reader:handle_other/3
+</I>&gt;<i> (src/rabbit_reader.erl, line 363)
+</I>&gt;<i>       in call from rabbit_reader:start_connection/7
+</I>&gt;<i> (src/rabbit_reader.erl, line 238)
+</I>&gt;<i> 
+</I>&gt;<i> i.e. you got a message saying the port had closed. Your plugin
+</I>&gt;<i> (executing in the reader process) did not handle this message, and
+</I>&gt;<i> the reader process is designed to crash when it receives a message
+</I>&gt;<i> it didn't expect.
+</I>&gt;<i> 
+</I>&gt;<i> So make sure to receive that message in your plugin...
+</I>
+In my receive, here
+&lt;<A HREF="https://github.com/simmel/rabbitmq-auth-backend-kerberos/blob/213a831a61e1524cb187273b7d78ff5bc415a678/src/rabbit_auth_backend_kerberos.erl#L42-55">https://github.com/simmel/rabbitmq-auth-backend-kerberos/blob/213a831a61e1524cb187273b7d78ff5bc415a678/src/rabbit_auth_backend_kerberos.erl#L42-55</A>&gt;,
+I tried to add:
+
+    {'EXIT', Port, PosixCode} -&gt;
+      rabbit_log:error(&quot;EXIT: ~p~n&quot;, [PosixCode]),
+      false;
+
+however I still get the same error.
+I even tried to add:
+    {A, B, C} -&gt;
+      rabbit_log:error(&quot;EXIT: ~p : ~p : ~p~n&quot;, [A,B,C]),
+      false;
+
+just to see so I could &quot;catch&quot; every case but I still got the same error.
+
+Since the crash report mentions a supervisor I suspected it had
+something to do with &quot;my&quot; sup in
+&lt;<A HREF="https://github.com/simmel/rabbitmq-auth-backend-kerberos/blob/213a831a61e1524cb187273b7d78ff5bc415a678/src/rabbit_auth_backend_kerberos_app.erl">https://github.com/simmel/rabbitmq-auth-backend-kerberos/blob/213a831a61e1524cb187273b7d78ff5bc415a678/src/rabbit_auth_backend_kerberos_app.erl</A>&gt;
+so I tried to add this to the start function:
+  receive
+    {'EXIT', Port, PosixCode} -&gt;
+      rabbit_log:error(&quot;EXIT in sup: ~p~n&quot;, [PosixCode]),
+      false
+  end.
+
+but RabbitMQ wouldn't even start and didn't log anything anywhere then = D
+
+As you've probably guessed by Erlang coding so far has been trial and
+error based and I have no idea what I'm doing really = )
+
+Where should I handle the message?
+
+Thanks!
+- Simon
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="023804.html">[rabbitmq-discuss] Creating an auth plugin (Kerberos)
+</A></li>
+	<LI>Next message: <A HREF="023822.html">[rabbitmq-discuss] Creating an auth plugin (Kerberos)
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#23812">[ date ]</a>
+              <a href="thread.html#23812">[ thread ]</a>
+              <a href="subject.html#23812">[ subject ]</a>
+              <a href="author.html#23812">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

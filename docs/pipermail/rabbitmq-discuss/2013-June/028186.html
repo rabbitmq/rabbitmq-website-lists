@@ -1,0 +1,202 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] c amqp consumer frame header issue
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20c%20amqp%20consumer%20frame%20header%20issue&In-Reply-To=%3CCAAt2poL6Zt8jau2w_FFOXcPe1WxYTQ_3n%2BF8zynrJhQT2bh0Wg%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="028183.html">
+   <LINK REL="Next"  HREF="028187.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] c amqp consumer frame header issue</H1>
+    <B>Alan Antonuk</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20c%20amqp%20consumer%20frame%20header%20issue&In-Reply-To=%3CCAAt2poL6Zt8jau2w_FFOXcPe1WxYTQ_3n%2BF8zynrJhQT2bh0Wg%40mail.gmail.com%3E"
+       TITLE="[rabbitmq-discuss] c amqp consumer frame header issue">alan.antonuk at gmail.com
+       </A><BR>
+    <I>Sun Jun 30 08:14:05 BST 2013</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="028183.html">[rabbitmq-discuss] c amqp consumer frame header issue
+</A></li>
+        <LI>Next message: <A HREF="028187.html">[rabbitmq-discuss] c amqp consumer frame header issue
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#28186">[ date ]</a>
+              <a href="thread.html#28186">[ thread ]</a>
+              <a href="subject.html#28186">[ subject ]</a>
+              <a href="author.html#28186">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>When a message is delivered over AMQP to a client with a consumer the
+client will receive the following frames this order:
+
+- a method frame containing the basic.deliver method
+- a header frame containing the properties structure
+- one or more body frames containing the message data
+
+Note that this happens in the context of a single channel. AMQP multiplexes
+multiple channels over a single connection. My understanding of AMQP is
+that as a client, once you receive a basic.deliver method on a channel, the
+next 2 or more frames will be a header frame and one or more body frames,
+with no other frames in between unless there's some kind of channel
+exception, in which case you'll receive a channel.close and the message is
+aborted being received.
+
+Why does this matter? Because amqp_simple_wait_frame() returns the next
+frame *for the connection*. Thus if you have more than one consumer running
+on different channels, the logic for reading messages from the broker
+becomes a little more involved in that you need to separate out frames
+based on their channel, then construct the messages from there.
+(Unfortunately the rabbitmq-c examples don't cover this scenario)
+
+This is why I asked for a bit more context as to what your program was
+doing outside of the code you provided. (I'm still don't have all the
+details necessary to understand what you're doing e.g., describe what
+amqp_* commands you're issuing before you get to the message reader loop).
+
+-Alan
+
+
+On Sat, Jun 29, 2013 at 6:04 PM, cogitate &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">monish.unni at gmail.com</A>&gt; wrote:
+
+&gt;<i> hi alan:
+</I>&gt;<i> right now, i am not running the program with those conditions =&gt;
+</I>&gt;<i> [1] when no routing_key is found and the message is sent to bounded AE and
+</I>&gt;<i> a
+</I>&gt;<i> consumer of AE tries to get the message.
+</I>&gt;<i> [2] when due message-ttl the message ends up at DLX consumer.
+</I>&gt;<i>
+</I>&gt;<i> however, just for your reference, it seems this is what pika is doing (see
+</I>&gt;<i> below), and it just seems that it doesn't expect the frames to be in any
+</I>&gt;<i> certain order like the C consumer (if , else if , else if...)
+</I>&gt;<i>
+</I>&gt;<i> i'll however, try and reproduce the conditions in the meanwhile.
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> def decode_frame(data_in):
+</I>&gt;<i>     &quot;&quot;&quot;
+</I>&gt;<i>     Receives raw socket data and attempts to turn it into a frame.
+</I>&gt;<i>     Returns bytes used to make the frame and the frame
+</I>&gt;<i>     &quot;&quot;&quot;
+</I>&gt;<i>     # Look to see if it's a protocol header frame
+</I>&gt;<i>     try:
+</I>&gt;<i>         if data_in[0:4] == 'AMQP':
+</I>&gt;<i>             major, minor, revision = struct.unpack_from('BBB', data_in, 5)
+</I>&gt;<i>             return 8, ProtocolHeader(major, minor, revision)
+</I>&gt;<i>     except IndexError:
+</I>&gt;<i>         # We didn't get a full frame
+</I>&gt;<i>         return 0, None
+</I>&gt;<i>     except struct.error:
+</I>&gt;<i>         # We didn't get a full frame
+</I>&gt;<i>         return 0, None
+</I>&gt;<i>
+</I>&gt;<i>     # Get the Frame Type, Channel Number and Frame Size
+</I>&gt;<i>     try:
+</I>&gt;<i>         frame_type, channel_number, frame_size = \
+</I>&gt;<i>             struct.unpack('&gt;BHL', data_in[0:7])
+</I>&gt;<i>     except struct.error:
+</I>&gt;<i>         # We didn't get a full frame
+</I>&gt;<i>         return 0, None
+</I>&gt;<i>
+</I>&gt;<i>     # Get the frame data
+</I>&gt;<i>     frame_end = spec.FRAME_HEADER_SIZE +\
+</I>&gt;<i>                 frame_size +\
+</I>&gt;<i>                 spec.FRAME_END_SIZE
+</I>&gt;<i>
+</I>&gt;<i>     # We don't have all of the frame yet
+</I>&gt;<i>     if frame_end &gt; len(data_in):
+</I>&gt;<i>         return 0, None
+</I>&gt;<i>
+</I>&gt;<i>     # The Frame termination chr is wrong
+</I>&gt;<i>     if data_in[frame_end - 1] != chr(spec.FRAME_END):
+</I>&gt;<i>         raise exceptions.InvalidFrameError(&quot;Invalid FRAME_END marker&quot;)
+</I>&gt;<i>
+</I>&gt;<i>     # Get the raw frame data
+</I>&gt;<i>     frame_data = data_in[spec.FRAME_HEADER_SIZE:frame_end - 1]
+</I>&gt;<i>
+</I>&gt;<i>     if frame_type == spec.FRAME_METHOD:
+</I>&gt;<i>
+</I>&gt;<i>         # Get the Method ID from the frame data
+</I>&gt;<i>         method_id = struct.unpack_from('&gt;I', frame_data)[0]
+</I>&gt;<i>
+</I>&gt;<i>         # Get a Method object for this method_id
+</I>&gt;<i>         method = spec.methods[method_id]()
+</I>&gt;<i>
+</I>&gt;<i>         # Decode the content
+</I>&gt;<i>         method.decode(frame_data, 4)
+</I>&gt;<i>
+</I>&gt;<i>         # Return the amount of data consumed and the Method object
+</I>&gt;<i>         return frame_end, Method(channel_number, method)
+</I>&gt;<i>
+</I>&gt;<i>     elif frame_type == spec.FRAME_HEADER:
+</I>&gt;<i>
+</I>&gt;<i>         # Return the header class and body size
+</I>&gt;<i>         class_id, weight, body_size = struct.unpack_from('&gt;HHQ',
+</I>&gt;<i> frame_data)
+</I>&gt;<i>
+</I>&gt;<i>         # Get the Properties type
+</I>&gt;<i>         properties = spec.props[class_id]()
+</I>&gt;<i>
+</I>&gt;<i>         # Decode the properties
+</I>&gt;<i>         out = properties.decode(frame_data[12:])
+</I>&gt;<i>
+</I>&gt;<i>         # Return a Header frame
+</I>&gt;<i>         return frame_end, Header(channel_number, body_size, properties)
+</I>&gt;<i>
+</I>&gt;<i>     elif frame_type == spec.FRAME_BODY:
+</I>&gt;<i>
+</I>&gt;<i>         # Return the amount of data consumed and the Body frame w/ data
+</I>&gt;<i>         return frame_end, Body(channel_number, frame_data)
+</I>&gt;<i>
+</I>&gt;<i>     elif frame_type == spec.FRAME_HEARTBEAT:
+</I>&gt;<i>
+</I>&gt;<i>         # Return the amount of data and a Heartbeat frame
+</I>&gt;<i>         return frame_end, Heartbeat()
+</I>&gt;<i>
+</I>&gt;<i>     raise exceptions.InvalidFrameError(&quot;Unknown frame type: %i&quot; %
+</I>&gt;<i> frame_type)
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> --
+</I>&gt;<i> View this message in context:
+</I>&gt;<i> <A HREF="http://rabbitmq.1065348.n5.nabble.com/c-amqp-consumer-frame-header-issue-tp27685p27692.html">http://rabbitmq.1065348.n5.nabble.com/c-amqp-consumer-frame-header-issue-tp27685p27692.html</A>
+</I>&gt;<i> Sent from the RabbitMQ mailing list archive at Nabble.com.
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20130630/bb388481/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20130630/bb388481/attachment.htm</A>&gt;
+</PRE>
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="028183.html">[rabbitmq-discuss] c amqp consumer frame header issue
+</A></li>
+	<LI>Next message: <A HREF="028187.html">[rabbitmq-discuss] c amqp consumer frame header issue
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#28186">[ date ]</a>
+              <a href="thread.html#28186">[ thread ]</a>
+              <a href="subject.html#28186">[ subject ]</a>
+              <a href="author.html#28186">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,153 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Rabbit Client Supervision Architecture
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Rabbit%20Client%20Supervision%20Architecture&In-Reply-To=%3C20100922120058.GJ24946%40rabbitmq.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="009032.html">
+   <LINK REL="Next"  HREF="009034.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Rabbit Client Supervision Architecture</H1>
+    <B>Matthew Sackman</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Rabbit%20Client%20Supervision%20Architecture&In-Reply-To=%3C20100922120058.GJ24946%40rabbitmq.com%3E"
+       TITLE="[rabbitmq-discuss] Rabbit Client Supervision Architecture">matthew at rabbitmq.com
+       </A><BR>
+    <I>Wed Sep 22 13:00:59 BST 2010</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="009032.html">[rabbitmq-discuss] Rabbit Client Supervision Architecture
+</A></li>
+        <LI>Next message: <A HREF="009034.html">[rabbitmq-discuss] Rabbit Client Supervision Architecture
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#9033">[ date ]</a>
+              <a href="thread.html#9033">[ thread ]</a>
+              <a href="subject.html#9033">[ subject ]</a>
+              <a href="author.html#9033">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi Erik,
+
+On Wed, Sep 22, 2010 at 11:49:49AM +0000, Erik Seres wrote:
+&gt;<i> I think I have one question regarding connections. So, you explain that an 
+</I>&gt;<i> exclusive queue must be deleted when a connection closes. On that same note, 
+</I>&gt;<i> however, how do you locate a durable queue after a connection had died (or had 
+</I>&gt;<i> been closed) and then you reopened it? If one can locate a durable queue after a 
+</I>&gt;<i> disconnect/connect, which my understanding is one must be able to, then why can 
+</I>&gt;<i> one not locate an exclusive queue the same way? (Tell me if I just need to dive 
+</I>&gt;<i> in the AMQP specs to understand this.)
+</I>
+The details (but not content) of all queues are stored in mnesia, in
+Rabbit. This means that when Rabbit restarts, we can check to find which
+queues were durable and get them to be recreated. Non-durable queues
+that we find on startup get nuked. Queues with exclusive owners record
+the Pid of their owner. Thus at queue creation time (regardless of
+whether it's rabbit startup or normal queue creation), we have the queue
+monitor the pid of its owner. When the queue gets the DOWN message
+(which may be immediately if the queue's being restarted), the queue
+self-destructs.
+
+The problem with restarting the connection then is that there is no way
+to identify that the new connection is replacing the old: the Pid of the
+connection will have changed, and you can't do it by user authentication
+as there's nothing to stop the same username/password being used by many
+connections concurrently. There is no session-id concept in AMQP which
+is what prevents this sort of thing from being achievable.
+
+&gt;<i> In my application at startup, I will open a connection and then, each 
+</I>&gt;<i> application process wanting to communicate over AMQP, will open a channel. The 
+</I>&gt;<i> application will need to know if the amqp_client has crashed and the connection 
+</I>&gt;<i> and channels have been lost. So, I thought I would add the process ID returned 
+</I>&gt;<i> by amqp_connection:start(network, ...) to my supervision tree. This does not 
+</I>&gt;<i> seem to work, though, as the connection PID never shows up under my application 
+</I>&gt;<i> supervisor as a child. And, consequently, it never gets restarted in case of a 
+</I>&gt;<i> crash. I have the &quot;Type&quot; in the ChildSpec set to 'supervisor' for this child. 
+</I>&gt;<i> With that said, how should I go about detecting when/if the amqp client has 
+</I>&gt;<i> crashed?
+</I>
+Just link directly to either the Pid of the connection or the Pid of the
+channel. If either go down abnormally, it'll take out your process (and
+vice versa - in fact, you may want to just monitor rather than link).
+
+Also, the Pid you get back from amqp_connection:start/1 is _not_ the Pid of the
+supervisor. It's the Pid of the amqp_{network,direct}_connection
+process. The Pid of the connection_sup is never returned. Fairly soon,
+the entire client will become a real application and then it will be
+properly visible in things like appmon.
+
+&gt;<i> Also, what do you think is the expected time frame before this client library 
+</I>&gt;<i> becomes officially supported?
+</I>
+Err, the really really pessimistic view is 3 months. So hopefully before
+then.
+
+Matthew
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="009032.html">[rabbitmq-discuss] Rabbit Client Supervision Architecture
+</A></li>
+	<LI>Next message: <A HREF="009034.html">[rabbitmq-discuss] Rabbit Client Supervision Architecture
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#9033">[ date ]</a>
+              <a href="thread.html#9033">[ thread ]</a>
+              <a href="subject.html#9033">[ subject ]</a>
+              <a href="author.html#9033">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

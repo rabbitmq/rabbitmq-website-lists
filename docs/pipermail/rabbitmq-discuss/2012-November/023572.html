@@ -1,0 +1,279 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Searching for a client library/example: Problems getting a reliable connection in Python and Erlang
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Searching%20for%20a%20client%20library/example%3A%0A%20Problems%20getting%20a%20reliable%20connection%20in%20Python%20and%20Erlang&In-Reply-To=%3CCCBC29A8.5B8B%25Michael.Laing%40nytimes.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="023569.html">
+   <LINK REL="Next"  HREF="023574.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Searching for a client library/example: Problems getting a reliable connection in Python and Erlang</H1>
+    <B>Laing, Michael P.</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Searching%20for%20a%20client%20library/example%3A%0A%20Problems%20getting%20a%20reliable%20connection%20in%20Python%20and%20Erlang&In-Reply-To=%3CCCBC29A8.5B8B%25Michael.Laing%40nytimes.com%3E"
+       TITLE="[rabbitmq-discuss] Searching for a client library/example: Problems getting a reliable connection in Python and Erlang">Michael.Laing at nytimes.com
+       </A><BR>
+    <I>Sun Nov  4 19:31:18 GMT 2012</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="023569.html">[rabbitmq-discuss] Searching for a client library/example: Problems getting a reliable connection in Python and Erlang
+</A></li>
+        <LI>Next message: <A HREF="023574.html">[rabbitmq-discuss] Searching for a client library/example: Problems getting a reliable connection in Python and Erlang
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#23572">[ date ]</a>
+              <a href="thread.html#23572">[ thread ]</a>
+              <a href="subject.html#23572">[ subject ]</a>
+              <a href="author.html#23572">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Here's a straightforward publisher using pika async library.
+
+ 1.  Be sure you are using pika 0.9.6 (released about a week ago).
+ 2.  Create an exchange 'my_log_exchange' in vhost '/'. This and the step below could be done in code &#8211; eliminated for simplicity.
+ 3.  Create a queue '&lt;whatever&gt;' in vhost '/' and bind it to the above exchange with key '#' (to get everything)
+ 4.  Create a file named 'my_id' in the same directory (or findable) by the code below. Put some text in it.
+ 5.  Run the program. Look in the queue. Get your message as JSON with the body attribute set to the text.
+
+I am using python 2.7 but this should work with 2.6. <A HREF="http://pika.readthedocs.org/">http://pika.readthedocs.org/</A> has good examples too.
+
+Michael
+
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
+import sys
+import json
+
+import pika
+
+class BasicPublish(object):
+    def __init__(self):
+        self._properties = pika.BasicProperties(content_type=&quot;application/json&quot;, user_id='guest')
+        self._credentials = pika.PlainCredentials('guest', 'guest')
+        self._connection = None
+        self._channel = None
+
+    def put_log(self):
+        print 'put_message'
+        key = 'my_id'
+        body = self.get_body(key)
+        message = dict(body=body)
+        self.put_message(key, message)
+
+    def get_body(self, key):
+        print 'get_body'
+        body = self.get_file_contents(key)
+        return body
+
+    def get_file_contents(self, fname):
+        print 'get_file_contents'
+
+        with open(fname) as f:
+            return f.read()
+
+    def put_message(self, key, message):
+        print 'put_message'
+
+        self._channel.basic_publish(
+            exchange='my_log_exchange',
+            routing_key=key,
+            body=json.dumps(message),
+            properties=self._properties
+        )
+
+    def channel_on_open_callback(self, channel):
+        print 'channel_on_open_callback: channel:{0}'.format(channel)
+        self._channel = channel
+        self.put_log()
+
+    def connection_callback(self, connection):
+        print 'connection_callback'
+        self._connection.channel(on_open_callback=self.channel_on_open_callback)
+
+    def connection(self):
+        print 'connection'
+        parameters = pika.ConnectionParameters(
+            virtual_host='/',
+            credentials=self._credentials
+        )
+
+        self._connection = pika.SelectConnection(parameters, self.connection_callback)
+
+    def connection_close(self):
+        self._connection.close()
+
+    def stop(self): # called on interrupt
+        self.connection_close()
+        self._connection.ioloop.start() # stopped by interrupt - must be restarted to process commands
+
+    def run(self):
+        print 'run'
+        self.connection()
+        self._connection.ioloop.start()
+
+def main(argv=None):
+    if argv is None: argv = sys.argv
+    basic_publish = BasicPublish()
+
+    try:
+        basic_publish.run()
+    except KeyboardInterrupt:
+        print &gt;&gt;sys.stderr, &quot;Interrupt!&quot;
+        basic_publish.stop()
+
+if __name__ == &quot;__main__&quot;:
+    sys.exit(main())
+
+
+From: Jerry Kuch &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">jerryk at rbcon.com</A>&lt;mailto:<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">jerryk at rbcon.com</A>&gt;&gt;
+Reply-To: rabbitmq &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>&lt;mailto:<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>&gt;&gt;
+Date: Sun, 4 Nov 2012 13:24:38 -0500
+To: rabbitmq &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>&lt;mailto:<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>&gt;&gt;
+Subject: Re: [rabbitmq-discuss] Searching for a client library/example: Problems getting a reliable connection in Python and Erlang
+
+Also, further to what Alvaro said:  The Erlang client is quite reliable and, indeed, is used by us internally for a range of things.  Its main downside is that the documentation can be a bit sparse, especially if you're new to Erlang, and it has had some API changes over the years that have rendered some of what you might read about it on the internet out of date (again, in ways that are probably harder to sort out if you're new to the whole mess)...
+
++1 to Alvaro's request for some more specifics on what you're up to helping us provide guidance... :-)
+
+Best regards,
+Jerry
+
+On Sun, Nov 4, 2012 at 10:20 AM, Alvaro Videla &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">videlalvaro at gmail.com</A>&lt;mailto:<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">videlalvaro at gmail.com</A>&gt;&gt; wrote:
+Would you mind sharing some code? Is hard for us to help you without code.
+
+Regards,
+
+Alvaro
+
+Sent from my iPhone
+
+On Nov 4, 2012, at 7:06 PM, Daniel Neugebauer &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">mailinglists at energiequant.de</A>&lt;mailto:<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">mailinglists at energiequant.de</A>&gt;&gt; wrote:
+
+&gt;<i> Hi!
+</I>&gt;<i>
+</I>&gt;<i> I wanted to use RabbitMQ for simple log collection but for some reason I
+</I>&gt;<i> can't find any useful AMQP client library (and what good is a server
+</I>&gt;<i> without a working client?). I'd like to implement in either Python or
+</I>&gt;<i> Erlang but I'm unable to get a reliable connection - either connection
+</I>&gt;<i> setup fails, strange error messages appear after a short uptime or the
+</I>&gt;<i> client just cannot handle connection loss.
+</I>&gt;<i>
+</I>&gt;<i> What I've written so far is a simple Python script that takes lines from
+</I>&gt;<i> stdin, builds a dictionary from it and tries to send it via amqplib,
+</I>&gt;<i> Pika or Kombu (which seems to decide on using amqplib internally). It's
+</I>&gt;<i> nothing special, I already have a serialized string, that's all I need
+</I>&gt;<i> to send.
+</I>&gt;<i>
+</I>&gt;<i> However, Pika or amqplib (it's been a while since I tried them, so I
+</I>&gt;<i> don't remember which one it was) appeared to have some buffer issue -
+</I>&gt;<i> although the connection (to localhost) was still alive, I would get
+</I>&gt;<i> error messages about messages queueing up in the client after a few
+</I>&gt;<i> minutes. The other library would loose connection a few seconds after
+</I>&gt;<i> connecting but doesn't notice. Kombu terminates when the connection to
+</I>&gt;<i> RabbitMQ is lost, although I would expect Kombu to retry since I set
+</I>&gt;<i> retry = True when calling publish on the Producer object. I'm already
+</I>&gt;<i> running a reconnect in a loop with a try/except inside but my script
+</I>&gt;<i> just terminates. Strange...
+</I>&gt;<i>
+</I>&gt;<i> I also tried to use amqp_client in Erlang but failed to get any
+</I>&gt;<i> connection (I always get unknown_host unless I enter nothing as host
+</I>&gt;<i> name). I should add that I only read into Erlang theoretically so far
+</I>&gt;<i> and didn't get to write much but example programs yet, so it's likely I
+</I>&gt;<i> do something wrong here (yes, I already tried both binary lists and
+</I>&gt;<i> regular lists, no difference; I even tried supplying IP addresses in
+</I>&gt;<i> various forms - without success). Documentation is scarce and what I
+</I>&gt;<i> found suggests that I'm doing nothing wrong. I would prefer staying with
+</I>&gt;<i> Python for this implementatin anyway, just thought the client that comes
+</I>&gt;<i> with RabbitMQ should be able to work fine - unfortunately I seem to be
+</I>&gt;<i> wrong here. :(
+</I>&gt;<i>
+</I>&gt;<i> My question is: Does anyone have a complete working example of a
+</I>&gt;<i> *reliable* client in Python (or Erlang)? Maybe I'm too stupid to read
+</I>&gt;<i> the (very brief?) documentation correctly or the libraries I tried so
+</I>&gt;<i> far are just too buggy... What I started with was an example from
+</I>&gt;<i> &quot;RabbitMQ in Action&quot; but even that didn't work as expected.
+</I>&gt;<i>
+</I>&gt;<i> If it wasn't for getting logs piped in on the console I would try Java
+</I>&gt;<i> clients instead as I expect them to be more mature - to me, the Python
+</I>&gt;<i> libraries appear to be a bit messy, pardon my (maybe wrong) impression
+</I>&gt;<i> but I'm starting to get very frustrated with this: I've never had more
+</I>&gt;<i> problems to just get a simple plain string handed over to some other
+</I>&gt;<i> system. All in all I've spent too many hours in trying to get anything
+</I>&gt;<i> working and nothing has worked so far.
+</I>&gt;<i>
+</I>&gt;<i> Thanks,
+</I>&gt;<i> Daniel
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>&lt;mailto:<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>&gt;
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>_______________________________________________
+rabbitmq-discuss mailing list
+<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>&lt;mailto:<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>&gt;
+<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20121104/6f67d0c1/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20121104/6f67d0c1/attachment.htm</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="023569.html">[rabbitmq-discuss] Searching for a client library/example: Problems getting a reliable connection in Python and Erlang
+</A></li>
+	<LI>Next message: <A HREF="023574.html">[rabbitmq-discuss] Searching for a client library/example: Problems getting a reliable connection in Python and Erlang
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#23572">[ date ]</a>
+              <a href="thread.html#23572">[ thread ]</a>
+              <a href="subject.html#23572">[ subject ]</a>
+              <a href="author.html#23572">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

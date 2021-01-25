@@ -1,0 +1,178 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] High-performance routing strategies
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20High-performance%20routing%20strategies&In-Reply-To=%3C20110323131154.GE19387%40rabbitmq.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="011963.html">
+   <LINK REL="Next"  HREF="011957.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] High-performance routing strategies</H1>
+    <B>Matthew Sackman</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20High-performance%20routing%20strategies&In-Reply-To=%3C20110323131154.GE19387%40rabbitmq.com%3E"
+       TITLE="[rabbitmq-discuss] High-performance routing strategies">matthew at rabbitmq.com
+       </A><BR>
+    <I>Wed Mar 23 13:11:55 GMT 2011</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="011963.html">[rabbitmq-discuss] High-performance routing strategies
+</A></li>
+        <LI>Next message: <A HREF="011957.html">[rabbitmq-discuss] A project I've been working on
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#11992">[ date ]</a>
+              <a href="thread.html#11992">[ thread ]</a>
+              <a href="subject.html#11992">[ subject ]</a>
+              <a href="author.html#11992">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi,
+
+On Mon, Mar 21, 2011 at 10:47:53AM -0600, Helena Edelson wrote:
+&gt;<i> &gt; 100,000 queues on a single broker is fine - I've just created that on my
+</I>&gt;<i> &gt; desktop with no problems. You could likely get to well over a million
+</I>&gt;<i> &gt; with a bit of tuning and enough RAM.
+</I>&gt;<i> 
+</I>&gt;<i> Can you direct me toward acknowledged, tested RAM requirements? I've seen
+</I>&gt;<i> some information pass by in the list and other docs but would like to see
+</I>&gt;<i> something concrete.
+</I>
+Erm, we don't really have anything concrete... there are a couple of
+issues: one is that Rabbit dynamically pushes messages to disk to free
+up RAM, so it's not correct to think that the memory footprint of a
+queue is dependent on its contents. The other issue is that after a
+queue is idle for a while (10 seconds or more), it'll &quot;hibernate&quot; which
+causes a GC of that queue. As a result, this can dramatically shrink the
+amount of memory the queue requires. So for example, it might be
+possbile to have, say, 1000 empty queues in 10MB of RAM, but only when
+they're idle. When they're all active (even if empty), they might,
+depending on memory fragmentation and such like, consume much more
+memory.
+
+So, some quick testing:
+
+                                             VSZ     RSS (both in kB)
+on startup, no queues, no connections:    203092   89492
+no queues, 2000 network connections:      265820  146996
+ (so we're talking about 32kB per connection)
+no queues, close 2000 connections:        263996  145632
+ (typical for a VM: it doesn't hand back RAM to the OS immediately)
+
+-&gt; restart rabbit
+no queues, 1 connection, 2000 channels:   266052  147000
+ (similarly, around 32kB per channel)
+
+-&gt; restart rabbit
+1 connection, 1 channel, 2000 queues:     308764 187400
+ (a bit more - around 50kB per queue)
+
+Now that's with all processes &quot;active&quot;. Them hibernating at this stage
+is difficult to observe because the Erlang VM does not hand back memory
+to the OS asap. However, it can be observed if you have a large process
+that hibernates and has very fragmented memory (the amount reclaimed can
+be sufficient to force the VM to hand back memory to the OS). Or if you
+have a test that just steadily increases the memory footprint of Rabbit
+then the effect of hibernation of idle processes would be to reduce the
+rate of increase of memory use.
+
+&gt;<i> Say I have an application consisting of a server to 20,000 agents. Each
+</I>&gt;<i> agent-server request/response conversation can be broken down into 15 basic
+</I>&gt;<i> classification types with say 5 sub-conversation types. If I leverage topic
+</I>&gt;<i> exchanges for their behavioral flexibility, primarily use hierarchical
+</I>&gt;<i> routing keys and say, create a topic per major classification/conversation
+</I>&gt;<i> and use more specific routing keys for sub-converstations creating more
+</I>&gt;<i> lower-cost Bindinds, are you saying that is not more performant than going
+</I>&gt;<i> with an exponential amount of direct exchanges and more queues? I can
+</I>&gt;<i> partition and load balance the queues that would handle the very large
+</I>&gt;<i> message payloads easily enough, but for general high-traffic small JSON
+</I>&gt;<i> payloads/quick turn around for instance, what is the recommendation?
+</I>
+The recommendation is to do both and see which one works better for
+you! ;) Generally, if you have a finite domain of routing keys, then
+many fanout exchanges might be the right thing (literally, one exchange
+per routing key). If you have a potentially infinite number of routing
+keys, then that won't work, so you'll have to go with topic exchanges.
+Quite where direct exchanges fit in here is difficult to pin-point,
+except that they're a faster form of topic exchanges provided you don't
+need the wild card.
+
+However, as I've said before, it's likely to be binding churn that can
+kill you, so if you're creating lots of new queues and bindings to those
+queues whenever consumers attach then you might run into problems. Thus
+if you have a exchanges 'X1' ... 'Xn' to which lots of msgs are being
+published, and then whenever consumer 'Cm' connects, it has to create
+bindings from its own queue to all of 'X1' ... 'Xn' then you might have
+problems, depending on the rate of connections. One neat solution is for
+each consumer to have its own secondary exchange 'Ym'. Then use
+exchange-to-exchange bindings to bind all of 'X1' ... 'Xn' to 'Ym'.
+These bindings then always exist (make sure 'Ym' is not auto-delete).
+Then, whenever consumer 'Cm' connects, all it has to do is create its
+queue and bind that queue to 'Ym'. Make 'Ym' a fanout exchange, and you
+should find this is very fast, and reduces the binding churn rate to 1
+per connection, rather than potentially n per connection.
+
+&gt;<i> With regard to connections and channels, I wonder if someone can point me to
+</I>&gt;<i> data or research on thread behavior, leveraging threads going to
+</I>&gt;<i> sleep/waking up vs creating/closing connections for each client request to
+</I>&gt;<i> the broker.
+</I>
+Erlang is a multithreaded VM, and happily takes advantage of multiple
+cores. It presents green threads to the programmer (which are called
+'processes' because unlike threads, they conceptually do not share an
+address space - the fact that in practise they do is merely an
+implementation detail). I'm not quite sure of the research you're asking
+for but nothing really springs to mind that I've read recently.
+
+&gt;<i> If I am delegating to a Queue to handle runtime requests to create queues,
+</I>&gt;<i> exchanges, and bindings, might that take care of resultant capacity issues?
+</I>&gt;<i> I have typically federated JMS brokers and wonder about a similar
+</I>&gt;<i> topology/configuration.
+</I>
+I'm afraid I don't really follow: in AMQP it's the channel that provides
+functionality such as creating queues, exchanges, bindings et al. Queues
+are merely FIFO structures that buffer messages. I suspect my confusion
+here is most likely one of terminology.
+
+Matthew
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="011963.html">[rabbitmq-discuss] High-performance routing strategies
+</A></li>
+	<LI>Next message: <A HREF="011957.html">[rabbitmq-discuss] A project I've been working on
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#11992">[ date ]</a>
+              <a href="thread.html#11992">[ thread ]</a>
+              <a href="subject.html#11992">[ subject ]</a>
+              <a href="author.html#11992">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

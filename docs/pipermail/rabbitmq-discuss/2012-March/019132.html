@@ -1,0 +1,167 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] [java-client] Parallelizing message	consumption from a single queue
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20%5Bjava-client%5D%20Parallelizing%20message%0A%09consumption%20from%20a%20single%20queue&In-Reply-To=%3C58FAA50E-7E40-4B20-9568-CBC2A4A70983%40rabbitmq.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="019072.html">
+   <LINK REL="Next"  HREF="019150.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] [java-client] Parallelizing message	consumption from a single queue</H1>
+    <B>Steve Powell</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20%5Bjava-client%5D%20Parallelizing%20message%0A%09consumption%20from%20a%20single%20queue&In-Reply-To=%3C58FAA50E-7E40-4B20-9568-CBC2A4A70983%40rabbitmq.com%3E"
+       TITLE="[rabbitmq-discuss] [java-client] Parallelizing message	consumption from a single queue">steve at rabbitmq.com
+       </A><BR>
+    <I>Mon Mar 26 15:11:13 BST 2012</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="019072.html">[rabbitmq-discuss] [java-client] Parallelizing message consumption	from a single queue
+</A></li>
+        <LI>Next message: <A HREF="019150.html">[rabbitmq-discuss] [java-client] Parallelizing message consumption from a single queue
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#19132">[ date ]</a>
+              <a href="thread.html#19132">[ thread ]</a>
+              <a href="subject.html#19132">[ subject ]</a>
+              <a href="author.html#19132">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi Josh,
+
+In the absence of the experts -- you get me :-)
+
+Questions that start 'what is the best way to...' often have no
+definitive answer, I'm afraid; but here goes.
+
+First, I'm going to have to explain what I *think* you are asking about,
+before trying to answer it.
+
+  I assume you are asking about multiple Consumers, in a Java client, all
+  consuming from the same queue, allowing 'parallel' consumption -- which
+  I take to mean multi-threaded -- within the same Java client. You want
+  the 'best' application structure which achieves 'parallel' processing of 
+  messages from the queue.
+
+Well, there is nothing to stop you 'registering' the same Consumer
+instance more than once, with different consumer tags, so it is easy to
+drive multiple 'identical' Consumers. However, if you register
+(Channel.basicConsume()) on the same channel, the consumers will be
+called serially (this is done to preserve the ordering of messages
+processed on a channel).
+
+No doubt you've read the blurb on the Java Client API doc pages
+(<A HREF="http://www.rabbitmq.com/api-guide.html#consuming">http://www.rabbitmq.com/api-guide.html#consuming</A>) which says:
+
+&gt;<i> Callbacks to Consumers are dispatched on a thread separate from the
+</I>&gt;<i> thread managed by the Connection. This means that Consumers can safely
+</I>&gt;<i> call blocking methods on the Connection or Channel, such asqueueDeclare,
+</I>&gt;<i> txCommit, basicCancel or basicPublish.
+</I>&gt;<i> 
+</I>&gt;<i> Each Channel has its own dispatch thread. For the most common use case
+</I>&gt;<i> of one Consumer per Channel, this means Consumers do not hold up other
+</I>&gt;<i> Consumers. If you have multiple Consumers per Channel be aware that a
+</I>&gt;<i> long-running Consumer may hold up dispatch of callbacks to other
+</I>&gt;<i> Consumers on that Channel.
+</I>
+and the section on advanced connection options mentions a thread-pool
+(by default containing 5 threads) associated with the connection.
+
+What this all means is that *on each channel* Consumer callbacks are
+called serially. No overlapping there, so no chance to consume 'in
+parallel', so distinct *channels* (on the same connection) are allowed
+to run their consumers in parallel (up to five may run concurrently, in
+the default case).
+
+So, to 'consume' messages in parallel from a single queue you need to
+have the consumers on separate channels. Now, if you define a single
+Consumer instance, and get it to be invoked on multiple threads
+concurrently (on separate channels) you have to be careful -- the code
+in your Consumer must be thread-safe, and probably more than just that,
+too. I'll assume you know what you are doing. If you create one Consumer
+instance for each channel, RabbitMQ will guarantee that each channel's
+Consumer is running on one thread, so the rules are simpler.
+
+There is another option. Provided you are prepared to separate
+consumption from processing (and possibly acknowledgement) you can
+register a single consumer which does very little except pass the
+message to another (worker) thread to do the actual processing. The
+Consumer doesn't have to be sophisticated, but your dispatching
+mechanism needs to be: you mustn't lose messages, and you must ensure
+that you acknowledge them at some point (which may not be straight
+away). Still, if you are adept at Java concurrent programming these are
+all achievable. By managing your own worker threads you can achieve your
+own dispatching and resource management rules, and by setting the
+pre-fetch count (Qos) and managing acknowledgements you can gate the
+amount of work done in parallel, and even decide which workers get which
+messages.
+
+Which of these is 'best' depends a lot on your requirements. If you need
+just a little more control over the processing threads but don't want to
+'roll-your-own' dispatcher mechanism there is an option for you to
+supply your own ExecutorService for the RabbitMQ Connection to use, and
+Java supplies some standard ExecutorService implementations which allow
+you to do some of the management without considerable effort.
+
+My general advice is that this might be a lot of work, and you should
+consider investing in a sophisticated system only if you have determined
+that you really need the advantages it might bring. Be aware that these
+may not include faster throughput, and might upset any ordering
+guarantees you may be relying upon at present.
+
+I hope this helps.
+
+Steve Powell  (a happy kitten)
+----------some more definitions from the SPD----------
+chinchilla (n.) Cooling device for the lower jaw.
+socialcast (n.) Someone to whom everyone is speaking but nobody likes.
+literacy (n.) A textually transmitted disease usually contracted in childhood.
+
+On 22 Mar 2012, at 18:20, Josh Stone wrote:
+
+&gt;<i> I wanted to ask the experts since it's not clear to me - what is the best way to parallelize message consumption from a single queue, using the Java client? 
+</I>&gt;<i> 
+</I>&gt;<i> Thanks,
+</I>&gt;<i> Josh
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="019072.html">[rabbitmq-discuss] [java-client] Parallelizing message consumption	from a single queue
+</A></li>
+	<LI>Next message: <A HREF="019150.html">[rabbitmq-discuss] [java-client] Parallelizing message consumption from a single queue
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#19132">[ date ]</a>
+              <a href="thread.html#19132">[ thread ]</a>
+              <a href="subject.html#19132">[ subject ]</a>
+              <a href="author.html#19132">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

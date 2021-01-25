@@ -1,0 +1,163 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Looking for some clarification on mirrored queue implementation
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Looking%20for%20some%20clarification%20on%20mirrored%0A%20queue%20implementation&In-Reply-To=%3C20120207174114.GB5185%40rabbitmq.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="017996.html">
+   <LINK REL="Next"  HREF="017959.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Looking for some clarification on mirrored queue implementation</H1>
+    <B>Matthew Sackman</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Looking%20for%20some%20clarification%20on%20mirrored%0A%20queue%20implementation&In-Reply-To=%3C20120207174114.GB5185%40rabbitmq.com%3E"
+       TITLE="[rabbitmq-discuss] Looking for some clarification on mirrored queue implementation">matthew at rabbitmq.com
+       </A><BR>
+    <I>Tue Feb  7 17:41:14 GMT 2012</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="017996.html">[rabbitmq-discuss] Looking for some clarification on mirrored queue implementation
+</A></li>
+        <LI>Next message: <A HREF="017959.html">[rabbitmq-discuss] Random Disconnects (bad_payload) - 2012-02-06
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#17999">[ date ]</a>
+              <a href="thread.html#17999">[ thread ]</a>
+              <a href="subject.html#17999">[ subject ]</a>
+              <a href="author.html#17999">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi Matt,
+
+On Tue, Feb 07, 2012 at 05:18:54PM +0000, Emile Joubert wrote:
+&gt;<i> Neither. RabbitMQ uses a separate Erlang process per channel and this
+</I>&gt;<i> channel process is responsible for sending publish messages to each
+</I>&gt;<i> slave as well as the master.
+</I>
+Indeed. It's actually no different from a message being published to an
+exchange which then routes the message to several different queues - the
+channel process on the broker is responsible for finding out which
+queues the message is destined for and forwarding the message to all
+those queues. In the case of a mirrored queue, the expansion step to go
+from &quot;queue name&quot; to &quot;queue process ID&quot; returns several process IDs.
+
+&gt;<i> The slaves and master make use of a
+</I>&gt;<i> separate fault-tolerant framework (Guaranteed Multicast) to communicate.
+</I>&gt;<i> The master uses GM to communicate all messages (including publish
+</I>&gt;<i> messages) to slaves. Slaves therefore receive publish messages from the
+</I>&gt;<i> channel as well as GM, and all other messages from GM only.
+</I>
+...and the purpose of this is as follows.
+
+Because you can have multiple channels publishing messages to the same
+mirrored queue at the same time, there is the possibility that different
+members of the mirrored queue see the publishes in different orders when
+they receive the publishes directly from the channel processes. This
+will not do - the messages *must* be in the same order in all members of
+the mirrored queue. This is why publishes *also* go via GM - the master
+pushes each publish onto GM and the slaves received that and use it to
+derive the correct order.
+
+But, if you *only* had publishes being sent to the master and then the
+master pushes them via GM to all the slaves, then, in the event of the
+death of the master, there's a window of time before any of the slaves
+notice the death of the master during which there could be in-flight
+publishes going from the channels to the old master which will be lost -
+the master is dead so will not be able to process those publishes and
+push them onto GM.
+
+So as a result, publishes go via both routes - directly to all the
+members of the mirrored queue to ensure that no publishes ever get lost,
+and secondly via GM, pushed by the master, so that the slaves can
+actually enqueue the messages in the right order.
+
+&gt;<i> The sources contain some further detail which may be of interest:
+</I>&gt;<i> <A HREF="http://hg.rabbitmq.com/rabbitmq-server/file/default/src/rabbit_mirror_queue_coordinator.erl">http://hg.rabbitmq.com/rabbitmq-server/file/default/src/rabbit_mirror_queue_coordinator.erl</A>
+</I>&gt;<i> <A HREF="http://hg.rabbitmq.com/rabbitmq-server/file/default/src/gm.erl">http://hg.rabbitmq.com/rabbitmq-server/file/default/src/gm.erl</A>
+</I>
+Indeed. In general, it's much more complex than you can imagine. For
+example, a publishing client that's using publisher confirms could be
+publishing to a mirrored queue. Each confirm will only be issued once
+all members of the mirrored queue have received *and* correctly
+enqueued the message. And even if the master and any-but-not-all slaves
+fail, the code will ensure that not only are no messages lost, but all
+the confirms will still be correctly issued, assuming both the node to
+which the client is connected survives and at least one member of the
+mirrored queue survives.
+
+Most if not all of the complexity arises from a) we do almost everything
+regarding publishing asynchronously to take advantage of parallelism and
+ensure performance, but this means some nodes could fall a long way
+behind others; and b) failures and births can occur at any time and we
+try pretty hard to cope transparently with almost everything. And some
+of it we even get right...
+
+Matthew
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="017996.html">[rabbitmq-discuss] Looking for some clarification on mirrored queue implementation
+</A></li>
+	<LI>Next message: <A HREF="017959.html">[rabbitmq-discuss] Random Disconnects (bad_payload) - 2012-02-06
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#17999">[ date ]</a>
+              <a href="thread.html#17999">[ thread ]</a>
+              <a href="subject.html#17999">[ subject ]</a>
+              <a href="author.html#17999">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

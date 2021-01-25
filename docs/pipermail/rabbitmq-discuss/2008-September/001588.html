@@ -1,0 +1,149 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Publish won't work without transaction?
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20Publish%20won%27t%20work%20without%20transaction%3F&In-Reply-To=269388e30809230520n6eea651apea10d40abeac0c1%40mail.gmail.com">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001585.html">
+   <LINK REL="Next"  HREF="001596.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Publish won't work without transaction?</H1>
+    <B>tsuraan</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20Publish%20won%27t%20work%20without%20transaction%3F&In-Reply-To=269388e30809230520n6eea651apea10d40abeac0c1%40mail.gmail.com"
+       TITLE="[rabbitmq-discuss] Publish won't work without transaction?">tsuraan at gmail.com
+       </A><BR>
+    <I>Tue Sep 23 20:28:14 BST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001585.html">[rabbitmq-discuss] Publish won't work without transaction?
+</A></li>
+        <LI>Next message: <A HREF="001596.html">[rabbitmq-discuss] Publish won't work without transaction?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1588">[ date ]</a>
+              <a href="thread.html#1588">[ thread ]</a>
+              <a href="subject.html#1588">[ subject ]</a>
+              <a href="author.html#1588">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>&gt;<i> Is there a reason why you are passively declaring the queue?
+</I>&gt;<i>
+</I>...
+&gt;<i> I still don't see how you are working this out - are you using
+</I>&gt;<i> rabbit_amqqueue:stat_all() or are you maintaining a count with your
+</I>&gt;<i> consumers?
+</I>
+The response from the passive declaration gives how many messages are
+in the queue.  That's how I'm checking the number of messages that
+exist.  There isn't a consumer yet; I've just been trying to make
+message insertion work, or at least understand how it's supposed to
+work.  Maybe I'm not making sense here - see below.
+
+&gt;&gt;<i> Ok, so there isn't a return code from basic_publish that will tell me
+</I>&gt;&gt;<i> it was dropped?
+</I>&gt;<i>
+</I>&gt;<i> basic.publish is an asynchronous command.
+</I>&gt;<i>
+</I>&gt;<i> If you register a return handler and set the mandatory flag, you will
+</I>&gt;<i> get a return if the message can't be delivered.
+</I>
+Ok, I'll have to look into this.
+
+&gt;<i> The main goal of a messaging system is to deliver messages rather than
+</I>&gt;<i> queue them up. So Rabbit will only queue if it can't deliver.
+</I>&gt;<i>
+</I>&gt;<i> In this light, you should be able to see the effect of the immediate
+</I>&gt;<i> flag - if a message cannot be delivered immediately, bin it.
+</I>&gt;<i>
+</I>&gt;<i> So you need to have something reading off the queues to avoid the
+</I>&gt;<i> message being turfed. Or don't set the immediate flag.
+</I>
+Ok, I'm definitely having terminology issues, and I can't find the
+definitions in the AMQP-0.8 spec.  A producer publishes a message to
+an exchange.  An exchange routes a message into a queue (or many
+queues).  A consumer gets a message from a queue, and once it has
+acknowledged that message, then the message is delivered.  Is that
+right?  My understanding was totally non-sensical, which probably made
+this discussion a bit more confusing for everybody involved than it
+had to be...
+
+If all consumers are using basic_get instead of basic_consume, will
+immediate delivery always fail?  In other words, if a queue has no
+&quot;consumer&quot; on it, will all messages marked for immediate delivery be
+dropped?
+
+&gt;<i> In any case, it's not a good idea to enforce queueing - you will build
+</I>&gt;<i> up an unecessary backlog.
+</I>
+Yeah, the backlog is exactly what I need to manage though, because my
+backlog management isn't the best.  That's essentially the problem I
+was hoping that RabbitMQ would solve; apparently it doesn't do that
+yet, but it's still much better designed than my way, and I'm guessing
+it's probably higher performance.  I have a bit of Erlang experience;
+how difficult do you think it would be to implement a custom queue
+that allows for ludicrous backlogs, once the upcoming RabbitMQ version
+with pluggable queues is done?
+
+&gt;<i> If this is the case, you probably don't want to set the immediate
+</I>&gt;<i> flag, unless you catch it using the return handler - but this is
+</I>&gt;<i> clunky in itself anyway.
+</I>&gt;<i>
+</I>&gt;<i> As indicated in a previous thread that Edwin started, there is a
+</I>&gt;<i> finite limit as to how much Rabbit can queue things up.
+</I>&gt;<i>
+</I>&gt;<i> You should calibrate your system and don't overfeed the bunny accordingly.
+</I>
+I can probably hack my way around this, but the tasks my system gets
+aren't requested; it just gets tasks as they are generated.  Often, a
+system will get a lot of work during the day, and then just process it
+all night.  Sometimes, a system will just get too much data, and never
+be able to process it all.  Then, the customer calls tech support, but
+no data is lost.  The pluggable queues would probably be the right
+answer for this, I guess.
+
+&gt;<i> There is a roadmap item to address this - but no ETA.
+</I>
+Is that item the pluggable queues, or an actual implementation of
+queues that can grow indefinitely?
+
+&gt;<i> Doesn't sound like an unreasonable use case.
+</I>
+I don't think it sounds unreasonable either, but I've been reading
+about file system gotchas lately, and one common fs issue (I sure wish
+I could still find my source for this) is that creating and deleting
+files forces a metadata sync.  This tends to thrash the drives
+excessively, which is a problem we've been having lately.  I'm going
+to try implementing our system using rabbit, and have another one
+using the fs-based queues, and see if hard drive througput increases.
+Even if that doesn't fix that performance issue, I really like the
+exchange and queue design of AMQP; it would really let us clean up a
+lot of stuff in our system.
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001585.html">[rabbitmq-discuss] Publish won't work without transaction?
+</A></li>
+	<LI>Next message: <A HREF="001596.html">[rabbitmq-discuss] Publish won't work without transaction?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1588">[ date ]</a>
+              <a href="thread.html#1588">[ thread ]</a>
+              <a href="subject.html#1588">[ subject ]</a>
+              <a href="author.html#1588">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

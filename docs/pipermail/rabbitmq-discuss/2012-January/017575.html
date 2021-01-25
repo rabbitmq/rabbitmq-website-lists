@@ -1,0 +1,288 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Sequential message processing guarantee
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Sequential%20message%20processing%20guarantee&In-Reply-To=%3C4400DD7F-0926-41AE-965A-3C5752A0A280%40rabbitmq.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="017570.html">
+   <LINK REL="Next"  HREF="017603.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Sequential message processing guarantee</H1>
+    <B>Steve Powell</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Sequential%20message%20processing%20guarantee&In-Reply-To=%3C4400DD7F-0926-41AE-965A-3C5752A0A280%40rabbitmq.com%3E"
+       TITLE="[rabbitmq-discuss] Sequential message processing guarantee">steve at rabbitmq.com
+       </A><BR>
+    <I>Mon Jan 23 16:54:32 GMT 2012</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="017570.html">[rabbitmq-discuss] Sequential message processing guarantee
+</A></li>
+        <LI>Next message: <A HREF="017603.html">[rabbitmq-discuss] Sequential message processing guarantee
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#17575">[ date ]</a>
+              <a href="thread.html#17575">[ thread ]</a>
+              <a href="subject.html#17575">[ subject ]</a>
+              <a href="author.html#17575">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi Yogesh,
+
+What Alex says is perfectly correct.
+
+The executor service is set on the connection, and is there to allow multiple
+channels to execute consumers simultaneously, and without blocking the channel
+thread. By default you get an executor service which has five threads.
+
+From the point of view of a single channel, the consumers are driven serially,
+one delivery at a time, upon one of the executor service threads. The same
+thread is not guaranteed to be used each time for each consumer call for a
+channel (so don't try to use ThreadLocal objects).
+
+The reason we provide this, is so that clients with many, many channels are not
+forced to have a Consumer thread per channel -- something that is quite
+expensive -- but have the option of allocating as many threads as they wish if
+they need it. At the same time we guarantee that no Consumer calls can
+'overtake' each other on any one channel, and that Consumer processing runs on a
+distinct thread from the channel and the app, so that channel calls in the
+Consumer code will not deadlock.
+
+I hope this clarifies rather than obscures the situation,
+
+Regards,
+Steve Powell  (a hoppy bunny)
+----------some more definitions from the SPD----------
+vermin (v.) Treating the dachshund for roundworm.
+chinchilla (n.) Cooling device for the lower jaw.
+socialcast (n.) Someone to whom everyone is speaking but nobody likes.
+
+On 23 Jan 2012, at 15:22, Alexandru Scvor&#355;ov wrote:
+
+&gt;&gt;<i> Is my understanding correct?
+</I>&gt;<i> 
+</I>&gt;<i> Almost.  Deliveries will happen serially on a channel, so, as long as you
+</I>&gt;<i> only have one consumer, everything should be fine.
+</I>&gt;<i> 
+</I>&gt;<i> On Mon, Jan 23, 2012 at 06:54:15AM -0800, Yogesh Ketkar wrote:
+</I>&gt;&gt;<i> Hello Alex,
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;<i> I thought, using default Connection con = factory.newConnection(),
+</I>&gt;&gt;<i> ThreadPool which gets created will have more than one thread and
+</I>&gt;&gt;<i> calling basicConsume will result in processing of messages on multiple
+</I>&gt;&gt;<i> threads.
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;<i> But if we explicitly provide Executors.newSingleThreadExecutor() to
+</I>&gt;&gt;<i> newConnection method, only single thread will come into play with
+</I>&gt;&gt;<i> basicConsume.
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;<i> Is my understanding correct?
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;<i> regards, Yogesh
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;<i> On Jan 23, 7:48 pm, Alexandru Scvor&#355;ov &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">alexan... at rabbitmq.com</A>&gt; wrote:
+</I>&gt;&gt;&gt;<i> Hi Yogesh,
+</I>&gt;&gt;&gt;<i> 
+</I>&gt;&gt;&gt;&gt;<i> using channel.basicConsume on the channel which is created like this
+</I>&gt;&gt;&gt;&gt;<i> ExecutorService es = Executors.newSingleThreadExecutor();
+</I>&gt;&gt;&gt;&gt;<i> Connection connection = factory.newConnection(es);
+</I>&gt;&gt;&gt;&gt;<i> final Channel channel = connection.createChannel();
+</I>&gt;&gt;&gt;<i> 
+</I>&gt;&gt;&gt;&gt;<i> is probably a better approach.
+</I>&gt;&gt;&gt;&gt;<i> Any comments on this?
+</I>&gt;&gt;&gt;<i> 
+</I>&gt;&gt;&gt;<i> I don't quite see the point of the ExecutorService.
+</I>&gt;&gt;&gt;<i> 
+</I>&gt;&gt;&gt;<i> Just doing this:
+</I>&gt;&gt;&gt;<i> 
+</I>&gt;&gt;&gt;&gt;<i> Connection connection = factory.newConnection(es);
+</I>&gt;&gt;&gt;&gt;<i> final Channel channel = connection.createChannel();
+</I>&gt;&gt;&gt;<i> 
+</I>&gt;&gt;&gt;<i> Then, calling basicConsume with your own subclass of DefaultConsumer
+</I>&gt;&gt;&gt;<i> should be fine.
+</I>&gt;&gt;&gt;<i> 
+</I>&gt;&gt;&gt;<i> Cheers,
+</I>&gt;&gt;&gt;<i> Alex
+</I>&gt;&gt;&gt;<i> 
+</I>&gt;&gt;&gt;<i> 
+</I>&gt;&gt;&gt;<i> 
+</I>&gt;&gt;&gt;<i> 
+</I>&gt;&gt;&gt;<i> 
+</I>&gt;&gt;&gt;<i> 
+</I>&gt;&gt;&gt;<i> 
+</I>&gt;&gt;&gt;<i> 
+</I>&gt;&gt;&gt;<i> 
+</I>&gt;&gt;&gt;<i> On Mon, Jan 23, 2012 at 08:08:37PM +0530, Yogesh Ketkar wrote:
+</I>&gt;&gt;&gt;&gt;<i> Thanks Alex.
+</I>&gt;&gt;&gt;<i> 
+</I>&gt;&gt;&gt;&gt;<i> I think, for sequential message processing, rather than this pattern
+</I>&gt;&gt;&gt;&gt;<i> while(true) {
+</I>&gt;&gt;&gt;&gt;<i>     GetResponse res = channel.basicGet(QUEUE_NAME, false);
+</I>&gt;&gt;&gt;&gt;<i>     if(res != null) {
+</I>&gt;&gt;&gt;&gt;<i>         // process and ack message
+</I>&gt;&gt;&gt;&gt;<i>    }
+</I>&gt;&gt;&gt;&gt;<i> }
+</I>&gt;&gt;&gt;<i> 
+</I>&gt;&gt;&gt;&gt;<i> using channel.basicConsume on the channel which is created like this
+</I>&gt;&gt;&gt;&gt;<i> ExecutorService es = Executors.newSingleThreadExecutor();
+</I>&gt;&gt;&gt;&gt;<i> Connection connection = factory.newConnection(es);
+</I>&gt;&gt;&gt;&gt;<i> final Channel channel = connection.createChannel();
+</I>&gt;&gt;&gt;<i> 
+</I>&gt;&gt;&gt;&gt;<i> is probably a better approach.
+</I>&gt;&gt;&gt;&gt;<i> Any comments on this?
+</I>&gt;&gt;&gt;<i> 
+</I>&gt;&gt;&gt;&gt;<i> regards, Yogesh
+</I>&gt;&gt;&gt;<i> 
+</I>&gt;&gt;&gt;&gt;<i> 2012/1/23 Alexandru Scvor&#355;ov &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">alexan... at rabbitmq.com</A>&gt;
+</I>&gt;&gt;&gt;<i> 
+</I>&gt;&gt;&gt;&gt;&gt;<i> Hi Yogesh,
+</I>&gt;&gt;&gt;<i> 
+</I>&gt;&gt;&gt;&gt;&gt;<i> In the absence of consumer failures, RabbitMQ will deliver messages from
+</I>&gt;&gt;&gt;&gt;&gt;<i> a queue in order.
+</I>&gt;&gt;&gt;<i> 
+</I>&gt;&gt;&gt;&gt;&gt;<i> So, if messages 1, 2, 3 reach a queue in order, RabbitMQ will deliver
+</I>&gt;&gt;&gt;&gt;&gt;<i> them to consumers in the same order (1, 2, 3).
+</I>&gt;&gt;&gt;<i> 
+</I>&gt;&gt;&gt;&gt;&gt;<i> But, if consumers fail before acknowledging the messages (or if they
+</I>&gt;&gt;&gt;&gt;&gt;<i> reject the messages), those messages will requeued at the end of the
+</I>&gt;&gt;&gt;&gt;&gt;<i> queue.  So, if the consumer that got message 1 rejects it, the new
+</I>&gt;&gt;&gt;&gt;&gt;<i> order of messages will be 2, 3, 1.
+</I>&gt;&gt;&gt;<i> 
+</I>&gt;&gt;&gt;&gt;&gt;<i> This all deals with message *delivery*.
+</I>&gt;&gt;&gt;<i> 
+</I>&gt;&gt;&gt;&gt;&gt;&gt;<i> There are multiple consumer threads consuming the messages.
+</I>&gt;&gt;&gt;&gt;&gt;&gt;<i> Though multiple threads are consuming the messages, I observed that
+</I>&gt;&gt;&gt;&gt;&gt;&gt;<i> messages still get processed sequentially.
+</I>&gt;&gt;&gt;&gt;&gt;&gt;<i> Is that the case and if NOT, what is the way to guarantee sequential
+</I>&gt;&gt;&gt;&gt;&gt;&gt;<i> processing of messages on one queue?
+</I>&gt;&gt;&gt;<i> 
+</I>&gt;&gt;&gt;&gt;&gt;<i> The library makes no guarantees about the order in which you process
+</I>&gt;&gt;&gt;&gt;&gt;<i> messages, only about the order in which they're delivered.
+</I>&gt;&gt;&gt;<i> 
+</I>&gt;&gt;&gt;&gt;&gt;<i> If you want to process all the messages on a queue in order, only
+</I>&gt;&gt;&gt;&gt;&gt;<i> consume from one thread (doing basic.get from one thread like you
+</I>&gt;&gt;&gt;&gt;&gt;<i> suggested in the other email would work, but would also be highly
+</I>&gt;&gt;&gt;&gt;&gt;<i> inefficient).
+</I>&gt;&gt;&gt;<i> 
+</I>&gt;&gt;&gt;&gt;&gt;<i> Does this answer your question?
+</I>&gt;&gt;&gt;<i> 
+</I>&gt;&gt;&gt;&gt;&gt;<i> Cheers,
+</I>&gt;&gt;&gt;&gt;&gt;<i> Alex
+</I>&gt;&gt;&gt;<i> 
+</I>&gt;&gt;&gt;&gt;&gt;<i> On Sun, Jan 22, 2012 at 09:38:40AM -0800, Yogesh Ketkar wrote:
+</I>&gt;&gt;&gt;&gt;&gt;&gt;<i> Running the code below, gives
+</I>&gt;&gt;&gt;&gt;&gt;&gt;<i> channel.basicConsume(QUEUE_NAME, autoAck, CONSUMER_TAG,
+</I>&gt;&gt;&gt;&gt;&gt;&gt;<i>       new DefaultConsumer(channel)  {
+</I>&gt;&gt;&gt;&gt;&gt;&gt;<i>         @Override
+</I>&gt;&gt;&gt;&gt;&gt;&gt;<i>         public void handleDelivery(String consumerTag, Envelope
+</I>&gt;&gt;&gt;&gt;&gt;&gt;<i> envelope, BasicProperties properties, byte[] body) {
+</I>&gt;&gt;&gt;&gt;&gt;&gt;<i>                 System.out.println(Thread.currentThread().getName());
+</I>&gt;&gt;&gt;&gt;&gt;&gt;<i>          }
+</I>&gt;&gt;&gt;&gt;&gt;&gt;<i> }
+</I>&gt;&gt;&gt;<i> 
+</I>&gt;&gt;&gt;&gt;&gt;&gt;<i> o/p like
+</I>&gt;&gt;&gt;&gt;&gt;&gt;<i> pool-1-thread-1
+</I>&gt;&gt;&gt;&gt;&gt;&gt;<i> pool-1-thread-2
+</I>&gt;&gt;&gt;&gt;&gt;&gt;<i> pool-1-thread-3
+</I>&gt;&gt;&gt;&gt;&gt;&gt;<i> etc
+</I>&gt;&gt;&gt;<i> 
+</I>&gt;&gt;&gt;&gt;&gt;&gt;<i> There are multiple consumer threads consuming the messages.
+</I>&gt;&gt;&gt;&gt;&gt;&gt;<i> Though multiple threads are consuming the messages, I observed that
+</I>&gt;&gt;&gt;&gt;&gt;&gt;<i> messages still get processed sequentially.
+</I>&gt;&gt;&gt;&gt;&gt;&gt;<i> Is that the case and if NOT, what is the way to guarantee sequential
+</I>&gt;&gt;&gt;&gt;&gt;&gt;<i> processing of messages on one queue?
+</I>&gt;&gt;&gt;<i> 
+</I>&gt;&gt;&gt;&gt;&gt;&gt;<i> regards, Yogesh
+</I>&gt;&gt;&gt;<i> 
+</I>&gt;&gt;&gt;&gt;&gt;&gt;<i> _______________________________________________
+</I>&gt;&gt;&gt;&gt;&gt;&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;&gt;&gt;&gt;&gt;&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-disc... at lists.rabbitmq.com</A>
+</I>&gt;&gt;&gt;&gt;&gt;&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>&gt;&gt;&gt;<i> 
+</I>&gt;&gt;&gt;<i> _______________________________________________
+</I>&gt;&gt;&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;&gt;&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-disc... at lists.rabbitmq.comhttps</A>://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss
+</I>&gt;&gt;<i> _______________________________________________
+</I>&gt;&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20120123/60749c13/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20120123/60749c13/attachment.htm</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="017570.html">[rabbitmq-discuss] Sequential message processing guarantee
+</A></li>
+	<LI>Next message: <A HREF="017603.html">[rabbitmq-discuss] Sequential message processing guarantee
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#17575">[ date ]</a>
+              <a href="thread.html#17575">[ thread ]</a>
+              <a href="subject.html#17575">[ subject ]</a>
+              <a href="author.html#17575">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

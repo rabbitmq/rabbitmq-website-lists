@@ -1,0 +1,203 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Creating a job only once (using Java Client API)
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Creating%20a%20job%20only%20once%20%28using%20Java%20Client%0A%20API%29&In-Reply-To=%3C20110419104605.GJ7850%40wellquite.org%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="012438.html">
+   <LINK REL="Next"  HREF="012419.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Creating a job only once (using Java Client API)</H1>
+    <B>Matthew Sackman</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Creating%20a%20job%20only%20once%20%28using%20Java%20Client%0A%20API%29&In-Reply-To=%3C20110419104605.GJ7850%40wellquite.org%3E"
+       TITLE="[rabbitmq-discuss] Creating a job only once (using Java Client API)">matthew at rabbitmq.com
+       </A><BR>
+    <I>Tue Apr 19 11:46:05 BST 2011</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="012438.html">[rabbitmq-discuss] Creating a job only once (using Java Client	API)
+</A></li>
+        <LI>Next message: <A HREF="012419.html">[rabbitmq-discuss] rabbitmq-server crashes
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#12457">[ date ]</a>
+              <a href="thread.html#12457">[ thread ]</a>
+              <a href="subject.html#12457">[ subject ]</a>
+              <a href="author.html#12457">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>On Mon, Apr 18, 2011 at 07:13:43PM +0300, Allan Kamau wrote:
+&gt;<i> Almost. I am trying to process jobs level by level. Let's say I have a
+</I>&gt;<i> tree structure, where I need to create jobs one level at a time and
+</I>&gt;<i> completely process them then generate the next batch of jobs and
+</I>&gt;<i> process them totally and so on. Each job (level) creation depends on
+</I>&gt;<i> the successful processing of all the jobs of the preceding level as
+</I>&gt;<i> those results form the bases of the jobs being created for the new
+</I>&gt;<i> level.
+</I>&gt;<i> 
+</I>&gt;<i> So the key is for the client that obtained and successfully processed
+</I>&gt;<i> the last job to realize this fact and generate the next round of jobs.
+</I>&gt;<i> The jobs are to be generated and injected into the queue by a single
+</I>&gt;<i> client, process and thread.
+</I>&gt;<i> 
+</I>&gt;<i> One way would be to specially mark the last job as it is being
+</I>&gt;<i> generated in the job creation undertaking, then program the clients to
+</I>&gt;<i> be on the lookout for this &quot;last&quot; job as they process the jobs. But
+</I>&gt;<i> this may not really work well considering that some jobs may take
+</I>&gt;<i> longer to process than this job marked as &quot;last&quot; and that they may be
+</I>&gt;<i> some jobs still under processing or awaiting to be processed (if they
+</I>&gt;<i> were resent due to some failure of some kind) after the completion of
+</I>&gt;<i> processing of the &quot;last&quot; job.
+</I>
+Thanks for the explanation.
+
+To start with, I'd probably do one queue per level. Eventually you may
+be able to collapse that back down to one queue overall, but it might
+help to start with the separation.
+
+You are after some sort of global concensus that all clients have become
+idle. I would do the following;
+
+1. Is it actually important that the next set of jobs are created by the
+client that processed the last msg enqueued at the previous level; or is
+it enough for the next set of jobs to be created by the client that
+finished processing last?
+
+If the former, then this is harder - you'd probably need to use a
+last-value-cache and hope that all msgs come from one source, or use
+something in addition to Rabbit to achieve this (maybe something like
+Zookeeper?).
+
+If the latter:
+
+All clients are consuming from queue X for level X. When each client
+becomes idle, it does a basic.cancel on its consumer, and then does an
+exclusive basic.consume on the same queue.
+
+Exactly one client will find its later basic.consume will succeed and
+this will indicate that all clients have become idle and cancelled their
+consumer, and there is now exactly one consumer hanging off that queue.
+
+The client that succeeds can then generate the next batch of jobs. This
+will probably consist of creating a new queue, sending the jobs into
+that queue, and then communicating the queue name to the other workers.
+Thus there'll need to be both a &quot;control&quot; exchange which simply gets
+msgs about which is the next queue to consume from (each client will
+need to have a queue hanging off that exchange), and then &quot;job&quot; queues
+with one queue for each level.
+
+Something like that should, I think work. You're really trying to build
+a semaphore though and using exclusive consumers is a very very crude
+way of doing this. I'm not sure this is the right tool for the job, but
+I think it should work.
+
+Matthew
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="012438.html">[rabbitmq-discuss] Creating a job only once (using Java Client	API)
+</A></li>
+	<LI>Next message: <A HREF="012419.html">[rabbitmq-discuss] rabbitmq-server crashes
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#12457">[ date ]</a>
+              <a href="thread.html#12457">[ thread ]</a>
+              <a href="subject.html#12457">[ subject ]</a>
+              <a href="author.html#12457">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

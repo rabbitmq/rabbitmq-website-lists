@@ -1,0 +1,172 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] client connect problems
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20client%20connect%20problems&In-Reply-To=%3CDC070EC8-9ABD-4B08-9824-7E91ECD7D846%40vmware.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="010229.html">
+   <LINK REL="Next"  HREF="010233.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] client connect problems</H1>
+    <B>Jerry Kuch</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20client%20connect%20problems&In-Reply-To=%3CDC070EC8-9ABD-4B08-9824-7E91ECD7D846%40vmware.com%3E"
+       TITLE="[rabbitmq-discuss] client connect problems">jerryk at vmware.com
+       </A><BR>
+    <I>Fri Dec  3 18:11:27 GMT 2010</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="010229.html">[rabbitmq-discuss] client connect problems
+</A></li>
+        <LI>Next message: <A HREF="010233.html">[rabbitmq-discuss] client connect problems
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#10232">[ date ]</a>
+              <a href="thread.html#10232">[ thread ]</a>
+              <a href="subject.html#10232">[ subject ]</a>
+              <a href="author.html#10232">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi, Robert.
+
+With a broker version this new, these things are often either a misbehaving client, or the broker running in an environment where there's a resource limit configuration problem, e.g. running out of file descriptors.
+
+Here are a few things to investigate in such circumstances (derived from a support incident on an older Rabbit version, but most of this remains sensible stuff to check).
+
+Please let us know how it goes.  If none of the above yield meaningful clues, would you feel comfortable sharing some snippets of your client code with which you're encountering the problem?
+
+Jerry
+
+==============
+
+ Here's a quick laundry list of things to investigate when one
+ encounters problems of this flavor.
+
+ - check `ulimit -n` as whichever user is being used to run rabbit;
+   depending on your system this may be the 'rabbitmq' user.  Be wary
+   of raised limits not making it to the user/shell/process one
+   wanted them to.  Again, newer Rabbits will announce at startup
+   time what sort of file handle limits they think they're working under
+   with a log message something like:
+
+           =INFO REPORT==== 2-Dec-2010::14:37:38 ===
+        Limiting to approx 156 file handles (138 sockets)
+ 
+  This example is from my desktop machine where by default 'ulimit -n' 
+  gives 256, a value that's likely rather too low for a broker that's going
+  to be serving a lot of clients.
+
+ - check the logs for memory alarms; severe memory pressure can cause
+   Rabbit to start refusing connections.
+
+ - check that Rabbit hasn't run out of sockets; to do this use
+   `rabbitmqctl list_connections` and netstat to see if there are
+   suspiciously large numbers of existing connections.  Client
+   misbehavior may cause this on an otherwise healthy Rabbit.
+
+ - check the rabbit-sasl.log and the main rabbit.log for any sign
+   that the tcp listener/acceptor process has crashed or misbehaved.  
+   Look for 'CRASH REPORT' entries in the logs and mentions of 
+   'tcp_acceptor', 'cannot_accept' , &quot;{error,emfile}&quot; and similar.
+
+ - is Rabbit spinning frantically?  Check 'top' and your preferred
+   process monitoring tools to see if you have Rabbit beam.smp
+   processes consuming large amounts of CPU while the problem is
+   manifesting. [ In your current case it seems you've ruled this out 
+   already]
+
+ - generally scour rabbit.log and rabbit-sasl.log for suspicious errors.
+
+ - use 'rabbitmqctl list_WHATEVER' for WHATEVERs including connections,
+   channels, exchanges, queues, bindings, etc. to see if there are
+   unexpectedly massive quantities of anything.  Also check your
+   queues to see if any have absurd numbers of messages languishing
+   in them, as this could indicate a misbehaving client application.
+
+On Dec 3, 2010, at 4:03 AM, Robert Fuller wrote:
+
+&gt;<i> Hi,
+</I>&gt;<i> 
+</I>&gt;<i> I had an issue for several hours where clients from many hosts were
+</I>&gt;<i> not able to connect to a running rabbitmq server (2.2.0). list_queues
+</I>&gt;<i> showed only a small number of items in the queues. Eventually after
+</I>&gt;<i> restarting rabbitmq server everything returned immediately to normal.
+</I>&gt;<i> 
+</I>&gt;<i> client stack seems to be sometimes this:
+</I>&gt;<i> java.net.ConnectException: Connection timed out
+</I>&gt;<i> 	at java.net.PlainSocketImpl.socketConnect(Native Method)
+</I>&gt;<i> 	at java.net.PlainSocketImpl.doConnect(PlainSocketImpl.java:333)
+</I>&gt;<i> 	at java.net.PlainSocketImpl.connectToAddress(PlainSocketImpl.java:195)
+</I>&gt;<i> 	at java.net.PlainSocketImpl.connect(PlainSocketImpl.java:182)
+</I>&gt;<i> 	at java.net.SocksSocketImpl.connect(SocksSocketImpl.java:366)
+</I>&gt;<i> 	at java.net.Socket.connect(Socket.java:529)
+</I>&gt;<i> 	at java.net.Socket.connect(Socket.java:478)
+</I>&gt;<i> 	at com.rabbitmq.client.ConnectionFactory.createFrameHandler(ConnectionFactory.java:338)
+</I>&gt;<i> 	at com.rabbitmq.client.ConnectionFactory.newConnection(ConnectionFactory.java:376)
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> and sometimes this:
+</I>&gt;<i> java.io.IOException
+</I>&gt;<i> 	at com.rabbitmq.client.impl.AMQChannel.wrap(AMQChannel.java:121)
+</I>&gt;<i> 	at com.rabbitmq.client.impl.AMQConnection.start(AMQConnection.java:274)
+</I>&gt;<i> 	at com.rabbitmq.client.ConnectionFactory.newConnection(ConnectionFactory.java:379)
+</I>&gt;<i> 	at com.rabbitmq.client.ConnectionFactory.newConnection(ConnectionFactory.java:399)
+</I>&gt;<i> ...
+</I>&gt;<i> Caused by: com.rabbitmq.client.ShutdownSignalException: connection
+</I>&gt;<i> error; reason: java.net.SocketException: Connection reset
+</I>&gt;<i> 	at com.rabbitmq.utility.ValueOrException.getValue(ValueOrException.java:81)
+</I>&gt;<i> 	at com.rabbitmq.utility.BlockingValueOrException.uninterruptibleGetValue(BlockingValueOrException.java:47)
+</I>&gt;<i> 	at com.rabbitmq.client.impl.AMQChannel$BlockingRpcContinuation.getReply(AMQChannel.java:342)
+</I>&gt;<i> 	at com.rabbitmq.client.impl.AMQConnection.start(AMQConnection.java:258)
+</I>&gt;<i> 	... 39 more
+</I>&gt;<i> Caused by: java.net.SocketException: Connection reset
+</I>&gt;<i> 	at java.net.SocketInputStream.read(SocketInputStream.java:168)
+</I>&gt;<i> 	at java.io.BufferedInputStream.fill(BufferedInputStream.java:218)
+</I>&gt;<i> 	at java.io.BufferedInputStream.read(BufferedInputStream.java:237)
+</I>&gt;<i> 	at java.io.DataInputStream.readUnsignedByte(DataInputStream.java:271)
+</I>&gt;<i> 	at com.rabbitmq.client.impl.Frame.readFrom(Frame.java:118)
+</I>&gt;<i> 	at com.rabbitmq.client.impl.SocketFrameHandler.readFrame(SocketFrameHandler.java:155)
+</I>&gt;<i> 	at com.rabbitmq.client.impl.AMQConnection.readFrame(AMQConnection.java:393)
+</I>&gt;<i> 	at com.rabbitmq.client.impl.AMQConnection$MainLoop.run(AMQConnection.java:421)
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> I could see nothing unusual on the server using top (memory and cpu
+</I>&gt;<i> usage ok), or in the rabbitmq logs.
+</I>&gt;<i> 
+</I>&gt;<i> What can I do to produce you a log on the server should this situation re-occur?
+</I>&gt;<i> 
+</I>&gt;<i> Thanks,
+</I>&gt;<i> Rob.
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>
+</PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="010229.html">[rabbitmq-discuss] client connect problems
+</A></li>
+	<LI>Next message: <A HREF="010233.html">[rabbitmq-discuss] client connect problems
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#10232">[ date ]</a>
+              <a href="thread.html#10232">[ thread ]</a>
+              <a href="subject.html#10232">[ subject ]</a>
+              <a href="author.html#10232">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

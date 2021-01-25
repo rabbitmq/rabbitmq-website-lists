@@ -1,0 +1,147 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] rabbitmq-c memory leak?
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20rabbitmq-c%20memory%20leak%3F&In-Reply-To=%3CCAAt2po%2BJjGiOYS07Tx6i%2Bjfzmzz3M%2BJsnPa7hChmtgT7TcC2Uw%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="034989.html">
+   <LINK REL="Next"  HREF="035115.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] rabbitmq-c memory leak?</H1>
+    <B>Alan Antonuk</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20rabbitmq-c%20memory%20leak%3F&In-Reply-To=%3CCAAt2po%2BJjGiOYS07Tx6i%2Bjfzmzz3M%2BJsnPa7hChmtgT7TcC2Uw%40mail.gmail.com%3E"
+       TITLE="[rabbitmq-discuss] rabbitmq-c memory leak?">alan.antonuk at gmail.com
+       </A><BR>
+    <I>Sat Apr  5 16:44:21 BST 2014</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="034989.html">[rabbitmq-discuss] rabbitmq-c memory leak?
+</A></li>
+        <LI>Next message: <A HREF="035115.html">[rabbitmq-discuss] rabbitmq-c memory leak?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#35011">[ date ]</a>
+              <a href="thread.html#35011">[ thread ]</a>
+              <a href="subject.html#35011">[ subject ]</a>
+              <a href="author.html#35011">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>SimpleAmqpClient should call MaybeReleaseBuffersOnChannel, which if it has
+no frames enqueued, should call amqp_maybe_release_buffers_on_channel(),
+which if rabbitmq-c doesn't have any frames lying around will recycle the
+pool associated with that channel. If this really is a bug (possible...) it
+would be good to know which channel(s) SimpleAmqpClient is publishing on,
+and which channel(s) are growing without bound (e.g., which entry in
+amqp_connection_state_t.pool_table).
+
+-Alan
+
+
+On Thu, Apr 3, 2014 at 5:19 PM, Dushin Fred &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">fred at dushin.net</A>&gt; wrote:
+
+&gt;<i>
+</I>&gt;<i> I have written a simple test program using the SimpleAqmpClient library
+</I>&gt;<i> (which in turn uses the rabbitmq-c library), which seems to illustrate a
+</I>&gt;<i> memory leak, of sorts.
+</I>&gt;<i>
+</I>&gt;<i> The program is a simple main, which pre-allocates a string message, and
+</I>&gt;<i> then calls BasicPublish on a channel in a loop, all single threaded.
+</I>&gt;<i>  Effectively:
+</I>&gt;<i>
+</I>&gt;<i>         auto envelope = BasicMessage::Create(random_data(message_size));
+</I>&gt;<i>         for (unsigned i = 0;  i &lt; num_messages;  ++i)
+</I>&gt;<i>         {
+</I>&gt;<i>             channel-&gt;BasicPublish(exchange_name, routing_key, envelope);
+</I>&gt;<i>         }
+</I>&gt;<i>
+</I>&gt;<i> The problem is that the memory image of this process seems to grow without
+</I>&gt;<i> bounds.  The memory all seems to be allocated in amqp_pool_alloc (as
+</I>&gt;<i> expected), when calling wait_frame_inner -&gt; amqp_handle_input.  The memory
+</I>&gt;<i> is not orphaned -- i.e., it seems to get cleaned up at shutdown, so it
+</I>&gt;<i> doesn't show up as a leak in a leak detector tool, such a
+</I>&gt;<i> Instruments/DTrace, or valgrind, or purify, etc.  But I don't see where the
+</I>&gt;<i> memory is every de-allocated, which will spell doom for an application that
+</I>&gt;<i> is designed to never terminate.
+</I>&gt;<i>
+</I>&gt;<i> I am attaching a screenshot from an Instruments run, to give some context.
+</I>&gt;<i>  The code is here:
+</I>&gt;<i>
+</I>&gt;<i> <A HREF="https://github.com/fadushin/sandbox/blob/master/cpp/rabbitmq/sender.cpp">https://github.com/fadushin/sandbox/blob/master/cpp/rabbitmq/sender.cpp</A>
+</I>&gt;<i>
+</I>&gt;<i> This was run against RabbitMQ 3.2.4, using rabbitmq-c 0.5.0 and
+</I>&gt;<i> SimpleAmqpClient 2.3, compiled using Clang 5.0 on OS X.9 (Mavericks).
+</I>&gt;<i>
+</I>&gt;<i> Has anyone seen this behavior?  Am I missing something in my use of
+</I>&gt;<i> BasicPublish, that is not telling the rabbitmq-c library to free memory in
+</I>&gt;<i> the &quot;amqp pool&quot;?  It doesn't seem to make a difference whether I am
+</I>&gt;<i> actively pulling messages off the queue from a separate process, or even
+</I>&gt;<i> whether there is a queue bound to the exchange to which I am publishing
+</I>&gt;<i> messages.  (Not that I would expect it to)
+</I>&gt;<i>
+</I>&gt;<i> -Fred
+</I>&gt;<i>
+</I>&gt;<i> encl.
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20140405/f0fea407/attachment.html">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20140405/f0fea407/attachment.html</A>&gt;
+-------------- next part --------------
+A non-text attachment was scrubbed...
+Name: PastedGraphic-3.png
+Type: image/png
+Size: 422159 bytes
+Desc: not available
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20140405/f0fea407/attachment.png">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20140405/f0fea407/attachment.png</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="034989.html">[rabbitmq-discuss] rabbitmq-c memory leak?
+</A></li>
+	<LI>Next message: <A HREF="035115.html">[rabbitmq-discuss] rabbitmq-c memory leak?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#35011">[ date ]</a>
+              <a href="thread.html#35011">[ thread ]</a>
+              <a href="subject.html#35011">[ subject ]</a>
+              <a href="author.html#35011">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

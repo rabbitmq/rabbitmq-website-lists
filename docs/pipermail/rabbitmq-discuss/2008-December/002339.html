@@ -1,0 +1,148 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] [Q] best way to add a sequencer to the broker
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20%5BQ%5D%20best%20way%20to%20add%20a%20sequencer%20to%20the%20broker&In-Reply-To=269388e30812290818w9052696h63163ab3c7844639%40mail.gmail.com">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002335.html">
+   <LINK REL="Next"  HREF="002340.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] [Q] best way to add a sequencer to the broker</H1>
+    <B>Chuck Remes</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20%5BQ%5D%20best%20way%20to%20add%20a%20sequencer%20to%20the%20broker&In-Reply-To=269388e30812290818w9052696h63163ab3c7844639%40mail.gmail.com"
+       TITLE="[rabbitmq-discuss] [Q] best way to add a sequencer to the broker">cremes.devlist at mac.com
+       </A><BR>
+    <I>Mon Dec 29 17:43:16 GMT 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002335.html">[rabbitmq-discuss] [Q] best way to add a sequencer to the broker
+</A></li>
+        <LI>Next message: <A HREF="002340.html">[rabbitmq-discuss] [Q] best way to add a sequencer to the broker
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2339">[ date ]</a>
+              <a href="thread.html#2339">[ thread ]</a>
+              <a href="subject.html#2339">[ subject ]</a>
+              <a href="author.html#2339">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>
+On Dec 29, 2008, at 10:18 AM, Ben Hood wrote:
+
+&gt;&gt;<i> 2. Is there a better way to accomplish this task?
+</I>&gt;<i>
+</I>&gt;<i> I'm not quite sure I fully understand the actual use case. AFAICT you
+</I>&gt;<i> want each message to have it's own sequence number that you want to
+</I>&gt;<i> set yourself but have some kind of intermediary increment this number.
+</I>&gt;<i> But because this is stateless operation (because you are just
+</I>&gt;<i> incrementing a context free number), I must conclude that I don't
+</I>&gt;<i> really understand what you are really trying to achieve (although I've
+</I>&gt;<i> read through your post twice - maybe I'm just being stupid). Or is
+</I>&gt;<i> that the publisher always sets this sequence number to 0 and you want
+</I>&gt;<i> to stamp it with a globally incremented number?
+</I>
+Sorry it was still unclear; I rewrote the email twice before hitting  
+the send button. :)
+
+Your last sentence quoted above gets it exactly. Each publisher will  
+set the sequence number to 0 so that the republisher/sequencer service  
+can add the global number stamp to it. I guess the publishers could  
+also set it to nil; the initial value is irrelevant since the  
+Sequencer will overwrite it.
+
+The use case is to stamp a global order on all messages through the  
+broker for the purposes of replay, debugging and async logging. I  
+realize that during normal operation the services will be publishing  
+messages in an arbitrary order; it doesn't matter to me. I need to  
+recreate that arbitrary order *exactly* for a replay.
+
+Think of the sequencer as the software equivalent of a hardware bus  
+clock. Alternately, think of the sequencer as the equivalent of adding  
+an identity column to a database table (this column contains a  
+monotonically increasing integer assigned by the server).
+
+&gt;<i> BTW I don't whether the delivery tag that is sent in the header of the
+</I>&gt;<i> message to the consumer is of any use to you for sequencing.
+</I>
+I don't plan to use the delivery tag at all. When I republish, I need  
+to pass through the routing key from the original message's header.
+
+&gt;&gt;<i> I've read some notes
+</I>&gt;&gt;<i> about future releases of rabbitmq allowing for &quot;internal&quot; clients  
+</I>&gt;&gt;<i> that
+</I>&gt;&gt;<i> run inside the rabbitmq memory space. I think this is an ideal use of
+</I>&gt;&gt;<i> that capability. Am I right or barking up the wrong tree? And does
+</I>&gt;&gt;<i> that internal client need to be written in erlang or can it be java/ 
+</I>&gt;&gt;<i> c/
+</I>&gt;&gt;<i> whatever?
+</I>&gt;<i>
+</I>&gt;<i> The Erlang AMQP library can run transparently in the address space of
+</I>&gt;<i> the broker. The interface is exactly the same as the client library
+</I>&gt;<i> that uses TCP, the only difference is that the TCP stack and the
+</I>&gt;<i> message serialization/deserialization is avoided. This basically takes
+</I>&gt;<i> advantage of the fact that Erlang messages natively and hence you can
+</I>&gt;<i> unobtrusively abstract out the AMQP wire format.
+</I>&gt;<i>
+</I>&gt;<i> The types of things that this is useful for is processing messages in
+</I>&gt;<i> a custom fashion without a network hop and you can stick to the AMQP
+</I>&gt;<i> model rather than having to write something that is Rabbit specific.
+</I>&gt;<i> This also takes advantage of the fact that Erlang processes are
+</I>&gt;<i> isolated from each other and so it is ok to run &quot;foreign code&quot; in the
+</I>&gt;<i> same memory space as the broker.
+</I>&gt;<i>
+</I>&gt;<i> But I don't know if this solves your problem, because as I stated
+</I>&gt;<i> above, I didn't really understand it.
+</I>
+I think this does solve the issue. I don't know Erlang yet so I'll  
+probably keep the Sequencer as an external Java client for the short- 
+term, but it's nice to know I can get a performance win with a rewrite  
+in Erlang. Avoiding the TCP overhead, even if it is short circuited on  
+a localhost, is a good thing.
+
+&gt;&gt;<i> 3. Is there a way to make this more dynamic so I do not have to
+</I>&gt;&gt;<i> declare all the exchanges up-front in this sequencer code? Ideally
+</I>&gt;&gt;<i> this service could detect that new exchanges were declared by other
+</I>&gt;&gt;<i> services and automatically subscribe to them to do the sequence
+</I>&gt;&gt;<i> stamping and routing.
+</I>&gt;<i>
+</I>&gt;<i> I don't know if the terminology is right here, because you generally
+</I>&gt;<i> don't subscribe to an exchange, rather to a queue.
+</I>
+You are right. I was confusing the terminology. Let me try again.
+
+As other services declare exchanges and publish to them, I would like  
+my Sequencer to dynamically detect the existence of a new Exchange so  
+it can create a queue, bind the new queue to the Exchange and receive  
+messages from it for processing and republishing.
+
+cr
+
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002335.html">[rabbitmq-discuss] [Q] best way to add a sequencer to the broker
+</A></li>
+	<LI>Next message: <A HREF="002340.html">[rabbitmq-discuss] [Q] best way to add a sequencer to the broker
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2339">[ date ]</a>
+              <a href="thread.html#2339">[ thread ]</a>
+              <a href="subject.html#2339">[ subject ]</a>
+              <a href="author.html#2339">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

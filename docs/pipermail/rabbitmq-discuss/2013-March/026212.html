@@ -1,0 +1,198 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] java-client: Reproducable &quot;COMMAND_INVALID - second 'channel.open' seen&quot;
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20java-client%3A%20Reproducable%20%22COMMAND_INVALID%20-%0A%20second%20%27channel.open%27%20seen%22&In-Reply-To=%3C5152D31D.9070006%40rabbitmq.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="026210.html">
+   <LINK REL="Next"  HREF="026214.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] java-client: Reproducable &quot;COMMAND_INVALID - second 'channel.open' seen&quot;</H1>
+    <B>Tim Watson</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20java-client%3A%20Reproducable%20%22COMMAND_INVALID%20-%0A%20second%20%27channel.open%27%20seen%22&In-Reply-To=%3C5152D31D.9070006%40rabbitmq.com%3E"
+       TITLE="[rabbitmq-discuss] java-client: Reproducable &quot;COMMAND_INVALID - second 'channel.open' seen&quot;">tim at rabbitmq.com
+       </A><BR>
+    <I>Wed Mar 27 11:08:13 GMT 2013</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="026210.html">[rabbitmq-discuss] java-client: Reproducable &quot;COMMAND_INVALID -	second 'channel.open' seen&quot;
+</A></li>
+        <LI>Next message: <A HREF="026214.html">[rabbitmq-discuss] Suggestions for queue rename
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#26212">[ date ]</a>
+              <a href="thread.html#26212">[ thread ]</a>
+              <a href="subject.html#26212">[ subject ]</a>
+              <a href="author.html#26212">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi Victor,
+
+Thanks for reporting this, and for providing a test case! I've filed a 
+bug to fix it and hopefully it'll be included in the next release.
+
+Tim
+
+On 03/27/2013 06:26 AM, Victor Boivie wrote:
+&gt;<i> I have been having some problems with the java-rabbitmq-client when 
+</I>&gt;<i> stress testing it. I frequently get &quot;COMMAND_INVALID - second 
+</I>&gt;<i> 'channel.open' seen&quot;, which eventually closes the connection (not just 
+</I>&gt;<i> the channel).
+</I>&gt;<i>
+</I>&gt;<i> It seems that there is a race condition when channels are closed 
+</I>&gt;<i> asynchronously (due to errors), and created in other threads. The 
+</I>&gt;<i> channel that is closed (by the server) doesn't seem to be fully closed 
+</I>&gt;<i> before another thread can try to open a channel with the same number.
+</I>&gt;<i>
+</I>&gt;<i> The code to reproduce it is at <A HREF="https://github.com/boivie/rmq-stress-test">https://github.com/boivie/rmq-stress-test</A>
+</I>&gt;<i>
+</I>&gt;<i> A possible fix is below.
+</I>&gt;<i>
+</I>&gt;<i> Thanks,
+</I>&gt;<i> Victor
+</I>&gt;<i>
+</I>&gt;<i> From 213cf8ef15a759985bc9dd74496548236b5160f2 Mon Sep 17 00:00:00 2001
+</I>&gt;<i> From: Victor Boivie &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">victor at boivie.com</A> &lt;mailto:<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">victor at boivie.com</A>&gt;&gt;
+</I>&gt;<i> Date: Wed, 27 Mar 2013 07:22:04 +0100
+</I>&gt;<i> Subject: [PATCH] Fix race-condition of asynchronously closed channels
+</I>&gt;<i>
+</I>&gt;<i> When a channel is closed from the server side due to errors we
+</I>&gt;<i> have to send CloseOk before we can make it available for allocation
+</I>&gt;<i> again. If not, we risk handing it out to a client which will open it
+</I>&gt;<i> when it's not yet fully closed, which results in a
+</I>&gt;<i> &quot;COMMAND_INVALID - second 'channel.open' seen&quot;.
+</I>&gt;<i>
+</I>&gt;<i> diff --git a/src/com/rabbitmq/client/impl/ChannelN.java 
+</I>&gt;<i> b/src/com/rabbitmq/client/impl/ChannelN.java
+</I>&gt;<i> index 18e4f6a..9fe11c3 100644
+</I>&gt;<i> --- a/src/com/rabbitmq/client/impl/ChannelN.java
+</I>&gt;<i> +++ b/src/com/rabbitmq/client/impl/ChannelN.java
+</I>&gt;<i> @@ -471,7 +471,6 @@ public class ChannelN extends AMQChannel 
+</I>&gt;<i> implements com.rabbitmq.client.Channel
+</I>&gt;<i>      }
+</I>&gt;<i>      private void asyncShutdown(Command command) throws IOException {
+</I>&gt;<i> -        releaseChannel();
+</I>&gt;<i>          ShutdownSignalException signal = new 
+</I>&gt;<i> ShutdownSignalException(false,
+</I>&gt;<i>                                                                       
+</I>&gt;<i> false,
+</I>&gt;<i>                                                                       
+</I>&gt;<i> command,
+</I>&gt;<i> @@ -484,6 +483,7 @@ public class ChannelN extends AMQChannel 
+</I>&gt;<i> implements com.rabbitmq.client.Channel
+</I>&gt;<i>                  notifyOutstandingRpc(signal);
+</I>&gt;<i>              }
+</I>&gt;<i>          }
+</I>&gt;<i> +        releaseChannel();
+</I>&gt;<i>          notifyListeners();
+</I>&gt;<i>      }
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20130327/980b7140/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20130327/980b7140/attachment.htm</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="026210.html">[rabbitmq-discuss] java-client: Reproducable &quot;COMMAND_INVALID -	second 'channel.open' seen&quot;
+</A></li>
+	<LI>Next message: <A HREF="026214.html">[rabbitmq-discuss] Suggestions for queue rename
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#26212">[ date ]</a>
+              <a href="thread.html#26212">[ thread ]</a>
+              <a href="subject.html#26212">[ subject ]</a>
+              <a href="author.html#26212">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

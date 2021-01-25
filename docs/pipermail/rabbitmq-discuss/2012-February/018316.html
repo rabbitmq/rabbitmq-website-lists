@@ -1,0 +1,158 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Ensuring low latency for publishers
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Ensuring%20low%20latency%20for%20publishers&In-Reply-To=%3C1e665e68-b239-44a0-aecd-af98dec19d1d%40qs5g2000pbc.googlegroups.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="018313.html">
+   <LINK REL="Next"  HREF="018317.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Ensuring low latency for publishers</H1>
+    <B>Eric</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Ensuring%20low%20latency%20for%20publishers&In-Reply-To=%3C1e665e68-b239-44a0-aecd-af98dec19d1d%40qs5g2000pbc.googlegroups.com%3E"
+       TITLE="[rabbitmq-discuss] Ensuring low latency for publishers">ejarendt at gmail.com
+       </A><BR>
+    <I>Tue Feb 21 17:51:47 GMT 2012</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="018313.html">[rabbitmq-discuss] Who did the &quot;Simon Dixon's blog&quot;?
+</A></li>
+        <LI>Next message: <A HREF="018317.html">[rabbitmq-discuss] Ensuring low latency for publishers
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#18316">[ date ]</a>
+              <a href="thread.html#18316">[ thread ]</a>
+              <a href="subject.html#18316">[ subject ]</a>
+              <a href="author.html#18316">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi,
+
+I've made some effort to answer these questions on my own, but I'm
+still a bit unsure.  I'm designing an application for a webserver that
+needs to publish events to a broker as part of the work to render a
+request.  The information is important, but in the event of a broker
+failure or broker throttling, the most important thing is to get the
+web request rendered.  If that means messages get dropped, that's fine
+- the consumers are idempotent and we can replay the messages later if
+necessary.
+
+I'd like this information to be published with as little latency to
+the rendering thread as possible, so large delays while publishing
+messages (20ms+) aren't acceptable, even if the broker is down or
+throttling.  Essentially, I want a situation where publishing gets
+done, but the publishing process and/or the state of the broker don't
+impact the process of rendering the request.  I'm using the Java
+client library.
+
+My first inclination was to put all messages in a blocking queue and
+have a single thread dedicated to publishing the contents of that
+queue to the broker.  If the broker goes down that's ok - a bound on
+the queue will make sure we don't exceed the server's heap capacity.
+The problem there is that such queues synchronize all writers on a
+single lock, and given the high concurrency of the server there could
+be a lot of contention.  I want to avoid a single point of
+synchronization.
+
+There are lock-free queue implementations, but they don't offer an
+easy way to implement a size bound.
+
+Rather than queuing locally, isn't RabbitMQ for queueing?  So I
+figured I could keep a single connection around for all publishers in
+the JVM, with one thread responsible for maintaining the connection.
+Since the server uses a thread pool to render requests, every thread
+can have their own channel in a threadlocal, only creating a new
+channel if the underlying connection breaks and is reestablished or
+they haven't created one before.  If the connection is down when the
+rendering thread tries to publish, we'll just drop the message.
+Otherwise each rendering thread can publish straight to RabbitMQ.
+
+A couple of questions about doing it this way.  First, does publishing
+a message require a roundtrip to the broker?  I dug around on the
+topic and came to some part of the AMQP spec that indicates publishing
+is a &quot;cast&quot;, not a &quot;call&quot;, so it seems like it shouldn't.  ACKs come
+back asynchronously, so I'm assuming publishing is essentially a 0ms
+operation, but I want to be sure.  Second, if the broker is throttling
+via &quot;TCP backpressure&quot; (which I'm having a hard time finding a good
+definition for) will that increase publisher latency?   I see that I
+can set a socket timeout, but I think that only applies if the broker
+is actually down.
+
+Thanks!
+
+ - Eric
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="018313.html">[rabbitmq-discuss] Who did the &quot;Simon Dixon's blog&quot;?
+</A></li>
+	<LI>Next message: <A HREF="018317.html">[rabbitmq-discuss] Ensuring low latency for publishers
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#18316">[ date ]</a>
+              <a href="thread.html#18316">[ thread ]</a>
+              <a href="subject.html#18316">[ subject ]</a>
+              <a href="author.html#18316">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

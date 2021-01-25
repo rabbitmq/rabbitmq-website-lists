@@ -1,0 +1,205 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] [Minimum Air Induction] Introducing Shovel:	An AMQP Relay
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20%5BMinimum%20Air%20Induction%5D%20Introducing%20Shovel%3A%0A%09An%20AMQP%20Relay&In-Reply-To=90169A17-9B0C-46EC-9396-F47DBC1B1115%40gmail.com">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001553.html">
+   <LINK REL="Next"  HREF="001555.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] [Minimum Air Induction] Introducing Shovel:	An AMQP Relay</H1>
+    <B>Ben Hood</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20%5BMinimum%20Air%20Induction%5D%20Introducing%20Shovel%3A%0A%09An%20AMQP%20Relay&In-Reply-To=90169A17-9B0C-46EC-9396-F47DBC1B1115%40gmail.com"
+       TITLE="[rabbitmq-discuss] [Minimum Air Induction] Introducing Shovel:	An AMQP Relay">0x6e6562 at gmail.com
+       </A><BR>
+    <I>Sat Sep 20 15:27:37 BST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001553.html">[rabbitmq-discuss] [Minimum Air Induction] Introducing Shovel:	An AMQP Relay
+</A></li>
+        <LI>Next message: <A HREF="001555.html">[rabbitmq-discuss] [Minimum Air Induction] Introducing Shovel:	An AMQP Relay
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1554">[ date ]</a>
+              <a href="thread.html#1554">[ thread ]</a>
+              <a href="subject.html#1554">[ subject ]</a>
+              <a href="author.html#1554">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Valentino,
+
+On Sat, Sep 20, 2008 at 9:56 AM, Valentino Volonghi &lt;<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">dialtone at gmail.com</A>&gt; wrote:
+&gt;<i> Yes, I am tracking tip, I didn't notice the big changes in lib_amqp.erl
+</I>&gt;<i> so I'll refactor my code to use them.
+</I>
+lib_amqp was evolved as a high level convenience API to sit on top of
+the fine grained low level API. Whilst the low level API is stable
+from a design and implementation perspective (meaning it seems to be
+the correct approach and is quite simple and expressive), the higher
+level lib_amqp *may* have to evolve further to cover more common use
+cases. The reason why I say may, is because it would change in the
+course of the community using it and seeing how it suffices their
+needs. So if there are any issues or ideas with lib_amqp, now is an
+ideal time to start a (separate) discussion thread about this, so it
+will flow into 1.0.
+
+&gt;<i> I hope so :). The main problem is the absolute necessity to not lose
+</I>&gt;<i> any single one of the messages. Nothing can be lost.
+</I>
+Sounds familiar. If you use transactional persistent messaging, this
+will be guaranteed. Sounds like an expensive setup for log statements
+though :-)
+
+&gt;<i> Here is already the first 'problem', if the known exchange is down the line
+</I>&gt;<i> would be lost forever, this is simple enough though and rabbitmq would
+</I>&gt;<i> run embedded in mochiweb together with shovel. Every queue durable and
+</I>&gt;<i> every message too. In this case if mochiweb fails I won't have to worry, if
+</I>&gt;<i> shovel disconnects it won't send lines to anyone and wouldn't even remove
+</I>&gt;<i> them from the queue so nothing is lost here, if rabbitmq dies I hope it
+</I>&gt;<i> brings
+</I>&gt;<i> everything down with itself, traffic is rebalanced on the remaining servers
+</I>&gt;<i> and
+</I>&gt;<i> nothing is lost.
+</I>
+Phew! That was a sentence.....what do you mean by Rabbit bringing
+everything down with itself?
+
+And if you're using an embedded RabbitMQ instance, how is the Shovel
+application supposed to failover to other Rabbit nodes?
+
+I think this scenario requires a bit more elaboration.
+
+&gt;<i> Right after this component there's another rabbitmq server, that we can call
+</I>&gt;<i> local rabbitmq, which is local to the mochiweb server, in the same subnet.
+</I>&gt;<i> This server would collect everything that various mochiweb+rabbitmq+shovel
+</I>&gt;<i> servers send, persist it and forward it to a central location. Again,
+</I>&gt;<i> everything is
+</I>&gt;<i> durable so there should be no risk of losing messages.
+</I>
+Why have this middleman? Why not just have the embedded Rabbit
+instances forward straight to the remote brokers?
+
+&gt;<i> In the central location there would be a final rabbitmq server that will
+</I>&gt;<i> wait for
+</I>&gt;<i> data. Attached to it there would be several consumers that fetch data and
+</I>&gt;<i> store it in various databases in small transactions (let's say one
+</I>&gt;<i> transaction
+</I>&gt;<i> every 50-100 log lines).
+</I>
+Have you considered doing the coalescing in Shovel (i.e. on the
+sending side rather than on the receiving side)?
+
+Maybe you also want to compress stuff if you're sending it over a WAN.
+
+&gt;<i>
+</I>&gt;<i> So, how should shovel behave:
+</I>&gt;<i>
+</I>&gt;<i> Well, it should be pretty sure that every message was delivered to the final
+</I>&gt;<i> location, so I think its way of working would be:
+</I>&gt;<i>
+</I>&gt;<i>  1. receive message from embedded consumer
+</I>&gt;<i>  2. publish message to remote host
+</I>&gt;<i>  3. wait for ack
+</I>&gt;<i>  4. ack the rabbitmq container
+</I>&gt;<i>  5. the rabbitmq container at this point can remove the message
+</I>
+What happens when Shovel fails between step 3 and 4? Or there is a
+network failure just after the remote broker sends the ack and just
+before it would have been received by Shovel? This sounds like the
+Byzantine General's problem. Maybe there is something you can do in
+the application to achieve the idempotency your application requires.
+
+&gt;<i> Now... I'm not sure if there's an ack confirmation message so that the
+</I>&gt;<i> consumer if
+</I>&gt;<i> 100% sure that the confirmation was received, I suppose there isn't so this
+</I>&gt;<i> means
+</I>&gt;<i> that the system will maybe have duplicates at the end and I'll have to take
+</I>&gt;<i> care of
+</I>&gt;<i> this somehow (any suggestions?).
+</I>
+Not quite sure what you mean here. Can you elaborate?
+
+&gt;<i> Another small problem is the current state of Shovel where it basically
+</I>&gt;<i> crashes when a
+</I>&gt;<i> connection is dropped, a change that I would like to make (or I would like
+</I>&gt;<i> to see) is that
+</I>&gt;<i> it should be able to reconnect to the remote host with an exponential
+</I>&gt;<i> backoff so that it
+</I>&gt;<i> starts retransmitting as soon as possible.
+</I>
+Sure, the OTP supervisor could potentially handle this.
+
+&gt;<i> I've read a bit of the archives and I see there are some problems with
+</I>&gt;<i> memory growth
+</I>&gt;<i> and rabbitmq simply crashing... I hope this doesn't become a problem for us,
+</I>&gt;<i> but...
+</I>&gt;<i> let's say that the web servers generate messages of about 1K each (could be
+</I>&gt;<i> much
+</I>&gt;<i> less, but this is for the example's sake), now the local rabbitmq instance
+</I>&gt;<i> is down for
+</I>&gt;<i> some reason, basically mochiweb will remain alive as long as it has memory
+</I>&gt;<i> which
+</I>&gt;<i> means about 4GB/1MB/sec (let's say that the server generates 1000 requests
+</I>&gt;<i> per
+</I>&gt;<i> second) that is about 66 minutes. If the problem instead is in the central
+</I>&gt;<i> rabbitmq
+</I>&gt;<i> basically each local rabbitmq is subject to the traffic of every web server,
+</I>&gt;<i> if we have
+</I>&gt;<i> 8 webservers we obtain 4000/8MB/sec or about 8 minutes.
+</I>&gt;<i>
+</I>&gt;<i> So it basically means that we have 8 minutes to react to such a failure.
+</I>&gt;<i> Does this
+</I>&gt;<i> also sound reasonable? and if so... What possible fixes can I look for?
+</I>&gt;<i> Ultimately... does this sound like something that rabbitmq can be good at?
+</I>
+ATM, queues are memory bound, so as indicated in a previous thread,
+you would have to calibrate this with your own application and
+production sceanario. Just test it and find out where the limit is.
+
+BTW, we do intend to implement the disk overflow mechanism discussed
+with Edwin. Just don't know when it'll get done.
+
+&gt;&gt;&gt;<i> I took part of the code I'm using now to replace lib_shovel.erl from a
+</I>&gt;&gt;&gt;<i> guy
+</I>&gt;&gt;&gt;<i> on IRC #erlang that
+</I>&gt;&gt;&gt;<i> shared it, I had my version of it which was pretty similar but his looked
+</I>&gt;&gt;&gt;<i> more cleaned up so
+</I>&gt;&gt;&gt;<i> I'm using that now.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Who was that?
+</I>&gt;<i>
+</I>&gt;<i> Ah, can't remember.
+</I>
+No probs, I just am not on IRC so much lately because whilst it is a
+quick way to answer questions, it does take up a lot of time.
+
+Ben
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001553.html">[rabbitmq-discuss] [Minimum Air Induction] Introducing Shovel:	An AMQP Relay
+</A></li>
+	<LI>Next message: <A HREF="001555.html">[rabbitmq-discuss] [Minimum Air Induction] Introducing Shovel:	An AMQP Relay
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1554">[ date ]</a>
+              <a href="thread.html#1554">[ thread ]</a>
+              <a href="subject.html#1554">[ subject ]</a>
+              <a href="author.html#1554">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

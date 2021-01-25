@@ -1,0 +1,131 @@
+?using System;
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.Threading.Tasks;
+using NUnit.Framework;
+using RabbitMQ.Client;
+
+namespace Betgenius.AmqpUtils.Rabbit.Tests
+{
+    [TestFixture, Category("Integration")]
+    public class ConnectionFactoryTests
+    {
+        [Test]
+        public void CanCreateConnectionsSingleThreaded()
+        {
+            // Arrange
+            ConnectionFactory connectionFactory = new ConnectionFactory();
+            connectionFactory.Endpoint = new AmqpTcpEndpoint("localhost");
+            List<IConnection> connections = new List<IConnection>();
+
+            // Act & Assert
+            Stopwatch stopwatch = Stopwatch.StartNew();
+            for (int i = 0; i < 100; i++)
+            {
+                connections.Add(connectionFactory.CreateConnection());
+            }
+            
+            stopwatch.Stop();
+            Console.WriteLine("Elapsed seconds: " + stopwatch.Elapsed.TotalSeconds); // Typically < 2 seconds
+
+            // Cleanup
+            connections.ForEach(c => c.Dispose());
+        }
+
+        [Test]
+        public void CanCreateConnectionsMultiThreaded()
+        {
+            // Arrange
+            List<IConnection> connections = new List<IConnection>();
+            List<Exception> errors = new List<Exception>();
+            List<Task> tasks = new List<Task>();
+
+            // Act & Assert
+            Stopwatch stopwatch = Stopwatch.StartNew();
+            for (int i = 0; i < 100; i++)
+            {
+                tasks.Add(Task.Factory.StartNew(() =>
+                    {
+                        try
+                        {
+                            ConnectionFactory connectionFactory = new ConnectionFactory();
+                            connectionFactory.Endpoint = new AmqpTcpEndpoint("localhost");
+                            connections.Add(connectionFactory.CreateConnection());
+                        }
+                        catch(Exception ex)
+                        {
+                            errors.Add(ex);
+                        }
+                    }));
+            }
+            
+            bool waitAll = Task.WaitAll(tasks.ToArray(), TimeSpan.FromSeconds(60));
+            
+            stopwatch.Stop();
+            Console.WriteLine("Elapsed seconds: " + stopwatch.Elapsed.TotalSeconds); // Always times out
+
+            foreach (var exception in errors)
+            {
+                Console.WriteLine("Error creating connection: " + exception); // System.TimeoutException: Connection to amqp-0-9://localhost:5672 timed out
+            }
+
+            if (!waitAll)
+            {
+                Assert.Fail("Connection creation did not complete within Timeout");
+            }
+
+            // Cleanup
+            connections.ForEach(c => c.Dispose());
+        }
+
+        [Test]
+        public void CanCreateConnectionsMultiThreadedWithLock()
+        {
+            // Arrange
+            List<IConnection> connections = new List<IConnection>();
+            List<Exception> errors = new List<Exception>();
+            List<Task> tasks = new List<Task>();
+            object lockObject = new object();
+
+            // Act & Assert
+            Stopwatch stopwatch = Stopwatch.StartNew();
+            for (int i = 0; i < 100; i++)
+            {
+                tasks.Add(Task.Factory.StartNew(() =>
+                {
+                    try
+                    {
+                        lock (lockObject)
+                        {
+                            ConnectionFactory connectionFactory = new ConnectionFactory();
+                            connectionFactory.Endpoint = new AmqpTcpEndpoint("localhost");
+                            connections.Add(connectionFactory.CreateConnection());
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        errors.Add(ex);
+                    }
+                }));
+            }
+            
+            bool waitAll = Task.WaitAll(tasks.ToArray(), TimeSpan.FromSeconds(20));
+            
+            stopwatch.Stop();
+            Console.WriteLine("Elapsed seconds: " + stopwatch.Elapsed.TotalSeconds); // Always times out
+
+            foreach (var exception in errors)
+            {
+                Console.WriteLine("Error creating connection: " + exception); // System.TimeoutException: Connection to amqp-0-9://localhost:5672 timed out
+            }
+
+            if (!waitAll)
+            {
+                Assert.Fail("Connection creation did not complete within Timeout");
+            }
+
+            // Cleanup
+            connections.ForEach(c => c.Dispose());
+        }
+    }
+}

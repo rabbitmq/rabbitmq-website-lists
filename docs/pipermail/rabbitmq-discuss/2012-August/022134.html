@@ -1,0 +1,164 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Non-blocking Consumers approach
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Non-blocking%20Consumers%20approach&In-Reply-To=%3CCAPrynAWsS7anCPn%2BiruGNBPp%2BumQ93R6FV4SA8jBaFwWv0%2B8pQ%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="022126.html">
+   <LINK REL="Next"  HREF="022136.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Non-blocking Consumers approach</H1>
+    <B>Mahesh Viraktamath</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Non-blocking%20Consumers%20approach&In-Reply-To=%3CCAPrynAWsS7anCPn%2BiruGNBPp%2BumQ93R6FV4SA8jBaFwWv0%2B8pQ%40mail.gmail.com%3E"
+       TITLE="[rabbitmq-discuss] Non-blocking Consumers approach">yuva670 at gmail.com
+       </A><BR>
+    <I>Mon Aug 27 19:30:58 BST 2012</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="022126.html">[rabbitmq-discuss] Non-blocking Consumers approach
+</A></li>
+        <LI>Next message: <A HREF="022136.html">[rabbitmq-discuss] Non-blocking Consumers approach
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#22134">[ date ]</a>
+              <a href="thread.html#22134">[ thread ]</a>
+              <a href="subject.html#22134">[ subject ]</a>
+              <a href="author.html#22134">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi,
+
+As per your suggestion, I created 5 channels as follows:
+
+for (int i = 0; i &lt; 5; i++) {
+            final Channel channel = connection.createChannel();
+            channel.queueDeclare(RPC_QUEUE_NAME, false, false, false, null);
+            channel.basicQos(1);
+
+            log.info(&quot; [x] Awaiting RPC requests&quot;);
+
+            boolean autoAck = false;
+            channel.basicConsume(RPC_QUEUE_NAME, autoAck, &quot;watermark&quot; + i,
+                    new DefaultConsumer(channel) {
+
+                        @Override
+                        public void handleDelivery(String consumerTag,
+                                Envelope envelope,
+                                AMQP.BasicProperties properties,
+                                byte[] body)
+                                throws IOException {
+                            String routingKey = envelope.getRoutingKey();
+                            String contentType =
+properties.getContentType();
+                            long deliveryTag = envelope.getDeliveryTag();
+                            //process the message here
+                            channel.basicPublish(&quot;&quot;,
+properties.getReplyTo(),
+                                    new
+BasicProperties.Builder().correlationId(properties.getCorrelationId()).build(),
+                                    response.getBytes(&quot;UTF-8&quot;));
+                            channel.basicAck(deliveryTag, false);
+                        }
+                    });
+
+            }
+
+But, the consumer doesn't seem to listen to the queue, as soon as I run
+this application, it exists. Earlier I used the while(true) loop to get the
+messages. How do I make sure if the consumer listens to the intended queue
+and process messages?
+
+
+-Mahesh
+
+On Mon, Aug 27, 2012 at 6:54 PM, Matthias Radestock
+&lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">matthias at rabbitmq.com</A>&gt;wrote:
+
+&gt;<i> Mahesh,
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> On 27/08/12 13:37, Mahesh Viraktamath wrote:
+</I>&gt;<i>
+</I>&gt;&gt;<i> I read the API guide and still stuck to the QueuingConsumer, for each
+</I>&gt;&gt;<i> incoming message I create a new service thread (with common channel,
+</I>&gt;&gt;<i> without that the service won't know which message to acknowledge). But
+</I>&gt;&gt;<i> in the guide, it is mentioned that the channel should be created for
+</I>&gt;&gt;<i> each thread. Now, my question is does this guide assumes that we run
+</I>&gt;&gt;<i> different consumer threads? *I can't understand the concept of different
+</I>&gt;&gt;<i> consumer threads*. I run a single consumer and use basicConsume() to
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> listen to the messages and each message (nextDelivery()) will give rise
+</I>&gt;&gt;<i> to a new service thread. Again, each message creating a thread is scary !
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> If it helps, I am running the consumer as a java application and use
+</I>&gt;&gt;<i> basicConsume() and nextDelivery() in a while loop to process the
+</I>&gt;&gt;<i> messages. Our application sends messages to these non-stop. So, I am
+</I>&gt;&gt;<i> looking for a consumer which will not block the incoming messages when
+</I>&gt;&gt;<i> it is processing a large message.
+</I>&gt;&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> I suggest you create N channels and for each channel:
+</I>&gt;<i> - set the basic.qos prefetch to 1 or some other low-ish value (for fair
+</I>&gt;<i> dispatch)
+</I>&gt;<i> - create a consumer as shown in <A HREF="http://www.rabbitmq.com/api-**">http://www.rabbitmq.com/api-**</A>
+</I>&gt;<i> guide.html#consuming &lt;<A HREF="http://www.rabbitmq.com/api-guide.html#consuming">http://www.rabbitmq.com/api-guide.html#consuming</A>&gt;
+</I>&gt;<i>
+</I>&gt;<i> You write above that you only have one channel because &quot;without that the
+</I>&gt;<i> service won't know which message to acknowledge&quot;, but the channel is
+</I>&gt;<i> accessible via the context (as shown in the example), so there is no
+</I>&gt;<i> ambiguity.
+</I>&gt;<i>
+</I>&gt;<i> Obviously message ordering goes out of the window, but that's the case for
+</I>&gt;<i> any scheme where messages are handled by multiple threads.
+</I>&gt;<i>
+</I>&gt;<i> Regards,
+</I>&gt;<i>
+</I>&gt;<i> Matthias.
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20120828/bed9ad9f/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20120828/bed9ad9f/attachment.htm</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="022126.html">[rabbitmq-discuss] Non-blocking Consumers approach
+</A></li>
+	<LI>Next message: <A HREF="022136.html">[rabbitmq-discuss] Non-blocking Consumers approach
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#22134">[ date ]</a>
+              <a href="thread.html#22134">[ thread ]</a>
+              <a href="subject.html#22134">[ subject ]</a>
+              <a href="author.html#22134">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

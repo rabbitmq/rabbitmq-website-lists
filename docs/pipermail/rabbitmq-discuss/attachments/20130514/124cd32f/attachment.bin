@@ -1,0 +1,114 @@
+?using System;
+using System.Collections.Concurrent;
+using System.Threading;
+using NUnit.Framework;
+using RabbitMQ.Client;
+
+namespace Betgenius.AmqpUtils.Rabbit.Tests
+{
+    [TestFixture]
+    public class MultiThreadedChannelCreationTest
+    {
+        [TestCase(true)]
+        [TestCase(false)]
+        public void CanCreateChannelsFromManyThreadsAtOnce(bool useLocking)
+        {
+            var connectionFactory = new ConnectionFactory
+            {
+                HostName = "localhost",
+                VirtualHost = "/",
+                RequestedHeartbeat = 2,
+            };
+            IConnection connection = connectionFactory.CreateConnection();
+
+            ConcurrentBag<Exception> exceptions = new ConcurrentBag<Exception>();
+            bool isRunning = true;
+
+            const int threadCount = 500;
+
+            // Make sure there are threads available, we don't want thread starvation to interfere with our test
+            ThreadPool.SetMinThreads(threadCount, 30);
+
+            for (int i = 0; i < threadCount; i++)
+            {
+                Thread thread = new Thread(() =>
+                    {
+                        while (isRunning)
+                        {
+                            // Without locking around connection.CreateModel() this will fail
+                            CreateModel(connection, exceptions, useLocking);
+                            Thread.Sleep(5);
+                        }
+                    });
+                thread.Start();
+            }
+            
+            Thread.Sleep(TimeSpan.FromSeconds(30));
+            isRunning = false;
+
+            Console.WriteLine("Exception count: " + exceptions.Count);
+            if (exceptions.Count > 0)
+            {
+                foreach (var exception in exceptions)
+                {
+                    Console.WriteLine(exception);
+                }
+            }
+
+            try
+            {
+                Console.WriteLine("About to create a channel to see if connection still works");
+                // All threads are now indefinitely hanging calling the same method, and this will indefinitely hang here too
+                var model = connection.CreateModel();
+                Console.WriteLine("Connection still works");
+                model.Dispose();
+            }
+            catch
+            {
+                // This never gets hit, because it is hanging above
+                Console.WriteLine("Oh balls, my connection is now in a bad state");
+                Assert.Fail("Channel creation failed after main loop");
+            }
+
+            Assert.That(exceptions.Count, Is.EqualTo(0));
+
+            connection.Dispose();
+        }
+
+        private static readonly object createModelLock = new object();
+
+        private static void CreateModel(IConnection connection, ConcurrentBag<Exception> exceptions, bool useLocking)
+        {
+            IModel model = null;
+            try
+            {
+                if (useLocking)
+                {
+                    lock (createModelLock)
+                    {
+                        model = connection.CreateModel();
+                    }
+                }
+                else
+                {
+                    model = connection.CreateModel();
+                }
+            }
+            catch (Exception ex)
+            {
+                exceptions.Add(ex);
+            }
+            finally
+            {
+                try
+                {
+                    if (model != null)
+                    {
+                        model.Dispose();
+                    }
+                }
+                catch{}
+            }
+        }
+    }
+}

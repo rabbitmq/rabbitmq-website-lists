@@ -1,0 +1,271 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Published message not queued after publish-ok received when connection quickly closed
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Published%20message%20not%20queued%20after%0A%20publish-ok%20received%20when%20connection%20quickly%20closed&In-Reply-To=%3CCA%2BJR6zNM%2BjD540A8YaTs11H%2BazFHV6zqnC_OCXhnLFa6DMTFFg%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="013774.html">
+   <LINK REL="Next"  HREF="013781.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Published message not queued after publish-ok received when connection quickly closed</H1>
+    <B>Michael Nacos</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Published%20message%20not%20queued%20after%0A%20publish-ok%20received%20when%20connection%20quickly%20closed&In-Reply-To=%3CCA%2BJR6zNM%2BjD540A8YaTs11H%2BazFHV6zqnC_OCXhnLFa6DMTFFg%40mail.gmail.com%3E"
+       TITLE="[rabbitmq-discuss] Published message not queued after publish-ok received when connection quickly closed">m.nacos at gmail.com
+       </A><BR>
+    <I>Fri Jul  8 17:01:16 BST 2011</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="013774.html">[rabbitmq-discuss] Published message not queued after	publish-ok received when connection quickly closed
+</A></li>
+        <LI>Next message: <A HREF="013781.html">[rabbitmq-discuss] Published message not queued after publish-ok received when connection quickly closed
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#13778">[ date ]</a>
+              <a href="thread.html#13778">[ thread ]</a>
+              <a href="subject.html#13778">[ subject ]</a>
+              <a href="author.html#13778">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>I forgot to mention my example code hangs if I introduce @channel.tx_select
+and @channel.tx_commit around the publish call. I'm using amqp 0.8.0rc13 +
+rabbit 2.4.1 &amp; 2.5.1 -- perhaps this related to how transactions work and
+the fact I'm re-using the same channel -- should I even be doing this?
+
+I've got plenty of experience with transactions and atomicity, but in a
+database context, not amqp/rabbit. I think there is considerable complexity
+(made worse by my lack of familiarity with eventmachine and the amqp
+protocol): in this 'rebroadcaster' scenario is it better:
+
+   - to use the same connection for 'consume' and 'publish' or different
+   ones?
+   - to use the same channel or different ones? (do amqp transactions
+   operate on a per-channel basis?)
+
+Jakub, I understand eventmachine is event-driven, this is how the subscribe
+call works. But within its asynchronous consume loop, I need to defer the
+queue1 ack until messages have been published in queue2. Sorry, this is
+probably lack of familiarity with eventmachine. Do you mean I could have two
+handlers within the same EM.run block, a 'subscribe'  one and a 'on_ack' one
+handling the publish confirms within which the queue1 ack is done? How do I
+know which queue1 message I'm getting the on_ack notification for?
+
+Michael
+
+On 8 July 2011 16:32, Stastny Jakub &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">stastny at 101ideas.cz</A>&gt; wrote:
+
+&gt;<i> El 8 Jul 2011, a las 16:16, Michael Nacos escribi&#243;:
+</I>&gt;<i>
+</I>&gt;<i> so if the publish call returns immediately with no guarantees, what's the
+</I>&gt;<i> point of adding a @channel.tx_commit right after it?
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> Transactions are mainly atomicity, so if you publish more messages, then
+</I>&gt;<i> running it in a transactions will result in saving all or nothing (and
+</I>&gt;<i> getting an error back). Using it for one item will result in getting the
+</I>&gt;<i> error back, so you'll know if it went wrong (I think, I don't have much
+</I>&gt;<i> experience with them).
+</I>&gt;<i>
+</I>&gt;<i> The docs:
+</I>&gt;<i>
+</I>&gt;<i> &quot;The Tx class allows publish and ack operations to be batched into atomic
+</I>&gt;<i> units of work. The intention is that all publish and ack requests issued
+</I>&gt;<i> within a transaction will complete successfully or none of them will.
+</I>&gt;<i> Servers SHOULD implement atomic transactions at least where all publish or
+</I>&gt;<i> ack requests affect a single queue. Transactions that cover multiple queues
+</I>&gt;<i> may be non&#173;atomic, given that queues can be created and destroyed
+</I>&gt;<i> asynchronously, and such events do not form part of any transaction.&quot;
+</I>&gt;<i>
+</I>&gt;<i> the question becomes how do I get a reliable publish ack to base the
+</I>&gt;<i> tx_commit/metadata.ack on
+</I>&gt;<i>
+</I>&gt;<i> I saw this in the docs for publisher confirms:
+</I>&gt;<i>
+</I>&gt;<i> # define a callback that will be executed when message is acknowledgedchannel.on_ack do |basic_ack|
+</I>&gt;<i>   puts &quot;Received an acknowledgement: delivery_tag = #{basic_ack.delivery_tag}, multiple = #{basic_ack.multiple}&quot;end
+</I>&gt;<i>
+</I>&gt;<i> which is great, but how does it fit within the consume loop? I need
+</I>&gt;<i> execution to block until it's safe to issue the metadata.ack call. Is this
+</I>&gt;<i> something I can achieve with eventmachine?
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> I'm not sure if I understand ... this is a callback, it doesn't block as
+</I>&gt;<i> well as #subscribe, it's a callback called when a message is delivered to
+</I>&gt;<i> the client. EventMachine is an implementation of reactor pattern (it means
+</I>&gt;<i> it's async). So it works based on events (when I get this, do that ... ).
+</I>&gt;<i> BTW just to make sure, do you know that this on_ack is for ack which the
+</I>&gt;<i> *broker* sends? So you don't call metadata.ack for this (you ack messages
+</I>&gt;<i> when they're actually processed on the consumer).
+</I>&gt;<i>
+</I>&gt;<i> Cheers,
+</I>&gt;<i>
+</I>&gt;<i> Jakub
+</I>&gt;<i>
+</I>&gt;<i> 2011/7/8 Jakub &#352;&#357;astn&#253; &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">stastny at 101ideas.cz</A>&gt;
+</I>&gt;<i>
+</I>&gt;&gt;<i> Basic.Publish isn't pseudo-synchronous, it's really
+</I>&gt;&gt;<i> asynchronous. Exchange#publish doesn't take nowait option (so no, your code
+</I>&gt;&gt;<i> isn't safe), it simply send the data and that's it. Then you have no idea
+</I>&gt;&gt;<i> whether everything went OK or not. That's why you can use either
+</I>&gt;&gt;<i> transactions (yes, you'd have to wrap the code in it as you've mentioned) or
+</I>&gt;&gt;<i> publisher confirms (which I'd personally prefer as transactions are really
+</I>&gt;&gt;<i> slow and fairly tricky). The documentation for publisher confirms in AMQP
+</I>&gt;&gt;<i> gem is here:
+</I>&gt;&gt;<i> <A HREF="http://rdoc.info/github/ruby-amqp/amqp/master/file/docs/Durability.textile">http://rdoc.info/github/ruby-amqp/amqp/master/file/docs/Durability.textile</A>
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Jakub
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> <A HREF="http://www.flickr.com/photos/jakub-stastny">http://www.flickr.com/photos/jakub-stastny</A>
+</I>&gt;&gt;<i> <A HREF="http://twitter.com/botanicus">http://twitter.com/botanicus</A>
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> 2011/7/8 Michael Nacos &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">m.nacos at gmail.com</A>&gt;
+</I>&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i> so, what's currently the best way to publish messages consumed from one
+</I>&gt;&gt;&gt;<i> queue into another with the amqp gem? This is quite important in processing
+</I>&gt;&gt;&gt;<i> scenaria when no messages may be lost. In particular, is the following code
+</I>&gt;&gt;&gt;<i> safe? Will the pseudo-synchronous *publish* call return only after the
+</I>&gt;&gt;&gt;<i> message has been accepted in the second queue (:nowait =&gt; false)? otherwise,
+</I>&gt;&gt;&gt;<i> what would be the point of wrapping the publish call with @channel.tx_select
+</I>&gt;&gt;&gt;<i> / @channel.tx_commit ?
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i> # consumer which publishes each message to another queue
+</I>&gt;&gt;&gt;<i> # ------------------------------------------------------
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i> @consume_from = 'first'
+</I>&gt;&gt;&gt;<i> @deliver_to = 'second'
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i> EM.run do
+</I>&gt;&gt;&gt;<i>   AMQP.connect do |connection|
+</I>&gt;&gt;&gt;<i>     @channel = MQ.new(connection)
+</I>&gt;&gt;&gt;<i>     # making sure the relevant queues exist
+</I>&gt;&gt;&gt;<i>     @queue1 = @channel.queue(@consume_from, :passive =&gt; false, :durable
+</I>&gt;&gt;&gt;<i> =&gt; true)
+</I>&gt;&gt;&gt;<i>     @queue2 = @channel.queue(@deliver_to, :passive =&gt; false, :durable =&gt;
+</I>&gt;&gt;&gt;<i> true)
+</I>&gt;&gt;&gt;<i>     # setting up the consumer loop
+</I>&gt;&gt;&gt;<i>     @queue1.subscribe(:ack =&gt; true) do |metadata, data|
+</I>&gt;&gt;&gt;<i>       @channel.default_exchange.publish(data, \
+</I>&gt;&gt;&gt;<i>         :routing_key =&gt; @deliver_to, \
+</I>&gt;&gt;&gt;<i>         :persistent =&gt; true, \
+</I>&gt;&gt;&gt;<i>         :nowait =&gt; false)
+</I>&gt;&gt;&gt;<i>       puts '.'
+</I>&gt;&gt;&gt;<i>       metadata.ack
+</I>&gt;&gt;&gt;<i>     end
+</I>&gt;&gt;&gt;<i>   end
+</I>&gt;&gt;&gt;<i> end
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i> 2011/7/4 Jakub &#352;&#357;astn&#253; &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">stastny at 101ideas.cz</A>&gt;
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;&gt;<i> AMQP 0.8 is available as RC, it's way more stable than 0.7, so I would
+</I>&gt;&gt;&gt;&gt;<i> recommend to just use the RC.
+</I>&gt;&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;&gt;<i> Jakub
+</I>&gt;&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;&gt;<i> <A HREF="http://www.flickr.com/photos/jakub-stastny">http://www.flickr.com/photos/jakub-stastny</A>
+</I>&gt;&gt;&gt;&gt;<i> <A HREF="http://twitter.com/botanicus">http://twitter.com/botanicus</A>
+</I>&gt;&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;&gt;<i> 2011/7/4 Michael Nacos &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">m.nacos at gmail.com</A>&gt;
+</I>&gt;&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;&gt;&gt;<i> there seems to be some support for tx_select, tx_commit, tx_rollback in
+</I>&gt;&gt;&gt;&gt;&gt;<i> the master branch of the amqp gem, but not in the 0.7.x-stable branch, which
+</I>&gt;&gt;&gt;&gt;&gt;<i> is what most people are using
+</I>&gt;&gt;&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;&gt;&gt;<i> 2011/5/6 David Wragg &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">david at rabbitmq.com</A>&gt;
+</I>&gt;&gt;&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;&gt;&gt;&gt;<i> Simon MacMullen &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">simon at rabbitmq.com</A>&gt; writes:
+</I>&gt;&gt;&gt;&gt;&gt;&gt;<i> &gt; On 05/05/11 22:33, Elias Levy wrote:
+</I>&gt;&gt;&gt;&gt;&gt;&gt;<i> &gt;&gt; While writing some code using the Ruby AMQP gem against RabbitMQ,
+</I>&gt;&gt;&gt;&gt;&gt;&gt;<i> I've
+</I>&gt;&gt;&gt;&gt;&gt;&gt;<i> &gt;&gt; noticed that if I publish a message and quickly close the
+</I>&gt;&gt;&gt;&gt;&gt;&gt;<i> connection,
+</I>&gt;&gt;&gt;&gt;&gt;&gt;<i> &gt;&gt; even though I've received a publish-ok response from the server,
+</I>&gt;&gt;&gt;&gt;&gt;&gt;<i> the
+</I>&gt;&gt;&gt;&gt;&gt;&gt;<i> &gt;&gt; message fails to be queued by the broker.
+</I>&gt;&gt;&gt;&gt;&gt;&gt;<i> &gt;
+</I>&gt;&gt;&gt;&gt;&gt;&gt;<i> &gt; I'm not at all familiar with the Ruby client, but I should point out
+</I>&gt;&gt;&gt;&gt;&gt;&gt;<i> &gt; that unlike many of the other AMQP methods, basic.publish does not
+</I>&gt;&gt;&gt;&gt;&gt;&gt;<i> &gt; have a corresponding basic.publish-ok method; it's always
+</I>&gt;&gt;&gt;&gt;&gt;&gt;<i> &gt; asynchronous. So I imagine the post-publish callback fires
+</I>&gt;&gt;&gt;&gt;&gt;&gt;<i> &gt; immediately.
+</I>&gt;&gt;&gt;&gt;&gt;&gt;<i> &gt;
+</I>&gt;&gt;&gt;&gt;&gt;&gt;<i> &gt; In order to be able to know when the broker has taken responsibility
+</I>&gt;&gt;&gt;&gt;&gt;&gt;<i> &gt; for a message you can either wrap the publish in a transaction (when
+</I>&gt;&gt;&gt;&gt;&gt;&gt;<i> &gt; you see tx.commit-ok you know the server has the message) or use the
+</I>&gt;&gt;&gt;&gt;&gt;&gt;<i> &gt; rather more lightweight publish confirms:
+</I>&gt;&gt;&gt;&gt;&gt;&gt;<i> o&gt;
+</I>&gt;&gt;&gt;&gt;&gt;&gt;<i> &gt;
+</I>&gt;&gt;&gt;&gt;&gt;&gt;<i> <A HREF="http://www.rabbitmq.com/blog/2011/02/10/introducing-publisher-confirms/">http://www.rabbitmq.com/blog/2011/02/10/introducing-publisher-confirms/</A>
+</I>&gt;&gt;&gt;&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;&gt;&gt;&gt;<i> Another way to solve the problem is to do a synchronous AMQP method
+</I>&gt;&gt;&gt;&gt;&gt;&gt;<i> rather than abruptly closing the connection.  If this the sync method
+</I>&gt;&gt;&gt;&gt;&gt;&gt;<i> completes successfully, you can be sure that your published messages
+</I>&gt;&gt;&gt;&gt;&gt;&gt;<i> have reached the broker (it doesn't give you all the guarantees of
+</I>&gt;&gt;&gt;&gt;&gt;&gt;<i> transactions, but it is much lighter weight).
+</I>&gt;&gt;&gt;&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;&gt;&gt;&gt;<i> An easy way to do this with all versions of the AMQP gem (even 0.6.7)
+</I>&gt;&gt;&gt;&gt;&gt;&gt;<i> is
+</I>&gt;&gt;&gt;&gt;&gt;&gt;<i> to use the AMQP#close callback.  E.g., add something like this to your
+</I>&gt;&gt;&gt;&gt;&gt;&gt;<i> code:
+</I>&gt;&gt;&gt;&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;&gt;&gt;&gt;<i>  client.close { puts &quot;Closed ok&quot; ; EM.stop }
+</I>&gt;&gt;&gt;&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;&gt;&gt;&gt;<i> David
+</I>&gt;&gt;&gt;&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;&gt;&gt;&gt;<i> --
+</I>&gt;&gt;&gt;&gt;&gt;&gt;<i> David Wragg
+</I>&gt;&gt;&gt;&gt;&gt;&gt;<i> Staff Engineer, RabbitMQ
+</I>&gt;&gt;&gt;&gt;&gt;&gt;<i> VMware, Inc.
+</I>&gt;&gt;&gt;&gt;&gt;&gt;<i> _______________________________________________
+</I>&gt;&gt;&gt;&gt;&gt;&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;&gt;&gt;&gt;&gt;&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;&gt;&gt;&gt;&gt;&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>&gt;&gt;&gt;&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20110708/e4a67a31/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20110708/e4a67a31/attachment.htm</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="013774.html">[rabbitmq-discuss] Published message not queued after	publish-ok received when connection quickly closed
+</A></li>
+	<LI>Next message: <A HREF="013781.html">[rabbitmq-discuss] Published message not queued after publish-ok received when connection quickly closed
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#13778">[ date ]</a>
+              <a href="thread.html#13778">[ thread ]</a>
+              <a href="subject.html#13778">[ subject ]</a>
+              <a href="author.html#13778">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

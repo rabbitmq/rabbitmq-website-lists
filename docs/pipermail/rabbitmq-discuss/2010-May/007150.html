@@ -1,0 +1,168 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Scalability?
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20Scalability%3F&In-Reply-To=4BE48685.8070307%40rabbitmq.com">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="007149.html">
+   <LINK REL="Next"  HREF="007201.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Scalability?</H1>
+    <B>Wayne Van Den Handel</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20Scalability%3F&In-Reply-To=4BE48685.8070307%40rabbitmq.com"
+       TITLE="[rabbitmq-discuss] Scalability?">wvandenhandel at dataraker.com
+       </A><BR>
+    <I>Fri May  7 23:07:38 BST 2010</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="007149.html">[rabbitmq-discuss] Scalability?
+</A></li>
+        <LI>Next message: <A HREF="007201.html">[rabbitmq-discuss] Scalability?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#7150">[ date ]</a>
+              <a href="thread.html#7150">[ thread ]</a>
+              <a href="subject.html#7150">[ subject ]</a>
+              <a href="author.html#7150">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>
+
+Matthias Radestock wrote:
+&gt;<i> Wayne,
+</I>&gt;<i>
+</I>&gt;<i> Wayne Van Den Handel wrote:
+</I>&gt;&gt;<i> I tried the high water mark setting and it now prevents too much 
+</I>&gt;&gt;<i> memory from being used (barely) but as my test continued it 
+</I>&gt;&gt;<i> eventually had a hard crash for another reason. I was hitting it with 
+</I>&gt;&gt;<i> 2 producers throttled to 1000 messages each to a separate queue and 5 
+</I>&gt;&gt;<i> consumers. 
+</I>&gt;<i>
+</I>&gt;<i> Just to clarify ... the producer limits the publishing rate by 
+</I>&gt;<i> checking on the queue size with a passive queue.declare, and only 
+</I>&gt;<i> sends more messages when the size is less than 1000, right?
+</I>&gt;<i>
+</I>&gt;<i> How often is that check performed?
+</I>This check is done each time prior to adding another message to the 
+queue. It ensures there is always only ever 1000 max messages. I did 
+this so as to not run of our memory. There is a 10 second sleep if it 
+finds the queue &quot;full&quot; before checking again and adding more records.
+&gt;<i>
+</I>&gt;&gt;<i> There was always 1000 messages each in the 2 queues and after 15 
+</I>&gt;&gt;<i> minutes one of the producers crashed with an error (from the logs) 
+</I>&gt;&gt;<i> {amqp_error,not_found,&quot;no queue 'xxx' in vhost '/'&quot;, queue.declare'}. 
+</I>&gt;&gt;<i> I figured this was a timeout or something as the queue did exist and 
+</I>&gt;&gt;<i> was being emptied by 3 different consumers actively.
+</I>&gt;<i>
+</I>&gt;<i> How many queues do you see when running &quot;rabbitmqctl list_queues&quot;?
+</I>There are 9 queues. Only 2 have messages and are being used in this 
+test. Both of the 2 have always ~1000 records. The producers are 100x 
+faster than the consumers. In a production mode there would be a few 
+producers but 50+ consumers.
+&gt;<i>
+</I>&gt;&gt;<i> 5 seconds later the entire process died with an error (from the logs) 
+</I>&gt;&gt;<i> &quot;exception on TCP connection ... connection_closed_abruptly&quot; and then 
+</I>&gt;&gt;<i> &quot;closing TCP connection&quot;.
+</I>&gt;<i>
+</I>&gt;<i> Which process died? The producers/consumers? Rabbit?
+</I>One of the 2 producer python processes dies and then 5 seconds later 
+Rabbit died.
+&gt;<i>
+</I>&gt;<i> Are there any other interesting messages in the rabbit.log or 
+</I>&gt;<i> rabbit-sasl.log?
+</I>There are no other interesting messages.
+&gt;<i>
+</I>&gt;<i> If you could
+</I>&gt;<i> 1) clear the log files,
+</I>&gt;<i> 2) restart rabbit,
+</I>&gt;<i> 3) do a complete run of your tests until they fail,
+</I>&gt;<i> 4) put the logs somewhere we can see them
+</I>I am rerunning and will post the logs if/when it crashes.
+&gt;<i>
+</I>&gt;<i> then we may be able to determine the cause of the problem from looking 
+</I>&gt;<i> at the logs.
+</I>&gt;<i>
+</I>&gt;<i> And, as Colin suggests, if you can post the code then we can try to 
+</I>&gt;<i> reproduce the problem.
+</I>My code is reading data from a MySQL database as the source so this 
+&quot;scenario&quot; is not portable.
+&gt;<i>
+</I>&gt;&gt;<i> I am new to queuing but frankly I don't know what to do. My 
+</I>&gt;&gt;<i> Experience with this and other MQ products is less than compelling. 
+</I>&gt;&gt;<i> Does this take a ton of tweaking to get stable? How do people manage 
+</I>&gt;&gt;<i> to push 500k messages a day?
+</I>&gt;<i>
+</I>&gt;<i> How many messages did you actually send in your above test? Rabbit can 
+</I>&gt;<i> easily route tens of thousands of messages a second. So if your test 
+</I>&gt;<i> was running for 15 minutes and the producers/consumers weren't a 
+</I>&gt;<i> bottleneck then rabbit will have processed tens of millions of 
+</I>&gt;<i> messages in that time.
+</I>The messages are composed of a batch of 10000 records from a database 
+query (6 fields) pickled with python. Performance of Rabbit is great 
+relative to everything else going on (reading from MySQL, python, 
+Cassandra writes). Performance is great, stability is the issue. Could 
+it be the size of the messages? Each Queue with 1000 messages shows a 
+size of 2,914,608 using rabbitmqctl.
+&gt;<i>
+</I>&gt;<i> Regards,
+</I>&gt;<i>
+</I>&gt;<i> Matthias.
+</I>&gt;<i>
+</I>Thanks for your help!
+
+Wayne
+
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="007149.html">[rabbitmq-discuss] Scalability?
+</A></li>
+	<LI>Next message: <A HREF="007201.html">[rabbitmq-discuss] Scalability?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#7150">[ date ]</a>
+              <a href="thread.html#7150">[ thread ]</a>
+              <a href="subject.html#7150">[ subject ]</a>
+              <a href="author.html#7150">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

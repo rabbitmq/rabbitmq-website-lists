@@ -1,0 +1,750 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] librabbitmq faults
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20librabbitmq%20faults&In-Reply-To=%3C3B34C005-3EE0-486D-943E-0EE2D62D1C9E%40portalify.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="019365.html">
+   <LINK REL="Next"  HREF="019411.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] librabbitmq faults</H1>
+    <B>Matti Linnanvuori</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20librabbitmq%20faults&In-Reply-To=%3C3B34C005-3EE0-486D-943E-0EE2D62D1C9E%40portalify.com%3E"
+       TITLE="[rabbitmq-discuss] librabbitmq faults">matti.linnanvuori at portalify.com
+       </A><BR>
+    <I>Wed Apr  4 08:12:32 BST 2012</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="019365.html">[rabbitmq-discuss] librabbitmq faults
+</A></li>
+        <LI>Next message: <A HREF="019411.html">[rabbitmq-discuss] librabbitmq faults
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#19376">[ date ]</a>
+              <a href="thread.html#19376">[ thread ]</a>
+              <a href="subject.html#19376">[ subject ]</a>
+              <a href="author.html#19376">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi!
+
+I wonder how it is possible to have recv hang if RabbitMQ server has disconnected. Maybe RabbitMQ server has a bug that it does not disconnect a socket.
+
+I am afraid I don't have a succinct example that can reproduce this segfault. It occurred with Net::RabbitMQ versions 0.2.0 and 0.2.2, but not with rabbitmq-c-fb6fca832fd2.
+
+I reported the segmentation fault in CPAN:
+<A HREF="https://rt.cpan.org/Public/Bug/Display.html?id=76205">https://rt.cpan.org/Public/Bug/Display.html?id=76205</A>
+
+I got the segmentation fault in subroutine get. I think it is because memory allocation failed.
+I have Net::RabbitMQ version 0.2.2. I got a similar bug in Net::RabbitMQ version 0.2.0, too:<A HREF="https://rt.cpan.org/Public/Bug/Display.html?id=76156">https://rt.cpan.org/Public/Bug/Display.html?id=76156</A>
+This is perl, v5.10.0 built for x86_64-linux-thread-multi
+Linux pmc-inst-test 2.6.32.12-0.7-default #1 SMP 2010-05-20 11:14:20 +0200 x86_64 x86_64 x86_64 GNU/Linux
+
+Program received signal SIGSEGV, Segmentation fault.
+0x00007ffff724fa41 in memcpy () from /lib64/libc.so.6
+(gdb) bt
+#0 0x00007ffff724fa41 in memcpy () from /lib64/libc.so.6
+#1 0x00007ffff6db2c0d in amqp_handle_input (state=0x7bc8a0, 
+received_data=..., decoded_frame=0x7fffffffe2c0)
+at /usr/include/bits/string3.h:52
+#2 0x00007ffff6dbbeec in wait_frame_inner (state=0x7bc8a0, 
+decoded_frame=0x7fffffffe2c0) at amqp_socket.c:167
+#3 0x00007ffff6dbc489 in amqp_simple_rpc (state=0x7bc8a0, channel=3, 
+request_id=, expected_reply_ids=0x7fffffffe3a0, 
+decoded_request_method=) at amqp_socket.c:283
+#4 0x00007ffff6db156c in amqp_basic_get (state=0x7bc8a0, channel=7, 
+queue=..., no_ack=1) at amqp_api.c:258
+#5 0x00007ffff6da7432 in XS_Net__RabbitMQ_get (my_perl=, 
+cv=) at RabbitMQ.xs:618
+#6 0x000000000047e115 in Perl_pp_entersub ()
+#7 0x0000000000455ad3 in Perl_runops_debug ()
+#8 0x000000000047a005 in perl_run ()
+#9 0x000000000042172c in main ()
+(gdb)
+
+#!/usr/bin/perl -w
+
+=pod
+
+=head1 sds2sds_sf_fault.t
+
+ Test 1: publish a Dispatch JSON message with ack_level and valid_until
+ - from SDS to SDS in exchange.pmc.router-in.
+ Try to receive a message from exchange.pmc.router-in in 8 seconds.
+ Test 1 expected result: a message is received from exchange.pmc.router-in in 8 seconds.
+ Test 2: decode the message as JSON.
+ Test 2 expected result: the message is decoded as JSON.
+ Test 3: check that the sender field is the same as in the sent message.
+ Test 3 expected result: the sender field is the same as in the sent message.
+ Test 4: check the body of the received message and the sent one.
+ Test 4 expected result: the body fields are the same.
+ Test 5: check the timestamp field.
+ Test 5 expected result: the timestamp field is the same as in the published message.
+ Test 6: try to receive a message from exchange.pmc.sf-in in 8 seconds.
+ Test 6 expected result: a message is received from exchange.pmc.sf-in in 8 seconds.
+ Test 7: decode the message as JSON.
+ Test 7 expected result: the message is decoded as JSON.
+ Test 8: check that the sender field is &quot;exchange.pmc.router-in&quot;.
+ Test 8 expected result: the sender field is &quot;exchange.pmc.router-in&quot;.
+ Test 9: check the body of the received message and the sent one.
+ Test 9 expected result: the body fields are the same.
+ Test 10: check that the timestamp in an integer.
+ Test 10 expected result: the timestamp in an integer.
+ Test 11: check that the timestamp is greater than or equal to that of before publishing.
+ Test 11 expected result: the timestamp is greater than or equal to that of before publishing.
+ Test 12: check that the timestamp is less than or equal to that of now.
+ Test 12 expected result: the timestamp is less than or equal to that of now.
+ Test 13: try to receive a message from exchange.pmc.router-in in 8 seconds.
+ Test 13 expected result: a message is received from exchange.pmc.router-in in 8 seconds.
+ Test 14: decode the message as JSON.
+ Test 14 expected result: the message is decoded as JSON.
+ Test 15: check that the sender field is &quot;exchange.pmc.sf-in&quot;.
+ Test 15 expected result: the sender field is &quot;exchange.pmc.sf-in&quot;.
+ Test 16: check the body of the received message and the sent one.
+ Test 16 expected result: the body fields are the same.
+ Test 17: check that the timestamp in an integer.
+ Test 17 expected result: the timestamp in an integer.
+ Test 18: check that the timestamp is greater than or equal to that of before publishing.
+ Test 18 expected result: the timestamp is greater than or equal to that of before publishing.
+ Test 19: check that the timestamp is less than or equal to that of now.
+ Test 19 expected result: the timestamp is less than or equal to that of now.
+ Test 20: try to receive a message from exchange.pmc.router-in in 8 seconds.
+ Test 20 expected result: a message is received from exchange.pmc.router-in in 8 seconds.
+ Test 21: decode the message as JSON.
+ Test 21 expected result: the message is decoded as JSON.
+ Test 22: check that the sender field is &quot;exchange.pmc.sf-in&quot;.
+ Test 22 expected result: the sender field is &quot;exchange.pmc.sf-in&quot;.
+ Test 23: check that the timestamp in an integer.
+ Test 23 expected result: the timestamp in an integer.
+ Test 24: check that the timestamp is greater than or equal to that of before publishing.
+ Test 24 expected result: the timestamp is greater than or equal to that of before publishing.
+ Test 25: check that the timestamp is less than or equal to that of now.
+ Test 25 expected result: the timestamp is less than or equal to that of now.
+ Test 26: check that the id fields of the received and the published messages are the same.
+ Test 26 expected result: the id fields of the received and the published messages are the same.
+ Test 27: check that the ack_type field has value &quot;processed&quot;.
+ Test 27 expected result: the ack_type field has value &quot;processed&quot;.
+ Test 28: check that the from field of the received message is the same as
+ the to field of the published message.
+ Test 28 expected result: the from field of the received message is the same as
+ the to field of the published message.
+ Test 29: check that the type field has value &quot;ack&quot;.
+ Test 29 expected result: the type field has value &quot;ack&quot;.
+ Test 30: check that the version field has value 1.
+ Test 30 expected result: the version field has value 1.
+ Test 31: try to receive a message from exchange.pmc.cassidian-in in 8 seconds.
+ Test 31 expected result: a message is received from exchange.pmc.cassidian-in in 8 seconds.
+ Test 32: decode the message as JSON.
+ Test 32 expected result: the message is decoded as JSON.
+ Test 33: check that the sender field is &quot;exchange.pmc.router-in&quot;.
+ Test 33 expected result: the sender field is &quot;exchange.pmc.router-in&quot;.
+ Test 34: check the body of the received message and the sent one.
+ Test 34 expected result: the body fields are the same.
+ Test 35: check that the timestamp in an integer.
+ Test 35 expected result: the timestamp in an integer.
+ Test 36: check that the timestamp is greater than or equal to that of before publishing.
+ Test 36 expected result: the timestamp is greater than or equal to that of before publishing.
+ Test 37: check that the timestamp is less than or equal to that of now.
+ Test 37 expected result: the timestamp is less than or equal to that of now.
+ Test 38: try to receive a message from exchange.pmc.cassidian-in in 8 seconds.
+ Test 38 expected result: a message is received from exchange.pmc.cassidian-in in 8 seconds.
+ Test 39: decode the message as JSON.
+ Test 39 expected result: the message is decoded as JSON.
+ Test 40: check that the sender field is &quot;exchange.pmc.router-in&quot;.
+ Test 40 expected result: the sender field is &quot;exchange.pmc.router-in&quot;.
+ Test 41: check that the timestamp in an integer.
+ Test 41 expected result: the timestamp in an integer.
+ Test 42: check that the timestamp is greater than or equal to that of before publishing.
+ Test 42 expected result: the timestamp is greater than or equal to that of before publishing.
+ Test 43: check that the timestamp is less than or equal to that of now.
+ Test 43 expected result: the timestamp is less than or equal to that of now.
+ Test 44: check that the id fields of the received and the published messages are the same.
+ Test 44 expected result: the id fields of the received and the published messages are the same.
+ Test 45: check that the ack_type field has value &quot;processed&quot;.
+ Test 45 expected result: the ack_type field has value &quot;processed&quot;.
+ Test 46: check that the from field of the received message is the same as
+ the to field of the published message.
+ Test 46 expected result: the from field of the received message is the same as
+ the to field of the published message.
+ Test 47: check that the type field has value &quot;ack&quot;.
+ Test 47 expected result: the type field has value &quot;ack&quot;.
+ Test 48: check that the version field has value 1.
+ Test 48 expected result: the version field has value 1.
+ Test 49: publish an Ack sent message from the SSI in exchange.pmc.router-in.
+ try to receive a message from exchange.pmc.router-in in 8 seconds.
+ Test 49 expected result: a message is received from exchange.pmc.router-in in 8 seconds.
+ Test 50: decode the message as JSON.
+ Test 50 expected result: the message is decoded as JSON.
+ Test 51: check that the timestamp of the received message is the same as that of published one.
+ Test 51 expected result:
+ the timestamp of the received message is the same as that of published one.
+ Test 52: check the sender field of the received message.
+ Test 52 expected result:
+ the sender field of the received message has value &quot;exchange.pmc.cassidian-in&quot;.
+ Test 53: check the body fields of the received and the published messages.
+ Test 53 expected result:
+ the body fields of the received and the published messages are the same.
+ Test 54: try to receive a message from exchange.pmc.sf-in in 8 seconds.
+ Test 54 expected result: a message is received from exchange.pmc.sf-in in 8 seconds.
+ Test 55: decode the message as JSON.
+ Test 55 expected result: the message is decoded as JSON.
+ Test 56: check the sender field of the received message.
+ Test 56 expected result:
+ the sender field of the received message has value &quot;exchange.pmc.router-in&quot;.
+ Test 57: check the body fields of the received and the published messages.
+ Test 57 expected result:
+ the body fields of the received and the published messages are the same.
+ Test 58: check that the timestamp in an integer.
+ Test 58 expected result: the timestamp in an integer.
+ Test 59: check that the timestamp is greater than or equal to that of before publishing.
+ Test 59 expected result: the timestamp is greater than or equal to that of before publishing.
+ Test 60: check that the timestamp is less than or equal to that of now.
+ Test 60 expected result: the timestamp is less than or equal to that of now.
+ Test 61: try to receive a message from exchange.pmc.router-in in 8 seconds.
+ Test 61 expected result: a message is received from exchange.pmc.router-in in 8 seconds.
+ Test 62: decode the message as JSON.
+ Test 62 expected result: the message is decoded as JSON.
+ Test 63: check the sender field of the received message.
+ Test 63 expected result:
+ the sender field of the received message has value &quot;exchange.pmc.sf-in&quot;.
+ Test 64: check the body fields of the received and the published messages.
+ Test 64 expected result:
+ the body fields of the received and the published messages are the same.
+ Test 65: check that the timestamp in an integer.
+ Test 65 expected result: the timestamp in an integer.
+ Test 66: check that the timestamp is greater than or equal to that of before publishing.
+ Test 66 expected result: the timestamp is greater than or equal to that of before publishing.
+ Test 67: check that the timestamp is less than or equal to that of now.
+ Test 67 expected result: the timestamp is less than or equal to that of now.
+ Test 68: try to receive a message from exchange.pmc.cassidian-in in 8 seconds.
+ Test 68 expected result: a message is received from exchange.pmc.cassidian-in in 8 seconds.
+ Test 69: decode the message as JSON.
+ Test 69 expected result: the message is decoded as JSON.
+ Test 70: check the sender field of the received message.
+ Test 70 expected result:
+ the sender field of the received message has value &quot;exchange.pmc.router-in&quot;.
+ Test 71: check the body fields of the received and the published messages.
+ Test 71 expected result:
+ the body fields of the received and the published messages are the same.
+ Test 72: check that the timestamp in an integer.
+ Test 72 expected result: the timestamp in an integer.
+ Test 73: check that the timestamp is greater than or equal to that of before publishing.
+ Test 73 expected result: the timestamp is greater than or equal to that of before publishing.
+ Test 74: check that the timestamp is less than or equal to that of now.
+ Test 74 expected result: the timestamp is less than or equal to that of now.
+
+=cut
+
+use strict;
+
+use Net::RabbitMQ;
+use Test::More tests =&gt; 74;
+use JSON;
+use Time::HiRes qw(gettimeofday);
+
+use constant ROUTER_EXCHANGE    =&gt; 'exchange.pmc.router-in';
+use constant ROUTER_CHANNEL     =&gt; 1;
+use constant ROUTER_QUEUE       =&gt; 'queue.test.router-in';
+use constant SF_EXCHANGE        =&gt; 'exchange.pmc.sf-in';
+use constant SF_CHANNEL         =&gt; 2;
+use constant SF_QUEUE           =&gt; 'queue.test.sf-in';
+use constant CASSIDIAN_EXCHANGE =&gt; 'exchange.pmc.cassidian-in';
+use constant CASSIDIAN_CHANNEL  =&gt; 3;
+use constant CASSIDIAN_QUEUE    =&gt; 'queue.test.cassidian-in';
+
+sub timestamp {
+    return int( gettimeofday() * 1000 );
+}
+
+system(
+'service pmc-smpp stop &gt;&amp;2; service pmc-cassidian stop &gt;&amp;2; service pmc-email stop &gt;&amp;2; service pmc-sf stop &gt;&amp;2; service pmc-routing stop &gt;&amp;2'
+);
+
+sleep 1;    # Wait for the message-sending to stop.
+
+system(
+    'rabbitmqctl stop_app; rabbitmqctl reset; rabbitmqctl start_app; mongo &lt;&lt;END
+use database
+db.dropDatabase();
+END'
+);
+
+system('service pmc-sf start &gt;&amp;2; service pmc-routing start &gt;&amp;2');
+
+sleep 8;    # Wait for Store &amp; Forward and Routing to start.
+
+my $json_text = '{
+&quot;timestamp&quot; : 1330327514213,
+&quot;sender&quot; : &quot;' . CASSIDIAN_EXCHANGE . '&quot;,
+&quot;body&quot; : {
+&quot;type&quot; : &quot;dispatch&quot;,
+&quot;version&quot; : 1,
+&quot;id&quot; : &quot;8f970b1b-f8a3-4c78-aa24-3b8e2205648788&quot;,
+&quot;from&quot; : {
+&quot;type&quot; : &quot;ssi&quot;,
+&quot;address&quot; : &quot;16777215&quot;
+},
+&quot;to&quot; : {
+&quot;type&quot; : &quot;ssi&quot;,
+&quot;address&quot; : &quot;0&quot;
+},
+&quot;body&quot; : &quot;This is a test message.&quot;,
+&quot;ack_level&quot; : &quot;sent&quot;,
+&quot;valid_until&quot; : 9223372036854775807,
+&quot;auxiliary&quot; : {
+&quot;timestamp&quot; : 1325376000000,
+&quot;sdstl&quot; : {
+&quot;protocol_id&quot; : 130,
+&quot;message_reference&quot; : 42,
+&quot;short_report_allowed&quot; : true,
+&quot;protocol_data&quot; : {
+&quot;encoding&quot; : 0,
+&quot;timestamp&quot; : {
+&quot;month&quot; : 1,
+&quot;day&quot; : 1,
+&quot;hour&quot; : 0,
+&quot;minute&quot; : 0
+}
+}
+}
+}
+}
+}';
+
+my $mq_router = Net::RabbitMQ-&gt;new();
+$mq_router-&gt;connect( &quot;localhost&quot;, { user =&gt; &quot;guest&quot;, password =&gt; &quot;guest&quot; } );
+$mq_router-&gt;channel_open(ROUTER_CHANNEL);
+$mq_router-&gt;queue_declare(
+    ROUTER_CHANNEL,
+    ROUTER_QUEUE,
+    {
+        passive     =&gt; 0,
+        durable     =&gt; 1,
+        exclusive   =&gt; 0,
+        auto_delete =&gt; 0
+    }
+);
+$mq_router-&gt;queue_bind( ROUTER_CHANNEL, ROUTER_QUEUE, ROUTER_EXCHANGE, '' );
+$mq_router-&gt;purge( ROUTER_CHANNEL, ROUTER_QUEUE );
+$mq_router-&gt;consume( ROUTER_CHANNEL, ROUTER_QUEUE );
+
+my $mq_sf = Net::RabbitMQ-&gt;new();
+$mq_sf-&gt;connect( &quot;localhost&quot;, { user =&gt; &quot;guest&quot;, password =&gt; &quot;guest&quot; } );
+$mq_sf-&gt;channel_open(SF_CHANNEL);
+$mq_sf-&gt;exchange_declare(
+    SF_CHANNEL,
+    SF_EXCHANGE,
+    {
+        exchange_type =&gt; 'direct',
+        passive       =&gt; 0,
+        durable       =&gt; 1,
+        auto_delete   =&gt; 0
+    }
+);
+$mq_sf-&gt;queue_declare(
+    SF_CHANNEL,
+    SF_QUEUE,
+    {
+        passive     =&gt; 0,
+        durable     =&gt; 1,
+        exclusive   =&gt; 0,
+        auto_delete =&gt; 0
+    }
+);
+$mq_sf-&gt;queue_bind( SF_CHANNEL, SF_QUEUE, SF_EXCHANGE, '' );
+$mq_sf-&gt;purge( SF_CHANNEL, SF_QUEUE );
+$mq_sf-&gt;consume( SF_CHANNEL, SF_QUEUE );
+
+my $mq_cassidian = Net::RabbitMQ-&gt;new();
+$mq_cassidian-&gt;connect( &quot;localhost&quot;, { user =&gt; &quot;guest&quot;, password =&gt; &quot;guest&quot; } );
+$mq_cassidian-&gt;channel_open(CASSIDIAN_CHANNEL);
+$mq_cassidian-&gt;exchange_declare(
+    CASSIDIAN_CHANNEL,
+    CASSIDIAN_EXCHANGE,
+    {
+        exchange_type =&gt; 'direct',
+        passive       =&gt; 0,
+        durable       =&gt; 1,
+        auto_delete   =&gt; 0
+    }
+);
+$mq_cassidian-&gt;queue_declare(
+    CASSIDIAN_CHANNEL,
+    CASSIDIAN_QUEUE,
+    {
+        passive     =&gt; 0,
+        durable     =&gt; 1,
+        exclusive   =&gt; 0,
+        auto_delete =&gt; 0
+    }
+);
+$mq_cassidian-&gt;queue_bind( CASSIDIAN_CHANNEL, CASSIDIAN_QUEUE,
+    CASSIDIAN_EXCHANGE, '' );
+$mq_cassidian-&gt;purge( CASSIDIAN_CHANNEL, CASSIDIAN_QUEUE );
+$mq_cassidian-&gt;consume( CASSIDIAN_CHANNEL, CASSIDIAN_QUEUE );
+
+my $before = timestamp();
+
+$mq_router-&gt;publish(
+    ROUTER_CHANNEL,
+    '',
+    $json_text,
+    {
+
+        # Options
+        exchange =&gt; ROUTER_EXCHANGE
+    },
+    {
+
+        # Props
+        content_encoding =&gt; &quot;UTF-8&quot;,
+        content_type     =&gt; &quot;application/json&quot;
+    }
+);
+
+my $sent = decode_json($json_text);
+my $message;
+eval {
+    local $SIG{ALRM} = sub { die &quot;Timeout\n&quot; };
+    alarm 8;
+    $message = $mq_router-&gt;recv();
+    alarm 0;
+};
+is( $@, '', 'A message was received from queue' );
+my $json;
+eval { $json = decode_json( $message-&gt;{'body'} ); };
+is( $@, '', 'A JSON message received' );
+is( $json-&gt;{'sender'}, $sent-&gt;{'sender'}, 'sender ' . $sent-&gt;{'sender'} );
+is_deeply( $json-&gt;{'body'}, $sent-&gt;{'body'}, 'body the same' );
+is( $json-&gt;{'timestamp'}, $sent-&gt;{'timestamp'},
+    &quot;timestamp &quot; . $sent-&gt;{'timestamp'} );
+
+undef $message;
+eval {
+    local $SIG{ALRM} = sub { die &quot;Timeout\n&quot; };
+    alarm 8;
+    $message = $mq_sf-&gt;recv();
+    alarm 0;
+};
+is( $@, '', 'A message was received' );
+undef $json;
+eval { $json = decode_json( $message-&gt;{'body'} ); };
+is( $@, '', 'A JSON message received' );
+is( $json-&gt;{'sender'}, ROUTER_EXCHANGE, 'sender ' . ROUTER_EXCHANGE );
+is_deeply( $json-&gt;{'body'}, $sent-&gt;{'body'}, 'body the same' );
+like( $json-&gt;{'timestamp'}, qr/^\d+$/, &quot;timestamp an integer&quot; );
+ok( $json-&gt;{'timestamp'} &gt;= $before,
+    'timestamp greater than or equal to that of before publishing' )
+  or diag(&quot;$json-&gt;{'timestamp'} &lt; $before&quot;);
+my $now = timestamp();
+ok( $json-&gt;{'timestamp'} &lt;= $now,
+    'timestamp less than or equal to that of now' )
+  or diag(&quot;$json-&gt;{'timestamp'} &gt; $now&quot;);
+
+undef $message;
+eval {
+    local $SIG{ALRM} = sub { die &quot;Timeout\n&quot; };
+    alarm 8;
+    $message = $mq_router-&gt;recv();
+    alarm 0;
+};
+is( $@, '', 'A message was received' );
+undef $json;
+eval { $json = decode_json( $message-&gt;{'body'} ); };
+is( $@,                '',          'A JSON message received' );
+is( $json-&gt;{'sender'}, SF_EXCHANGE, 'sender ' . SF_EXCHANGE );
+is_deeply( $json-&gt;{'body'}, $sent-&gt;{'body'}, 'body the same' );
+like( $json-&gt;{'timestamp'}, qr/^\d+$/, &quot;timestamp an integer&quot; );
+ok( $json-&gt;{'timestamp'} &gt;= $before,
+    'timestamp greater than or equal to that of before publishing' )
+  or diag(&quot;$json-&gt;{'timestamp'} &lt; $before&quot;);
+$now = timestamp();
+ok( $json-&gt;{'timestamp'} &lt;= $now,
+    'timestamp less than or equal to that of now' )
+  or diag(&quot;$json-&gt;{'timestamp'} &gt; $now&quot;);
+
+undef $message;
+eval {
+    local $SIG{ALRM} = sub { die &quot;Timeout\n&quot; };
+    alarm 8;
+    $message = $mq_router-&gt;recv();
+    alarm 0;
+};
+is( $@, '', 'A message was received' );
+undef $json;
+eval { $json = decode_json( $message-&gt;{'body'} ); };
+is( $@,                '',          'A JSON message received' );
+is( $json-&gt;{'sender'}, SF_EXCHANGE, 'sender ' . SF_EXCHANGE );
+like( $json-&gt;{'timestamp'}, qr/^\d+$/, &quot;timestamp an integer&quot; );
+ok( $json-&gt;{'timestamp'} &gt;= $before,
+    'timestamp greater than or equal to that of before publishing' )
+  or diag(&quot;$json-&gt;{'timestamp'} &lt; $before&quot;);
+$now = timestamp();
+ok( $json-&gt;{'timestamp'} &lt;= $now,
+    'timestamp less than or equal to that of now' )
+  or diag(&quot;$json-&gt;{'timestamp'} &gt; $now&quot;);
+is( $json-&gt;{'body'}-&gt;{'id'}, $sent-&gt;{'body'}-&gt;{'id'}, 'id the same' );
+is( $json-&gt;{'body'}-&gt;{'ack_type'}, 'processed', 'ack_type processed' );
+is_deeply(
+    $json-&gt;{'body'}-&gt;{'from'},
+    $sent-&gt;{'body'}-&gt;{'to'},
+    'from is the same as to of sent'
+);
+is( $json-&gt;{'body'}-&gt;{'type'},    'ack', 'type is ack' );
+is( $json-&gt;{'body'}-&gt;{'version'}, 1,     'version is 1' );
+
+my $end = time() + 8;
+undef $message;
+do {
+    eval {
+        $message = $mq_cassidian-&gt;get( CASSIDIAN_CHANNEL, CASSIDIAN_QUEUE );
+    };
+    if ($@) {
+        diag($@);
+    }
+} until ( defined $message or time() &gt; $end or $@ );
+ok( defined $message, 'A message was received' );
+undef $json;
+eval { $json = decode_json( $message-&gt;{'body'} ); };
+is( $@, '', 'A JSON message received' );
+is( $json-&gt;{'sender'}, ROUTER_EXCHANGE, 'sender ' . ROUTER_EXCHANGE );
+is_deeply( $json-&gt;{'body'}, $sent-&gt;{'body'}, 'body the same' );
+like( $json-&gt;{'timestamp'}, qr/^\d+$/, &quot;timestamp an integer&quot; );
+ok( $json-&gt;{'timestamp'} &gt;= $before,
+    'timestamp greater than or equal to that of before publishing' )
+  or diag(&quot;$json-&gt;{'timestamp'} &lt; $before&quot;);
+$now = timestamp();
+ok( $json-&gt;{'timestamp'} &lt;= $now,
+    'timestamp less than or equal to that of now' )
+  or diag(&quot;$json-&gt;{'timestamp'} &gt; $now&quot;);
+
+$end = time() + 8;
+note(&quot;Trying to receive an Ack from Cassidian exchange&quot;);
+undef $message;
+do {
+    eval {
+        $message = $mq_cassidian-&gt;get( CASSIDIAN_CHANNEL, CASSIDIAN_QUEUE );
+    };
+    if ($@) {
+        diag($@);
+    }
+} until ( defined $message or time() &gt; $end or $@ );
+ok( defined $message, 'A message was received' );
+undef $json;
+eval { $json = decode_json( $message-&gt;{'body'} ); };
+is( $@, '', 'A JSON message received' );
+is( $json-&gt;{'sender'}, ROUTER_EXCHANGE, 'sender ' . ROUTER_EXCHANGE );
+like( $json-&gt;{'timestamp'}, qr/^\d+$/, &quot;timestamp an integer&quot; );
+ok( $json-&gt;{'timestamp'} &gt;= $before,
+    'timestamp greater than or equal to that of before publishing' )
+  or diag(&quot;$json-&gt;{'timestamp'} &lt; $before&quot;);
+$now = timestamp();
+ok( $json-&gt;{'timestamp'} &lt;= $now,
+    'timestamp less than or equal to that of now' )
+  or diag(&quot;$json-&gt;{'timestamp'} &gt; $now&quot;);
+is( $json-&gt;{'body'}-&gt;{'id'}, $sent-&gt;{'body'}-&gt;{'id'}, 'id the same' );
+is( $json-&gt;{'body'}-&gt;{'ack_type'}, 'processed', 'ack_type processed' );
+is_deeply(
+    $json-&gt;{'body'}-&gt;{'from'},
+    $sent-&gt;{'body'}-&gt;{'to'},
+    'from is the same as to of sent'
+);
+is( $json-&gt;{'body'}-&gt;{'type'},    'ack', 'type is ack' );
+is( $json-&gt;{'body'}-&gt;{'version'}, 1,     'version is 1' );
+
+my $ack = '{
+&quot;timestamp&quot; : 1328020064358,
+&quot;sender&quot; : &quot;' . CASSIDIAN_EXCHANGE . '&quot;,
+&quot;body&quot; : {
+&quot;type&quot; : &quot;ack&quot;,
+&quot;version&quot; : 1,
+&quot;id&quot; : &quot;8f970b1b-f8a3-4c78-aa24-3b8e2205648788&quot;,
+&quot;from&quot; : {
+&quot;type&quot; : &quot;ssi&quot;,
+&quot;address&quot; : &quot;0&quot;
+},
+&quot;ack_type&quot; : &quot;sent&quot;,
+&quot;auxiliary&quot; : {
+&quot;timestamp&quot; : 1325376000000,
+&quot;original_message&quot; : ' . encode_json( $sent-&gt;{'body'} ) . ',
+&quot;sdstl&quot; : {
+&quot;protocol_id&quot; : 130,
+&quot;message_reference&quot; : 42,
+&quot;short_report_allowed&quot; : true,
+&quot;protocol_data&quot; : {
+&quot;encoding&quot; : 0,
+&quot;timestamp&quot; : {
+&quot;month&quot; : 1,
+&quot;day&quot; : 1,
+&quot;hour&quot; : 0,
+&quot;minute&quot; : 0
+}
+}
+}
+}
+}
+}';
+$sent   = decode_json($ack);
+$before = timestamp();
+
+$mq_router-&gt;publish(
+    ROUTER_CHANNEL,
+    '', $ack,
+    {
+
+        # Options
+        exchange =&gt; ROUTER_EXCHANGE
+    },
+    {
+
+        # Props
+        content_encoding =&gt; &quot;UTF-8&quot;,
+        content_type     =&gt; &quot;application/json&quot;
+    }
+);
+
+undef $message;
+eval {
+    local $SIG{ALRM} = sub { die &quot;Timeout\n&quot; };
+    alarm 8;
+    $message = $mq_router-&gt;recv();
+    alarm 0;
+};
+is( $@, '', 'A message was received' );
+undef $json;
+eval { $json = decode_json( $message-&gt;{'body'} ); };
+is( $@, '', 'A JSON message received' );
+is( $json-&gt;{'timestamp'}, $sent-&gt;{'timestamp'},
+    'timestamp ' . $sent-&gt;{'timestamp'} )
+  or diag( $message-&gt;{'body'} );
+is( $json-&gt;{'sender'}, CASSIDIAN_EXCHANGE, 'sender ' . CASSIDIAN_EXCHANGE )
+  or diag( $message-&gt;{'body'} );
+is_deeply( $json-&gt;{'body'}, $sent-&gt;{'body'}, 'body the same' )
+  or diag( $message-&gt;{'body'} );
+
+undef $message;
+eval {
+    local $SIG{ALRM} = sub { die &quot;Timeout\n&quot; };
+    alarm 8;
+    $message = $mq_sf-&gt;recv();
+    alarm 0;
+};
+is( $@, '', 'A message was received' );
+undef $json;
+eval { $json = decode_json( $message-&gt;{'body'} ); };
+is( $@, '', 'A JSON message received' );
+is( $json-&gt;{'sender'}, ROUTER_EXCHANGE, 'sender ' . ROUTER_EXCHANGE );
+is_deeply( $json-&gt;{'body'}, $sent-&gt;{'body'}, 'body the same' );
+like( $json-&gt;{'timestamp'}, qr/^\d+$/, &quot;timestamp an integer&quot; );
+ok( $json-&gt;{'timestamp'} &gt;= $before,
+    'timestamp greater than or equal to that of before publishing' )
+  or diag(&quot;$json-&gt;{'timestamp'} &lt; $before&quot;);
+$now = timestamp();
+ok( $json-&gt;{'timestamp'} &lt;= $now,
+    'timestamp less than or equal to that of now' )
+  or diag(&quot;$json-&gt;{'timestamp'} &gt; $now&quot;);
+
+undef $message;
+eval {
+    local $SIG{ALRM} = sub { die &quot;Timeout\n&quot; };
+    alarm 8;
+    $message = $mq_router-&gt;recv();
+    alarm 0;
+};
+is( $@, '', 'A message was received' );
+undef $json;
+eval { $json = decode_json( $message-&gt;{'body'} ); };
+is( $@,                '',          'A JSON message received' );
+is( $json-&gt;{'sender'}, SF_EXCHANGE, 'sender ' . SF_EXCHANGE );
+is_deeply( $json-&gt;{'body'}, $sent-&gt;{'body'}, 'body the same' );
+like( $json-&gt;{'timestamp'}, qr/^\d+$/, &quot;timestamp an integer&quot; );
+ok( $json-&gt;{'timestamp'} &gt;= $before,
+    'timestamp greater than or equal to that of before publishing' )
+  or diag(&quot;$json-&gt;{'timestamp'} &lt; $before&quot;);
+$now = timestamp();
+ok( $json-&gt;{'timestamp'} &lt;= $now,
+    'timestamp less than or equal to that of now' )
+  or diag(&quot;$json-&gt;{'timestamp'} &gt; $now&quot;);
+
+undef $message;
+eval {
+    local $SIG{ALRM} = sub { die &quot;Timeout\n&quot; };
+    alarm 8;
+    $message = $mq_cassidian-&gt;recv();
+    alarm 0;
+};
+is( $@, '', 'A message was received' );
+undef $json;
+eval { $json = decode_json( $message-&gt;{'body'} ); };
+is( $@, '', 'A JSON message received' );
+is( $json-&gt;{'sender'}, ROUTER_EXCHANGE, 'sender ' . ROUTER_EXCHANGE );
+is_deeply( $json-&gt;{'body'}, $sent-&gt;{'body'}, 'body the same' );
+like( $json-&gt;{'timestamp'}, qr/^\d+$/, &quot;timestamp an integer&quot; );
+ok( $json-&gt;{'timestamp'} &gt;= $before,
+    'timestamp greater than or equal to that of before publishing' )
+  or diag(&quot;$json-&gt;{'timestamp'} &lt; $before&quot;);
+$now = timestamp();
+ok( $json-&gt;{'timestamp'} &lt;= $now,
+    'timestamp less than or equal to that of now' )
+  or diag(&quot;$json-&gt;{'timestamp'} &gt; $now&quot;);
+
+END {
+    $mq_sf-&gt;queue_unbind( SF_CHANNEL, SF_QUEUE, SF_EXCHANGE, '' );
+    $mq_router-&gt;queue_unbind( ROUTER_CHANNEL, ROUTER_QUEUE, ROUTER_EXCHANGE,
+        '' );
+    $mq_cassidian-&gt;queue_unbind( CASSIDIAN_CHANNEL, CASSIDIAN_QUEUE,
+        CASSIDIAN_EXCHANGE, '' );
+    system(
+'service pmc-smpp start &gt;&amp;2; service pmc-cassidian start &gt;&amp;2; service pmc-email start &gt;&amp;2'
+    );
+}
+
+regards, Matti Linnanvuori
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="019365.html">[rabbitmq-discuss] librabbitmq faults
+</A></li>
+	<LI>Next message: <A HREF="019411.html">[rabbitmq-discuss] librabbitmq faults
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#19376">[ date ]</a>
+              <a href="thread.html#19376">[ thread ]</a>
+              <a href="subject.html#19376">[ subject ]</a>
+              <a href="author.html#19376">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

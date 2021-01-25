@@ -1,0 +1,346 @@
+diff -r 846f18b5364f src/amqp_client.erl
+--- a/src/amqp_client.erl	Tue Aug 07 17:10:40 2007 +0100
++++ b/src/amqp_client.erl	Tue Aug 07 17:35:58 2007 +0100
+@@ -7,69 +7,26 @@
+ 
+ -export([init/1, terminate/2, code_change/3, handle_call/3, handle_cast/2, handle_info/2]).
+ 
+--define(Reader, reader).
+--define(Writer, writer).
+--define(Username, username).
+--define(Password, password).
+--define(VHostPath, vhostpath).
+--define(Peer, peer).
+--define(ChannelNumber,channel_number).
+--define(Direct, direct).
++-record(client_state, {	username, password, vhostpath, 
++                		reader_pid, writer_pid, peer, 
++                		direct, channel_number, 
++                        consumers = ets:new(?MODULE,[])}).
+ 
+ %---------------------------------------------------------------------------
+ % Internal plumbing
+ %---------------------------------------------------------------------------
+ 
+-get_vhost_path(Table) ->
+-    [{_,VHostPath}] = ets:lookup(Table, ?VHostPath),
+-    VHostPath.
+-
+-get_username(Table) ->
+-	[{_,User}] = ets:lookup(Table, ?Username),
+-    User.
+-
+-get_password(Table) ->
+-	[{_,Password}] = ets:lookup(Table, ?Password),
+-    Password.
+-
+-get_reader(Table) ->
+-	[{_,Reader}] = ets:lookup(Table, ?Reader),
+-    Reader.
+-get_writer(Table) ->
+-	[{_,Writer}] = ets:lookup(Table, ?Writer),
+-    Writer.
+-
+-is_direct(Table) ->
+-	[{_,D}] = ets:lookup(Table, ?Direct),
+-    D.
+-
+-get_peer(Table) ->
+-    case ets:lookup(Table, ?Peer) of
+-		[{_,Peer}] ->
+-            Peer;
+-        _ ->
+-            exit(peer_not_intialized)
+-    end.
+-
+-get_channel_number(Table) ->
+-    case ets:lookup(Table, ?ChannelNumber) of
+-		[{_,ChannelNumber}] ->
+-            ChannelNumber;
+-        _ ->
+-            exit(channel_not_intialized)
+-    end.
+-
+-get_consumer(ConsumerTag, Table) ->
+-    case ets:lookup(Table, ConsumerTag) of
++get_consumer(ConsumerTag, #client_state{consumers = Consumers}) ->
++    case ets:lookup(Consumers, ConsumerTag) of
+ 		[{_,Consumer}] ->
+             Consumer;
+         _ ->
+             exit(consumer_not_registered, ConsumerTag)
+     end.
+ 
+-start_ok(Table) ->
+-    LoginTable = [	{<<"LOGIN">>, longstr, get_username(Table) },
+-                    {<<"PASSWORD">>, longstr, get_password(Table) }],
++start_ok(#client_state{username = Username, password = Password}) ->
++    LoginTable = [	{<<"LOGIN">>, longstr, Username },
++                    {<<"PASSWORD">>, longstr, Password }],
+     #'connection.start_ok'{
+ 			client_properties = [
+                             {<<"product">>, longstr, <<"Erlang-AMQC">>},
+@@ -85,26 +42,24 @@ start_ok(Table) ->
+ %---------------------------------------------------------------------------
+                                                                                      
+ %% connection.close_ok    
+-amqp_handle(Peer, {Channel, #'connection.close_ok'{} }, Table ) ->
++amqp_handle(Peer, {Channel, #'connection.close_ok'{} }, State ) ->
+     ok;                                                                                                                                                                                                                                                                                       
+                                                                                             
+ %% Anything else                                                                                                                  
+-amqp_handle(Peer, Message, Table ) ->
++amqp_handle(Peer, Message, State ) ->
+     exit({amqp_client, unhandled_message , Message}).
+ 
+ %---------------------------------------------------------------------------
+ % AMQP message sending
+ %---------------------------------------------------------------------------
+ 
+-amqp_initial_send(Method, Table) ->
++amqp_initial_send(Method, #client_state{peer = Peer}) ->
+     io:format("Init sending method ~p to peer~n",[Method]),
+-    Peer = get_peer(Table),
+     Peer ! { self(), Method }.
+ 
+-amqp_send(Method, Table) ->
++amqp_send(Method, #client_state{peer = Peer, direct = Direct}) ->
+     io:format("AS: Sending method ~p to peer~n",[Method]),
+-    Peer = get_peer(Table),
+-    Message = case is_direct(Table) of
++    Message = case Direct of
+               true ->
+                 { method, Method};    			
+               _ ->
+@@ -112,9 +67,8 @@ amqp_send(Method, Table) ->
+               end,
+     Peer ! Message.
+ 
+-amqp_send(Method, Content, Table) ->
+-    Peer = get_peer(Table),
+-    Message = case is_direct(Table) of
++amqp_send(Method, Content, #client_state{peer = Peer, direct = Direct}) ->
++    Message = case Direct of
+               true ->
+                 { method, Method, Content };    			
+               _ ->
+@@ -184,19 +138,15 @@ amqp_receive(Channel, Method) ->
+           
+ init([User, Pass, ServerHost, VHostPath, Handshake, Direct]) when is_function(Handshake) ->
+     { ReaderPid, WriterPid } = Handshake(self(), ServerHost),
+-    Table = ets:new(?MODULE,[]),
+-    ets:insert(Table, {?Username, User} ),
+-    ets:insert(Table, {?Password, Pass} ),
+-    ets:insert(Table, {?VHostPath, VHostPath} ),                               
+-    ets:insert(Table, {?Reader, ReaderPid} ),
+-    ets:insert(Table, {?Writer, WriterPid} ),
+-    ets:insert(Table, {?Direct, Direct} ),
++    State = #client_state{	username = User, password = Pass, vhostpath = VHostPath,
++    						reader_pid = ReaderPid, writer_pid = WriterPid,
++                            direct = Direct},
+     { Peer, #'connection.start'{version_major = MajorVersion,
+ 									version_minor = MinorVersion,
+ 									server_properties = Properties,
+ 									mechanisms = Mechansims,
+ 									locales = Locales }} = amqp_receive('connection.start'),
+-    WriterPid ! {self(), start_ok(Table) },
++    WriterPid ! {self(), start_ok(State) },
+     {Peer, #'connection.tune'{channel_max = ChannelMax, 
+                               frame_max = FrameMax, 
+                               heartbeat = Heartbeat} } = amqp_receive('connection.tune'),
+@@ -217,51 +167,52 @@ init([User, Pass, ServerHost, VHostPath,
+ 		_ ->
+             exit(unknown_protocol_sequence)                                                                                                                           
+     end,                                                                                                                                   
+-    {ok, Table};
++    {ok, State};
+ 
+ %% This gets called to open a new network client channel process                                                              
+-init( [User, Pass, VHostPath, ReaderPid, WriterPid, Direct] ) ->
+-    Table = ets:new(?MODULE,[]),
+-    ets:insert(Table, {?Username, User} ),
+-    ets:insert(Table, {?Password, Pass} ),
+-    ets:insert(Table, {?VHostPath, VHostPath} ),                               
+-    ets:insert(Table, {?Reader, ReaderPid} ),
+-    ets:insert(Table, {?Writer, WriterPid} ),
+-    ets:insert(Table, {?Direct, Direct} ),
+-    {ok,Table}.
++init([State]) ->
++    {ok, State}.
+ 
+ %% Return the reader and writer pids for the network client
+-handle_call( channel0, From, Table) ->
+-    {reply, { get_username(Table), 
+-              get_password(Table),
+-              get_vhost_path(Table), 
+-              get_reader(Table), 
+-              get_writer(Table) }, Table};
++handle_call( channel0, From, 
++             State = #client_state{username = Username, password = Password,
++                           vhostpath = VHostPath, direct = Direct,
++                           reader_pid = ReaderPid, 
++                           writer_pid = WriterPid}) ->
++	%% TODO figure out whether copying everything individually is necessary
++	%% Originally did this to confine any references to consumers a client may have                                                               
++    State1 = #client_state{username = Username, password = Password,
++                           vhostpath = VHostPath, direct = Direct,
++                           reader_pid = ReaderPid, 
++                           writer_pid = WriterPid},
++    {reply, State1, State};
+ 
+ %% Create and open a channel
+-handle_call( {open_channel, ChannelNumber, OutOfBand, Callback, Mode}, From, Table) ->    
+-    Connection = case Mode of
+-          			direct -> 
+-           				#connection{user = #user{username = get_username(Table)} , 
+-                             vhost = get_vhost_path(Table), 
+-                             reader_pid = self(),
+-                             writer_pid = self()};
+-                    network ->
+-                        #connection{user = #user{username = get_username(Table)} , 
+-                             vhost = get_vhost_path(Table), 
+-                             reader_pid = get_reader(Table),
+-                             writer_pid = get_writer(Table)}
++handle_call( {open_channel, ChannelNumber, OutOfBand, Callback},
++             From, State0 = #client_state{username = Username, password = Password,
++                           vhostpath = VHostPath, direct = Direct,
++                           reader_pid = ReaderPid, writer_pid = WriterPid}) ->    
++    Connection = case Direct of
++          			true -> 
++           				#connection{user = #user{username = Username}, 
++                             		vhost = VHostPath, 
++                                    reader_pid = self(), writer_pid = self()};
++                    false ->
++                        #connection{user = #user{username = Username} , 
++                             vhost = VHostPath, 
++                             reader_pid = ReaderPid,
++                             writer_pid = WriterPid}
+                     end,                        
+     {Con, Peer} = Callback({ChannelNumber, OutOfBand}, Connection),                           
+     io:format("Bound AMQP client channel ~p to pid ~p, peer pid is ~p~n", [ChannelNumber, self(), Peer]),           
+-    ets:insert(Table, {?Peer, Peer}),               
+-    amqp_initial_send(#'channel.open'{out_of_band = OutOfBand}, Table),
++    State1 = State0#client_state{peer = Peer},                            
++    amqp_initial_send(#'channel.open'{out_of_band = OutOfBand}, State1),
+     OpenOk = amqp_receive('channel.open_ok'),                    
+-    {reply, self(), Table};
++    {reply, self(), State1};
+ 
+ %% Access a realm                                                  
+-handle_call({ access_request, Method}, From , Table) ->
+-    amqp_send(Method, Table),
++handle_call({ access_request, Method}, From , State) ->
++    amqp_send(Method, State),
+     %% TODO Think about a case block here for better exception handling
+     %% Also, this case block arises from the difference messages are being passed
+     %% in the direct and networked cases, this can handled a lot better
+@@ -273,12 +224,12 @@ handle_call({ access_request, Method}, F
+         #'access.request_ok'{ticket = NextTicket} ->
+             ok
+     end,                                                                                                                                     
+-	{reply, NextTicket, Table};                                 
++	{reply, NextTicket, State};                                 
+ 
+ %% TODO look at how to apply this to access_request 
+ %% This is effectively RPC over AMQP                                                                                                                       
+-handle_call({ Method, Content }, From , Table) ->                                                                                                                            
+-    amqp_send(Method, Content, Table),
++handle_call({ Method, Content }, From , State) ->                                                                                                                            
++    amqp_send(Method, Content, State),
+     %% TODO have a closer look at this, this case statement should be unecessary
+     case amqp_receive(<<>>) of
+         {Pid,Response} when is_pid(Pid)  ->
+@@ -286,36 +237,37 @@ handle_call({ Method, Content }, From , 
+         Response ->
+             ok
+     end,                
+-    {reply,Response , Table};    
++    {reply, Response , State};    
+         
+-handle_call({ Method }, From , Table) ->                                                                                                                                
+-    amqp_send(Method, Table), 
++handle_call({ Method }, From , State) ->                                                                                                                                
++    amqp_send(Method, State), 
+     case amqp_receive(<<>>) of 
+         {Peer, Reply} ->
+             ok;
+         Reply ->
+             ok
+ 	end,                          
+-    {reply, Reply , Table};        
++    {reply, Reply , State};        
+                                                      
+ handle_call(_Request, _From, State) ->
+     {reply, ignored, State}.                                                                                                           
+                      
+-handle_cast( { register_consumer, Consumer, ConsumerTag }, Table) ->
+-    ets:insert(Table, {ConsumerTag, Consumer} ),
+-    {noreply, Table};
++handle_cast( { register_consumer, Consumer, ConsumerTag }, 
++             State = #client_state{consumers = Consumers}) ->
++    ets:insert(Consumers, {ConsumerTag, Consumer} ),
++    {noreply, State};
+                                       
+ %% Non RPC calls                                                                                                      
+-handle_cast( { Method, Content }, Table) ->
+-    amqp_send(Method, Content, Table),    
+-    {noreply, Table}.                                                                                                                                               
+-
+-handle_info( {Peer, Message}, Table) ->
+-    amqp_handle(Peer, Message, Table),
+-    {noreply, Table};
++handle_cast( { Method, Content }, State) ->
++    amqp_send(Method, Content, State),    
++    {noreply, State}.                                                                                                                                               
++
++handle_info( {Peer, Message}, State) ->
++    amqp_handle(Peer, Message, State),
++    {noreply, State};
+     
+ %% These are subscription events                                                                  
+-handle_info( {frame, Sender, Channel, {method, 'basic.deliver' = Method, Content} }, Table) ->
++handle_info( {frame, Sender, Channel, {method, 'basic.deliver' = Method, Content} }, State) ->
+     Decoded = #content{class_id = ClassId,
+                         properties = Properties,
+ 		  				properties_bin = PropertiesBin,
+@@ -323,16 +275,16 @@ handle_info( {frame, Sender, Channel, {m
+ 
+     CollectedContent = 
+       	Decoded#content{properties_bin = rabbit_framing:decode_properties(ClassId, PropertiesBin)},        
+-    Consumer = get_consumer(<<"">>, Table),
++    Consumer = get_consumer(<<"">>, State),
+ 	Consumer ! CollectedContent,
+-    {noreply, Table};
++    {noreply, State};
+ 
+ %% This captures the close event over the network
+ %% Haven't genericized any of the handle_info(XXX),
+ %% because I think they might *wrongly* capture some
+ %% messages in an RPC sequence....will have to investigate      
+ %% OR put a predicate on the handle method, e.g. when not(Method = basic.get)                                                             
+-handle_info( {frame, Sender, Channel, {method, 'connection.close' = Method, Content} }, Table) ->
++handle_info( {frame, Sender, Channel, {method, 'connection.close' = Method, Content} }, State) ->
+     Decoded = #content{class_id = ClassId,
+                         properties = Properties,
+ 		  				properties_bin = PropertiesBin,
+diff -r 846f18b5364f src/amqp_connection.erl
+--- a/src/amqp_connection.erl	Tue Aug 07 17:10:40 2007 +0100
++++ b/src/amqp_connection.erl	Tue Aug 07 17:35:58 2007 +0100
+@@ -27,13 +27,13 @@ open_channel( {Pid, Mode}, ChannelNumber
+     case Mode of
+         direct ->
+             Callback = fun(X,Y) -> amqp_direct_driver:open_channel(X,Y) end,
+-            gen_server:call(Pid, {open_channel, ChannelNumber, amqp_util:binary(OutOfBand), Callback, direct}),
++            gen_server:call(Pid, {open_channel, ChannelNumber, amqp_util:binary(OutOfBand), Callback}),
+             Pid;
+         network ->    
+-    		{User, Pass, Host, ReaderPid, WriterPid} = gen_server:call(Pid, channel0),
+-    		{ok, Channel} = gen_server:start_link(amqp_client, [User, Pass, Host, ReaderPid, WriterPid, false], []),
++    		ClientState = gen_server:call(Pid, channel0),
++    		{ok, Channel} = gen_server:start_link(amqp_client, [ClientState], []),
+             Callback = fun(X,Y) -> amqp_network_driver:open_channel(X,Y) end,
+-    		gen_server:call(Channel, {open_channel, ChannelNumber, amqp_util:binary(OutOfBand), Callback, network}),
++    		gen_server:call(Channel, {open_channel, ChannelNumber, amqp_util:binary(OutOfBand), Callback}),
+     		Channel
+      end.   
+ 

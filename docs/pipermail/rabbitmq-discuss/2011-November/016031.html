@@ -1,0 +1,165 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] STOMP performance problems at &gt; 1200 messages/s
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20STOMP%20performance%20problems%20at%20%3E%201200%20messages/s&In-Reply-To=%3CCA%2Bw7haVt65BPyikvnHp8CrNhawwjjOz9CrwOiF2ZK_GAPpxkYA%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="016059.html">
+   <LINK REL="Next"  HREF="016034.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] STOMP performance problems at &gt; 1200 messages/s</H1>
+    <B>Al Tobey</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20STOMP%20performance%20problems%20at%20%3E%201200%20messages/s&In-Reply-To=%3CCA%2Bw7haVt65BPyikvnHp8CrNhawwjjOz9CrwOiF2ZK_GAPpxkYA%40mail.gmail.com%3E"
+       TITLE="[rabbitmq-discuss] STOMP performance problems at &gt; 1200 messages/s">al at ooyala.com
+       </A><BR>
+    <I>Tue Nov  8 00:18:19 GMT 2011</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="016059.html">[rabbitmq-discuss] Channel error handling
+</A></li>
+        <LI>Next message: <A HREF="016034.html">[rabbitmq-discuss] STOMP performance problems at &gt; 1200	messages/s
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#16031">[ date ]</a>
+              <a href="thread.html#16031">[ thread ]</a>
+              <a href="subject.html#16031">[ subject ]</a>
+              <a href="author.html#16031">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>I mentioned some performance issues I experienced over the weekend with
+STOMP on Twitter and @monadic asked me to send an email, so here it is.
+
+For a recent internal hackathon project, I hooked some of our logs to
+RabbitMQ so a team of engineers could process events in real time. Having
+done this in the past, I wrote a simple perl program to tail the logfile in
+question and put each message on the queue (e.g. /queue/logs).  The
+messages are about 1100 bytes on average, including the usual apache style
+log stuff and a serialized object, mime-encoded.  I was capturing logs from
+8 machines that are load balanced, so the rate of messages was pretty even.
+
+Everything seemed to be working fine when I set it up. Messages were going
+in and coming out just fine at 5000-6000 messages/s (both sides stomp).
+
+Once the engineer I was helping started running his stuff against RMQ, we
+started to notice that there was anywhere from 30-600 seconds of lag
+between the logs and his client (a dead-simple Ruby app using net-stomp).
+To make things extra fun, our traffic rose and the message rate rose with
+up to ~14km/s.  We instrumented my tailing code and his ruby code and
+couldn't find any issue with either. I started watching the RabbitMQ
+instance, which is running in EC2 on a m2.xlarge (in retrospect, not the
+best instance choice). I could see both vcpus were pretty busy hovering at
+6-10% idle with 12-20% system. I pulled up top with thread view enabled and
+could see two threads were pegging the CPU.  I assumed, but did not verify,
+that these were running the STOMP code. At the same time all of this was
+happening, we were watching message rates in the admin webui. When I
+compared numbers in the UI to what my producers were sending, there was a
+large mismatch that correlated with the delay we were seeing at the
+consumers.  The memory usage of erlang on the RMQ host was growing well
+past the 40% mark, so we bumped that to 75%, which simply allowed more time
+before it blew up.
+
+My suspicion is that the STOMP plugin is getting backed up, based on these
+observations:
+  * memory usage regularly maxed out under load (4,000-14,000
+messages/second)
+  * the AMQP queue stats did not match what the producers sent
+  * the amount of memory consumed was way out of order from what the AMQP
+queue depths were (usually close to 0!)
+  * we were definitely consuming fast enough with 3-8 consumer processes on
+dedicated machines (4x m2.xlarge)
+     * these machines/processes were showing no stress
+  * after shutting down producers, it appeared as if they were producing
+for up to 10 minutes after shutdown
+
+While under the gun, we tried a few quick &amp; dirty hacks:
+
+  * dropped every other log line in the producer to cut msg/s in half
+    * slowed performance decay but did not fix anything
+  * restarted the producer regularly to cycle connections
+    * made things worse - we could observe many draining producer channels
+in the admin UI that hung around for more than 10 minutes
+       * after a while we bounced rabbitmq so we could move on
+    * thrashing seemed to make the existing producer channels drain even
+slower
+  * start more consumers - no change
+  * shut down producers
+    * only when I took it down to 1 producer did memory usage stop
+climbing, so ~1200 messages/s is the observed limit
+
+Things I'd try if this project was still running, but have not:
+
+  * upgrade to Erlang R14
+  * switch to AMQP producers
+  * more/faster CPU instances
+
+In any case, the experiment driving all of this is concluded for now. I can
+still fire up the producers and dummy consumers for quick tests but don't
+have a lot of time to dedicate to debugging this.  For what it's worth, the
+hackathon project was super cool and successful; I just had to babysit the
+queue and fire up producers just before the demo started so delay would be
+acceptable ;)
+
+-Al
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20111107/5ac3a90f/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20111107/5ac3a90f/attachment.htm</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="016059.html">[rabbitmq-discuss] Channel error handling
+</A></li>
+	<LI>Next message: <A HREF="016034.html">[rabbitmq-discuss] STOMP performance problems at &gt; 1200	messages/s
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#16031">[ date ]</a>
+              <a href="thread.html#16031">[ thread ]</a>
+              <a href="subject.html#16031">[ subject ]</a>
+              <a href="author.html#16031">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

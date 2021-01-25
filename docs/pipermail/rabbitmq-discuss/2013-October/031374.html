@@ -1,0 +1,158 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] RabbitMQ / Erlang not running on all cores?
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20RabbitMQ%20/%20Erlang%20not%20running%20on%20all%20cores%3F&In-Reply-To=%3CCACLE7iyExANwm3qSMXj0E-SeuEq%3DKA-aLriQ-SZqZ%3DLcGDzMYw%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="031254.html">
+   <LINK REL="Next"  HREF="031390.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] RabbitMQ / Erlang not running on all cores?</H1>
+    <B>Matt Pietrek</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20RabbitMQ%20/%20Erlang%20not%20running%20on%20all%20cores%3F&In-Reply-To=%3CCACLE7iyExANwm3qSMXj0E-SeuEq%3DKA-aLriQ-SZqZ%3DLcGDzMYw%40mail.gmail.com%3E"
+       TITLE="[rabbitmq-discuss] RabbitMQ / Erlang not running on all cores?">mpietrek at skytap.com
+       </A><BR>
+    <I>Fri Oct 25 22:00:10 BST 2013</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="031254.html">[rabbitmq-discuss] RabbitMQ / Erlang not running on all cores?
+</A></li>
+        <LI>Next message: <A HREF="031390.html">[rabbitmq-discuss] RabbitMQ / Erlang not running on all cores?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#31374">[ date ]</a>
+              <a href="thread.html#31374">[ thread ]</a>
+              <a href="subject.html#31374">[ subject ]</a>
+              <a href="author.html#31374">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Following up on this to close the loop on what happened, and hopefully
+provide some useful information if anybody else run into a similar problem.
+
+Long story short, I was able to find/fix the problem without needing to
+upgrade from RabbitMQ 3.0.2 and Erlang R15B01. (Although I hope to upgrade
+soon.)
+
+Our server had ~800 connections with associated subscriptions from clients.
+Using top, I found a disproportionate amount of time spent in system code
+on core 0. Using strace, I found that poll() was being called, specifying
+~800 file descriptors (i.e., all our connections).
+
+Turns out that Erlang by default doesn't use the much more efficient
+epoll() mechanism. However, RabbitMQ's startup of Erlang includes the &quot;+K
+true&quot; option, which tells Erlang to use epoll.
+
+For reasons I won't go into, I was setting the RABBITMQ_SERVER_ERL_ARGS
+environment variable, not realizing that what I put there *replaced* what
+RabbitMQ passes to Erlang. I mistakenly believed it got *added* to the
+Erlang start parameter.
+
+Once I changed the RABBITMQ_SERVER_ERL_ARGS variable to include the
+RabbitMQ defaults as well, things started working much better.
+
+For what it's worth, it might be useful for RabbitMQ to log the Erlang
+related stuff and highlight if any thing's been changed from the defaults.
+
+Thanks Matthias, Michael and Zhibo for your help!
+
+
+On Wed, Oct 23, 2013 at 12:08 AM, Matthias Radestock
+&lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">matthias at rabbitmq.com</A>&gt;wrote:
+
+&gt;<i> Matt,
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> On 22/10/13 23:44, Matt Pietrek wrote:
+</I>&gt;<i>
+</I>&gt;&gt;<i> The load on our box (it's in production) has dropped a little bit, but
+</I>&gt;&gt;<i> core 0 is still running nearly flat out.
+</I>&gt;&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> If you are seeing *less* than 100% utilisation of one core then your
+</I>&gt;<i> system is *not* CPU bound.
+</I>&gt;<i>
+</I>&gt;<i> Check that RabbitMQ is actually a bottlneck here, rather than, say, your
+</I>&gt;<i> producers or consumers.
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>  Are there other useful &quot;eval&quot; commands that I could use to ferret out
+</I>&gt;&gt;<i> what's happening? This is a box in production and we have an upcoming
+</I>&gt;&gt;<i> release that's only going to add more load on this box.
+</I>&gt;&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> We could come up with some eval code to identify the top running
+</I>&gt;<i> processes. Or perhaps find a way to get etop to run (Erlang's equivalent of
+</I>&gt;<i> 'top'). But...
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>  Also, we are running this in a cluster with another box, with all queues
+</I>&gt;&gt;<i> in HA mode.
+</I>&gt;&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> There have been tons of improvements *and bug fixes* to mirrored queues.
+</I>&gt;<i> Some relating to performance. So I strongly recommend you upgrade RabbitMQ
+</I>&gt;<i> to the lastest version. And Erlang too, due to the SMP scheduler
+</I>&gt;<i> improvements I mentioned in my earlier email.
+</I>&gt;<i>
+</I>&gt;<i> If you still see performance anomalies after the upgrade then we can
+</I>&gt;<i> investigate further.
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> Regards,
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> Matthias.
+</I>&gt;<i> ______________________________**_________________
+</I>&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.</A>**rabbitmq.com&lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>&gt;
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/**cgi-bin/mailman/listinfo/**rabbitmq-discuss&lt;https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/**cgi-bin/mailman/listinfo/**rabbitmq-discuss&lt;https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>&gt;
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20131025/504c794b/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20131025/504c794b/attachment.htm</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="031254.html">[rabbitmq-discuss] RabbitMQ / Erlang not running on all cores?
+</A></li>
+	<LI>Next message: <A HREF="031390.html">[rabbitmq-discuss] RabbitMQ / Erlang not running on all cores?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#31374">[ date ]</a>
+              <a href="thread.html#31374">[ thread ]</a>
+              <a href="subject.html#31374">[ subject ]</a>
+              <a href="author.html#31374">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

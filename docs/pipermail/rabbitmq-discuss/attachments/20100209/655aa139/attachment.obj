@@ -1,0 +1,199 @@
+Index: rabbit.c
+===================================================================
+--- rabbit.c	(revision 18759)
++++ rabbit.c	(revision 18853)
+@@ -139,7 +139,7 @@
+ };
+ /* }}} */
+ 
+-#ifdef COMPILE_DL_AMQP
++#ifdef COMPILE_DL_RABBIT
+ ZEND_GET_MODULE(rabbit)
+ #endif
+ 
+@@ -265,7 +265,7 @@
+ 	amqp_set_sockfd( ctx->conn, ctx->fd);
+   
+ 	amqp_rpc_reply_t x =
+-		amqp_login( ctx->conn, vhost, 0 , FRAME_MAX , AMQP_SASL_METHOD_PLAIN, login, psw);
++		amqp_login( ctx->conn, vhost, 0 , FRAME_MAX , 0 , AMQP_SASL_METHOD_PLAIN, login, psw);
+ 	
+    if ( x.reply_type != AMQP_RESPONSE_NORMAL) {
+ 		rabbit_error( x, pstr ); 
+@@ -401,10 +401,11 @@
+ 		};
+ 	}	  
+ 	
++	amqp_method_number_t method_ok = AMQP_QUEUE_DECLARE_OK_METHOD;
+ 	result = amqp_simple_rpc(cnn->conn, 
+ 				AMQP_CHANNAL, 
+ 				AMQP_QUEUE_DECLARE_METHOD,
+-				AMQP_QUEUE_DECLARE_OK_METHOD, &s);
++				&method_ok, &s);
+ 		
+ 	res = (amqp_rpc_reply_t) result; 	
+ 
+@@ -475,10 +476,11 @@
+ 		.nowait = 0,
+ 	}; 
+ 
++    amqp_method_number_t method_ok = AMQP_QUEUE_DELETE_OK_METHOD;
+ 	result = amqp_simple_rpc(cnn->conn, 
+ 				AMQP_CHANNAL, 
+ 				AMQP_QUEUE_DELETE_METHOD,
+-				AMQP_QUEUE_DELETE_OK_METHOD, &s);
++				&method_ok, &s);
+ 	
+ 	res = (amqp_rpc_reply_t) result;  	
+ 	
+@@ -537,10 +539,11 @@
+ 			.nowait = 0,
+ 		}; 
+ 	
++	amqp_method_number_t method_ok = AMQP_QUEUE_PURGE_OK_METHOD;
+ 	result = amqp_simple_rpc(cnn->conn, 
+ 				AMQP_CHANNAL, 
+ 				AMQP_QUEUE_PURGE_METHOD,
+-				AMQP_QUEUE_PURGE_OK_METHOD, &s);
++				&method_ok, &s);
+ 		
+ 	res = (amqp_rpc_reply_t) result;  	
+ 
+@@ -600,10 +603,11 @@
+ 		.arguments = {.num_entries = 0, .entries = NULL}
+ 	};
+ 	  	  
++    amqp_method_number_t method_ok = AMQP_QUEUE_BIND_OK_METHOD;
+     result = amqp_simple_rpc(cnn->conn,
+ 							AMQP_CHANNAL,
+ 							AMQP_QUEUE_BIND_METHOD,
+-							AMQP_QUEUE_BIND_OK_METHOD, &s);
++							&method_ok, &s);
+ 
+ 	res = (amqp_rpc_reply_t)result; 	
+ 	
+@@ -660,10 +664,11 @@
+ 		.arguments = {.num_entries = 0, .entries = NULL}
+ 	};
+ 	  	  
++    amqp_method_number_t method_ok = AMQP_QUEUE_UNBIND_OK_METHOD;
+     result = amqp_simple_rpc(cnn->conn,
+ 							AMQP_CHANNAL,
+ 							AMQP_QUEUE_UNBIND_METHOD,
+-							AMQP_QUEUE_UNBIND_OK_METHOD, &s);
++							&method_ok, &s);
+ 
+ 	res = (amqp_rpc_reply_t)result; 	
+ 	
+@@ -726,10 +731,11 @@
+ 		.nowait = 0	
+ 	};
+ 	  
++	amqp_method_number_t method_ok = AMQP_BASIC_CONSUME_OK_METHOD;
+ 	res = (amqp_rpc_reply_t)amqp_simple_rpc(cnn->conn, 
+ 					AMQP_CHANNAL, 
+ 					AMQP_BASIC_CONSUME_METHOD, 
+-					AMQP_BASIC_CONSUME_OK_METHOD, 
++					&method_ok, 
+ 					&s);
+ 			  
+ 
+@@ -996,8 +1002,8 @@
+ 	ctx = (rabbit_exchange_object *)zend_object_store_get_object(id TSRMLS_CC);
+ 	
+ 	if ( !type_len ){
+-		type="direct";	// default - direct
+-		type_len=6;	//strlen('direct')
++		type="topic";	// default - direct
++		type_len=5;	//strlen('direct')
+ 	}	
+ 	
+ 
+@@ -1005,7 +1011,7 @@
+ //		printf("exchange name=%s\n",name );
+ 		strncpy(ctx->name,name,name_len);  
+ 		ctx->name_len = name_len;
+-///		printf("after copy\n" );
++//      printf("after copy\n" );
+ 	
+ 	  s =	(amqp_exchange_declare_t) {
+ 		.ticket = 0,
+@@ -1018,7 +1024,7 @@
+ 		.nowait = 0,
+ 		.arguments = {.num_entries = 0, .entries = NULL}
+ 	};
+-///	printf("after declare\n" );
++    //  printf("after declare\n" );
+ 	
+ 	} else {
+ //	printf("exchange constr name len=%d\n",ctx->name_len );
+@@ -1032,7 +1038,6 @@
+ 		.internal =  ( AMQP_INTERNAL & parms )? 1:0,
+ 		.nowait = 0,
+ 		.arguments = {.num_entries = 0, .entries = NULL}
+-	
+ 		};
+ 	}
+     
+@@ -1040,9 +1045,16 @@
+ 	if(!ctx_cnn)
+ 		zend_throw_exception(zend_exception_get_default(TSRMLS_C), "AMQPConnection is null" ,0 TSRMLS_CC);
+ 		
++//  printf("Validating declaration?\n" );		
+ 		
++	amqp_method_number_t method_ok = AMQP_EXCHANGE_DECLARE_OK_METHOD;
++    res = amqp_simple_rpc(ctx_cnn->conn,
++                        AMQP_CHANNAL,
++                        AMQP_EXCHANGE_DECLARE_METHOD,
++                        &method_ok,
++                        &s);
+ 		
+-	res = amqp_simple_rpc(ctx_cnn->conn, AMQP_CHANNAL, AMQP_EXCHANGE_DECLARE_METHOD, AMQP_EXCHANGE_DECLARE_OK_METHOD, &s);
++//  printf("declaration valid\n" );
+ 	
+ 	if (res.reply_type != AMQP_RESPONSE_NORMAL ){
+ 		char str[256];
+@@ -1115,7 +1127,12 @@
+ 	if(!ctx_cnn)
+ 		zend_throw_exception(zend_exception_get_default(TSRMLS_C), "AMQPConnection is null" ,0 TSRMLS_CC);
+ 		
+-	res = amqp_simple_rpc(ctx_cnn->conn, AMQP_CHANNAL, AMQP_EXCHANGE_DECLARE_METHOD, AMQP_EXCHANGE_DECLARE_OK_METHOD, &s);
++	amqp_method_number_t method_ok = AMQP_QUEUE_DECLARE_OK_METHOD;
++    res = amqp_simple_rpc(ctx_cnn->conn,
++                        AMQP_CHANNAL,
++                        AMQP_EXCHANGE_DECLARE_METHOD,
++                        &method_ok,
++                        &s);
+ 	
+ 	if (res.reply_type != AMQP_RESPONSE_NORMAL ){
+ 		char str[256];
+@@ -1132,7 +1149,7 @@
+ }
+ /* }}} */
+ 
+-/* {{{ proto AMQPEexchange::publish( string msg, [string key] );
++/* {{{ proto AMQPExchange::publish( string msg, [string key] );
+    publish into Exchange   
+ */
+ PHP_METHOD(rabbit_exchange_class, publish)
+@@ -1242,10 +1259,11 @@
+ 		.arguments = {.num_entries = 0, .entries = NULL}
+ 	};
+ 	  	  
++    amqp_method_number_t method_ok = AMQP_QUEUE_BIND_OK_METHOD;
+     result = amqp_simple_rpc(cnn->conn,
+ 							AMQP_CHANNAL,
+ 							AMQP_QUEUE_BIND_METHOD,
+-							AMQP_QUEUE_BIND_OK_METHOD, &s);
++							&method_ok, &s);
+ 
+ 	res = (amqp_rpc_reply_t)result; 	
+ 	
+@@ -1368,7 +1386,7 @@
+ 	zend_class_entry ce;
+ 	//php_xmlsec_error *err_rsc;
+ 
+-	INIT_CLASS_ENTRY(ce, "AMQPConnect", rabbit_class_functions);
++	INIT_CLASS_ENTRY(ce, "AMQPConnection", rabbit_class_functions);
+ 	ce.create_object = rabbit_ctor;
+ 	rabbit_class_entry = zend_register_internal_class(&ce TSRMLS_CC);

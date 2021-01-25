@@ -1,0 +1,105 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Message ack timeout
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20Message%20ack%20timeout&In-Reply-To=08C22EAA-BE7F-4A87-917A-F977B6B354C4%40gmail.com">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001716.html">
+   <LINK REL="Next"  HREF="001718.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Message ack timeout</H1>
+    <B>Dmitriy Samovskiy</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20Message%20ack%20timeout&In-Reply-To=08C22EAA-BE7F-4A87-917A-F977B6B354C4%40gmail.com"
+       TITLE="[rabbitmq-discuss] Message ack timeout">dmitriy.samovskiy at cohesiveft.com
+       </A><BR>
+    <I>Fri Oct 10 18:14:32 BST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001716.html">[rabbitmq-discuss] Message ack timeout
+</A></li>
+        <LI>Next message: <A HREF="001718.html">[rabbitmq-discuss] Message ack timeout
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1717">[ date ]</a>
+              <a href="thread.html#1717">[ thread ]</a>
+              <a href="subject.html#1717">[ subject ]</a>
+              <a href="author.html#1717">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>
+Hi Haldun,
+
+Haldun Bayhantopcu wrote:
+&gt;<i> Hi all,
+</I>&gt;<i> 
+</I>&gt;<i> I'm trying to set up a system where one process produces several
+</I>&gt;<i> messages to many consumer processes. Each consumer creates a new
+</I>&gt;<i> record in database for each message. Since this is a bit slow,
+</I>&gt;<i> and heavy work for database when especially a lot of messages
+</I>&gt;<i> are produced in a short interval, I considered buffering the
+</I>&gt;<i> messages in consumer processes, and then sending them to the
+</I>
+Interesting problem. I personally can think of 2 ways how you can design it to meet your 
+requirements. (Please note it's purely on theoretical level, I haven't tested any of it).
+
+
+1. Your consumer can establish a connection to rabbitmq broker, and then set up N 
+channels. Do basic.get on each channel, you will end up with a batch of at most N 
+messages, write the batch to the database, and then ack each message individually. Then 
+repeat.
+
+A problem of course is that something may happen before you finish ack'ing all messages 
+(say after you ack'ed 2 of 5). It is my understanding that you won't be able to ack them 
+all together, since basic.ack can only ack messages on its channel. Not sure if you can 
+handle that in your app, but unack'ed 3 messages will be delivered to you again in this 
+scenario.
+
+
+1a. You can use nearly identical approach by having your consumers open multiple 
+connections to broker (and a single channel inside each connection). Might get more 
+complicated, as you will have to juggle multiple sockets.
+
+
+2. &quot;buffering&quot; is somewhat like &quot;queueing&quot;, so why not use rabbitmq to be your buffer? In 
+this case, you set up a regular consumer (basic.consume). When a message arrives, you 
+publish it back to rabbitmq but to a different routing_key (say &quot;finished.{batch_number}&quot; 
+to topic-based exchange), and then ack the original one. Once you accumulate N messages, 
+you write entire batch to the database, and then send something like &quot;END&quot; to 
+&quot;finished.{batch_number}&quot;. Have another process regularly check all finished.* messages, 
+and for those that were not properly END'ed, put them back into original queue.
+
+In this case, your window of inconsistency should be much smaller I think. With multiple 
+consumer, make sure to use &quot;finished.{consumer_id}_{batch_number}&quot; instead.
+
+
+
+- Dmitriy
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001716.html">[rabbitmq-discuss] Message ack timeout
+</A></li>
+	<LI>Next message: <A HREF="001718.html">[rabbitmq-discuss] Message ack timeout
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1717">[ date ]</a>
+              <a href="thread.html#1717">[ thread ]</a>
+              <a href="subject.html#1717">[ subject ]</a>
+              <a href="author.html#1717">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

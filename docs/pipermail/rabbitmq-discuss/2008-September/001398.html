@@ -1,0 +1,186 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Broadcasting and STOMP (was Re: python stomp	examples)
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20Broadcasting%20and%20STOMP%20%28was%20Re%3A%20python%20stomp%0A%09examples%29&In-Reply-To=48C66DF9.8030507%40lshift.net">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001397.html">
+   <LINK REL="Next"  HREF="001399.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Broadcasting and STOMP (was Re: python stomp	examples)</H1>
+    <B>Novak Joe</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20Broadcasting%20and%20STOMP%20%28was%20Re%3A%20python%20stomp%0A%09examples%29&In-Reply-To=48C66DF9.8030507%40lshift.net"
+       TITLE="[rabbitmq-discuss] Broadcasting and STOMP (was Re: python stomp	examples)">joes.mailing.lists at gmail.com
+       </A><BR>
+    <I>Wed Sep 10 10:22:12 BST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001397.html">[rabbitmq-discuss] Broadcasting and STOMP (was Re: python stomp	examples)
+</A></li>
+        <LI>Next message: <A HREF="001399.html">[rabbitmq-discuss] Broadcasting and STOMP (was Re: python stomp	examples)
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1398">[ date ]</a>
+              <a href="thread.html#1398">[ thread ]</a>
+              <a href="subject.html#1398">[ subject ]</a>
+              <a href="author.html#1398">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi,
+
+  First I wanted to thank you for this post, it was tremendously
+informative for me and pointed me at some other very useful resources.
+ I think much of my initial confusion came from a lack of clear
+boundaries (in my head) between AMQP and STOMP within rabbitmq.  Also,
+lthough this response cleared up a lot, it also prompted some further
+questions.
+  Again, I've now got a total of roughly 2 days experience with STOMP
+and AMQP so I apologize if these questions are a bit on the weak side.
+
+&gt;<i> This is a good question. Here's where STOMP's definition gets weaker,
+</I>&gt;<i> and where we start to see AMQP's semantics leaking through.
+</I>&gt;<i>
+</I>&gt;<i> The way AMQP works is that messages are
+</I>&gt;<i>
+</I>&gt;<i>  - sent by /producers/ to /exchanges/, and from there are
+</I>&gt;<i>  - forwarded to /queues/ along /bindings/, from which they are
+</I>&gt;<i>  - distributed round-robin(ish) to /consumers/
+</I>&gt;<i>
+</I>&gt;<i> As messages pass through an exchange, they are duplicated, and a /copy/
+</I>&gt;<i> is sent down each activated binding.
+</I>&gt;<i>
+</I>&gt;<i> In contrast, when messages leave a queue for a consumer, they are not
+</I>&gt;<i> duplicated. One message, sitting on a queue, is delivered to only one of
+</I>&gt;<i> the available consumers. Only if that consumer rejects the message
+</I>&gt;<i> somehow (e.g. by crashing or otherwise disconnecting before it
+</I>&gt;<i> acknowledges the message) will the message be sent on by the queue to
+</I>&gt;<i> some other consumer.
+</I>Is this round-robin functionality predictable in terms of the order in
+which a set of consumers subscribed to a single queue will be
+notified?  That is, if I have 5 consumers subscribed to one queue,
+(A,B,C,D,E) and my producer sends a message which makes its way to the
+queue, how does rabbitmq determine which of those 5 consumers should
+receive the message?  If message 234 is sent and A rejects, then B
+accepts it, will the next message 235 first be sent to consumer C?  Or
+is this just kind of random?
+
+I'm primarily concerned with broadcasting so this isn't a big deal to
+me at the moment but I'm curious how things work.
+
+&gt;<i> With the STOMP adapter, a plain old
+</I>&gt;<i>
+</I>&gt;<i>  SUBSCRIBE
+</I>&gt;<i>  destination: myqueue
+</I>&gt;<i>
+</I>&gt;<i> will create a new consumer. If there are multiple clients, all
+</I>&gt;<i> SUBSCRIBEing to the same queue, then there will be multiple consumers
+</I>&gt;<i> all on the same queue, leading to round-robin delivery to those clients.
+</I>&gt;<i>
+</I>&gt;<i> In order to get broadcast behaviour, you need to use a feature
+</I>&gt;<i> (originally contributed by Artur, now present in the trunk) which
+</I>&gt;<i> exposes a little more of AMQP's semantics through STOMP:
+</I>&gt;<i>
+</I>&gt;<i>  SUBSCRIBE
+</I>&gt;<i>  id: da9d4779-92b9-4cef-86c0-800bdc977f15
+</I>&gt;<i>  destination:
+</I>&gt;<i>  exchange: amq.topic
+</I>&gt;<i>  routing_key: #
+</I>&gt;<i>
+</I>&gt;<i> The empty-string used for the &quot;destination&quot; header tells the adapter to
+</I>&gt;<i> create a private queue for this one subscription, which will last for
+</I>&gt;<i> the duration of your connection, or until you UNSUBSCRIBE.
+</I>Awesome, this is what I was looking for.
+
+&gt;<i> The &quot;id&quot; header should be some string unique to the current connection
+</I>&gt;<i> (!) which names the subscription. I've used a fresh GUID here, but
+</I>&gt;<i> anything connection-unique is acceptable.
+</I>Would there be any argument against using some version of a GUID-style
+browser session cookie here?  This would provide me with a nice
+mapping to my web application as well, to help keep things organized.
+
+&gt;<i> The &quot;exchange&quot; header tells the adapter to bind the new private queue to
+</I>&gt;<i> the named exchange. All AMQP brokers come with preconfigured
+</I>&gt;<i> &quot;amq.direct&quot;, &quot;amq.topic&quot; and &quot;amq.fanout&quot; exchanges, with semantics
+</I>&gt;<i> described by the AMQP specification (section 3.1.3 of
+</I>&gt;<i> <A HREF="http://jira.amqp.org/confluence/download/attachments/720900/amqp0-8.pdf?version=1">http://jira.amqp.org/confluence/download/attachments/720900/amqp0-8.pdf?version=1</A> ).
+</I>Thanks for this link, although maybe I should have looked harder for
+the spec myself.  Instead I fruitlessly searched about the rabbitmq
+site for 'fanout' and 'topic'.
+
+&gt;<i> The &quot;routing_key&quot; header is used as described in &#167;3.1.3 to select which
+</I>&gt;<i> messages are copied into the queue by the exchange.
+</I>Based on the AMQP spec it looks like a topic exchange is best suited
+to my needs.  This provides the same basic functionality as the
+fanout, but also provides added granularity in terms of determining
+who gets what in a hierarchical fashion ( I guess it doesn't
+necessarily have to be hierarchical though ).
+
+&gt;<i> The STOMP gateway doesn't provide a way of creating a new exchange, yet;
+</I>&gt;<i> you have to use a real AMQP client (one that can issue
+</I>&gt;<i> &quot;exchange.declare&quot; commands) for that, currently. Suggestions welcome!
+</I>Hmm.  From the AMQP spec it looks like I can create a 'durable'
+exchange, which means that there shouldn't be any obstacle to creating
+a hybrid producer client, right?  I am working primarily with python,
+so I'm thinking I can use stomper+py-amqplib or python-qpid
+(<A HREF="http://barryp.org/software/py-amqplib/">http://barryp.org/software/py-amqplib/</A>) then just use amqp module to
+add the exchange and do all my message passing with STOMP.
+
+&gt;<i> To unsubscribe from a private queue,
+</I>&gt;<i>
+</I>&gt;<i>  UNSUBSCRIBE
+</I>&gt;<i>  id: da9d4779-92b9-4cef-86c0-800bdc977f15
+</I>&gt;<i>
+</I>&gt;<i> as usual, supplying the same &quot;id&quot; you supplied to the SUBSCRIBE.
+</I>&gt;<i>
+</I>&gt;<i> The private queue will be deleted when the UNSUBSCRIBE has completed.
+</I>&gt;<i>
+</I>&gt;<i> I've just committed
+</I>&gt;<i> <A HREF="http://hg.rabbitmq.com/rabbitmq-stomp/rev/8972d204473a,">http://hg.rabbitmq.com/rabbitmq-stomp/rev/8972d204473a,</A> which contains
+</I>&gt;<i> some (ruby!) examples of topic broadcast, private-queue creation, and
+</I>&gt;<i> unsubscription.
+</I>Awesome, thanks for all that!
+
+Cheers,
+  Joe
+
+
+
+
+
+&gt;<i>
+</I>&gt;<i> Regards,
+</I>&gt;<i>  Tony
+</I>&gt;<i> --
+</I>&gt;<i>  [][][] Tony Garnock-Jones     | Mob: +44 (0)7905 974 211
+</I>&gt;<i>   [][] LShift Ltd             | Tel: +44 (0)20 7729 7060
+</I>&gt;<i>  []  [] <A HREF="http://www.lshift.net/">http://www.lshift.net/</A> | Email: <A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">tonyg at lshift.net</A>
+</I>&gt;<i>
+</I>
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001397.html">[rabbitmq-discuss] Broadcasting and STOMP (was Re: python stomp	examples)
+</A></li>
+	<LI>Next message: <A HREF="001399.html">[rabbitmq-discuss] Broadcasting and STOMP (was Re: python stomp	examples)
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1398">[ date ]</a>
+              <a href="thread.html#1398">[ thread ]</a>
+              <a href="subject.html#1398">[ subject ]</a>
+              <a href="author.html#1398">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

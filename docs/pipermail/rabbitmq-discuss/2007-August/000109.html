@@ -1,0 +1,142 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss]  FW: Multiple consumers
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20%20FW%3A%20Multiple%20consumers&In-Reply-To=269388e30708070821l5e0e97eu848ac61b0e578225%40mail.gmail.com">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000108.html">
+   <LINK REL="Next"  HREF="000111.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss]  FW: Multiple consumers</H1>
+    <B>Ben Hood</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20%20FW%3A%20Multiple%20consumers&In-Reply-To=269388e30708070821l5e0e97eu848ac61b0e578225%40mail.gmail.com"
+       TITLE="[rabbitmq-discuss]  FW: Multiple consumers">0x6e6562 at gmail.com
+       </A><BR>
+    <I>Tue Aug  7 17:40:06 BST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000108.html">[rabbitmq-discuss] FW: Multiple consumers
+</A></li>
+        <LI>Next message: <A HREF="000111.html">[rabbitmq-discuss] Socket Exceptions
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#109">[ date ]</a>
+              <a href="thread.html#109">[ thread ]</a>
+              <a href="subject.html#109">[ subject ]</a>
+              <a href="author.html#109">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Matthias,
+
+I've reworked your comments into this patch, which I've responded to
+inline. In essence, the amqp_client module has been thinned and
+de-parameterized and I've introduced the modules amqp_connection and
+amqp_channel.
+
+BTW, since this is get quite patchy, I've started to use a patch stack
+to keep things maintainable and separated, so you can have any patch
+as a diff of the vanilla 1.1.0 tree or as a patch series, whichever
+you'd prefer.
+
+&gt;<i> I am not convinced parameterised modules are the way to go. You can
+</I>&gt;<i> tell that something isn't quite right by the large number of places
+</I>&gt;<i> amqp_client has different branches for the network and direct case.
+</I>--snip--
+&gt;<i> when I think it should be
+</I>&gt;<i>
+</I>&gt;<i>     {ok, Connection} = amqp_network_client:start(User, Password),
+</I>&gt;<i>     Channel = amqp_connection:open_channel(Connection, ChannelNumber, &quot;&quot;),
+</I>&gt;<i>     Ticket = amqp_channel:access_request(Channel, Realm)
+</I>&gt;<i>     ...
+</I>&gt;<i>     amqp_channel:close(Channel),
+</I>&gt;<i>     amqp_connection:close(Connection).
+</I>&gt;<i>
+</I>&gt;<i> The module parameterisation and general client module structure is
+</I>&gt;<i> driven largely by the need to support both the direct and network
+</I>&gt;<i> client. I reckon we are trying to bite off too much in one go
+</I>&gt;<i> here, and suggest concentrating on the network client first.
+</I>
+I've removed the parameterization so the user code looks like this:
+
+{ok, Connection} = amqp_connection:start(User, Password, Host),
+Channel = amqp_connection:open_channel(Connection, ChannelNumber, &quot;&quot;),
+amqp_channel:access_request(Channel, Realm),
+%%...
+amqp_channel:stop(Channel),
+amqp_connection:stop(Connection).
+
+This differs only marginally from your suggestion in that I don't use
+a separate amqp_network_client module, because when I did so, I
+realized that this was very thin and in actual fact quite tied to the
+amqp_connection module.
+
+Part of the root cause for the parameterization was the direct/network
+branching in the amqp_client akin to ifdef macros in C. I've reduced
+the use of these and made them dependent on an internal flag, so they
+haven't gone away (yet). Whether they should completely disappear is a
+matter of design - amqp_send could be implemented in a specific driver
+rather than the generic client, but I think that may be 6 of one and
+half a dozen of the other. I think this is something we need to
+discuss.
+
+&gt;<i> 2)
+</I>&gt;<i> directly. E.g. instead of
+</I>&gt;<i>
+</I>&gt;<i>     #'queue.declare_ok'{queue = Q1,
+</I>&gt;<i>                         message_count = MessageCount,
+</I>&gt;<i>                         consumer_count = ConsumerCount}
+</I>&gt;<i>                         = AMQPClient:queue_declare(Channel, Ticket, Q)
+</I>&gt;<i>
+</I>&gt;<i> you'd write
+</I>&gt;<i>
+</I>&gt;<i>     #'queue.declare_ok'{queue = Q1,
+</I>&gt;<i>                         message_count = MessageCount,
+</I>&gt;<i>                         consumer_count = ConsumerCount}
+</I>&gt;<i>                         = amqp_channel:rpc(
+</I>&gt;<i>                             #'queue.declare'{ticket = Ticket,
+</I>&gt;<i>                                              queue = binary(Q)}),
+</I>
+I'll look into this as another patch in the stack, with the 2nd
+highest priority.
+
+&gt;<i> Why does amqp_client use an ets table instead of a record to record the
+</I>&gt;<i> username, password etc?
+</I>
+I'll look into this as another patch in the stack next as this is low
+hanging fruit.
+
+Ben
+-------------- next part --------------
+A non-text attachment was scrubbed...
+Name: client_patch_series-3.patch
+Type: application/octet-stream
+Size: 56018 bytes
+Desc: not available
+Url : <A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20070807/b2a38b77/attachment.obj">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20070807/b2a38b77/attachment.obj</A> 
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000108.html">[rabbitmq-discuss] FW: Multiple consumers
+</A></li>
+	<LI>Next message: <A HREF="000111.html">[rabbitmq-discuss] Socket Exceptions
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#109">[ date ]</a>
+              <a href="thread.html#109">[ thread ]</a>
+              <a href="subject.html#109">[ subject ]</a>
+              <a href="author.html#109">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

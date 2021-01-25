@@ -1,0 +1,213 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Debian/Ubuntu apt package issues.
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Debian/Ubuntu%20apt%20package%20issues.&In-Reply-To=%3C603F7B60-3426-44BC-97BB-3C54A614FB67%40noumenal.co.uk%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="012516.html">
+   <LINK REL="Next"  HREF="012519.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Debian/Ubuntu apt package issues.</H1>
+    <B>Carlton Gibson</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Debian/Ubuntu%20apt%20package%20issues.&In-Reply-To=%3C603F7B60-3426-44BC-97BB-3C54A614FB67%40noumenal.co.uk%3E"
+       TITLE="[rabbitmq-discuss] Debian/Ubuntu apt package issues.">carlton.gibson at noumenal.co.uk
+       </A><BR>
+    <I>Sat Apr 23 11:04:52 BST 2011</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="012516.html">[rabbitmq-discuss] Debian/Ubuntu apt package issues.
+</A></li>
+        <LI>Next message: <A HREF="012519.html">[rabbitmq-discuss] Debian/Ubuntu apt package issues.
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#12517">[ date ]</a>
+              <a href="thread.html#12517">[ thread ]</a>
+              <a href="subject.html#12517">[ subject ]</a>
+              <a href="author.html#12517">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi Matthias, 
+
+Thanks for the reply.
+
+On 23 Apr 2011, at 00:19, Matthias Radestock wrote:
+&gt;<i> Carlton Gibson wrote:
+</I>&gt;&gt;<i> I found I had to change the ownership of everything (?) in /var/lib/rabbitmq/mnesia to rabbitmq from root to get rabbitmq-server to restart. My thought is that this should be done automatically by the .deb package.
+</I>&gt;<i> 
+</I>&gt;<i> And that's exactly what the .deb does. The postinst contains
+</I>&gt;<i> 
+</I>&gt;<i> chown -R rabbitmq:rabbitmq /var/lib/rabbitmq
+</I>&gt;<i> chown -R rabbitmq:rabbitmq /var/log/rabbitmq
+</I>&gt;<i> 
+</I>&gt;<i> So I wonder how you ended up with those dirs owned by root. It can't be a general problem with the .deb since otherwise we'd have hordes of angry debian/ubuntu users beating down our door.
+</I>&gt;<i> 
+</I>&gt;<i> You mention that the problem started when trying to restart rabbit after a config change. That implies that rabbit was running ok up to that point, so either it was running as root at the time (bad) or/and the permissions on the dirs changed from rabbitmq to root somehow.
+</I>&gt;<i> 
+</I>&gt;<i> If you can find a way to reproduce this problem starting from a &quot;clean&quot; machine (i.e. no rabbit remnants on it) please post the steps here.
+</I>
+I'm not sure that I'm going to be able to try and replicate this issue right now. However, I can tell you exactly what I did...
+
+First I installed RabbitMQ, which was started by the install script, and then spent a bit of messing around trying to get rabbitmqctl to work. 
+(I was trying to run it from the wrong place -- would there be anything there that would change permissions?)
+
+$  sudo aptitude install rabbitmq-server 
+$  rabbitctl status                         &lt;---- command not found
+$  ps aux | grep rabbit                     &lt;---- okay, where is it?
+$  ls /usr/lib/rabbitmq/bin/ 
+$  /usr/lib/rabbitmq/bin/rabbitmqctl status 
+$  sudo /usr/lib/rabbitmq/bin/rabbitmqctl status &lt;---- nodedown -- oh poo, what's this?
+$  netstat -lptn                                 &lt;---- looks like it's running
+$  ps aux  | grep rabbit                  &lt;---- yep, looks like it's running
+$  sudo /usr/lib/rabbitmq/bin/rabbitmq-server    &lt;---- No!. It really is running! 
+$  /usr/lib/rabbitmq/bin/rabbitmqctl status 
+$  sudo /usr/lib/rabbitmq/bin/rabbitmqctl status &lt;---- Hmmm, confused.
+$  erl -sname foo -cookie coo                    &lt;---- okay lets try this... yep, it's running
+$  ps aux | grep rabbit 
+$  ls /etc/init.d/                               &lt;---- Hang on, maybe there's an init.d script
+$  cat /etc/init.d/rabbitmq-server               &lt;---- Yep.
+$  sudo /etc/init.d/rabbitmq-server status       &lt;---- Ah ha! There it is.
+$  sudo /usr/sbin/rabbitmqctl status             &lt;---- And there, brilliant.
+$  ln -s /usr/sbin/rabbitmqctl rabbitmqctl       &lt;---- lets put this somewhere I can find it.
+
+Then I adjusted the config, before trying to restart: 
+
+$  sudo rabbitmqctl add_user  [...]         &lt;---- details elided 
+$  sudo rabbitmqctl add_vhost [...] 
+$  sudo rabbitmqctl set_permissions [...]
+$  sudo rabbitmqctl list_users 
+$  sudo rabbitmqctl delete_user guest 
+$  sudo nano /etc/rabbitmq/rabbitmq.config   &lt;----- just setup SSL
+$  sudo /etc/init.d/rabbitmq-server restart        &lt;---- And here's where I got the error
+
+What follows is lots of `$ cat /var/log/rabbitmq/startup_log` until I emailed the list. This was all done in a single session, with nothing omitted, on a server that had never seen RabbitMQ (or Erlang) before. 
+
+On solving the permissions error I started RabbitMQ with the init.d script; I presume the installer did the same. 
+
+The output of `$ ps aux  | grep rabbit` (with a couple of blank lines to separate the long entry) is: 
+
+$ ps aux | grep rabbit
+rabbitmq 23851  0.0  0.1  10760   348 ?        S    Apr22   0:00 /usr/lib/erlang/erts-5.7.4/bin/epmd -daemon
+root     25301  0.0  0.2   4144   572 ?        Ss   Apr22   0:00 sh -c /usr/sbin/rabbitmq-server &gt; /var/log/rabbitmq/startup_log             2&gt; /var/log/rabbitmq/startup_err
+root     25304  0.0  0.2   4144   568 ?        S    Apr22   0:00 /bin/sh /usr/sbin/rabbitmq-server
+rabbitmq 25310  0.0  0.4  35636  1228 ?        S    Apr22   0:00 su rabbitmq -s /bin/sh -c /usr/lib/rabbitmq/bin/rabbitmq-server 
+rabbitmq 25311  0.0  0.2   4144   568 ?        S    Apr22   0:00 sh -c /usr/lib/rabbitmq/bin/rabbitmq-server 
+
+rabbitmq 25313  0.0 12.3 114788 30940 ?        Sl   Apr22   0:24 /usr/lib/erlang/erts-5.7.4/bin/beam.smp -W w -K true -A30 -P 1048576 -- -root /usr/lib/erlang -progname erl -- -home /var/lib/rabbitmq -- -noshell -noinput -sname <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at web</A> -boot /var/lib/rabbitmq/mnesia/<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at web-plugins-expand</A>/rabbit -config /etc/rabbitmq/rabbitmq -kernel inet_default_connect_options [{nodelay,true}] -sasl errlog_type error -kernel error_logger {file,&quot;/var/log/rabbitmq/<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at web.log</A>&quot;} -sasl sasl_error_logger {file,&quot;/var/log/rabbitmq/<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at web-sasl.log</A>&quot;} -os_mon start_cpu_sup true -os_mon start_disksup false -os_mon start_memsup false -mnesia dir &quot;/var/lib/rabbitmq/mnesia/<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at web</A>&quot;
+
+rabbitmq 25403  0.0  0.1   4044   304 ?        Ss   Apr22   0:00 /usr/lib/erlang/lib/os_mon-2.2.4/priv/bin/cpu_sup
+rabbitmq 25404  0.0  0.1  10760   360 ?        Ss   Apr22   0:00 inet_gethost 4
+rabbitmq 25405  0.0  0.2  12860   616 ?        S    Apr22   0:00 inet_gethost 4
+carlton  25869  0.0  0.2   6208   584 pts/1    R+   08:50   0:00 grep --color=auto rabbit
+
+I didn't save the output of this command from prior to attempting the restart but I'd say it was essentially the same. (There were the two root processes calling rabbitmq-server, with the others being rabbitmq.)
+
+If you can point out where I went wrong I would be glad to learn. Hopefully this sheds some light, even if it's not a reproduce case. 
+
+Regards,
+Carlton
+
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="012516.html">[rabbitmq-discuss] Debian/Ubuntu apt package issues.
+</A></li>
+	<LI>Next message: <A HREF="012519.html">[rabbitmq-discuss] Debian/Ubuntu apt package issues.
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#12517">[ date ]</a>
+              <a href="thread.html#12517">[ thread ]</a>
+              <a href="subject.html#12517">[ subject ]</a>
+              <a href="author.html#12517">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

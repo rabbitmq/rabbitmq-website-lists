@@ -1,0 +1,207 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Message Aggregating Queue
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Message%20Aggregating%20Queue&In-Reply-To=%3CBANLkTimNJzr2_0QTMxN84h1dEwv0aWOqOA%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="012600.html">
+   <LINK REL="Next"  HREF="012608.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Message Aggregating Queue</H1>
+    <B>Irmo Manie</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Message%20Aggregating%20Queue&In-Reply-To=%3CBANLkTimNJzr2_0QTMxN84h1dEwv0aWOqOA%40mail.gmail.com%3E"
+       TITLE="[rabbitmq-discuss] Message Aggregating Queue">irmo.manie at gmail.com
+       </A><BR>
+    <I>Thu Apr 28 14:44:19 BST 2011</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="012600.html">[rabbitmq-discuss] Message Aggregating Queue
+</A></li>
+        <LI>Next message: <A HREF="012608.html">[rabbitmq-discuss] Message Aggregating Queue
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#12606">[ date ]</a>
+              <a href="thread.html#12606">[ thread ]</a>
+              <a href="subject.html#12606">[ subject ]</a>
+              <a href="author.html#12606">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>The problem is actually a bit more tricky than this. When it comes to
+market data you would route all the data to a client specific
+exclusive queue based on a subscription because every client has its
+own authorization, authentication and quality of service. (real-time,
+delayed, only eu stocks, tick by tick, tick only every minute, etc,
+etc).
+
+So the easy way is still just to have the consumer do the filtering
+itself by storing all messages in a key value store and empty this
+based on a ordered queue of ids to process.
+That way the consumer can 'consume' as fast as it can put the values
+in the K/V store which probably always is fast enough :-)
+
+Only if you can process the data (ticks) independently from each other
+it makes sense to have this filtering on the broker because then it
+would be useful for a cluster of consumers apps processing the data.
+But 9 out of 10 times you need the ticks of more than one instrument
+to do your business logic so you'd already keep a cache with the last
+values anyway.
+
+Still there could be other usecases of course where having this
+functionality at the broker can be really useful and powerful.
+
+/2cents
+
+- Irmo
+
+On Thu, Apr 28, 2011 at 3:06 PM, Alvaro Videla &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">videlalvaro at gmail.com</A>&gt; wrote:
+&gt;<i> Jason,
+</I>&gt;<i>
+</I>&gt;<i> What I understood yesterday is that you will have one queue for UBS, another queue for Credit Suisse and so on. You mentioned something about unique identifiers per tick type which could be used as routing keys, then having a direct exchange bound to all those queues based on the tick type. My custom queue proposal is based on such assumptions.
+</I>&gt;<i>
+</I>&gt;<i> -Alvaro
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> On Apr 28, 2011, at 3:01 PM, Alexis Richardson wrote:
+</I>&gt;<i>
+</I>&gt;&gt;<i> Jason
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> On Thu, Apr 28, 2011 at 1:54 PM, Jason Zaugg &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">jzaugg at gmail.com</A>&gt; wrote:
+</I>&gt;&gt;&gt;<i> Thanks for the great ideas and discussion so far!
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i> Another requirement I should make explicit: we have a single consumer
+</I>&gt;&gt;&gt;<i> reading the stream of price updates for all stocks; and it should
+</I>&gt;&gt;&gt;<i> process them the order. That is, we don't want to 'UBS' to move to the
+</I>&gt;&gt;&gt;<i> back of the queue if it updates before the previous message is
+</I>&gt;&gt;&gt;<i> processed. So a data structure like as LinkedHashMap would be needed
+</I>&gt;&gt;&gt;<i> for the custom queue proposed by Alvaro.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> I'm confused. &#160;Would this stream contain exactly one price per ticker
+</I>&gt;&gt;<i> symbol? &#160;If so then why does it have to be a stream and not a set? &#160;If
+</I>&gt;&gt;<i> it must be a stream with multiple values per ticker, then just use
+</I>&gt;&gt;<i> direct exchanges and one queue for the full stream.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i> The Last Value Caching Exchange seems to solve a slightly different
+</I>&gt;&gt;&gt;<i> problem (although one that we also have!). If I understand it, a queue
+</I>&gt;&gt;&gt;<i> attached to the LVC exchange would receive *every* newly delivered
+</I>&gt;&gt;&gt;<i> message, regardless of how fast it is able to process them.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Correct. &#160;The LVC exchange is just a map from ticker to last value.
+</I>&gt;&gt;<i> It does not affect delivery of subsequent messages.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Are you sure you wouldn't be better off using a cache?
+</I>&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i> In
+</I>&gt;&gt;&gt;<i> addition, as soon as the queue is bound the the exchange, it would
+</I>&gt;&gt;&gt;<i> receive the last value for each routing key.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Correct.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> alexis
+</I>&gt;<i>
+</I>&gt;<i> Sent form my Nokia 1100
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>&gt;<i>
+</I></PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="012600.html">[rabbitmq-discuss] Message Aggregating Queue
+</A></li>
+	<LI>Next message: <A HREF="012608.html">[rabbitmq-discuss] Message Aggregating Queue
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#12606">[ date ]</a>
+              <a href="thread.html#12606">[ thread ]</a>
+              <a href="subject.html#12606">[ subject ]</a>
+              <a href="author.html#12606">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

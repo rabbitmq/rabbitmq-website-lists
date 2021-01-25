@@ -1,0 +1,186 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] My attempt at a high-level API for .NET
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20My%20attempt%20at%20a%20high-level%20API%20for%20.NET&In-Reply-To=%3C3095E7BFC8C0664E97D71288189F19C6177CE65C49%40AUSP01VMBX29.collaborationhost.net%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="012692.html">
+   <LINK REL="Next"  HREF="012694.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] My attempt at a high-level API for .NET</H1>
+    <B>Mike Hadlow</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20My%20attempt%20at%20a%20high-level%20API%20for%20.NET&In-Reply-To=%3C3095E7BFC8C0664E97D71288189F19C6177CE65C49%40AUSP01VMBX29.collaborationhost.net%3E"
+       TITLE="[rabbitmq-discuss] My attempt at a high-level API for .NET">mike.hadlow at 15below.com
+       </A><BR>
+    <I>Thu May  5 15:50:32 BST 2011</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="012692.html">[rabbitmq-discuss] My attempt at a high-level API for .NET
+</A></li>
+        <LI>Next message: <A HREF="012694.html">[rabbitmq-discuss] My attempt at a high-level API for .NET
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#12691">[ date ]</a>
+              <a href="thread.html#12691">[ thread ]</a>
+              <a href="subject.html#12691">[ subject ]</a>
+              <a href="author.html#12691">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Thanks Brian,
+
+It's reassuring to hear that you are also successfully using QueueingBasicConsumer. I don't suppose you'd be willing to share your code?
+
+Very interesting to hear that you are working with Mono. So I guess that means that the Rabbit .NET client is mono compatible. EasyNetQ should run well under mono too, I'll give it a try.
+
+Mike
+
+-----Original Message-----
+From: Bryan Murphy [mailto:<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">bmurphy1976 at gmail.com</A>]
+Sent: 05 May 2011 15:14
+To: Mike Hadlow
+Cc: <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+Subject: Re: [rabbitmq-discuss] My attempt at a high-level API for .NET
+
+On Wed, May 4, 2011 at 11:15 AM, Mike Hadlow &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">mike.hadlow at 15below.com</A>&gt; wrote:
+&gt;<i> I've just published details of a high level .NET API for Rabbit/AMQP:
+</I>&gt;<i>
+</I>&gt;<i> <A HREF="http://mikehadlow.blogspot.com/2011/05/easynetq-simple-net-api-for-rab">http://mikehadlow.blogspot.com/2011/05/easynetq-simple-net-api-for-rab</A>
+</I>&gt;<i> bitmq.html
+</I>
+I've more or less gone through the same process as you.  I've been through a few iterations, and this is what I've settled on so far.
+
+I have an IBus interface that is configured to send messages to a topic exchange, and then I create multiple instances of that class configured to multiple exchange (i.e. new Bus(&quot;host&quot;, &quot;port&quot;, &quot;exchange&quot;)).  The reason I do this is to de-emphasize exchanges and emphasize routes to reduce the cognitive burden for the rest of our team.  The whole exchange/route model gives us more flexibility than we need so I've simplified somewhat.
+
+IBus looks like this:
+
+variations of send:
+
+        void Send(params object[] messages)
+        void Send&lt;TMessage&gt;(params TMessage[] messages)
+        void Send(IEnumerable&lt;object&gt; messages)
+        void Send&lt;TMessage&gt;(IEnumerable&lt;TMessage&gt; messages)
+
+a route method allowing explicit definition of the route:
+
+        void Route(string routeName, params object[] messages)
+        void Route(string routeName, IEnumerable&lt;object&gt; messages)
+        void Route&lt;TMessage&gt;(string routeName, params TMessage[] messages)
+        void Route&lt;TMessage&gt;(string routeName, IEnumerable&lt;TMessage&gt; messages)
+
+async versions of all of the above:
+
+        void SendAsync&lt;TMessage&gt;(IEnumerable&lt;TMessage&gt; messages)
+        void RouteAsync&lt;TMessage&gt;(string routeName, params TMessage[] messages)
+        etc.
+
+RPC requests:
+
+        object SendAndReceive(Type responseType, object request)
+        object SendAndReceive(Type responseType, object request, TimeSpan timeout)
+        TResponse SendAndReceive&lt;TRequest, TResponse&gt;(TRequest request)
+        TResponse SendAndReceive&lt;TRequest, TResponse&gt;(TRequest request, TimeSpan timeout)
+
+        object RouteAndReceive(Type responseType, string routeName, object request)
+        object RouteAndReceive(Type responseType, string routeName, object request, TimeSpan timeout)
+        TResponse RouteAndReceive&lt;TRequest, TResponse&gt;(string routeName, TRequest request)
+        TResponse RouteAndReceive&lt;TRequest, TResponse&gt;(string routeName, TRequest request, TimeSpan timeout)
+
+IBus also has a RouteNameSelector property that references a class with one method:
+
+        string SelectRouteName(BusConfig config, object message);
+
+This can be swapped out for alternate implementations, but the default does the following when calling Send methods (this is not used for the Route methods):
+
+        1. if message implements IRoutable, return IRoutable.RouteName
+        2. if message has [RouteNameAttribute(&quot;RouteName&quot;)] return &quot;RouteName&quot;
+        3. otherwise return message.GetType().Name
+
+subscriptions look like this:
+
+var subscription = bus.Subscribe
+        .ToRoute(&quot;routeName&quot;)
+        .WithHandler(msg =&gt; { do something });
+
+or
+
+// where THandler : ConsumerOf&lt;TMessage&gt; var subscription = bus.Subscribe
+        .ToQueue(&quot;queue name #1&quot;)
+        .ToQueue(&quot;queue name #2&quot;)
+        .WithContainerScopedHandler&lt;TMessage, THandler&gt;(container);
+
+// equates for each message to:
+// using (var childContainer = container.CreateLifeTimeContainer()) {
+//      var handler = container.Resolve&lt;THandler&gt;();
+//      handler.Consume(message);
+// }
+
+subscription.Start();
+subscription.Stop();
+
+There are, of course, many overloads that allow me to consume messages in a variety of different ways (interface based, reflection method based, delegate based, etc. with and without scoping to a container) and additional fluent methods to control retries, timeouts, dead letter handling, and the likes.
+
+&gt;<i> Feedback would be much appreciated. I'm especially hoping that someone
+</I>&gt;<i> will look at the way I'm consuming messages. Currently with a simple
+</I>&gt;<i> while loop in a new thread:
+</I>&gt;<i>
+</I>&gt;<i> <A HREF="https://github.com/mikehadlow/EasyNetQ/blob/master/EasyNetQ/QueueingCo">https://github.com/mikehadlow/EasyNetQ/blob/master/EasyNetQ/QueueingCo</A>
+</I>&gt;<i> nsumerFactory.cs
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> I'm sure there must be a better way.
+</I>
+We use QueueingBasicConsumer and are quite happy with it.  I haven't had a need to use anything else.  Looking at our code, it's a little different, but most of that just has to do error handling and the additional code needed to support our abstractions.
+
+
+Bryan
+
+ 15below Limited: Company registered in England and Wales No 3945289
+Registered Office: Lyndean House, 43-46 Queens Road, Brighton BN1 3XB, United Kingdom
+
+15below Australia Pty Limited: ABN 25 132 716 379
+Level 50, 120 Collins Street, Melbourne, Victoria 3000, Australia
+
+Please think about the environment before printing this email.
+
+************************************************************************
+This email and any attachments may be confidential and/or legally privileged and are solely for the use of the intended recipient.  If you have received this email in error please contact the sender.  Any views or opinions expressed within this e-mail are solely those of the sender, and do not necessarily represent those of 15below unless otherwise specifically stated.  Although 15below has taken every reasonable precaution to ensure that any attachment to this e-mail has been checked for viruses, it is strongly recommended that you carry out your own virus check before opening any attachment, as we cannot accept liability for any damage sustained as a result of software virus infection.
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="012692.html">[rabbitmq-discuss] My attempt at a high-level API for .NET
+</A></li>
+	<LI>Next message: <A HREF="012694.html">[rabbitmq-discuss] My attempt at a high-level API for .NET
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#12691">[ date ]</a>
+              <a href="thread.html#12691">[ thread ]</a>
+              <a href="subject.html#12691">[ subject ]</a>
+              <a href="author.html#12691">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

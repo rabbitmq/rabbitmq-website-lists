@@ -1,0 +1,202 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] pika and node.amqp interop
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20pika%20and%20node.amqp%20interop&In-Reply-To=%3CAANLkTikocGWJG1hSA4VsfgDP%3D9wKOJwd9V3MmFkN4QL1%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="010832.html">
+   <LINK REL="Next"  HREF="010842.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] pika and node.amqp interop</H1>
+    <B>Dan Tenenbaum</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20pika%20and%20node.amqp%20interop&In-Reply-To=%3CAANLkTikocGWJG1hSA4VsfgDP%3D9wKOJwd9V3MmFkN4QL1%40mail.gmail.com%3E"
+       TITLE="[rabbitmq-discuss] pika and node.amqp interop">dtenenba at fhcrc.org
+       </A><BR>
+    <I>Sat Jan 22 00:06:23 GMT 2011</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="010832.html">[rabbitmq-discuss] Cleaning up unhandled messages
+</A></li>
+        <LI>Next message: <A HREF="010842.html">[rabbitmq-discuss] pika and node.amqp interop
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#10837">[ date ]</a>
+              <a href="thread.html#10837">[ thread ]</a>
+              <a href="subject.html#10837">[ subject ]</a>
+              <a href="author.html#10837">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi,
+
+I am new to rabbitmq. I got the python &quot;getting started&quot; examples to work
+just fine.
+I would like to be able to send messages between node.js (using node.amqp)
+and python/pika.
+
+I can successfully receive a message in node.js using this code:
+
+[receiver - node.js]
+var sys = require('sys');
+var amqp = require('./amqp');
+
+var connection = amqp.createConnection({ host: 'localhost' });
+
+// Wait for connection to become established.
+connection.addListener('ready', function () {
+  // Create a queue and bind to all messages.
+  // Use the default 'amq.topic' exchange
+
+  var q = connection.queue('my-queue');
+  // Catch all messages
+  q.bind('#');
+
+
+  // Receive messages
+  q.subscribe(function (message) {
+    // Print messages to stdout
+    sys.puts(sys.inspect(message));
+  });
+});
+
+[sender - python/pika]
+#!/usr/bin/env python
+import pika
+
+connection = pika.AsyncoreConnection(pika.ConnectionParameters(
+        host='localhost'))
+channel = connection.channel()
+
+
+channel.basic_publish(exchange='',
+                      routing_key='my-queue',
+                      body='Hello World!')
+print &quot; [x] Sent 'Hello World!'&quot;
+connection.close()
+
+But I can't go the other way. I'm not sure that the message sent by node.js
+is going anywhere. I've looked at the unit tests for node.amqp (they all
+pass) but there is something I am missing, probably to do with exchanges or
+something. I'd like to do something like this:
+
+[sender - node.js]
+var sys = require('sys');
+var amqp = require('./amqp');
+
+var connection = amqp.createConnection({ host: 'localhost' });
+
+// Wait for connection to become established.
+connection.addListener('ready', function () {
+  // Create a queue and bind to all messages.
+  // Use the default 'amq.topic' exchange
+  connection.publish(&quot;my-queue&quot;, {random_key:&quot;this is my message&quot;});
+  connection.end();
+
+});
+
+[receiver - python/pika]
+#!/usr/bin/env python
+import pika
+import sys
+
+connection = pika.AsyncoreConnection(pika.ConnectionParameters(
+        host='localhost'))
+channel = connection.channel()
+
+print ' [*] Waiting for messages. To exit press CTRL+C'
+
+def callback(ch, method, properties, body):
+    print body,
+    sys.stdout.flush()
+
+channel.basic_consume(callback,
+                      queue='my-queue',
+                      no_ack=True)
+
+pika.asyncore_loop()
+
+But nothing happens.
+
+Another thing (possibly related?) that I run into is if I create a queue in
+python using, e.g.:
+
+channel.queue_declare(queue='hello')
+
+Then, in node.js, when I do:
+
+  var q = connection.queue('hello');
+
+I get this:
+
+Unhandled channel error: PRECONDITION_FAILED - parameters for queue 'hello'
+in vhost '/' not equivalent
+
+events:12
+        throw arguments[1];
+                       ^
+Error: PRECONDITION_FAILED - parameters for queue 'hello' in vhost '/' not
+equivalent
+    at Queue._onMethod
+(/Users/dtenenba/dev/dev-amqp/node-amqp/amqp.js:1390:15)
+    at Connection._onMethod
+(/Users/dtenenba/dev/dev-amqp/node-amqp/amqp.js:784:28)
+    at AMQPParser.onMethod
+(/Users/dtenenba/dev/dev-amqp/node-amqp/amqp.js:698:12)
+    at AMQPParser._parseMethodFrame
+(/Users/dtenenba/dev/dev-amqp/node-amqp/amqp.js:415:10)
+    at AMQPParser.execute
+(/Users/dtenenba/dev/dev-amqp/node-amqp/amqp.js:196:20)
+    at Connection.&lt;anonymous&gt;
+(/Users/dtenenba/dev/dev-amqp/node-amqp/amqp.js:731:12)
+    at Connection.emit (events:31:17)
+    at IOWatcher.callback (net:489:16)
+    at node.js:773:9
+
+It appears that python's idea of a 'hello' queue is different from that of
+node.amqp's. How can I do this so that I don't receive this error?
+Hope this is the right place for this question. If not please tell me where
+I should post it.
+Thanks
+Dan
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20110121/33d06889/attachment-0001.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20110121/33d06889/attachment-0001.htm</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="010832.html">[rabbitmq-discuss] Cleaning up unhandled messages
+</A></li>
+	<LI>Next message: <A HREF="010842.html">[rabbitmq-discuss] pika and node.amqp interop
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#10837">[ date ]</a>
+              <a href="thread.html#10837">[ thread ]</a>
+              <a href="subject.html#10837">[ subject ]</a>
+              <a href="author.html#10837">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

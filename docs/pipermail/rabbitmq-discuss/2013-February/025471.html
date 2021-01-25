@@ -1,0 +1,266 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Consumer Clients as Tomcat Web Applications and Work Queue Configuration
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Consumer%20Clients%20as%20Tomcat%20Web%20Applications%0A%20and%20Work%20Queue%20Configuration&In-Reply-To=%3CCAC_yGUSCG6Nmj3xJ2Ae2HO5objLqv-fRt%3DrHne%3DXmGecZO%2BMqQ%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="025441.html">
+   <LINK REL="Next"  HREF="025551.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Consumer Clients as Tomcat Web Applications and Work Queue Configuration</H1>
+    <B>Kevin Behr</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Consumer%20Clients%20as%20Tomcat%20Web%20Applications%0A%20and%20Work%20Queue%20Configuration&In-Reply-To=%3CCAC_yGUSCG6Nmj3xJ2Ae2HO5objLqv-fRt%3DrHne%3DXmGecZO%2BMqQ%40mail.gmail.com%3E"
+       TITLE="[rabbitmq-discuss] Consumer Clients as Tomcat Web Applications and Work Queue Configuration">behrk2 at gmail.com
+       </A><BR>
+    <I>Tue Feb 12 19:28:51 GMT 2013</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="025441.html">[rabbitmq-discuss] Consumer Clients as Tomcat Web Applications	and Work Queue Configuration
+</A></li>
+        <LI>Next message: <A HREF="025551.html">[rabbitmq-discuss] Consumer Clients as Tomcat Web Applications	and Work Queue Configuration
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#25471">[ date ]</a>
+              <a href="thread.html#25471">[ thread ]</a>
+              <a href="subject.html#25471">[ subject ]</a>
+              <a href="author.html#25471">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Steve,
+
+Thanks very much for your response.  I was able to re-implement the while
+loop without having Tomcat bug-out upon server stop.  I achieved this by
+catching the the InterruptedException in a Thread:
+
+while (!Thread.currentThread().isInterrupted()) {
+
+            ...
+
+            channel.basicQos(1);
+
+            QueueingConsumer consumer = new QueueingConsumer(channel);
+            channel.basicConsume(ReferenceData.CONSUME_QUEUE_NAME, false,
+consumer)
+
+                try {
+
+                    QueueingConsumer.Delivery delivery =
+consumer.nextDelivery();
+                    ...
+
+channel.basicAck(delivery.getEnvelope().getDeliveryTag(), false);
+
+                } catch (InterruptedException ex) {
+                    Thread.currentThread().interrupt();
+                    break;
+                }
+
+}
+
+I find your comments about the polling interesting.  For now, though, my
+requirements would seem to favor as little network latency as possible, so
+I'm going to go with the original push/round robin model.
+
+I am more confident in deploying the consumers and producers as web
+applications, and your answer has helped to confirm that.  I am finding
+benefit in manageability and portability and my ultimate goal, like you
+said, is a sophisticated web-based control mechanism.  I want to have
+real-time control of my clients, and I want it to be user friendly.  I've
+started looking into JMX and MBeans to achieve such a solution.
+
+*If you impose a prefetch
+limit of 1 for each client you run, then the rabbit server will dispatch
+messages to clients that have no unacknowledged messages (by the way,
+you should explicitly acknowledge messages when using non-zero
+basicQos()).*
+*
+*
+Regarding your statement above, I had not taken that into consideration.
+ I've coded my clients to  only acknowledge upon successful processing of
+the delivered message.  If one of our many web services or datastore
+connections goes down, then unacknowledged messages will start piling up
+quickly, and the messaging and queuing pipeline will essentially come to a
+halt. I would expect this to be the correct behavior, however, as I don't
+want to throw out messages until someone discovers that a service is down.
+
+As I will be using QueuingConsumer, I'm now wondering *how *I should
+determine *what *to set my prefetch counts to.  Do you have any further
+advice on this?  I'm still a little confused there.
+
+Thanks again,
+
+Kevin Behr
+
+
+On Mon, Feb 11, 2013 at 6:33 AM, Steve Powell &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">steve at rabbitmq.com</A>&gt; wrote:
+
+&gt;<i> Hi Kevin,
+</I>&gt;<i>
+</I>&gt;<i> Sorry for the delayed response.
+</I>&gt;<i>
+</I>&gt;<i> First, an observation about your original set-up:
+</I>&gt;<i>
+</I>&gt;<i> &gt; while (true) {
+</I>&gt;<i> &gt;       QueueingConsumer.Delivery delivery = consumer.nextDelivery();
+</I>&gt;<i> &gt;       String message = new String(delivery.getBody());
+</I>&gt;<i> &gt;       System.out.println(&quot; [x] Received '&quot; + message + &quot;'&quot;);
+</I>&gt;<i> &gt; }
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> I assume that there are no Qos (prefetch) limits imposed on the channels
+</I>&gt;<i> these consumers use, and also I note that you are using the
+</I>&gt;<i> QueueingConsumer. I think this means that all of the consumers are able
+</I>&gt;<i> to receive the messages all the time, and so all messages will get
+</I>&gt;<i> distributed in round-robin fashion, until there are no messages left to
+</I>&gt;<i> deliver.
+</I>&gt;<i>
+</I>&gt;<i> In your 'workaround' solution, you are indeed pulling, not being pushed,
+</I>&gt;<i> and here all of the consumers will get a look-in: there is likely to be
+</I>&gt;<i> balancing, but not round-robin. This is based instead upon consumer
+</I>&gt;<i> request, so if one of them gets bogged down in work (initiated by the
+</I>&gt;<i> previous message, for example) then the other consumers can poll and
+</I>&gt;<i> take the next message, and, crucially, other messages won't be taken by
+</I>&gt;<i> this consumer while it is busy. Although this isn't 'round-robin'
+</I>&gt;<i> servicing, it is arguably better: the messages are not 'blindly' sent to
+</I>&gt;<i> consumers that are busy.
+</I>&gt;<i>
+</I>&gt;<i> The drawbacks are, as you note, an overhead of polling in the consumers,
+</I>&gt;<i> and a larger latency on the network -- each get involves a round-trip to
+</I>&gt;<i> the server, even when there is nothing to get.
+</I>&gt;<i>
+</I>&gt;<i> Now to your questions:
+</I>&gt;<i>
+</I>&gt;<i> &gt;  &#8226; Is it a bad idea to deploy consumers as Tomcat web applications? Are
+</I>&gt;<i> &gt; there any advantages or disadvantages as compared to the alternative of
+</I>&gt;<i> &gt; running system level Java clients?
+</I>&gt;<i>
+</I>&gt;<i> I see no reason why, apart from the overhead implied by running a full
+</I>&gt;<i> web application, there should be any particular disadvantages of running
+</I>&gt;<i> a Tomcat web application that does messaging as its main work. In fact,
+</I>&gt;<i> I suspect it is easier to control (start/stop) than using a
+</I>&gt;<i> free-standing Java client: you can potentially build a sophisticated
+</I>&gt;<i> web-based control mechanism. However, I'm not best placed to answer
+</I>&gt;<i> this.
+</I>&gt;<i>
+</I>&gt;<i> &gt;  &#8226; In the case of work queues, am I better off retrieving messages that
+</I>&gt;<i> &gt; are pushed down to my clients, and setting a prefetchCount
+</I>&gt;<i> &gt; (channel.basicQos(1)) to ensure that I only receive one message at a
+</I>&gt;<i> &gt; time?
+</I>&gt;<i>
+</I>&gt;<i> This is the crux of the matter, as I see it. If you impose a prefetch
+</I>&gt;<i> limit of 1 for each client you run, then the rabbit server will dispatch
+</I>&gt;<i> messages to clients that have no unacknowledged messages (by the way,
+</I>&gt;<i> you should explicitly acknowledge messages when using non-zero
+</I>&gt;<i> basicQos()). Under these circumstances, you can achieve similar
+</I>&gt;<i> balancing as in the polling case, but without the polling. It will *not*
+</I>&gt;<i> be strictly round-robin after the first 'round' because the first
+</I>&gt;<i> consumer need not have acknowledged the previous message yet, and
+</I>&gt;<i> messages will be delivered to whatever consumers are ready for them --
+</I>&gt;<i> albeit in round-robin priority.
+</I>&gt;<i>
+</I>&gt;<i> The tutorial pages describe this pretty well (see [1]).
+</I>&gt;<i>
+</I>&gt;<i> There are two points to note:
+</I>&gt;<i>
+</I>&gt;<i> If you are using QueueingConsumer, then each message will be placed in a
+</I>&gt;<i> client Java queue, and nextDelivery() then unblocks with the message
+</I>&gt;<i> when it arrives. With explicit acknowledgements this means that one
+</I>&gt;<i> message at a time is transferred to the Java queue. You could increase
+</I>&gt;<i> the prefetchCount to 2, say, and then up to two messages would be placed
+</I>&gt;<i> in the queue but you would still process them serially through the
+</I>&gt;<i> nextDelivery() call. When one consumer gets two messages, then no other
+</I>&gt;<i> consumer will get these -- so if a message can take a long time before
+</I>&gt;<i> it is acknowledged, the message behind it can get delayed, even though
+</I>&gt;<i> there may be other consumers which are idle. Other messages can
+</I>&gt;<i> 'overtake' and get processed before it.
+</I>&gt;<i>
+</I>&gt;<i> If you want to avoid the QueueingConsumer internal Java queue, you could
+</I>&gt;<i> write your own Consumer implementation (base it on DefaultConsumer) but
+</I>&gt;<i> you should be aware that the handleDelivery() methods are driven
+</I>&gt;<i> asynchronously, but serially. You shouldn't perform long pieces of work
+</I>&gt;<i> on these threads. It would be wise to pass the message to some
+</I>&gt;<i> serialised worker thread, especially if you have a prefetchCount larger
+</I>&gt;<i> than one. This will probably then require a queue of your own anyway, so
+</I>&gt;<i> the advantages to you are slim.
+</I>&gt;<i>
+</I>&gt;<i> I hope this helps. Please let us know how you get on.
+</I>&gt;<i>
+</I>&gt;<i> Steve Powell
+</I>&gt;<i>
+</I>&gt;<i> [1] <A HREF="http://www.rabbitmq.com/tutorials/tutorial-two-java.html">http://www.rabbitmq.com/tutorials/tutorial-two-java.html</A>
+</I>&gt;<i>
+</I>&gt;<i> [M: +44-7815-838-558; H:+44-1962-775-598]
+</I>&gt;<i> SpringSource (a division of VMware), Virgo, RabbitMQ.
+</I>&gt;<i> -----------------------------------------------------------------------
+</I>&gt;<i> Good design:
+</I>&gt;<i>    is innovative, useful, aesthetic;
+</I>&gt;<i>    is understandable, unobtrusive, honest;
+</I>&gt;<i>    is long-lasting, thorough, environmentally friendly;
+</I>&gt;<i>    and is as little design as possible.
+</I>&gt;<i> Copyright Dieter Rams, amended March 2003; October 2009; and August 2012
+</I>&gt;<i>
+</I>&gt;<i> On 31 Jan 2013, at 01:33, Kevin Behr &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">behrk2 at gmail.com</A>&gt; wrote:
+</I>&gt;<i> &gt; Hello everyone,
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; I have five RabbitMQ consumer clients that are written and deployed as
+</I>&gt;<i> Tomcat web applications.  My original intention was to consume messages in
+</I>&gt;<i> the typical fashion:
+</I>&gt;<i> &#8230;(elided)
+</I>&gt;<i> &gt; I would appreciate any advice or suggestions.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; Thanks!
+</I>&gt;<i> &gt; _______________________________________________
+</I>&gt;<i> &gt; rabbitmq-discuss mailing list
+</I>&gt;<i> &gt; <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;<i> &gt; <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20130212/ba95f3d3/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20130212/ba95f3d3/attachment.htm</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="025441.html">[rabbitmq-discuss] Consumer Clients as Tomcat Web Applications	and Work Queue Configuration
+</A></li>
+	<LI>Next message: <A HREF="025551.html">[rabbitmq-discuss] Consumer Clients as Tomcat Web Applications	and Work Queue Configuration
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#25471">[ date ]</a>
+              <a href="thread.html#25471">[ thread ]</a>
+              <a href="subject.html#25471">[ subject ]</a>
+              <a href="author.html#25471">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

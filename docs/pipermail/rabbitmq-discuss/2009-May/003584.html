@@ -1,0 +1,254 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Does erlang client tip work with server tip?
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20Does%20erlang%20client%20tip%20work%20with%20server%20tip%3F&In-Reply-To=4A110611.4020007%40lshift.net">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003579.html">
+   <LINK REL="Next"  HREF="003578.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Does erlang client tip work with server tip?</H1>
+    <B>Keith Irwin</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20Does%20erlang%20client%20tip%20work%20with%20server%20tip%3F&In-Reply-To=4A110611.4020007%40lshift.net"
+       TITLE="[rabbitmq-discuss] Does erlang client tip work with server tip?">keith.irwin at gmail.com
+       </A><BR>
+    <I>Mon May 18 18:44:39 BST 2009</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003579.html">[rabbitmq-discuss] Does erlang client tip work with server tip?
+</A></li>
+        <LI>Next message: <A HREF="003578.html">[rabbitmq-discuss] Does erlang client tip work with server tip?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3584">[ date ]</a>
+              <a href="thread.html#3584">[ thread ]</a>
+              <a href="subject.html#3584">[ subject ]</a>
+              <a href="author.html#3584">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>On Sun, May 17, 2009 at 11:54 PM, Matthias Radestock
+&lt;<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">matthias at lshift.net</A>&gt; wrote:
+&gt;<i> Keith,
+</I>&gt;<i>
+</I>&gt;<i> Keith Irwin wrote:
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> (I'm wishing you didn't have to have rabbitmq_server even installed to
+</I>&gt;&gt;<i> get an erlang_client)
+</I>&gt;<i>
+</I>&gt;<i> The Erlang client is still experimental and we have done no release
+</I>&gt;<i> packaging. Hence the need to work from the source repos. If there were
+</I>&gt;<i> packaged versions they would include the necessary parts of / dependency on
+</I>&gt;<i> the server code.
+</I>
+Yes, that makes sense.
+
+&gt;<i> Regarding the repo structure, we could have both the server and the client
+</I>&gt;<i> depend on a rabbitmq-common source repo, but that doesn't really make any
+</I>&gt;<i> material difference to the effort required in building &amp; running the Erlang
+</I>&gt;<i> client since we'd simply be switching one dependency - on the
+</I>&gt;<i> rabbitmq-server repo - for another. It would also complicate the server
+</I>&gt;<i> build &amp; packaging.
+</I>
+How about this? Why not merge the client with the server, and bundle
+it all up together (at least for release)? I think ActiveMQ works this
+way. If you check out the source, it's a bunch of related projects
+(and HUGE), but the release contains, among other things, a JAR file
+which contains all the code, including dependent libs, the broker, the
+client code, and so on.
+
+This is great because you can just drop it into your project, use an
+embedded broker for unit testing (if you want).
+
+I could see a case for that with rabbitmq, especially if the idea of
+loading code from archives ever gets more accepted in the Erlang
+community. (The advantage of the archive is that you don't notice
+there's a lot of code you're not using.... ;))
+
+BTW, after I wrote my little frustrated comment, I found the long
+discussion with Ed Fine in the mailing list archives. Good stuff. I
+really appreciate your team's patience with us.
+
+I'm pasting in the &quot;test&quot; code I wrote to experiment with the client
+and server. I think it's slightly more understandable for my way of
+thinking than the example at:
+
+    <A HREF="http://github.com/careo/rabbitmq-erlang-client-examples/tree/master">http://github.com/careo/rabbitmq-erlang-client-examples/tree/master</A>
+
+which did not have the benefit of lib_amqp.
+
+My example doesn't really illustrate everything (for instance I seem
+to have forgotten to explicitly set the realm), but it's a nice
+template for exploration.
+
+I'm looking forward to seeing more work on lib_amqp.
+
+Regards,
+
+Keith
+
+-----
+-module(test).
+
+-compile(export_all).
+-include(&quot;../lib/rabbitmq-client/include/amqp_client.hrl&quot;).
+-include_lib(&quot;../lib/rabbitmq-server/include/rabbit.hrl&quot;).
+-include_lib(&quot;../lib/rabbitmq-server/include/rabbit_framing.hrl&quot;).
+
+-record(conn, {conn, channel}).
+
+-define(USER, &quot;guest&quot;).
+-define(PASS, &quot;guest&quot;).
+-define(HOST, &quot;localhost&quot;).
+-define(REALM, &lt;&lt;&quot;/&quot;&gt;&gt;).
+
+-define(QUEUE,         &lt;&lt;&quot;app.queue&quot;&gt;&gt;).
+-define(EXCHANGE,      &lt;&lt;&quot;app.exchange&quot;&gt;&gt;).
+-define(EXCHANGE_TYPE, &lt;&lt;&quot;direct&quot;&gt;&gt;).
+-define(ROUTING_KEY,   &lt;&lt;&quot;app.route&quot;&gt;&gt;).
+
+start_all() -&gt;
+    start_consumer(),
+    start_producer().
+
+stop_all() -&gt;
+    stop_producer(),
+    stop_consumer().
+
+send(Msg) -&gt;
+    case whereis(producer) of
+        undefined -&gt;
+            producer_not_started;
+        Pid -&gt;
+            Pid ! Msg
+    end.
+
+start_consumer() -&gt;
+    spawn(fun() -&gt; consumer() end).
+
+stop_consumer() -&gt;
+    case whereis(consumer) of
+        undefined -&gt;
+            consumer_not_started;
+        Pid -&gt;
+            Pid ! stop
+    end.
+
+start_producer() -&gt;
+    Pid = spawn(fun() -&gt; producer() end),
+    register(producer, Pid).
+
+stop_producer() -&gt;
+    case whereis(producer) of
+        undefined -&gt;
+            producer_not_started;
+        Pid -&gt;
+            Pid ! stop
+    end.
+
+consumer() -&gt;
+    process_flag(trap_exit, true),
+    register(consumer, self()),
+    Conn = connect(?USER, ?PASS, ?HOST),
+    #conn{channel=Channel} = Conn,
+    lib_amqp:declare_queue(Channel, ?QUEUE),
+    lib_amqp:declare_exchange(Channel, ?EXCHANGE, ?EXCHANGE_TYPE),
+    lib_amqp:bind_queue(Channel, ?EXCHANGE, ?QUEUE, ?ROUTING_KEY),
+    lib_amqp:subscribe(Channel, ?QUEUE, self(), ?ROUTING_KEY),
+
+    consumer_loop(),
+
+    lib_amqp:unsubscribe(Channel, ?ROUTING_KEY),
+    lib_amqp:unbind_queue(Channel, ?EXCHANGE, ?QUEUE, ?ROUTING_KEY),
+    lib_amqp:delete_queue(Channel, ?QUEUE),
+    disconnect(Conn),
+    consumer_stopped.
+
+consumer_loop() -&gt;
+    receive
+        {'EXIT', _Pid, Reason} -&gt;
+            io:format(&quot;consumer: exiting ~p~n&quot;, [Reason]),
+            void;
+
+        stop -&gt;
+            void;
+
+        {Delivery, Content} -&gt;
+            io:format(&quot;consumer: delivery = ~p~n&quot;, [Delivery]),
+            io:format(&quot;consumer: content = ~p~n&quot;, [Content]),
+            consumer_loop();
+
+        Msg -&gt;
+            io:format(&quot;consumer: msg = ~p~n&quot;, [Msg]),
+            consumer_loop()
+    end,
+    ok.
+
+producer() -&gt;
+    process_flag(trap_exit, true),
+    Conn = connect(?USER, ?PASS, ?HOST),
+    #conn{channel=Channel} = Conn,
+    producer_loop(Channel),
+    disconnect(Conn),
+    producer_stopped.
+
+producer_loop(Channel) -&gt;
+    receive
+        stop -&gt;
+            void;
+        Msg -&gt;
+            io:format(&quot;publisher: sending &lt;&lt;~p&gt;&gt;~n&quot;, [Msg]),
+            lib_amqp:publish(Channel, ?EXCHANGE, ?ROUTING_KEY,
+list_to_binary(Msg)),
+            io:format(&quot;publisher: msg sent~n&quot;),
+            producer_loop(Channel)
+    end.
+
+connect(User, Pass, Host) -&gt;
+    Connection = amqp_connection:start(User, Pass, Host),
+    Channel = amqp_connection:open_channel(Connection),
+    #conn{conn=Connection, channel=Channel}.
+
+disconnect(Conn) -&gt;
+    #conn{conn=Connection, channel=Channel} = Conn,
+    lib_amqp:close_channel(Channel),
+    lib_amqp:close_connection(Connection).
+
+
+-----
+
+
+&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> Regards,
+</I>&gt;<i>
+</I>&gt;<i> Matthias.
+</I>&gt;<i>
+</I>
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003579.html">[rabbitmq-discuss] Does erlang client tip work with server tip?
+</A></li>
+	<LI>Next message: <A HREF="003578.html">[rabbitmq-discuss] Does erlang client tip work with server tip?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3584">[ date ]</a>
+              <a href="thread.html#3584">[ thread ]</a>
+              <a href="subject.html#3584">[ subject ]</a>
+              <a href="author.html#3584">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

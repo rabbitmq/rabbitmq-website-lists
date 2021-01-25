@@ -1,0 +1,145 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Creating an auth plugin (Kerberos)
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Creating%20an%20auth%20plugin%20%28Kerberos%29&In-Reply-To=%3C50BC8B53.4050103%40rabbitmq.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="024270.html">
+   <LINK REL="Next"  HREF="024344.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Creating an auth plugin (Kerberos)</H1>
+    <B>Tim Watson</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Creating%20an%20auth%20plugin%20%28Kerberos%29&In-Reply-To=%3C50BC8B53.4050103%40rabbitmq.com%3E"
+       TITLE="[rabbitmq-discuss] Creating an auth plugin (Kerberos)">tim at rabbitmq.com
+       </A><BR>
+    <I>Mon Dec  3 11:21:55 GMT 2012</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="024270.html">[rabbitmq-discuss] Creating an auth plugin (Kerberos)
+</A></li>
+        <LI>Next message: <A HREF="024344.html">[rabbitmq-discuss] Creating an auth plugin (Kerberos)
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#24271">[ date ]</a>
+              <a href="thread.html#24271">[ thread ]</a>
+              <a href="subject.html#24271">[ subject ]</a>
+              <a href="author.html#24271">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>On 12/03/2012 11:01 AM, Simon MacMullen wrote:
+&gt;<i> On 29/11/12 16:46, Simon Lundstr&#246;m wrote:
+</I>&gt;&gt;<i> Sorry to revisit an old message, but it's kind of related...
+</I>&gt;<i>
+</I>&gt;&gt;<i> When trying to handle when password is undefined I have found that
+</I>&gt;&gt;<i> the {'EXIT', Port, normal} message is only sent when a user logs in
+</I>&gt;&gt;<i> via AMQP (and probably STOMP).
+</I>&gt;<i>
+</I>&gt;<i> Well, the {'EXIT', Port, Reason} message is sent by the Erlang 
+</I>&gt;<i> runtime, so whatever is determining whether it gets sent or not is 
+</I>&gt;<i> down to the interaction between the runtime and kinit.
+</I>&gt;<i>
+</I>&gt;<i> It's worth noting at this point that I have never written anything 
+</I>&gt;<i> that uses open_port, so we really are reaching the limits of my 
+</I>&gt;<i> ability to help you. According to the docs:
+</I>&gt;<i>
+</I>&gt;<i> &quot;During use of a port opened using {spawn, Name}, {spawn_driver, Name} 
+</I>&gt;<i> or {spawn_executable, Name}, errors arising when sending messages to 
+</I>&gt;<i> it are reported to the owning process using signals of the form 
+</I>&gt;<i> {'EXIT', Port, PosixCode}. See file(3) for possible values of PosixCode.&quot;
+</I>&gt;<i> So it sounds like the messages might be optional.
+</I>&gt;<i>
+</I>
+This all depends what arguments you've passed in `Options' when you 
+called erlang:open_port/2 and whether or not your process is trapping 
+exits. For example, if you pass the exit_status option, then you'll get 
+a `{Port,{exit_status,Status}}' message when the port exits. If you're 
+trapping exits, then you will get 'EXIT' messages from the port (as 
+you're the controlling process if you called open_port) and you'll need 
+to handle these too.
+
+Normally what will happen is when stdio for the port detects `eof' then 
+it will close (and the exit signal will be generated). If you want to 
+avoid getting the exit signals, you can pass 'eof' in the options which 
+(as per the open_port/2 docs) will change this behaviour such that:
+
+&quot;The port will not be closed at the end of the file and produce an exit 
+signal. Instead, it will remain open and a {Port, eof} message will be 
+sent to the process holding the port.&quot;
+
+Either way you're going to end up getting some messages from the port 
+and you need to learn about the port protocol (from 
+<A HREF="http://erlang.org/doc/man/erlang.html#open_port-2">http://erlang.org/doc/man/erlang.html#open_port-2</A> and 
+<A HREF="http://www.erlang.org/doc/tutorial/c_port.html">http://www.erlang.org/doc/tutorial/c_port.html</A>) and make sure you're 
+handling all of them.
+
+&gt;&gt;<i> I never receive an EXIT-message when a user logs in via the
+</I>&gt;&gt;<i> API/mgmt.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Why is that? How can I handle the EXIT-message &quot;sometimes&quot;?
+</I>&gt;<i>
+</I>&gt;<i> If you really are only getting them sometimes, then &quot;after 0&quot; should 
+</I>&gt;<i> be fine as long as you have received everything else you expect from 
+</I>&gt;<i> the port by that point.
+</I>&gt;<i>
+</I>
+I would suggest making sure your port isn't 'hanging' by receiving until 
+you've got either 'EXIT' or a combination of 'eof' and 'exit_status' 
+messages - iirc the ordering guarantees with these allows you to write a 
+shutdown loop like so (you might want to ignore or use the stdout during 
+shutdown/close for your own purposes, I don't know how your app works):
+
+shutdown_loop(Port, Acc) -&gt;
+     receive
+         {Port, {exit_status, 0}}       -&gt; {ok, Acc};
+         {Port, {exit_status, Rc}}     -&gt; {error, Rc, Acc};
+         {Port, {data, {eol, Line}}} -&gt; shutdown_loop(Port, [Line|Acc]);
+         {Port, {data, {eol, []}}}     -&gt; shutdown_loop(Port, Acc);
+         {Port, {data, Data}}           -&gt; shutdown_loop(Port,
+                                                                                   [io_lib:format(&quot;~p~n&quot;, [Data])|Acc])
+     end.
+
+If you want to avoid blocking (the reader! yes you do I would've 
+thought) then you might consider using an 'insulator' process in which 
+to open and interact with the port. This allows you to timeout and/or 
+terminate the port without blocking the reader process - some port 
+commands are blocking and if your C code (or external application or 
+whatever) gets stuck then you could be in trouble.
+
+HTH
+
+Cheers,
+Tim
+</PRE>
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="024270.html">[rabbitmq-discuss] Creating an auth plugin (Kerberos)
+</A></li>
+	<LI>Next message: <A HREF="024344.html">[rabbitmq-discuss] Creating an auth plugin (Kerberos)
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#24271">[ date ]</a>
+              <a href="thread.html#24271">[ thread ]</a>
+              <a href="subject.html#24271">[ subject ]</a>
+              <a href="author.html#24271">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

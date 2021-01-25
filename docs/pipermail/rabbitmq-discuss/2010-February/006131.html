@@ -1,0 +1,188 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Garbage Collection Problem in Consumer
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20Garbage%20Collection%20Problem%20in%20Consumer&In-Reply-To=5ef296b31002020331m6b7ab085xef85425a21b0c66e%40mail.gmail.com">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="006130.html">
+   <LINK REL="Next"  HREF="006134.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Garbage Collection Problem in Consumer</H1>
+    <B>Seema Biradar</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20Garbage%20Collection%20Problem%20in%20Consumer&In-Reply-To=5ef296b31002020331m6b7ab085xef85425a21b0c66e%40mail.gmail.com"
+       TITLE="[rabbitmq-discuss] Garbage Collection Problem in Consumer">seemasbiradar at gmail.com
+       </A><BR>
+    <I>Tue Feb  2 12:29:04 GMT 2010</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="006130.html">[rabbitmq-discuss] Garbage Collection Problem in Consumer
+</A></li>
+        <LI>Next message: <A HREF="006134.html">[rabbitmq-discuss] Garbage Collection Problem in Consumer
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#6131">[ date ]</a>
+              <a href="thread.html#6131">[ thread ]</a>
+              <a href="subject.html#6131">[ subject ]</a>
+              <a href="author.html#6131">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi ,
+
+Please find the attached code for Consumer.java.
+
+public class SingleConsumer{
+
+ public static void main(String args[]) {
+
+
+ ConnectionParameters params = new ConnectionParameters();
+
+params.setUsername(janusProperties.getProperty(&quot;rabbitmq_userName&quot;).trim());
+
+params.setPassword(janusProperties.getProperty(&quot;rabbitmq_password&quot;).trim());
+            params.setVirtualHost(&quot;/&quot;);
+            params.setRequestedHeartbeat(0);
+            ConnectionFactory factory = new ConnectionFactory(params);
+            com.rabbitmq.client.Connection connRMQ =
+factory.newConnection(janusProperties.getProperty(&quot;rabbitmq_server_ip&quot;).trim(),
+Integer.parseInt(janusProperties.getProperty(&quot;rabbitmq_server_port&quot;).trim()));
+
+
+            Channel channel = connRMQ.createChannel();
+
+            String exchangeName =
+janusProperties.getProperty(&quot;rabbitmq_exchangeName&quot;).trim();
+            String queueName =
+janusProperties.getProperty(&quot;rabbitmq_queueName&quot;).trim();
+            String routingKey =
+janusProperties.getProperty(&quot;rabbitmq_routingKey&quot;).trim();
+
+            QueueingConsumer consumer = new QueueingConsumer(channel);
+            channel.basicConsume(queueName, true, consumer);
+           QueueingConsumer.Delivery delivery;
+            while (!runInfinite)
+            {
+                      try {
+
+                     delivery = consumer.nextDelivery();
+
+                         } catch (InterruptedException ie) {
+                    log.debug(&quot;Problem in Deliverying the message&quot;);
+                    continue;
+                }
+
+                  /* 1 . Do some operation on the consumed data which will
+take 2 -3 sec of time.
+                      2. if above operation is success than continue to
+receive next data
+                      3. if above operation fails than resend the message
+back to the queue( Consumer acting as Producer) using channel.basicPublish
+
+                  */
+                    channel.basicPublish(exchangeName, routingKey, true,
+false, MessageProperties.PERSISTENT_TEXT_PLAIN, bao.toByteArray());
+
+}
+
+}
+        }
+
+Memory leakage is because of operating on the data which take times. In that
+time the QueueingDelivery objects are created as many as the the messages
+sent by the Producer.
+
+Thanks,
+Seema
+On Tue, Feb 2, 2010 at 5:01 PM, Gustavo Aquino &lt;<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">aquino.gustavo at gmail.com</A>&gt;wrote:
+
+&gt;<i> Seema,
+</I>&gt;<i>
+</I>&gt;<i> You can't control when your GC will run, if you declare this objects into
+</I>&gt;<i> loop and don't are using hash tables or maps to reutilize it, so it will
+</I>&gt;<i> be eligible to GC automatically, because your life cycle over in next loop.
+</I>&gt;<i>
+</I>&gt;<i> Today I have a consumer in Java consuming about 1.000 m/s and never used
+</I>&gt;<i> more than 15Mb and this objects never go throw eden memory, if you don't
+</I>&gt;<i> forward this objects created inside consumer loop, this objects will be
+</I>&gt;<i> automatic eligible for GC but GC don't run immediately you need to wait.
+</I>&gt;<i>
+</I>&gt;<i> Can you post your consumer code ?
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>   On Tue, Feb 2, 2010 at 3:48 AM, Seema Biradar &lt;<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">seemasbiradar at gmail.com</A>&gt;wrote:
+</I>&gt;<i>
+</I>&gt;&gt;<i>   Hi All,
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> i tried the rabbit MQ with Producer and Consumer Program.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> in Consumer side i am getting the all the Message, but the following
+</I>&gt;&gt;<i> objects
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> com.rabbitmq.client.QueueingConsumer.Delivery
+</I>&gt;&gt;<i> com.rabbitmq.client.Envelop
+</I>&gt;&gt;<i> com.rabbitmq.client.AMQP.BasicProperties
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> are created for each message and not garbage collected immediately after
+</I>&gt;&gt;<i> consuming.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> *in Producer.java
+</I>&gt;&gt;<i> *
+</I>&gt;&gt;<i> used basic publish as shown below.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> channel.basicPublish(exchangeName, routingKey, true, false,
+</I>&gt;&gt;<i> MessageProperties.PERSISTENT_TEXT_PLAIN, bao.toByteArray()) ;
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> *Consumer.java
+</I>&gt;&gt;<i> *
+</I>&gt;&gt;<i> channel.basicConsume(queueName, true, consumer);
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> with no-acknowledgement *true*.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Please let me know, how to make the above object eligible for garbage
+</I>&gt;&gt;<i> collection immediately after consuming.
+</I>&gt;&gt;<i> for Consumer program The Heap Memory allocated is more , as this is
+</I>&gt;&gt;<i> performace issue
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Thanks,
+</I>&gt;&gt;<i> Seema
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> _______________________________________________
+</I>&gt;&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;&gt;<i> <A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;&gt;<i> <A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i>
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: <A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20100202/db1c999e/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20100202/db1c999e/attachment.htm</A> 
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="006130.html">[rabbitmq-discuss] Garbage Collection Problem in Consumer
+</A></li>
+	<LI>Next message: <A HREF="006134.html">[rabbitmq-discuss] Garbage Collection Problem in Consumer
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#6131">[ date ]</a>
+              <a href="thread.html#6131">[ thread ]</a>
+              <a href="subject.html#6131">[ subject ]</a>
+              <a href="author.html#6131">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

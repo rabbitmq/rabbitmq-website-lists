@@ -1,0 +1,140 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Issue with delayed restart of children in	supervisor2
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Issue%20with%20delayed%20restart%20of%20children%20in%0A%09supervisor2&In-Reply-To=%3CF0535D94-75ED-4430-8DD8-0B4F90F5402D%40rabbitmq.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="024136.html">
+   <LINK REL="Next"  HREF="024138.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Issue with delayed restart of children in	supervisor2</H1>
+    <B>Tim Watson</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Issue%20with%20delayed%20restart%20of%20children%20in%0A%09supervisor2&In-Reply-To=%3CF0535D94-75ED-4430-8DD8-0B4F90F5402D%40rabbitmq.com%3E"
+       TITLE="[rabbitmq-discuss] Issue with delayed restart of children in	supervisor2">tim at rabbitmq.com
+       </A><BR>
+    <I>Mon Nov 26 14:54:42 GMT 2012</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="024136.html">[rabbitmq-discuss] Issue with delayed restart of children in	supervisor2
+</A></li>
+        <LI>Next message: <A HREF="024138.html">[rabbitmq-discuss] Management UI bug in v3.0.0.0...
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#24137">[ date ]</a>
+              <a href="thread.html#24137">[ thread ]</a>
+              <a href="subject.html#24137">[ subject ]</a>
+              <a href="author.html#24137">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi Ilya,
+
+First of all, thanks for looking at this and suggesting improvements. We like community contributions very much! Interestingly I'm in the middle of merging supervisor2 with upstream changes from OTP, so this is a good time to discuss the inclusion of this patch. There are few points I'd like to discuss first (inline) though....
+
+On 26 Nov 2012, at 12:03, Ilya Staheev wrote:
+
+&gt;<i> Hi,
+</I>&gt;<i> 
+</I>&gt;<i> supervisor2 treats start of a child after the delay as a restart of the child which might lead to weird behavior in some cases. Imagine the situation when a bunch of children are restarted simultaneously for some reason so that maximum restart frequency has been reached.
+</I>&gt;<i> If all children have {permanent | transient | intrinsic, Delay} in their child specifications then supervisor2 delays restart of them for Delay seconds. After the delay all the children are restarted simultaneously and supervisor2 applies same rules for checking maximal restart frequency again.
+</I>
+What makes you think that all the children will be restarted simultaneously? For each restart, the supervisor will try to restart the child until the combination of MaxR and MaxT is reached. At the moment, supervisor2 uses the old R13 code which keeps on restarting until it fails. Once the changes from R15 are merged in, the supervisor will back-off after a restart fails and put a message at the back of the server's message queue, indicating that it should try again. When the restarts exceed MaxR with the time period defined in MaxT, then for a child that specifies `{Mode, Delay}` we set up a timer to send {delayed_restart, _Details}, which is processed in handle_info/2 and results in a *synchronous* start (or back-off to delayed restart once again if it fails). Remember that supervisor2 is a gen_server, so the {delayed_restart, _} messages are processed serially *and* so are the restart_child calls, as are the `{try_again_restart, _}` messages that the R15 supervisor introduces. So none of this is happening in parallel.
+
+&gt;<i> If amount of children is greater than MaxR then first MaxR children are started normally, without any delays between each other, but then supervisor2 begins to think that maximum restart frequency is reached again and introduce a delay before it begins to start the rest of the children. 
+</I>&gt;<i> 
+</I>
+The MaxR governs the number of *restarts* that the supervisor will tolerate. The `{Mode, Delay}` restart types indicate what to do when MaxR has been exceeded within MaxT, and when this is taking place the server *is* dealing with a restart. If we have seen the number of restarts exceed these thresholds then we *should* respond accordingly, and providing a delay is the way that child specifications say 'do not shutdown, but try again after N  millis' therefore if MaxR restarts have taken place then for the immediate next child, we should surely delay before attempting to restart that child again. To do otherwise would break the contract of MaxR ~ MaxT would it not?
+
+&gt;<i> 1. N children fail simultaneously (N &gt; MaxR).
+</I>
+This isn't happening 'simultaneously' as I mentioned above, but fair enough - say N children fail to restart within a time frame T where T &gt;= MaxT and N &gt; MaxR
+
+&gt;<i> 2. supervisor2 waits for Delay second.
+</I>&gt;<i> 3. supervisor2 begins to restart failed children.
+</I>
+Well - supervisor2 begins to restart children that specified `{Mode, Delay}` such that for each delayed restart a message will arrive at the server's inbox and these will be serially processed in turn. Each `{delayed_restart, _}` message will cause the server to attempt to restart that child spec again. The changes in R15 mean that if the initial restart fails, further restarts (of that individual child) may get queued up *behind* any `{delayed_restart, _}` instructions which have already been enqueued (for other child specs).
+
+&gt;<i> 4. First MaxR children have been restarted.
+</I>&gt;<i> 5. supervisor2 reaches maximum restart frequency.
+</I>
+If this happens within the MaxT time period, then (6) seems unavoidable to me.
+
+&gt;<i> 6. supervisor2 waits for Delay seconds.   &lt;-- bad
+</I>
+And what would you do with a vanilla supervisor to solve this and avoid shutting down? (the answer seems to be below)
+
+&gt;<i> 7. The (MaxR+1)'th child is started.
+</I>&gt;<i> 8. After the next MaxR children the same effect with delay appears.
+</I>&gt;<i> ...
+</I>&gt;<i> 
+</I>
+Why not simply raise the thresholds so that MaxR &gt; NumChildren for your supervisor? Why not avoid configuring every child with the same delay? Why not do both and avoid this situation altogether?
+
+&gt;<i> It is not good behaviour from my point of view, start of a child after the delay should not be treated as restart with restarts counting and I would like to fix it. Patch is attached. Thank you in advance.
+</I>&gt;<i> 
+</I>
+This seems to run counter to the intention of MaxR/MaxT, therefore even if we were going to accept such a patch, I would expect it to provide this as an alternative mechanism along with some indication (in the chosen configuration API) that MaxR/MaxT do not hold in the same way when this alternative_delayed_restart was engaged. 
+
+Overall I'm not entirely convinced this is necessary, although it's possible I've missed something here and I'm open to discussing this further. It feels like introducing behaviour which is more opaque (with respect to the way 'vanilla supervisor' would behave) and feels a bit confusing to me. I'd be interested to hear opinions from the other rabbits however, as they may have a different perspective. 
+
+Cheers,
+Tim
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="024136.html">[rabbitmq-discuss] Issue with delayed restart of children in	supervisor2
+</A></li>
+	<LI>Next message: <A HREF="024138.html">[rabbitmq-discuss] Management UI bug in v3.0.0.0...
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#24137">[ date ]</a>
+              <a href="thread.html#24137">[ thread ]</a>
+              <a href="subject.html#24137">[ subject ]</a>
+              <a href="author.html#24137">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

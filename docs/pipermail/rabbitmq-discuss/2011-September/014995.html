@@ -1,0 +1,88 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Stomp: after deleting a durable subscription,	message is still available
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Stomp%3A%20after%20deleting%20a%20durable%20subscription%2C%0A%09message%20is%20still%20available&In-Reply-To=%3C7C1B7121-6668-42B0-8A37-4AC5C54777A5%40rabbitmq.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="014915.html">
+   <LINK REL="Next"  HREF="015038.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Stomp: after deleting a durable subscription,	message is still available</H1>
+    <B>Steve Powell</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Stomp%3A%20after%20deleting%20a%20durable%20subscription%2C%0A%09message%20is%20still%20available&In-Reply-To=%3C7C1B7121-6668-42B0-8A37-4AC5C54777A5%40rabbitmq.com%3E"
+       TITLE="[rabbitmq-discuss] Stomp: after deleting a durable subscription,	message is still available">steve at rabbitmq.com
+       </A><BR>
+    <I>Fri Sep  9 12:28:28 BST 2011</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="014915.html">[rabbitmq-discuss] Stomp: after deleting a durable subscription,	message is still available
+</A></li>
+        <LI>Next message: <A HREF="015038.html">[rabbitmq-discuss] Stomp: after deleting a durable subscription,	message is still available
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#14995">[ date ]</a>
+              <a href="thread.html#14995">[ thread ]</a>
+              <a href="subject.html#14995">[ subject ]</a>
+              <a href="author.html#14995">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Michael,
+Thank you for pointing this out.  In reproducing your results I noticed that I get an error when UNSUBSCRIBE is issued. So that explains why you were still seeing the messages after issuing the UNSUBSCRIBE.
+
+Before a session can cancel a subscription it needs to know about it -- that is what the id is for.
+
+The STOMP 1.1 specification says this about subscription ids:
+SUBSCRIBE id Header
+
+An id header MUST be included in the frame to uniquely identify the subscription within the STOMP connection session. Since a single connection can have multiple open subscriptions with a server, the id header allows the client and server to relate subsequent ACK, NACK or UNSUBSCRIBEframes to the original subscription.
+
+and the phrase &quot;uniquely identify the subscription within the STOMP connection session&quot; is the problem.  That implies that the id is *limited in scope* to the session.
+
+In the case of durable subscriptions, as soon as you disconnect your subscription id is no longer in scope.  Reconnecting and using the same id ought to give you a distinct session and therefore a distinct subscription.  But then, what good is a durable subscription if you can never refer to it again??
+
+The solution as adopted in the RabbitMQ STOMP adapter is to make the id on the subscription non-local.  That is, we make it global to the RabbitMQ server.  (Actually, as implied in the RabbitMQ/stomp documentation, we make the *combination of subscription id and (topic) destination* global to the server.)  This means that SUBSCRIBE is the way to reconnect to the same subscription-id x topic, and then you can UNSUBSCRIBE from it (and delete it) successfully.
+
+[Notice what this means: the messages that were sitting &quot;in the topic&quot; for that subscription id are never discarded completely: in order to remove them you must SUBSCRIBE first -- and they are then delivered to you of course.  This is quite a nice 'feature', IMO.]
+
+I think you might have been aware of this, since you used the header &quot;client-id&quot; on your CONNECT frames.  This is not a STOMP header, but might be an ActiveMQ one.  It is not clear to me what the full effect of this header is, but it appears to identify a session context for subscription ids (at least). I notice that when the &quot;durable client&quot; reconnected, the subscriptions were not re-instated (no messages arrived) -- is that what you would expect ActiveMQ to do?
+
+I will raise a bug (we will probably try to behave compatibly with ActiveMQ), and take this up with the STOMP spec group.
+
+Steve Powell
+<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">steve at rabbitmq.com</A>
+[wrk: +44-2380-111-528] [mob: +44-7815-838-558]
+
+On 6 Sep 2011, at 19:28, Michael Justin wrote:
+&gt;<i> <A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/2011-September/014915.html">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/2011-September/014915.html</A>
+</I>
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20110909/3fb7d51b/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20110909/3fb7d51b/attachment.htm</A>&gt;
+</PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="014915.html">[rabbitmq-discuss] Stomp: after deleting a durable subscription,	message is still available
+</A></li>
+	<LI>Next message: <A HREF="015038.html">[rabbitmq-discuss] Stomp: after deleting a durable subscription,	message is still available
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#14995">[ date ]</a>
+              <a href="thread.html#14995">[ thread ]</a>
+              <a href="subject.html#14995">[ subject ]</a>
+              <a href="author.html#14995">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

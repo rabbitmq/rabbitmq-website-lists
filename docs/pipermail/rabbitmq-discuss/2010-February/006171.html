@@ -1,0 +1,159 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] routing threads on a rabbitmq node
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20routing%20threads%20on%20a%20rabbitmq%20node&In-Reply-To=b93cb8621002031205o7049222l3cdc2ba0715b27c9%40mail.gmail.com">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="006166.html">
+   <LINK REL="Next"  HREF="006186.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] routing threads on a rabbitmq node</H1>
+    <B>Matthew Sackman</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20routing%20threads%20on%20a%20rabbitmq%20node&In-Reply-To=b93cb8621002031205o7049222l3cdc2ba0715b27c9%40mail.gmail.com"
+       TITLE="[rabbitmq-discuss] routing threads on a rabbitmq node">matthew at lshift.net
+       </A><BR>
+    <I>Thu Feb  4 11:39:29 GMT 2010</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="006166.html">[rabbitmq-discuss] routing threads on a rabbitmq node
+</A></li>
+        <LI>Next message: <A HREF="006186.html">[rabbitmq-discuss] routing threads on a rabbitmq node
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#6171">[ date ]</a>
+              <a href="thread.html#6171">[ thread ]</a>
+              <a href="subject.html#6171">[ subject ]</a>
+              <a href="author.html#6171">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi Brian,
+
+On Wed, Feb 03, 2010 at 12:05:23PM -0800, Brian Sullivan wrote:
+&gt;<i> We have ~75 bindings, same as the number of queues.  We don't do many
+</I>&gt;<i> multiple bindings per queue (if any).  This has increased faster than our
+</I>&gt;<i> message volumes (more consuming applications to make use of the data), so I
+</I>&gt;<i> believe this is the primary reason things are harder now than they used to
+</I>&gt;<i> be.
+</I>
+If you pretty have every message going to every queue, it may be much
+simpler for you to use a fanout and then drop messages at the consumer.
+However, we're all in agreement that the use of topic exchanges here
+isn't likely to be the problem.
+
+&gt;<i> What I would like to figure out is how to reorient my cluster to make things
+</I>&gt;<i> more stable.  Knowing that the routing time is increasing due to the number
+</I>&gt;<i> of bindings, I am not convinced that my plan of adding a rabbitmq node to
+</I>&gt;<i> each producer is going to make things all that much better - the routing
+</I>&gt;<i> table will still be the same, and it will need to do that cross-routing
+</I>&gt;<i> you're talking about avoiding.
+</I>
+What I would recommend is to use the recently announced shovel. Have one
+node, which the publishers send to. They send to a fanout exchange. You
+then have some leaf nodes, which run the shovel. The shovel connects to
+the central node, creates a queue and binds to the fanout exchange, and
+republishes messages to a topic exchange on the leaf nodes.
+
+You then split your various other queues over the exchanges on the leaf
+nodes, thus dividing the outbound rate over the various leaf nodes.
+
+The only thing that changes is that you need to somehow load balance
+your consumers so that they know which leaf nodes to connect to. All the
+leaf nodes would receive the same messages so there's no issue about
+only being able to connect to certain nodes, but you do want to spread
+the load evenly.
+
+This would avoid using a cluster, and has the further advantage that as
+your load grows, you can add further leaf nodes to share the load
+seemlessly, without taking anything down.
+
+&gt;<i> Even when we have a single producer catching
+</I>&gt;<i> up in our current system, the node can only route at a certain rate, and
+</I>&gt;<i> this is definitely not CPU bound.  I am curious why Erlang cannot spend more
+</I>&gt;<i> time in that thread, but I don't know much about it - does that seem right
+</I>&gt;<i> to you?
+</I>
+That is interesting. Did you mean &quot;consumer&quot; rather than &quot;producer&quot; at
+the top there? Assuming you did, there could be a few reasons:
+
+1. The client itself could be the bottle neck. In the absence of a QoS
+setting, Rabbit will send messages to the consumer as fast as possible.
+These messages arriving at the consumer obviously take up some CPU
+resources to take them off the wire. Thus setting a QoS can limit the
+loading on the consumer. However, setting it too low (eg 1) can mean
+that the consumer is waiting for a little while after sending back an
+ack before the next message arrives. Some basic tuning may be useful
+here, depending on the structure of your clients (eg are they internally
+multithreaded etc).
+
+2. TCP Buffers on client and RabbitMQ. There have been a couple of threads
+recently on this list about buffer sizes. You may wish to try increasing
+the TCP buffers of RabbitMQ so that it can load more data into the
+buffers and pass it off to the network. You might wish to measure the
+amount of network throughput you're seeing.
+
+3. If QoS is off, and a queue has grown to a good length, then it's
+possible for acks to be &quot;stalled&quot; whilst the queue tries to push
+messages as fast as possible to the consumer. A build up of acks can
+hurt throughput. This has been fixed in 1.7.1. Now given that you're
+saying the RabbitMQ node doesn't seem to be CPU bound here, I don't
+think this is it, but I'd still suggest trying 1.7.1 when you can.
+
+&gt;<i> I am not sure what I can do to minimize cross-routing, other than to try to
+</I>&gt;<i> keep our producers consolidated and keep the heaviest consumers (meaning the
+</I>&gt;<i> ones with a binding to the most active topics - remember that all queues
+</I>&gt;<i> bind to only one topic expression) separated on their own nodes, to remove
+</I>&gt;<i> their queue management processing on the core routing function.  Ironically,
+</I>&gt;<i> I was originally trying to keep the heaviest consumers on the routing nodes,
+</I>&gt;<i> to minimize forwarding of messages - but if the cost magnifies with the
+</I>&gt;<i> number of consumer queues, then it's likely that keeping the larger fanout
+</I>&gt;<i> (but smaller throughput) of consumers on the routing nodes might be best.
+</I>
+With the design I propose above, without the cluster, but with several
+leaf nodes, I would suggest that you try to ensure the most active
+queues are evenly distributed. across the array of leaf nodes.
+
+&gt;<i> The thing that concerns me is that my scalability here seems to be limited -
+</I>&gt;<i> the only other thing I can think of doing is increasing my number of
+</I>&gt;<i> producers to distribute the load even further and possibly do the local node
+</I>&gt;<i> thing - then if our routing table keeps growing, I can manage scaling at the
+</I>&gt;<i> producer level - not efficient maybe, but at least it can grow past the
+</I>&gt;<i> threshold I appear to be running into.
+</I>
+Using the shovel and spreading out load to a number of leaf nodes (and
+this hierarchy can be several layers deep if necessary) reduces the
+amount of fanout on each node, and shares out the amount of data each
+node needs to send out. This is more manual and involved, but more
+efficient than a cluster.
+
+Please let us know how you get on.
+
+Matthew
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="006166.html">[rabbitmq-discuss] routing threads on a rabbitmq node
+</A></li>
+	<LI>Next message: <A HREF="006186.html">[rabbitmq-discuss] routing threads on a rabbitmq node
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#6171">[ date ]</a>
+              <a href="thread.html#6171">[ thread ]</a>
+              <a href="subject.html#6171">[ subject ]</a>
+              <a href="author.html#6171">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

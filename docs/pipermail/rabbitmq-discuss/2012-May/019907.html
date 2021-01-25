@@ -1,0 +1,160 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] immediate, mandatory flag with no consumers
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20immediate%2C%20mandatory%20flag%20with%20no%20consumers&In-Reply-To=%3C9399B902-3BA9-43FB-B9D3-D7CF3ADB9A09%40etrade.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="019897.html">
+   <LINK REL="Next"  HREF="019927.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] immediate, mandatory flag with no consumers</H1>
+    <B>Unni, Monish</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20immediate%2C%20mandatory%20flag%20with%20no%20consumers&In-Reply-To=%3C9399B902-3BA9-43FB-B9D3-D7CF3ADB9A09%40etrade.com%3E"
+       TITLE="[rabbitmq-discuss] immediate, mandatory flag with no consumers">munni at etrade.com
+       </A><BR>
+    <I>Tue May  8 02:33:21 BST 2012</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="019897.html">[rabbitmq-discuss] immediate, mandatory flag with no consumers
+</A></li>
+        <LI>Next message: <A HREF="019927.html">[rabbitmq-discuss] immediate, mandatory flag with no consumers
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#19907">[ date ]</a>
+              <a href="thread.html#19907">[ thread ]</a>
+              <a href="subject.html#19907">[ subject ]</a>
+              <a href="author.html#19907">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>this is super cool, Alan! thanks for the great pointers!
+
+we also found for rabbitmq, we could use &quot;alternate-exchange&quot; (extension), since, we are mostly calling services that are built in-house.
+this seems to be a very generic way to handle &quot;non-routable&quot; calls.
+the restriction seems to be this  exchange cannot be built on &quot;amq.direct&quot; as an &quot;alternate-exchange&quot; needs to be specified at the time of creation - is this right?
+
+for &quot;no-consumers&quot; i am not sure if we have any &quot;broker&quot; level setting except using &quot;dead-letter-messages&quot; as given : <A HREF="http://www.rabbitmq.com/extensions.html#dead-letter-messages">http://www.rabbitmq.com/extensions.html#dead-letter-messages</A>
+[also, we are loosely-coupled, i.e we really don't want &quot;transaction-level&quot; broker semantics, so &quot;confirmation&quot; is not an option...]
+
+am i right? are there any other settings we can make use of?
+
+regards,
+-monish
+
+
+
+On May 7, 2012, at 9:18 AM, Alan Antonuk wrote:
+
+Monish;
+
+As a short answer: there the rabbitmq-c does not provide an easy-to-use interface to deal with basic.return messages from the broker.
+
+The long answer: it is possible, with a bit of work:
+
+The easy part: reading a basic.return message from the broker, its almost the same as a basic.deliver of a message:
+- Read the method (1 frame), only instead of a basic.deliver, you get a basic.return method
+- Read the message header (1 frame)
+- Read message body (1+ frames)
+
+Example code: <A HREF="https://github.com/alanxz/rabbitmq-c/blob/master/examples/amqp_consumer.c#L75">https://github.com/alanxz/rabbitmq-c/blob/master/examples/amqp_consumer.c#L75</A>  Note that line 83 will need to compare against AMQP_BASIC_RETURN_METHOD instead of AMQP_BASIC_DELIVER_METHOD
+
+That's the easy part, the hard part requires a bit more explanation:
+
+As you can already tell the rabbitmq-c client works a bit differently from the Java and C# clients in that it doesn't have its own internal event loop that deals the the asynchronous bits of AMQP, so using the library forces you to think about how you're going to handle these asynchronous messages from the broker.
+
+The first thing to note is that basic.publish method is an asynchronous[1] AMQP method: a client sends a basic.publish on a channel, and does wait for the broker to respond before continuing.  In fact: if all you're doing is publishing messages to the broker, the broker won't send anything to the client unless something goes wrong (this is part of what makes AMQP a high-performance messaging protocol).  Whats more: since the basic.publish is asynchronous, if something goes wrong on the broker, you won't know immediately after publishing (e.g., calling the rabbitmq-c amqp_basic_publish(...) function ). The failure is transmitted as an AMQP method 'at some point in the future' meaning, likely you'll get an error pretty quickly, but you have to be able to deal with the case that it might happen a bit later.
+
+Since rabbitmq-c doesn't have its own thread sitting there dealing with error messages, and the amqp_basic_publish(...) doesn't do any sort of read on the socket from the broker (the return value only indicates an error if there was a failure writing the message to the socket to the broker), you have to check periodically for methods from the broker.
+
+You do this by using amqp_simple_wait_frame().  However this can block on a read() on the socket if the broker hasn't sent anything.  The way to get around this is to use amqp_get_sockfd() on the connection object, then use something like select(), amqp_frames_enqueued(), and amqp_data_in_buffer() to detect there is potentially a frame to be read from the broker.
+
+An example of a library that does this is SimpleAmqpClient: <A HREF="https://github.com/alanxz/SimpleAmqpClient/blob/master/src/Channel.cpp#L283">https://github.com/alanxz/SimpleAmqpClient/blob/master/src/Channel.cpp#L283</A> . It uses publisher-confirms to make the basic.publish method a synchronous process.  If you sift through the ChannelImpl::GetMethodOnChannel() implementation, you can see what needs to be done to poll the socket for frames.
+
+[1] The AMQP basic.publish method can be made synchronous by enabling publisher-confirms. However, this does come at a performance cost: there is a full network round-trip for each basic.publish.
+
+HTH
+-Alan
+
+As a personal plug the SimpleAmqpClient library can be found: <A HREF="https://github.com/alanxz/SimpleAmqpClient.">https://github.com/alanxz/SimpleAmqpClient.</A> It wraps the rabbitmq-c library in a (hopefully) easy-to-use synchronous c++ interface.  Since it uses publisher-confirms and waits for a confirmation before allowing another message to be sent, it won't have the best message publish through-put (I can get 3-4k-msg/s, whereas using unconfirmed messages I've seen as high as 20-25k-msg/s over a single connection).
+
+On Fri, May 4, 2012 at 3:43 PM, Unni, Monish &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">munni at etrade.com</A>&lt;mailto:<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">munni at etrade.com</A>&gt;&gt; wrote:
+Thanks for your replies Emile!
+
+the only thing close to the c-client for basic.return i found this : <A HREF="https://groups.google.com/forum/#!msg/rabbitmq-discuss/fHL9tQHj4s0/FxCQxx4khKQJ">https://groups.google.com/forum/#!msg/rabbitmq-discuss/fHL9tQHj4s0/FxCQxx4khKQJ</A>
+not sure if it does the same thing as java-api.
+
+or if you could link me to github for this functionality.
+
+kind regards,
+-monish
+
+On May 4, 2012, at 2:33 AM, Emile Joubert wrote:
+
+&gt;<i> Hi,
+</I>&gt;<i>
+</I>&gt;<i> On 04/05/12 05:19, Unni, Monish wrote:
+</I>&gt;&gt;<i> * is it okay to pair request-reply channels and use the same
+</I>&gt;&gt;<i> connection to provide &quot;maximum&quot; concurrency?
+</I>&gt;<i>
+</I>&gt;<i> It is okay to send and receive messages on the same connection. Bear in
+</I>&gt;<i> mind that if the broker decides to block the connection then all
+</I>&gt;<i> channels in that connection will be affected. I'm not sure you will
+</I>&gt;<i> achieve higher concurrency this way.
+</I>&gt;<i>
+</I>&gt;&gt;<i> * how can we get this feature working for &quot;C&quot; clients ( C- api ) ?
+</I>&gt;<i>
+</I>&gt;<i> Have you taken a look at the C client examples?
+</I>&gt;<i>
+</I>&gt;&gt;<i> * and last : is my understanding right ( from observation ) that the
+</I>&gt;&gt;<i> request channel and reply-channels have to share the same connection
+</I>&gt;&gt;<i> for this feature to work?
+</I>&gt;<i>
+</I>&gt;<i> In general requests and their corresponding replies do not have to share
+</I>&gt;<i> a connection, but for basic.return to work the return handler must share
+</I>&gt;<i> a channel with the publisher.
+</I>&gt;<i>
+</I>&gt;<i> -Emile
+</I>&gt;<i>
+</I>
+_______________________________________________
+rabbitmq-discuss mailing list
+<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>&lt;mailto:<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>&gt;
+<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+
+
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="019897.html">[rabbitmq-discuss] immediate, mandatory flag with no consumers
+</A></li>
+	<LI>Next message: <A HREF="019927.html">[rabbitmq-discuss] immediate, mandatory flag with no consumers
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#19907">[ date ]</a>
+              <a href="thread.html#19907">[ thread ]</a>
+              <a href="subject.html#19907">[ subject ]</a>
+              <a href="author.html#19907">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

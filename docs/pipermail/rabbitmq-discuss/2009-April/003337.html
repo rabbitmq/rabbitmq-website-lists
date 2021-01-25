@@ -1,0 +1,196 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Client API error recovery
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20Client%20API%20error%20recovery&In-Reply-To=">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003489.html">
+   <LINK REL="Next"  HREF="003338.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Client API error recovery</H1>
+    <B>Lev Walkin</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20Client%20API%20error%20recovery&In-Reply-To="
+       TITLE="[rabbitmq-discuss] Client API error recovery">vlm at lionet.info
+       </A><BR>
+    <I>Sat Apr 11 15:35:24 BST 2009</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003489.html">[rabbitmq-discuss] Large number of connections
+</A></li>
+        <LI>Next message: <A HREF="003338.html">[rabbitmq-discuss] Client API error recovery
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3337">[ date ]</a>
+              <a href="thread.html#3337">[ thread ]</a>
+              <a href="subject.html#3337">[ subject ]</a>
+              <a href="author.html#3337">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>
+Here I continue to check the Erlang Client library.
+
+Suppose I want to establish a connection with a remote broker, and 
+subscribe to some channel events. How do I ensure the broker is still 
+there and have not actually disappeared?
+
+Well, let's try stopping broker using `rabbitmqctl stop` and see what we 
+can discover by monitoring the processes the Erlang way:
+
+1&gt; Connection = lib_amqp:start_connection(&quot;test-amq&quot;).
+&lt;0.33.0&gt;
+2&gt; Channel = lib_amqp:start_channel(Connection).
+&lt;0.40.0&gt;
+3&gt; {erlang:monitor(process, Connection), erlang:monitor(process, Channel)}.
+{#Ref&lt;0.0.0.41&gt;,#Ref&lt;0.0.0.42&gt;}
+4&gt; R = fun() -&gt; receive X -&gt; X after 0 -&gt; empty end end.
+#Fun&lt;erl_eval.20.67289768&gt;
+5&gt; % Doing `rabbitmqctl stop` on the broker.
+Broker forced connection: 320 -&gt; &lt;&lt;&quot;CONNECTION_FORCED - broker forced 
+connection closure with reason 'shutdown'&quot;&gt;&gt;
+Channel 1 is shutting down due to: normal
+5&gt; R().
+{'DOWN',#Ref&lt;0.0.0.41&gt;,process,&lt;0.33.0&gt;,normal}
+6&gt; R().
+{'DOWN',#Ref&lt;0.0.0.42&gt;,process,&lt;0.40.0&gt;,normal}
+7&gt; R().
+empty
+8&gt;
+
+
+So far so good: if the broker disappears, both Connection and Channel 
+disappear as well. It seems I can just assume that if I receive a 'DOWN' 
+message on a Connection, I must re-establish it.
+
+But let's try doing a hard failure: killing the RabbitMQ beam using 
+`killall beam` on the broker machine. This is a realistic failure scenario.
+
+1&gt; Connection = lib_amqp:start_connection(&quot;amq1&quot;).
+&lt;0.33.0&gt;
+2&gt; Channel = lib_amqp:start_channel(Connection).
+&lt;0.40.0&gt;
+3&gt; {erlang:monitor(process, Connection), erlang:monitor(process, Channel)}.
+{#Ref&lt;0.0.0.41&gt;,#Ref&lt;0.0.0.42&gt;}
+4&gt; R = fun() -&gt; receive X -&gt; X after 0 -&gt; empty end end.
+#Fun&lt;erl_eval.20.67289768&gt;
+5&gt; % Doing `killall beam` on the broker.
+Channel 1 is shutting down due to: normal
+5&gt; R().
+{'DOWN',#Ref&lt;0.0.0.42&gt;,process,&lt;0.40.0&gt;,normal}
+6&gt; R().
+empty
+7&gt; is_process_alive(Connection).
+true
+8&gt;
+
+You see, the channel is dead, but connection is still alive. What can we 
+do with this connection? Can we start RabbitMQ, open a new Channel and 
+see if it has reconnected automatically?
+
+8&gt; f(Channel).
+ok
+9&gt; Channel = lib_amqp:start_channel(Connection).
+Channel 1 is shutting down due to: {writer,send_failed,badarg}
+
+=ERROR REPORT==== 11-Apr-2009::07:23:49 ===
+** Generic server &lt;0.33.0&gt; terminating
+** Last message in was {open_channel,none,&lt;&lt;&gt;&gt;}
+** When Server state == {connection_state,&quot;guest&quot;,&quot;guest&quot;,&quot;test-amq&quot;,
+                             #Port&lt;0.488&gt;,&lt;&lt;&quot;/&quot;&gt;&gt;,&lt;0.37.0&gt;,&lt;0.38.0&gt;,0,0,
+                             amqp_network_driver,
+                             {dict,0,16,16,8,80,48,
+ 
+{[],[],[],[],[],[],[],[],[],[],[],[],[],[],[],
+                                  []},
+ 
+{{[],[],[],[],[],[],[],[],[],[],[],[],[],[],
+                                   [],[]}}}}
+** Reason for termination ==
+** {normal,{gen_server,call,[&lt;0.50.0&gt;,{call,{'channel.open',&lt;&lt;&gt;&gt;}}]}}
+** exception exit: {{normal,
+                         {gen_server,call,
+                             [&lt;0.50.0&gt;,{call,{'channel.open',&lt;&lt;&gt;&gt;}}]}},
+                     {gen_server,call,[&lt;0.33.0&gt;,{open_channel,none,&lt;&lt;&gt;&gt;}]}}
+      in function  gen_server:call/2
+10&gt;
+
+No, it hasn't. The Connection we have been holding to all this time has 
+not been operational. It was alive, in Erlang process terms, but it is 
+useless because we cannot use it. Moreover, we cannot discover that the 
+connection is dead unless we try to use it.
+
+But let's try using that non-operational Connection again and see how it 
+behaves:
+
+10&gt; f(Channel), Channel = lib_amqp:start_channel(Connection).
+** exception exit: {noproc,
+ 
+{gen_server,call,[&lt;0.33.0&gt;,{open_channel,none,&lt;&lt;&gt;&gt;}]}}
+      in function  gen_server:call/2
+11&gt; is_process_alive(Connection).
+false
+12&gt;
+
+Oh, it's dead! It didn't die at the time it received connection failure 
+from the broker, it died when we tried to use it a considerable time later.
+
+Let's see if RabbitMQ client library actually notices this hard failure, 
+when no open channels are present:
+
+	16&gt; f(), Connection = lib_amqp:start_connection(&quot;test-amq&quot;).
+	&lt;0.66.0&gt;
+	17&gt; erlang:monitor(process, Connection).
+	#Ref&lt;0.0.0.94&gt;
+	18&gt; R = fun() -&gt; receive X -&gt; X after 0 -&gt; empty end end. 
+
+	#Fun&lt;erl_eval.20.67289768&gt;
+	19&gt; length(processes()).
+	35
+	20&gt; % Killing the broker
+	20&gt; length(processes()).
+	33
+	21&gt; R().
+	empty
+	22&gt; is_process_alive(Connection).
+	true
+	23&gt;
+
+Yes, it does! But it does not die &quot;in full&quot;.
+
+I believe the right behavior for the Connection process is to die
+right after receiving some network failure, avoid waiting in
+non-operational state and not allowing the Erlang monitoring to take
+care of network issues between the client and the broker.
+
+
+-- 
+Lev Walkin
+<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">vlm at lionet.info</A>
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003489.html">[rabbitmq-discuss] Large number of connections
+</A></li>
+	<LI>Next message: <A HREF="003338.html">[rabbitmq-discuss] Client API error recovery
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3337">[ date ]</a>
+              <a href="thread.html#3337">[ thread ]</a>
+              <a href="subject.html#3337">[ subject ]</a>
+              <a href="author.html#3337">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,182 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] best practice for &quot;work queue&quot; type	application
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20best%20practice%20for%20%22work%20queue%22%20type%0A%09application&In-Reply-To=%3CCAKH7ZWyAtfiD3Pd6y4KAePzJdxfPdYD3zCi4cB9GSiqE9w-Qvg%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="023564.html">
+   <LINK REL="Next"  HREF="023668.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] best practice for &quot;work queue&quot; type	application</H1>
+    <B>John Cartwright</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20best%20practice%20for%20%22work%20queue%22%20type%0A%09application&In-Reply-To=%3CCAKH7ZWyAtfiD3Pd6y4KAePzJdxfPdYD3zCi4cB9GSiqE9w-Qvg%40mail.gmail.com%3E"
+       TITLE="[rabbitmq-discuss] best practice for &quot;work queue&quot; type	application">john.c.cartwright at noaa.gov
+       </A><BR>
+    <I>Sun Nov  4 18:12:37 GMT 2012</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="023564.html">[rabbitmq-discuss] best practice for &quot;work queue&quot; type	application
+</A></li>
+        <LI>Next message: <A HREF="023668.html">[rabbitmq-discuss] best practice for &quot;work queue&quot; type	application
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#23567">[ date ]</a>
+              <a href="thread.html#23567">[ thread ]</a>
+              <a href="subject.html#23567">[ subject ]</a>
+              <a href="author.html#23567">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Thanks for your thoughtful reply Jerry.  I understand your points and
+in my case, there would relatively few messages and the content of
+those messages is quite small so memory/disk usage is not much
+concern.
+
+I had anticipated using a second queue anyway to publish status
+messages while the long-running process was in progress.
+
+I'm not quite clear however on the point at which the worker consumes
+the next message in the queue.  Assuming I'm using
+&quot;channel.start_consuming()&quot; as in the tutorial and my worker acks the
+message as soon as it receives it, won't it try to consume a second
+message and the single worker will end up concurrently processing two
+jobs?
+
+--john
+
+
+On Sun, Nov 4, 2012 at 9:30 AM, Jerry Kuch &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">jerryk at rbcon.com</A>&gt; wrote:
+&gt;<i> Hi, John:
+</I>&gt;<i>
+</I>&gt;<i> On Fri, Nov 2, 2012 at 7:19 PM, John Cartwright &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">john.c.cartwright at noaa.gov</A>&gt;
+</I>&gt;<i> wrote:
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> The example suggests that the worker wait until the processing is
+</I>&gt;&gt;<i> complete to send the ACK for a given message.  So if my processing
+</I>&gt;&gt;<i> takes many hours, is this a problem for RabbitMQ to have the worker
+</I>&gt;&gt;<i> process consume a message but wait for a very long time to acknowledge
+</I>&gt;&gt;<i> it?
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> The answer is that it depends.  :-)
+</I>&gt;<i>
+</I>&gt;<i> While your message is in the &quot;consumed but unACKed by the consumer&quot; state,
+</I>&gt;<i> the broker is holding on to a copy of the message to guard against the
+</I>&gt;<i> possible failure of your consumer (which will be detected by seeing the
+</I>&gt;<i> connection close unexpectedly) by redelivering in the future if necessary.
+</I>&gt;<i>
+</I>&gt;<i> If the message was published with persistence requested it may be sitting on
+</I>&gt;<i> disk during this period.  Even if it wasn't published persistently, but the
+</I>&gt;<i> broker came under memory pressure, the message may still have been swapped
+</I>&gt;<i> out to disk.  In both cases, keeping that message alive will eat some disk
+</I>&gt;<i> space.  It will also eat some memory, both for the message itself, assuming
+</I>&gt;<i> it hasn't been swapped out due to memory pressure, and a tiny bit of
+</I>&gt;<i> bookkeeping overhead.
+</I>&gt;<i>
+</I>&gt;<i> Whether that becomes a problem or not while your long running consumer is
+</I>&gt;<i> chewing on the message depends on just what sort of resources are available
+</I>&gt;<i> in your broker (RAM and disk particularly) couner-balanced against just how
+</I>&gt;<i> many other messages are passing through the broker, and potentially also
+</I>&gt;<i> languishing in this state for a long time.
+</I>&gt;<i>
+</I>&gt;<i> Rabbit can queue and persist messages pending their delivery and
+</I>&gt;<i> acknowledgment, but it's best not used deliberately as a long term store of
+</I>&gt;<i> data.  A handy mantra is that &quot;A happy Rabbit is an empty Rabbit.&quot;  In other
+</I>&gt;<i> words, Rabbit (and other messaging systems) runs best when it's able to
+</I>&gt;<i> deliver messages in a reasonably timely way, although if things block up due
+</I>&gt;<i> to crashed or slow consumers or the like, mechanisms exist to keep things
+</I>&gt;<i> going, as long as you don't resource exhaust the universe.
+</I>&gt;<i>
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Is there a better way to handle this scenario?
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> Again, it depends.  If you have a good sense for how much of your traffic is
+</I>&gt;<i> going to result in these long-working consumers, and you can bound that to
+</I>&gt;<i> some reasonable extent to avoid having vast piles of messages in the broker,
+</I>&gt;<i> delivered but waiting to be ACKed, then you might be just fine doing things
+</I>&gt;<i> the way you describe.
+</I>&gt;<i>
+</I>&gt;<i> If you expect that you'll have a ton of these slow-to-ACK messages, you may
+</I>&gt;<i> want to consider a slightly more elaborate messaging structure, say where
+</I>&gt;<i> the consumers ACK the message as soon as they've persisted a local copy to
+</I>&gt;<i> work on, and use another queue to notify any upstream services or publishers
+</I>&gt;<i> who care that the work in question has been finished.
+</I>&gt;<i>
+</I>&gt;<i> Then again, perhaps the publisher side doesn't need to be directly informed
+</I>&gt;<i> that consumer work is done, in which case your workflow on the consumer side
+</I>&gt;<i> would be to consume the message, persist it to local storage so that you
+</I>&gt;<i> have a safe copy of it you can resume work upon if your consumer dies, and
+</I>&gt;<i> then ACK it, thereby accepting responsibility for the message's contents
+</I>&gt;<i> from the broker and allowing the broker to forget about the message and stop
+</I>&gt;<i> worrying about having to redeliver it.
+</I>&gt;<i>
+</I>&gt;<i> Make sense?
+</I>&gt;<i>
+</I>&gt;<i> Jerry
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>&gt;<i>
+</I></PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="023564.html">[rabbitmq-discuss] best practice for &quot;work queue&quot; type	application
+</A></li>
+	<LI>Next message: <A HREF="023668.html">[rabbitmq-discuss] best practice for &quot;work queue&quot; type	application
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#23567">[ date ]</a>
+              <a href="thread.html#23567">[ thread ]</a>
+              <a href="subject.html#23567">[ subject ]</a>
+              <a href="author.html#23567">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

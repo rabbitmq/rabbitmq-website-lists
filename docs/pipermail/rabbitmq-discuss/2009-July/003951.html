@@ -1,0 +1,123 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] dropped messages on low volume
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20dropped%20messages%20on%20low%20volume&In-Reply-To=">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003950.html">
+   <LINK REL="Next"  HREF="003952.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] dropped messages on low volume</H1>
+    <B>Joel Reymont</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20dropped%20messages%20on%20low%20volume&In-Reply-To="
+       TITLE="[rabbitmq-discuss] dropped messages on low volume">joelr1 at gmail.com
+       </A><BR>
+    <I>Wed Jul  1 12:48:15 BST 2009</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003950.html">[rabbitmq-discuss] Eclipse type view of RabbitMQ exchanges etc
+</A></li>
+        <LI>Next message: <A HREF="003952.html">[rabbitmq-discuss] dropped messages on low volume
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3951">[ date ]</a>
+              <a href="thread.html#3951">[ thread ]</a>
+              <a href="subject.html#3951">[ subject ]</a>
+              <a href="author.html#3951">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>I'm running Erlang R13B01 and RabbitMQ 1.5.3 server with the Erlang  
+client library.
+
+I start 100 Erlang processes that subscribe to a single topic and  
+publish a single message once all the client processes are ready. Only  
+a random number of my client processes receive the message and the  
+number is less than 50.
+
+Is there an explanation?
+
+More detail...
+
+Client processes synchronize by monitoring a single Erlang process  
+(barrier). Every client subscribes to the topic only when notified  
+that the barrier is open ({'DOWN', _, process, Pid, normal}). Clients  
+bump a counter in the barrier when they are up and running and the  
+barrier opens once the target # of bumps has been reached.
+
+In other words, I don't publish until everyone is ready and subscribed.
+
+The client subscription process looks like this, where  
+common:random_token() returns a 16-digit hash as a string:
+
+     QS = [$t, $h, $q|common:random_token()],
+     Q = list_to_binary(QS),
+     Tok1 = common:random_token(),
+     Tag = list_to_binary([QS, Tok1]),
+     lib_amqp:declare_exchange(State#state.channel, Topic, &lt;&lt;&quot;topic&quot;&gt;&gt;),
+     lib_amqp:declare_queue(State#state.channel, Q),
+     lib_amqp:bind_queue(State#state.channel, Topic, Q,  
+State#state.type),
+     lib_amqp:subscribe(State#state.channel, Q, self(), Tag),
+
+Publishing a message then looks like this:
+
+     Con = lib_amqp:start_connection(Rabbit),
+     Chan = lib_amqp:start_channel(Con),
+     Exch = list_to_binary(Topic),
+     #'exchange.declare_ok'{} = lib_amqp:declare_exchange(Chan, Exch,  
+&lt;&lt;&quot;topic&quot;&gt;&gt;),
+     ...
+     lib_amqp:publish(Chan, Exch, &lt;&lt;&quot;raw&quot;&gt;&gt;, MsgWithId),
+     lib_amqp:publish(Chan, Exch, &lt;&lt;&quot;http&quot;&gt;&gt;, HttpMsg),
+     lib_amqp:publish(Chan, Exch, &lt;&lt;&quot;flash&quot;&gt;&gt;, FlashMsg),
+     lib_amqp:teardown(Con, Chan),
+
+The name of the exchange is always the topic.
+
+I know that 100 clients have subscribed and received messages because  
+I trace in Erlang and count the 'basic.consume_ok' and 'basic.deliver'  
+messages, e.g.
+
+grep &quot;basic.consume_ok&quot; /tmp/foo|wc -l
+grep &quot;basic.deliver&quot; /tmp/foo|wc -l
+
+What am I doing wrong and is there a way to do it better?
+
+All I want is to push a single message to hundreds of thousands of  
+subscribers with minimum latency.
+
+	Thanks, Joel
+
+---
+Mac hacker with a performance bent
+<A HREF="http://www.linkedin.com/in/joelreymont">http://www.linkedin.com/in/joelreymont</A>
+
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003950.html">[rabbitmq-discuss] Eclipse type view of RabbitMQ exchanges etc
+</A></li>
+	<LI>Next message: <A HREF="003952.html">[rabbitmq-discuss] dropped messages on low volume
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3951">[ date ]</a>
+              <a href="thread.html#3951">[ thread ]</a>
+              <a href="subject.html#3951">[ subject ]</a>
+              <a href="author.html#3951">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

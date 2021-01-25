@@ -1,0 +1,237 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] RabbitMQ Consumer Error
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20RabbitMQ%20Consumer%20Error&In-Reply-To=000001ca0314%24122f7610%24368e6230%24%40grice%40logosworld.com">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="004065.html">
+   <LINK REL="Next"  HREF="004069.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] RabbitMQ Consumer Error</H1>
+    <B>Lynton Grice</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20RabbitMQ%20Consumer%20Error&In-Reply-To=000001ca0314%24122f7610%24368e6230%24%40grice%40logosworld.com"
+       TITLE="[rabbitmq-discuss] RabbitMQ Consumer Error">lynton.grice at logosworld.com
+       </A><BR>
+    <I>Mon Jul 13 06:31:43 BST 2009</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="004065.html">[rabbitmq-discuss] RabbitMQ Consumer Error
+</A></li>
+        <LI>Next message: <A HREF="004069.html">[rabbitmq-discuss] Suggested small changes to	/etc/init.d/rabbitmq-server
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#4068">[ date ]</a>
+              <a href="thread.html#4068">[ thread ]</a>
+              <a href="subject.html#4068">[ subject ]</a>
+              <a href="author.html#4068">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi there,
+
+ 
+
+I seemed to have solved the issue....it all had to do with the
+&quot;content_encoding&quot;....so I replaced this:
+
+ 
+
+Content = #content{class_id = 60,
+
+                     properties = amqp_util:basic_properties(),
+
+                     properties = Properties,
+
+                     properties_bin = none,                 
+
+                     payload_fragments_rev = [Payload]
+
+                    },
+
+ 
+
+With this:
+
+ 
+
+Properties = #'P_basic'{content_type = &lt;&lt;&quot;application/octet-stream&quot;&gt;&gt;,
+
+                       content_encoding = &lt;&lt;&quot;binary&quot;&gt;&gt;,
+
+                      delivery_mode = 1,
+
+                      priority = 0},
+
+                Content = #content{class_id = 60,
+
+                     properties = Properties,
+
+                     properties_bin = none,                 
+
+                     payload_fragments_rev = [Payload]
+
+                    },
+
+ 
+
+Now my Python consumer in CARROT is working 100% ;-)
+
+ 
+
+Chat later
+
+ 
+
+Lynton
+
+From: <A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss-bounces at lists.rabbitmq.com</A>
+[mailto:<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss-bounces at lists.rabbitmq.com</A>] On Behalf Of Lynton
+Grice
+Sent: 12 July 2009 07:13 PM
+To: <A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+Subject: [rabbitmq-discuss] RabbitMQ Consumer Error
+
+ 
+
+Hi there,
+
+ 
+
+I wonder if someone can help me on this one. I am building the following
+scenario:
+
+ 
+
+Client -&gt; Mochiweb -&gt; RabbitMQ (via Erlang RabbitMQ Client code) -&gt; Python
+consumer (using the Python CARROT AMQP library)
+
+ 
+
+I have everything working right until the Python consumer picks up the
+message. I get the following error:
+
+ 
+
+&quot;No JSON object could be decoded&quot; 
+
+ 
+
+ Let me step back a second.....here is an example of the BINARY sent from
+the Erlang client (inside Mochiweb) to RabbitMQ:
+
+ 
+
+NOTE: I have simplified the call by just making a binary called &quot;Hello
+World&quot; for &quot;Payload&quot;
+
+ 
+
+Payload = &lt;&lt;&quot;Hello World&quot;&gt;&gt;,
+
+                Content = #content{class_id = 60,
+
+                     properties = amqp_util:basic_properties(),
+
+                     properties_bin = none, 
+
+                     payload_fragments_rev = [Payload]
+
+                    },
+
+                amqp_channel:cast(Channel, BasicPublish, Content),
+
+ 
+
+When the Python JSON library (decoder.py) receives this I can see the
+message is formatted like:
+
+ 
+
+'Hello World'
+
+ 
+
+But if I send to RabbitMQ like follows using PYTHON..
+
+ 
+
+from carrot.messaging import Publisher
+
+from carrot.connection import AMQPConnection
+
+ 
+
+amqpconn = AMQPConnection(hostname=&quot;localhost&quot;, port=5672, userid=&quot;guest&quot;,
+password=&quot;guest&quot;,vhost=&quot;/&quot;)
+
+publisher = Publisher(connection=amqpconn, exchange=&quot;amq.direct&quot;,
+routing_key=&quot;a.b.c.*&quot;)
+
+publisher.send('Hello World')
+
+publisher.close()
+
+ 
+
+I get the following for the message in the Python JSON library (decoder.py):
+
+ 
+
+'&quot;Hello World&quot;'
+
+ 
+
+NOTE the subtle different between the two.....the first one is 'Hello World'
+(from Erlang) and the second (from Python) is '&quot;Hello World&quot;'
+
+ 
+
+I am just wondering if this is a &quot;Unicode&quot; thing or do I need to do
+something to the Erlang BINARY before sending it to RabbitMQ?
+
+ 
+
+I think this could also have to do with the BUILT IN JSON library in Python
+2.6......I will look into that.....
+
+ 
+
+Thanks for the help....much appreciated ;-)
+
+ 
+
+Lynton
+
+ 
+
+ 
+
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: <A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20090713/b9f054e4/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20090713/b9f054e4/attachment.htm</A> 
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="004065.html">[rabbitmq-discuss] RabbitMQ Consumer Error
+</A></li>
+	<LI>Next message: <A HREF="004069.html">[rabbitmq-discuss] Suggested small changes to	/etc/init.d/rabbitmq-server
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#4068">[ date ]</a>
+              <a href="thread.html#4068">[ thread ]</a>
+              <a href="subject.html#4068">[ subject ]</a>
+              <a href="author.html#4068">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

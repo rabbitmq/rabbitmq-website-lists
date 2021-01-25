@@ -1,0 +1,198 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] &quot;Dead&quot; beam.smp threads under high load
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20%22Dead%22%20beam.smp%20threads%20under%20high%20load&In-Reply-To=%3C78190679-de67-4f66-baf5-0728d9508080%40googlegroups.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="030818.html">
+   <LINK REL="Next"  HREF="030835.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] &quot;Dead&quot; beam.smp threads under high load</H1>
+    <B>Paul Bowsher</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20%22Dead%22%20beam.smp%20threads%20under%20high%20load&In-Reply-To=%3C78190679-de67-4f66-baf5-0728d9508080%40googlegroups.com%3E"
+       TITLE="[rabbitmq-discuss] &quot;Dead&quot; beam.smp threads under high load">paul.bowsher at gmail.com
+       </A><BR>
+    <I>Tue Oct  8 11:21:47 BST 2013</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="030818.html">[rabbitmq-discuss] Detect already installed version of RabbitMQ and Erlang during setup
+</A></li>
+        <LI>Next message: <A HREF="030835.html">[rabbitmq-discuss] &quot;Dead&quot; beam.smp threads under high load
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#30825">[ date ]</a>
+              <a href="thread.html#30825">[ thread ]</a>
+              <a href="subject.html#30825">[ subject ]</a>
+              <a href="author.html#30825">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi,
+
+Under highish loads (upwards of 2,000 messages/s), RabbitMQ requires more 
+than one of our CPU cores, which is fine. However, after a long 
+(undetermined) period of uptime of the Erlang VM these scheduler threads 
+seem to become unused. Looking in top/htop with thread views enabled, only 
+one thread (always the same thread) is used and is constantly pegged at 99% 
+of a core. The other threads barely reach 0.1%. We run the Erlang VM with 
+default flags, e.g. no +S or +s options. Some information about the 
+schedulers and CPU bindings etc:
+
+# rabbitmqctl eval 'erlang:system_info(schedulers_online).'
+24
+# rabbitmqctl eval 'erlang:system_info(schedulers).'
+24
+# rabbitmqctl eval 'erlang:system_info(cpu_topology).'
+[{node,[{processor,[{core,[{thread,{logical,1}},{thread,{logical,13}}]},
+                    {core,[{thread,{logical,3}},{thread,{logical,15}}]},
+                    {core,[{thread,{logical,5}},{thread,{logical,17}}]},
+                    {core,[{thread,{logical,7}},{thread,{logical,19}}]},
+                    {core,[{thread,{logical,9}},{thread,{logical,21}}]},
+                    
+{core,[{thread,{logical,11}},{thread,{logical,23}}]}]}]},
+ {node,[{processor,[{core,[{thread,{logical,0}},{thread,{logical,12}}]},
+                    {core,[{thread,{logical,2}},{thread,{logical,14}}]},
+                    {core,[{thread,{logical,4}},{thread,{logical,16}}]},
+                    {core,[{thread,{logical,6}},{thread,{logical,18}}]},
+                    {core,[{thread,{logical,8}},{thread,{logical,20}}]},
+                    
+{core,[{thread,{logical,10}},{thread,{logical,22}}]}]}]}]
+# rabbitmqctl eval 'erlang:system_info(logical_processors_online).'
+24
+# rabbitmqctl eval 'erlang:system_info(multi_scheduling).'
+enabled
+# rabbitmqctl eval 'erlang:system_info(schedulers).'
+24
+# rabbitmqctl eval 'erlang:system_info(scheduler_bindings).'
+{unbound,unbound,unbound,unbound,unbound,unbound,unbound,unbound,unbound,
+         unbound,unbound,unbound,unbound,unbound,unbound,unbound,unbound,
+         unbound,unbound,unbound,unbound,unbound,unbound,unbound}
+# rabbitmqctl eval 'erlang:system_info(threads).'
+true
+# rabbitmqctl eval 'erlang:system_info(thread_pool_size).'
+30
+
+beam command line:
+
+/usr/lib64/erlang/erts-5.10.1/bin/beam.smp -W w -K true -A30 -P 1048576 -- 
+-root /usr/lib64/erlang -progname erl -- -home /var/lib/rabbitmq -- -pa 
+/usr/lib/rabbitmq/lib/rabbitmq_server-3.1.0/sbin/../ebin -noshell -noinput 
+-s rabbit boot -sname <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at rabbit-node-name</A> -boot start_sasl -config 
+/etc/rabbitmq/rabbitmq -kernel inet_default_connect_options 
+[{nodelay,true}] -sasl errlog_type error -sasl sasl_error_logger false 
+-rabbit error_logger {file,&quot;/var/log/rabbitmq/<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at rabbit-node-name.log</A>&quot;} 
+-rabbit sasl_error_logger 
+{file,&quot;/var/log/rabbitmq/<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at rabbit-node-name-sasl.log</A>&quot;} -rabbit 
+enabled_plugins_file &quot;/etc/rabbitmq/enabled_plugins&quot; -rabbit plugins_dir 
+&quot;/usr/lib/rabbitmq/lib/rabbitmq_server-3.1.0/sbin/../plugins&quot; -rabbit 
+plugins_expand_dir 
+&quot;/var/lib/rabbitmq/mnesia/<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at rabbit-node-name-plugins-expand</A>&quot; -os_mon 
+start_cpu_sup false -os_mon start_disksup false -os_mon start_memsup false 
+-mnesia dir &quot;/var/lib/rabbitmq/mnesia/<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at rabbit-node-name</A>&quot;
+
+htop screenshot (at not-quite-full load): <A HREF="http://i.imgur.com/fom6Cwa.png">http://i.imgur.com/fom6Cwa.png</A>
+
+After this point of only one core being utilised and high loads being 
+encountered, message throughput hits a ceiling, the run_queue grows and the 
+Management API becomes unresponsive (we use it for a lot of monitoring).
+
+To rectify the situation, we attempted first to do a rabbitmqctl stop_app, 
+rabbitmqctl start_app (our nodes are clustered with mirrored queues) but 
+this didn't help. In the end we shut down the app and restarted the Erlang 
+VM as a whole. Suddenly we see 6-8 threads all using about 70% CPU, 
+throughput increases to where it should be, run_queue is always 0 and the 
+Management API is fully responsive.
+
+We currently have 4 nodes in this &quot;stuck&quot; situation on our less-critical 
+workloads, so we are able to provide any debugging information required.
+
+We're running 24 &quot;cores&quot; worth of Xeon E5645 on 
+RHEL5.6 2.6.18-238.27.1.el5. We're running RabbitMQ both 3.1.0 and 3.1.5 on 
+a self-compiled RPM of Erlang OTP R16B with HiPE disabled.
+
+Thanks in advance for any help, and let me know if we can provide any 
+further information, straces, netstats etc.
+
+Paul Bowsher
+Senior Engineer
+Global Personals
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20131008/1a0d2f52/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20131008/1a0d2f52/attachment.htm</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="030818.html">[rabbitmq-discuss] Detect already installed version of RabbitMQ and Erlang during setup
+</A></li>
+	<LI>Next message: <A HREF="030835.html">[rabbitmq-discuss] &quot;Dead&quot; beam.smp threads under high load
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#30825">[ date ]</a>
+              <a href="thread.html#30825">[ thread ]</a>
+              <a href="subject.html#30825">[ subject ]</a>
+              <a href="author.html#30825">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

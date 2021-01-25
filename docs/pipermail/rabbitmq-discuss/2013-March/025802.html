@@ -1,0 +1,126 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Performance tests and a warning on HIPE
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Performance%20tests%20and%20a%20warning%20on%20HIPE&In-Reply-To=%3CB4A058E2-17EC-4669-B46E-286B9DDB8511%40gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="025801.html">
+   <LINK REL="Next"  HREF="025808.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Performance tests and a warning on HIPE</H1>
+    <B>McIntosh Jason</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Performance%20tests%20and%20a%20warning%20on%20HIPE&In-Reply-To=%3CB4A058E2-17EC-4669-B46E-286B9DDB8511%40gmail.com%3E"
+       TITLE="[rabbitmq-discuss] Performance tests and a warning on HIPE">mcintoshj at gmail.com
+       </A><BR>
+    <I>Fri Mar  8 03:03:50 GMT 2013</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="025801.html">[rabbitmq-discuss] Per-queue/exchange ACL via LDAP plugin
+</A></li>
+        <LI>Next message: <A HREF="025808.html">[rabbitmq-discuss] Performance tests and a warning on HIPE
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#25802">[ date ]</a>
+              <a href="thread.html#25802">[ thread ]</a>
+              <a href="subject.html#25802">[ subject ]</a>
+              <a href="author.html#25802">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>So I was doing some load testing against several boxes to test things like performance against a single exchange to fanout queues, multiple exchanges dedicated to a single queue, server topologies, etc.  One of the things I'd tested was performance improvements with HIPE.  I wanted to share a few discoveries over the last few days.
+
+First, let me start out my configuration.  I'd been trying transactions but after reading about publishConfirm settings, I switched to that immediately (losing messages otherwise is a bad deal for us).  Wish I'd seen that before.  Anyways, I'm publishing from a java client remotely on a 1GB network to a rabbit box with about 64GB Ram, 24 cores of CPU (Intel), 900GB SCSI Disks in a RAID 1 configuration.  I'm starting up multiple threads, each thread with it's own channel, and publishConfirm every 500 messages (I tried 5000 to 1000 to 50 and found 500 about optimal, though that may vary).  Each message is a static 800 byte random message.  I'm using something very similar to the code here:
+<A HREF="http://hg.rabbitmq.com/rabbitmq-java-client/file/default/test/src/com/rabbitmq/examples/ConfirmDontLoseMessages.java">http://hg.rabbitmq.com/rabbitmq-java-client/file/default/test/src/com/rabbitmq/examples/ConfirmDontLoseMessages.java</A>
+
+I'm consuming with a spring SimpleMessageConsumerListener, with 16 threads against all the available queues.  I've got a transaction size of 50, prefetch of 50, and am using the RabbitTransactionManager transaction handler.  I increment a local message counter and move on in the message.
+
+
+Here are some of my findings:
+NOTE - all messages/queues are durable and persistent.  
+
+With publishes only going, I'm seeing about 15k messages a second go through the system, and maxing out disk IO on the box at about 14MB/sec.  CPU load was about 20-40% at various times.  This is consistent whether it's five queue or twenty five queues.  Disk IO is the limiting factor here.  With messages about 1k a piece, and 15k of those going through, this implies that each message is hitting disk at a pretty straight 1-1 rate.  Note, this was the same whether against a fanout to multiple queues or direct exchanges with a single queue backing them. 
+
+With ONLY consumers going, I was able to receive at nearly 65k messages a second.  I was pretty danged impressed by that.  If I DON'T set the txSize that performance goes down to about 25k messages a second - big improvement when you tweak your settings there.  Note, I've not spent a whole lot of time working on this section, so I'm NOT sure about the reliability and handling of messages, but overall it seems pretty impressive.
+
+With both publishers and consumers going, the messages even out where the consumers eventually match the publishing rates (surprise surprise).  What was surprising a bit was that this rate with both going was about the same rate as publishing alone.  I'd have figured that the disk I/O might have actually increased due to having to modify the database to confirm (ack) the consume.  This and the consumer performance tells me that consuming data from the database is a LOT less intensive than getting it in there.  I do want to run more tests to see how intensive Consumes are to the disk.
+
+
+Now for the warnings:
+1)  TURN OFF HIPE.  This was testing with Erlang R15B03 - the latest release and RabbitMQ 3.0.2.  With HIPE and the load we were putting on the system, Rabbit crashes bad, no errors, no warning, it's just suddenly dead.  It seems to happen a few minutes into the load.  I've not enabled any kind of debugging to trace this down, but this was scary enough that we immediately turned off HIPE everywhere.  HIPE DOES give you a good 20-50% boost in message rates, but be prepared to have it crash.  Note, this was our experience on multiple boxes, running CentOS 6.2 (well, really Oracle's Enterprise Linux).  I'm going to hopefully at some point turn on some debugging and see if I can trace this down, but it's not a priority right now.  It ONLY seems to happen under a load though - I've got multiple systems that have HIPE turned on with the same hardware configurations that don't show this, but they aren't under the load I've put on while testing.  Note your mileage may vary with this.  I'd also want to test against different Erlang releases than R15B03.
+
+2)  These numbers are very preliminary and should be taken with a grain of salt.  Still, it's pretty interesting to see what Rabbit can handle under a load, and that it seems (at least from publishing) to be much more IO bound than CPU bound.  I'd love to hit a smaller CPU system that has more IO capacity to see if I can bottle neck on CPU and see performance there.
+
+3)  Tests were done from a remote system to the server.  I used about 30% of a 1GB connection - there IS a possibility there's some bottle necking on the network due to frame sizes and other settings.
+
+4)  I've not tested a whole lot of variations on this test yet, as I've not had the time, but it'd be interesting to test with different settings (i.e. async:1, A:0 settings, changing to XFS file system from EXT4, etc.).  This is currently a very default install of Rabbit.
+
+
+Good luck to anyone out there!  Will see if I can share my sample code of my publisher/consumer stuff out at some point.  If people have more questions on hardware configurations, server configs, etc. let me know!
+
+Jason
+
+
+
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="025801.html">[rabbitmq-discuss] Per-queue/exchange ACL via LDAP plugin
+</A></li>
+	<LI>Next message: <A HREF="025808.html">[rabbitmq-discuss] Performance tests and a warning on HIPE
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#25802">[ date ]</a>
+              <a href="thread.html#25802">[ thread ]</a>
+              <a href="subject.html#25802">[ subject ]</a>
+              <a href="author.html#25802">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

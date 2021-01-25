@@ -1,0 +1,187 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Synchronous publish with C client
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Synchronous%20publish%20with%20C%20client&In-Reply-To=%3C20110211003500.GA2361%40dakota.doc.ic.ac.uk%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="011200.html">
+   <LINK REL="Next"  HREF="011201.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Synchronous publish with C client</H1>
+    <B>Alexandru Scvor&#355;ov</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Synchronous%20publish%20with%20C%20client&In-Reply-To=%3C20110211003500.GA2361%40dakota.doc.ic.ac.uk%3E"
+       TITLE="[rabbitmq-discuss] Synchronous publish with C client">alexandru at rabbitmq.com
+       </A><BR>
+    <I>Fri Feb 11 00:35:00 GMT 2011</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="011200.html">[rabbitmq-discuss] Synchronous publish with C client
+</A></li>
+        <LI>Next message: <A HREF="011201.html">[rabbitmq-discuss] rabbitmq-auth-mechanism-ssl plugin, TCP,	SASL EXTERNAL
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#11202">[ date ]</a>
+              <a href="thread.html#11202">[ thread ]</a>
+              <a href="subject.html#11202">[ subject ]</a>
+              <a href="author.html#11202">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi,
+
+What you're seeing is [almost] the correct behaviour.  Sending a
+mandatory/immediate message to a nonexistent queue (or a queue with no
+consumers) is not considered an error, so the commit will succeed.  In
+this case, the broker will however respond with a basic.return message
+informing the client of the lost message.
+
+Unfortunately, I don't think our C client has anyway of handling
+basic.returns, so you're out of luck.
+
+The other clients are all capable of handling basic.returns (and
+publisher confirms if you're using 2.3.1), so you might want to consider
+using one of them.  Have a look at this blogpost, it covers what you're
+trying to achieve:
+  <A HREF="http://www.rabbitmq.com/blog/2011/02/10/introducing-publisher-confirms/">http://www.rabbitmq.com/blog/2011/02/10/introducing-publisher-confirms/</A>
+
+Hope this helps.
+
+Cheers,
+Alex
+
+On Thu, Feb 10, 2011 at 03:54:48PM -0700, Shane Head wrote:
+&gt;<i> I know that publish is asynchronous, but from other threads I've read I thought that selecting the channel for a transaction, calling publish and then calling commit could be used to accomplish it.  I've tried doing this in my C code and have been unable to get it to work.  I'm using the amq.direct exchange and sending to a nonexistent queue using the mandatory and immediate flags.  It appears as though the message is being silently dropped by the server though.  I'm running rabbitmQ version 2.2.  Here is the code I'm using.  Please let me know of any errors there might be in my logic or code.  All I get is
+</I>&gt;<i> 
+</I>&gt;<i> [*] Sending some message
+</I>&gt;<i> 
+</I>&gt;<i> outputted when I run this.  I would expect to see the 'Error committingtx' print if the queue does not exist though.
+</I>&gt;<i> 
+</I>&gt;<i> int main(int argc, char *argv[])
+</I>&gt;<i> {
+</I>&gt;<i>     int rc;
+</I>&gt;<i>     int sockfd;
+</I>&gt;<i>     uint16_t channel = 1;
+</I>&gt;<i>     amqp_rpc_reply_t reply;
+</I>&gt;<i> 
+</I>&gt;<i>     amqp_connection_state_t conn = amqp_new_connection();
+</I>&gt;<i>     //Connect
+</I>&gt;<i>     sockfd = amqp_open_socket(&quot;localhost&quot;, 5672);
+</I>&gt;<i>     if (sockfd &lt; 0)
+</I>&gt;<i>     {
+</I>&gt;<i>         printf(&quot;Error connecting to localhost:5672\n&quot;);
+</I>&gt;<i>         return 1;
+</I>&gt;<i>     }
+</I>&gt;<i>     amqp_set_sockfd(conn, sockfd);
+</I>&gt;<i>     amqp_login(conn, &quot;/&quot; /* vhost */, 0 /* channel_max */,
+</I>&gt;<i>                 131072 /* frame_max */, 0 /* heartbeat */,
+</I>&gt;<i>                 AMQP_SASL_METHOD_PLAIN, &quot;guest&quot;, &quot;guest&quot;);
+</I>&gt;<i> 
+</I>&gt;<i>     //Create a channel
+</I>&gt;<i>     amqp_channel_open(conn, channel);
+</I>&gt;<i> 
+</I>&gt;<i>     //Set up tx
+</I>&gt;<i>     amqp_tx_select(conn, channel);
+</I>&gt;<i>     reply = amqp_get_rpc_reply(conn);
+</I>&gt;<i>     if (reply.reply_type != AMQP_RESPONSE_NORMAL)
+</I>&gt;<i>     {
+</I>&gt;<i>         printf(&quot;Error selecting tx\n&quot;);
+</I>&gt;<i>         return 1;
+</I>&gt;<i>     }
+</I>&gt;<i> 
+</I>&gt;<i>     //Send  message
+</I>&gt;<i>     const char *message = &quot;some message&quot;;
+</I>&gt;<i>     printf(&quot;[*] Sending %s\n&quot;, message);
+</I>&gt;<i>     amqp_basic_properties_t props;
+</I>&gt;<i>     memset(&amp;props, 0x00, sizeof(props));
+</I>&gt;<i>     props.delivery_mode = 2; //persistent
+</I>&gt;<i> 
+</I>&gt;<i>     rc = amqp_basic_publish(conn, channel, amqp_cstring_bytes(&quot;amq.direct&quot;),
+</I>&gt;<i>                             amqp_cstring_bytes(&quot;nonexistent_queue&quot;), 1 /*mandatory*/,
+</I>&gt;<i>                             1 /*immediate*/, &amp;props, amqp_cstring_bytes(message));
+</I>&gt;<i>     if (rc != 0)
+</I>&gt;<i>     {
+</I>&gt;<i>         char *errstr = amqp_error_string(-rc);
+</I>&gt;<i>         printf(&quot;Error publishing: %s\n&quot;, errstr);
+</I>&gt;<i>         free(errstr);
+</I>&gt;<i>     }
+</I>&gt;<i> 
+</I>&gt;<i>     //Now send commit and see if it worked
+</I>&gt;<i>     amqp_tx_commit(conn, channel);
+</I>&gt;<i>     reply = amqp_get_rpc_reply(conn);
+</I>&gt;<i>     if (reply.reply_type != AMQP_RESPONSE_NORMAL)
+</I>&gt;<i>     {
+</I>&gt;<i>         printf(&quot;Error committing tx\n&quot;);
+</I>&gt;<i>         return 1;
+</I>&gt;<i>     }
+</I>&gt;<i> 
+</I>&gt;<i>     reply = amqp_channel_close(conn, channel, AMQP_REPLY_SUCCESS);
+</I>&gt;<i>     if (reply.reply_type != AMQP_RESPONSE_NORMAL)
+</I>&gt;<i>     {
+</I>&gt;<i>         printf(&quot;Error closing channel\n&quot;);
+</I>&gt;<i>     }
+</I>&gt;<i>     amqp_connection_close(conn, AMQP_REPLY_SUCCESS);
+</I>&gt;<i>     amqp_destroy_connection(conn);
+</I>&gt;<i> 
+</I>&gt;<i>     return 0;
+</I>&gt;<i> }
+</I>&gt;<i> 
+</I>&gt;<i> Cheers,
+</I>&gt;<i> Shane
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> ***************
+</I>&gt;<i> This e-mail and any files transmitted with it may contain confidential and/or proprietary information. It is intended solely for the use of the individual or entity who is the intended recipient. Unauthorized use of this information is prohibited. If you have received this in error, please contact the sender by replying to this message and delete this material from any system it may be on.
+</I>&gt;<i> ***************
+</I>
+&gt;<i> _______________________________________________
+</I>&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="011200.html">[rabbitmq-discuss] Synchronous publish with C client
+</A></li>
+	<LI>Next message: <A HREF="011201.html">[rabbitmq-discuss] rabbitmq-auth-mechanism-ssl plugin, TCP,	SASL EXTERNAL
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#11202">[ date ]</a>
+              <a href="thread.html#11202">[ thread ]</a>
+              <a href="subject.html#11202">[ subject ]</a>
+              <a href="author.html#11202">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

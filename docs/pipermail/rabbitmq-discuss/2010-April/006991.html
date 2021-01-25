@@ -1,0 +1,153 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Erlang client RPC and dropped messages
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20Erlang%20client%20RPC%20and%20dropped%20messages&In-Reply-To=20100426193755.GA5451%40wellquite.org">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="006990.html">
+   <LINK REL="Next"  HREF="006992.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Erlang client RPC and dropped messages</H1>
+    <B>Noah Fontes</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20Erlang%20client%20RPC%20and%20dropped%20messages&In-Reply-To=20100426193755.GA5451%40wellquite.org"
+       TITLE="[rabbitmq-discuss] Erlang client RPC and dropped messages">nfontes at cynigram.com
+       </A><BR>
+    <I>Mon Apr 26 21:20:55 BST 2010</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="006990.html">[rabbitmq-discuss] Erlang client RPC and dropped messages
+</A></li>
+        <LI>Next message: <A HREF="006992.html">[rabbitmq-discuss] compiled plugin for debian packaged	rabbitmq-server
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#6991">[ date ]</a>
+              <a href="thread.html#6991">[ thread ]</a>
+              <a href="subject.html#6991">[ subject ]</a>
+              <a href="author.html#6991">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>-----BEGIN PGP SIGNED MESSAGE-----
+Hash: SHA1
+
+Hi Matthew,
+
+Thanks a lot for the clarification! I was thoroughly confused and this
+all makes a lot more sense now. I think I'll try the transactional
+method (or perhaps even work on replacing our current system with
+rabbitmq-shovel).
+
+Much appreciated,
+
+Noah
+
+Matthew Sackman wrote:
+&gt;<i> Hi Noah,
+</I>&gt;<i> 
+</I>&gt;<i> On Mon, Apr 26, 2010 at 01:58:24PM -0500, Noah Fontes wrote:
+</I>&gt;&gt;<i> 1. The connection to the remote RabbitMQ exchange is dropped (often this
+</I>&gt;&gt;<i> is because I accidentally let way too many messages build up and the
+</I>&gt;&gt;<i> node crashes, but that's a topic for another day and I'm guessing the
+</I>&gt;&gt;<i> new persister is going to fix this issue quite nicely); however, no-one
+</I>&gt;&gt;<i> is notified of the dropped connection because as far as I can tell the
+</I>&gt;&gt;<i> checks for this are only run when data actually goes across the connection.
+</I>&gt;<i> 
+</I>&gt;<i> Correct, though you could set heartbeat to non-zero. That should get you
+</I>&gt;<i> more prompt notification.
+</I>&gt;<i> 
+</I>&gt;&gt;<i> 2. A message is read from the local queue and published to the remote
+</I>&gt;&gt;<i> exchange (via amqp_channel:cast/3), which appears to be successful.
+</I>&gt;<i> 
+</I>&gt;<i> Be aware of cast. Cast returns as soon as the message has been added to
+</I>&gt;<i> the writer's mailbox (and actually can be sooner...). Needless to say,
+</I>&gt;<i> this does not suggest the message has made it out of the socket, or even
+</I>&gt;<i> been looked at by the socket writer. In general, I tend to use
+</I>&gt;<i> amqp_channel:call, not cast, for almost everything as it avoids millions
+</I>&gt;<i> of messages backing up in the mailbox of the writer process.
+</I>&gt;<i> 
+</I>&gt;&gt;<i> Relevant comments from rabbit_writer.erl are included here:
+</I>&gt;&gt;<i> %% So instead we lift the code from prim_inet:send/2, which is what
+</I>&gt;&gt;<i> %% gen_tcp:send/2 calls, do the first half here and then just process
+</I>&gt;&gt;<i> %% the result code in handle_message/2 as and when it arrives.
+</I>&gt;&gt;<i> %%
+</I>&gt;&gt;<i> %% This means we may end up happily sending data down a closed/broken
+</I>&gt;&gt;<i> %% socket, but that's ok since a) data in the buffers will be lost in
+</I>&gt;&gt;<i> %% any case (so qualitatively we are no worse off than if we used
+</I>&gt;&gt;<i> %% gen_tcp:send/2), and b) we do detect the changed socket status
+</I>&gt;&gt;<i> %% eventually, i.e. when we get round to handling the result code.
+</I>&gt;<i> 
+</I>&gt;<i> Indeed, so using call, not cast, pretty much gets you to this point, but
+</I>&gt;<i> obviously no further.
+</I>&gt;<i> 
+</I>&gt;&gt;<i> 3. After the message is &quot;written&quot; to the exchange, the connection is
+</I>&gt;&gt;<i> seen as closed, messages are sent out to listening Erlang processes, and
+</I>&gt;&gt;<i> a new connection is subsequently re-established by my code.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> However, at this point the message that caused the connection drop to be
+</I>&gt;&gt;<i> noticed is permanently lost; since the connection wasn't actually active
+</I>&gt;&gt;<i> when it was published it can't possibly be rejected, and since no errors
+</I>&gt;&gt;<i> were thrown at publish-time, it appears as if the message was sent
+</I>&gt;&gt;<i> successfully. In our code, this results in ~50% data loss when a node
+</I>&gt;&gt;<i> unexpectedly goes down.
+</I>&gt;<i> 
+</I>&gt;<i> Right. What you're doing is fine, but with your approach you clearly
+</I>&gt;<i> need to hold on to the most recent message you received in case the
+</I>&gt;<i> connection drops and you then need to resend it. Furthermore, as you're
+</I>&gt;<i> using cast, you could have millions of messages queued up with the
+</I>&gt;<i> writer process mailbox which all would be lost.
+</I>&gt;<i> 
+</I>&gt;<i> However, you're not acking. So, on connection drop to the remote, you
+</I>&gt;<i> could also connection drop to the local. Then, the local broker will
+</I>&gt;<i> requeue everything that's not been acked, and when you reconnect, you'll
+</I>&gt;<i> find it all there. Now at that point, any ordering guarantees you had go
+</I>&gt;<i> out the window, but that may not be a concern. Assuming you're using
+</I>&gt;<i> basic.consume, you could set qos to prefetch of 1, which would then mean
+</I>&gt;<i> that at most one message is buffered in the client without it being
+</I>&gt;<i> acked, significantly limiting your exposure.
+</I>&gt;<i> 
+</I>&gt;<i> Finally, if you want to be really sure, use transactions to the
+</I>&gt;<i> destination - that way you know you have to hang on to everything you've
+</I>&gt;<i> published up until you get the commit_ok back, and then you are
+</I>&gt;<i> guaranteed that it's been received.
+</I>&gt;<i> 
+</I>&gt;<i> And in an obvious plug, our shovel is capable of dealing with these
+</I>&gt;<i> issues. ;)
+</I>&gt;<i> 
+</I>&gt;<i> Matthew
+</I>
+-----BEGIN PGP SIGNATURE-----
+Version: GnuPG v1.4.10 (GNU/Linux)
+
+iEYEARECAAYFAkvV9acACgkQhitK+HuUQJSKwgCgn881Wc100Ck+h+1DknhhwEsl
+rgQAnjUyC68Ehg1SRqFWeMUCEapmmaQc
+=JuyV
+-----END PGP SIGNATURE-----
+
+</PRE>
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="006990.html">[rabbitmq-discuss] Erlang client RPC and dropped messages
+</A></li>
+	<LI>Next message: <A HREF="006992.html">[rabbitmq-discuss] compiled plugin for debian packaged	rabbitmq-server
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#6991">[ date ]</a>
+              <a href="thread.html#6991">[ thread ]</a>
+              <a href="subject.html#6991">[ subject ]</a>
+              <a href="author.html#6991">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

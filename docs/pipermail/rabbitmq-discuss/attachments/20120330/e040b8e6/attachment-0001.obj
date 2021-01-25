@@ -1,0 +1,185 @@
+#!/usr/bin/env python
+# pika is 
+import os,sys,getopt
+import pika
+import time
+import random
+import md5
+import uuid
+import signal
+
+# default msg size
+C__MSG_SIZE=20*1024
+
+# number of messages to send before waiting a while
+# tune to have 15 msg/sec
+C__SLICE=20
+
+# List of possible priorities (0 to 9)
+C__PRIORITIES=range(10)
+
+C__PUBLIC_EXCHANGE = 'tera.public'
+C__BINDING_KEY     = 'insert.0'
+C__QUEUE           = 'spy.queue'
+
+g__display_method  = False
+g__display_props   = False
+g__redelivered_count = 0
+g__nb_messages     = 0
+g__max_messages    = 0
+g__debug = False
+
+def sig_handler(signum, frame):
+    global g__end
+    print 'Signal handler called with signal', signum
+    raise KeyboardInterrupt
+                  
+# declare the callback that will be invoked
+# when receiving a message
+def callback(ch, method, props, body):
+    global g__redelivered_count
+    global g__display_method
+    global g__display_props
+    global g__nb_messages
+    global g__nb_messages
+    
+    if g__debug:
+        print "\n***********************************************"
+        print "Message Received : ", time.ctime(time.time())
+    if g__display_props:
+        # Dump message properties
+        print "---------------------------------- Properties ----------------------------------"
+        print "\tcontent_type    : ", props.content_type
+        print "\tcontent_encoding: ", props.content_encoding
+        print "\theaders: ", props.headers
+        print "\tdelivery_mode: ", props.delivery_mode
+        print "\tpriority: ", props.priority
+        print "\tcorrelation_id: ", props.correlation_id
+        print "\treply_to: ", props.reply_to
+        print "\texpiration: ", props.expiration
+        print "\tmessage_id: ", props.message_id
+        print "\ttimestamp: ", props.timestamp
+        print "\ttype: ", props.type
+        print "\tuser_id: ", props.user_id
+        print "\tapp_id: ", props.app_id
+        print "\tcluster_id: ", props.cluster_id
+        print "-------------------------------------------------------------------------------"
+
+    if g__display_method:
+        # Dump method attribut
+        print "--------------------------------- method ---------------------------------------"
+        print "method.name: ",method.name
+        print "method.delivery_tag: ", method.delivery_tag
+        print "method.redelivered: ", method.redelivered
+        print "method.routing_key: ", method.routing_key
+        print "method.synchronous: ", method.synchronous
+        print "-------------------------------------------------------------------------------"
+        
+    if method.redelivered == True:
+        print "REDELIVERED MESSAGE : %s"%(props.message_id)
+        g__redelivered_count +=1
+
+    # Dump body properties
+    if g__debug:
+        size = len(body)
+        print "--- Body --------"
+        print "\tsize : ", size
+
+    print "At:%s %s Tag:%d redeliver:%s"%(time.ctime(time.time()), props.message_id, method.delivery_tag, method.redelivered)
+              
+    # ch.basic_ack(delivery_tag = method.delivery_tag)
+    g__nb_messages += 1
+    if g__nb_messages >= g__max_messages:
+        print "stop consuming"
+        ch.stop_consuming()
+
+
+class Client(object):
+    def __init__(self, i__host, i__exchange):
+        print "Client on host %s exchange %s"%(i__host,i__exchange)
+        self.connection = pika.BlockingConnection(pika.ConnectionParameters(host=i__host))
+        self.channel    = self.connection.channel()
+        self.exchange   = i__exchange
+        self.queue_name = C__QUEUE
+        
+        # Declare the queue and bind it to the exchange
+        # Exchange must exist
+        self.channel.queue_declare(queue=self.queue_name)
+        
+    def __del__(self):
+        self.connection.close()
+        
+    def bind(self, i__key):
+        print "Bind queue %s on key %s"%(self.queue_name,i__key)
+        self.channel.queue_bind(exchange=self.exchange,
+                          queue=self.queue_name,
+                          routing_key=i__key)
+
+    def start_read(self):
+        print "start consuming queue %s"%(self.queue_name)
+        self.channel.basic_consume(callback,
+                          queue=self.queue_name,
+                          no_ack=True)
+        self.channel.start_consuming()
+        
+    def __del__(self):
+        print "Delete queue ",self.queue_name 
+        self.channel.queue_delete(queue=self.queue_name)
+
+def read(i__host, i__exchange, i__key, i__nb):
+    global g__max_messages
+    # Declare the client connection toRabbitMQ server
+    l_Client = Client(i__host, i__exchange)
+    l_Client.bind(i__key)
+
+    # nb messages to read
+    g__max_messages=i__nb
+    try:
+        l_Client.start_read()
+    except KeyboardInterrupt:
+        pass
+
+    # Closing the connection to flush the messages
+    del l_Client
+
+
+def print_usage():
+    print 'Usage:'
+    print '\t' + sys.argv[0] + ' -m machine -e <exchange> -k <key> -n <number>' + ' -h'
+    print '\t <machine>  machine (host) name to bind from (default localhost)'
+    print '\t <exchange> exchange name to bind from (default tera.public)'
+    print '\t <key> binding  key to use (default insert.0)'
+    print '\t <number> total number of messages to read (default loop)'
+    print '\t\t-h\tThis message'
+
+if __name__ == '__main__':
+    try:
+        l__opts,l__args = getopt.getopt(sys.argv[1:],'hm:e:n:k:')
+    except getopt.error, msg:
+        print msg
+        print_usage()
+        sys.exit(1)
+
+    # default
+    l__host       = 'localhost'
+    l__exchange   = C__PUBLIC_EXCHANGE
+    l__nbRequest  = 1
+    l__bindingKey = C__BINDING_KEY
+    for l__opt in l__opts:
+        if l__opt[0]=='-h':
+            print_usage()
+            sys.exit(0)
+        if l__opt[0]=='-m':
+            l__host = l__opt[1]
+        if l__opt[0]=='-e':
+            l__exchange = l__opt[1]
+        if l__opt[0]=='-n':
+            l__nbRequest = int(l__opt[1])
+        if l__opt[0]=='-k':
+            l__bindingKey = l__opt[1]
+
+    signal.signal(signal.SIGTERM, sig_handler)
+    
+    print "Going to read %d messages on host %s exchange %s with key %s"%(l__nbRequest,l__host,l__exchange,l__bindingKey)
+    read(l__host, l__exchange, l__bindingKey, l__nbRequest)
+    print "Number of Redelivered messages : ", g__redelivered_count

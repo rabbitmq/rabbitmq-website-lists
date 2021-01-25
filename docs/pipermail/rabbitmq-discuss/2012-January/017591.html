@@ -1,0 +1,234 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Architecture Question: 2 Brokers, or Not 2 Brokers ?
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Architecture%20Question%3A%202%20Brokers%2C%0A%20or%20Not%202%20Brokers%20%3F&In-Reply-To=%3CCAOn7oW9NZMc003BHQDfZKDsfKLT2beVV7x%3DoeoHn4MsT6j2zDA%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="017582.html">
+   <LINK REL="Next"  HREF="017600.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Architecture Question: 2 Brokers, or Not 2 Brokers ?</H1>
+    <B>Simone Busoli</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Architecture%20Question%3A%202%20Brokers%2C%0A%20or%20Not%202%20Brokers%20%3F&In-Reply-To=%3CCAOn7oW9NZMc003BHQDfZKDsfKLT2beVV7x%3DoeoHn4MsT6j2zDA%40mail.gmail.com%3E"
+       TITLE="[rabbitmq-discuss] Architecture Question: 2 Brokers, or Not 2 Brokers ?">simone.busoli at gmail.com
+       </A><BR>
+    <I>Mon Jan 23 21:18:42 GMT 2012</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="017582.html">[rabbitmq-discuss] Architecture Question: 2 Brokers, or Not 2 Brokers ?
+</A></li>
+        <LI>Next message: <A HREF="017600.html">[rabbitmq-discuss] Architecture Question: 2 Brokers, or Not 2 Brokers ?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#17591">[ date ]</a>
+              <a href="thread.html#17591">[ thread ]</a>
+              <a href="subject.html#17591">[ subject ]</a>
+              <a href="author.html#17591">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi dns, I'll try to bring my own experience on the subject. When you
+federate exchanges between brokers you are in the loose sense having the
+downstream exchange acting as a consumer for the upstream exchange. I may
+have misunderstood you but I think that having 8000 brokers rather 8000
+remote consumers on the central broker doesn't solve the consistency
+problem you are describing.
+
+Let's make an example with federated brokers on the happy path:
+
+   1. One message is published on the upstream exchange and reaches the
+   downstream exchange, and in turn the queue and then the consumer on the
+   downstream broker
+   2. The downstream broker confirms the message to the upstream broker so
+   the upstream broker can forget about it
+   3. The connection between the brokers goes down
+   4. The consumer on the downstream broker processes the message,
+   acknowledges it and everyone's happy
+
+Here's the sad path with federated brokers:
+
+   1. same as above
+   2. The connection between the brokers is lost before the downstream can
+   confirm the message to the upstream (unlikely, but can definitely happen)
+   3. The consumer on the downstream broker processes the message and
+   acknowledges it to its local broker
+   4. The connection between the two brokers is restored, and thus the
+   upstream will resend the unconfirmed messages once again
+   5. The consumer on the downstream will receive the same message it has
+   already consumed, therefore it will need a way to deduplicate it
+
+Now the safe path with just the central broker:
+
+   1. One message is published on the central broker and reaches a remote
+   consumers
+   2. The consumer processes the message but the connection to the central
+   broker will go down before it can ack the message
+   3. Once the connection is restored the consumer will receive the unacked
+   message again, so also in this case it will need to deduplicate it
+
+Some observations:
+
+   - in any case your consumer will need to be somewhat aware of the fact
+   that it is quite distant from the original broker and cope with what this
+   implies in some way (message duplication, for one)
+   - with the central broker the remote consumers will have to handle
+   connection failures themselves, something which is less likely to happen
+   with a local broker, although not impossible of course. This is handled by
+   the federation plugin in case of federated brokers instead
+   - Having 8000 brokers rather than 8000 consumers is going to require
+   quite some maintenance, and I'm not sure how well the federation plugin
+   RabbitMQ can handle that, I am under the impression that it was not
+   designed for this many federated exchanges, but I may be wrong
+   - You mention synchronicity between the central location and the remote
+   consumers. Consider that even if you federate brokers and you see all
+   messages delivered and acked on the federation queues, it doesn't tell you
+   anything about whether the remote consumers have processed the messages or
+   not
+
+
+On Mon, Jan 23, 2012 at 19:54, dnsplus &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">developer at dnsplus.net</A>&gt; wrote:
+
+&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> Jerry Kuch wrote:
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; Hi, dnsplus:
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; Could you perhaps clarify a bit what you mean by &quot;remote?&quot;  Are you
+</I>&gt;<i> &gt; talking about systems that are geographically separated from your
+</I>&gt;<i> &gt; &quot;central broker&quot; for some reason external to your application?  Or
+</I>&gt;<i> &gt; are you just talking about having 8,000 consumers?  The latter
+</I>&gt;<i> &gt; shouldn't be a daunting number at all for even fairly modest Rabbit
+</I>&gt;<i> &gt; deployments.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; Best regards,
+</I>&gt;<i> &gt; Jerry
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt;
+</I>&gt;<i>
+</I>&gt;<i> Its a little complicated, but I'll give it my best shot:
+</I>&gt;<i>
+</I>&gt;<i> Jerry, for you ... Definition of a Site:  A retail store location, from 1
+</I>&gt;<i> to
+</I>&gt;<i> ~1800 miles away from the data center where the Central Broker runs).
+</I>&gt;<i>
+</I>&gt;<i> I am working with a large environment which has no guarantee of a stable
+</I>&gt;<i> network, or guaranteed bandwidth to the remote sites. The typical CIR is
+</I>&gt;<i> 384Kbps, with a 1.544Mbps MAX (yep, fractional T1s). To mitigate the
+</I>&gt;<i> possibility that network connectivity to a site, or region, can be
+</I>&gt;<i> unavailable for an undetermined period of time, at any time, and for any
+</I>&gt;<i> reason ... we think guaranteed message delivery with RabbitMQ is the
+</I>&gt;<i> foundation we need for this 'application' to work.
+</I>&gt;<i>
+</I>&gt;<i> The message payload for this application will be well formatted XML which
+</I>&gt;<i> contains instructions that will be parsed, interpreted, and executed via a
+</I>&gt;<i> consumer at each client site, implemented in PERL.
+</I>&gt;<i>
+</I>&gt;<i> So ... should I be using a Central Broker, which forwards a message to a
+</I>&gt;<i> queue at a remote broker, which is consumed by the client process?
+</I>&gt;<i>
+</I>&gt;<i> Or, do I leverage the Central Broker with a Queue for each remote site, and
+</I>&gt;<i> configure the consumers to talk to the Central Broker for message
+</I>&gt;<i> collection
+</I>&gt;<i> and processing.
+</I>&gt;<i>
+</I>&gt;<i> From an accounting perspective, I am thinking the Central Broker is going
+</I>&gt;<i> to
+</I>&gt;<i> be easier to query for unconsumed messages, or query a common error queue
+</I>&gt;<i> which is written to by the remote client, when things go amiss.
+</I>&gt;<i>
+</I>&gt;<i> But, should there be a network interruption between the time a client
+</I>&gt;<i> collects the message from Central, and starts the execution of instructions
+</I>&gt;<i> it contains, the Central Que would fail to get an ACK, or possible error
+</I>&gt;<i> message from the client. This could result in a lack of synchronicity
+</I>&gt;<i> between reality as understood by the remote client consumer, and the
+</I>&gt;<i> accounting and reporting mechanisms at Central.
+</I>&gt;<i>
+</I>&gt;<i> Hopefully I have conveyed more than my own confusion about this project.
+</I>&gt;<i>
+</I>&gt;<i> Thanks !
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> --
+</I>&gt;<i> View this message in context:
+</I>&gt;<i> <A HREF="http://old.nabble.com/Architecture-Question%3A-2-Brokers%2C-or-Not-2-Brokers---tp33189279p33190235.html">http://old.nabble.com/Architecture-Question%3A-2-Brokers%2C-or-Not-2-Brokers---tp33189279p33190235.html</A>
+</I>&gt;<i> Sent from the RabbitMQ mailing list archive at Nabble.com.
+</I>&gt;<i>
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20120123/6fbff298/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20120123/6fbff298/attachment.htm</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="017582.html">[rabbitmq-discuss] Architecture Question: 2 Brokers, or Not 2 Brokers ?
+</A></li>
+	<LI>Next message: <A HREF="017600.html">[rabbitmq-discuss] Architecture Question: 2 Brokers, or Not 2 Brokers ?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#17591">[ date ]</a>
+              <a href="thread.html#17591">[ thread ]</a>
+              <a href="subject.html#17591">[ subject ]</a>
+              <a href="author.html#17591">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

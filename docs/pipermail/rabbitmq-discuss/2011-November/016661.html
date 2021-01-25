@@ -1,0 +1,113 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] HA - missing or incompletely replicated	queues
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20HA%20-%20missing%20or%20incompletely%20replicated%0A%09queues&In-Reply-To=%3C20111130142215.GA29890%40rabbitmq.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="016032.html">
+   <LINK REL="Next"  HREF="016664.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] HA - missing or incompletely replicated	queues</H1>
+    <B>Matthew Sackman</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20HA%20-%20missing%20or%20incompletely%20replicated%0A%09queues&In-Reply-To=%3C20111130142215.GA29890%40rabbitmq.com%3E"
+       TITLE="[rabbitmq-discuss] HA - missing or incompletely replicated	queues">matthew at rabbitmq.com
+       </A><BR>
+    <I>Wed Nov 30 14:22:16 GMT 2011</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="016032.html">[rabbitmq-discuss] HA - missing or incompletely replicated	queues
+</A></li>
+        <LI>Next message: <A HREF="016664.html">[rabbitmq-discuss] HA - missing or incompletely replicated	queues
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#16661">[ date ]</a>
+              <a href="thread.html#16661">[ thread ]</a>
+              <a href="subject.html#16661">[ subject ]</a>
+              <a href="author.html#16661">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>On Mon, Nov 07, 2011 at 11:46:26PM +0000, Ashley Brown wrote:
+&gt;<i> Stop producers and consumers, delete queues. Deletions take a long time.
+</I>&gt;<i> Although I've also seen this with no-HA queues - it can take tens of
+</I>&gt;<i> minutes to delete a queue with 250k+ messages in.
+</I>
+Yeah, I've been testing this, and it's a known bug. Basically, Rabbit's
+queues prioritise driving consumers as fast as possible. Thus if a queue
+has a choice between processing an ack from a consumer, and processing a
+publish, it will always choose the ack. This then means that a large
+number of publishes can build up in the channel. This can be a very
+large number of publishes. Then, the channel issues the delete. The
+queue has to process all those publishes before it will see the delete,
+and this can take a long time.
+
+There is a heavy performance impact in general use if we disable this
+priorisation. We have come up with various schemes which may allow a
+more balanced approach, but they're rather complex and far from certain
+to solve the problem.
+
+On the whole, probably the best way to mitigate this is to reduce the
+number of acks from consumers. This can be done as follows.
+
+1. Make sure you set basic.qos, but don't set it to a very low number.
+Often something around 100 to 1000 often works well. Call this number N.
+
+2. Rather than acking every single message, instead only ack every N / 2
+(for example), and when you do ack, turn on the multiple flag.
+
+This means that the queue will throw N messages out to the consumer, but
+then will be able to spend time processing publishes. Then, some time
+later, it will receive the ack from the client, be able to process the
+acks for the first N/2 quite efficiently, and then be able to spew out a
+new N/2 msgs to the consumer. Essentially, this work-around relies on
+the assumption that there should be some time when all consumers are
+sated with messages during which the queue can spend some time
+processing its backlog. If consumers are able to process messages
+they're sent faster than the queue processes messages then this
+assumption fails and this work-around won't work.
+
+This problem is much worse for HA queues because the CPU hit per publish
+is much higher due to the extra work that has to be done for each
+publish. Consequently, even with high qos values (N &gt; 10000), it's still
+easy for a publisher to create a backlog in the channel which then can
+cause a delay for any synchronous command (such as delete) to hit the
+queue. Because of the lower throughput rates of HA queues, it's more
+likely that consumers will be able to keep up with the msgs they're
+being sent by the queue. This again, increases the likelihood that the
+work-around won't work.
+
+So in conclusion, we're aware of at least some of the things you're
+reporting. It would be good if you could test with 2.7.0 given there
+have been some substantial performance improvements over 2.6.0 -
+especially if you do the HiPE compilation that's not possible. As with
+all good engineering problems, there's no obvious win-win solution and
+we've cogitated on this one for a while.
+
+Matthew
+</PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="016032.html">[rabbitmq-discuss] HA - missing or incompletely replicated	queues
+</A></li>
+	<LI>Next message: <A HREF="016664.html">[rabbitmq-discuss] HA - missing or incompletely replicated	queues
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#16661">[ date ]</a>
+              <a href="thread.html#16661">[ thread ]</a>
+              <a href="subject.html#16661">[ subject ]</a>
+              <a href="author.html#16661">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,145 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] fanout exchange that does not keep messages
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20fanout%20exchange%20that%20does%20not%20keep%20messages&In-Reply-To=dbd9700a0907200936r4aff4bc2xf92a3aeafe021c47%40mail.gmail.com">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="004179.html">
+   <LINK REL="Next"  HREF="004182.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] fanout exchange that does not keep messages</H1>
+    <B>Brian Whitman</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20fanout%20exchange%20that%20does%20not%20keep%20messages&In-Reply-To=dbd9700a0907200936r4aff4bc2xf92a3aeafe021c47%40mail.gmail.com"
+       TITLE="[rabbitmq-discuss] fanout exchange that does not keep messages">brian at echonest.com
+       </A><BR>
+    <I>Mon Jul 20 17:51:58 BST 2009</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="004179.html">[rabbitmq-discuss] fanout exchange that does not keep messages
+</A></li>
+        <LI>Next message: <A HREF="004182.html">[rabbitmq-discuss] fanout exchange that does not keep messages
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#4181">[ date ]</a>
+              <a href="thread.html#4181">[ thread ]</a>
+              <a href="subject.html#4181">[ subject ]</a>
+              <a href="author.html#4181">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Ah, if I do both
+    ch.exchange_declare(my_exchange, 'fanout', durable=False,
+auto_delete=False)
+    qname, n_msgs, n_consumers = ch.queue_declare(queue_name, durable=False,
+exclusive=False, auto_delete=True)
+and send the message as immediate
+
+    def message(self, message):
+        self.ch.basic_publish(
+            amqp.Message(pickle.dumps(message)),
+            my_exchange, &quot;logger&quot;, immediate=True
+        )
+
+Then it works the way I expect.
+
+
+
+
+On Mon, Jul 20, 2009 at 12:36 PM, Brian Whitman &lt;<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">brian at echonest.com</A>&gt; wrote:
+
+&gt;<i> Hmm... this is not working the way I expect.
+</I>&gt;<i> If I do either Holger or Matthias's solution the write-only &quot;logger&quot; queue
+</I>&gt;<i> continues to grow but the listener queues do stay at 0:
+</I>&gt;<i>
+</I>&gt;<i> ~/rabbitmq-server/scripts# ./rabbitmqctl list_queues name mode messages
+</I>&gt;<i> messages_ready messages_unacknowledged durable
+</I>&gt;<i> Listing queues ...
+</I>&gt;<i> logger_2b02ca30-754b-11de-99c0-0023dfde57d8 mixed 0 0 0 false
+</I>&gt;<i> logger mixed 110 110 0 false
+</I>&gt;<i>
+</I>&gt;<i> What I would like to see here is that logger is always 0 messages. If there
+</I>&gt;<i> are listeners or not, I don't want the queue called &quot;logger&quot; to ever retain
+</I>&gt;<i> any messages.
+</I>&gt;<i>
+</I>&gt;<i> For both &quot;logger&quot; (write only) and the random queue names (read only) I am
+</I>&gt;<i> doing
+</I>&gt;<i>
+</I>&gt;<i>     ch.exchange_declare(my_exchange, 'fanout', durable=False,
+</I>&gt;<i> auto_delete=False)
+</I>&gt;<i>     qname, n_msgs, n_consumers = ch.queue_declare(queue_name,
+</I>&gt;<i> durable=False, exclusive=False, auto_delete=True)
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> On Mon, Jul 20, 2009 at 12:20 PM, Matthias Radestock &lt;<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">matthias at lshift.net</A>&gt;wrote:
+</I>&gt;<i>
+</I>&gt;&gt;<i> Brian, Holger,
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Holger Hoffst&#228;tte wrote:
+</I>&gt;&gt;<i> &gt; Brian Whitman wrote:
+</I>&gt;&gt;<i> &gt;&gt; I am concerned about this because over the weekend the broker crashed
+</I>&gt;&gt;<i> &gt;&gt; (not sure why yet, but I assume it had something to do with probably
+</I>&gt;&gt;<i> &gt;&gt; ~50m messages sitting in the exchange.) How can I have messages be
+</I>&gt;&gt;<i> &gt;&gt; completely transient?
+</I>&gt;&gt;<i> &gt;
+</I>&gt;&gt;<i> &gt; This is done with the &quot;immediate&quot; flag for a message; if there is no
+</I>&gt;&gt;<i> &gt; recipient, the message will be dropped.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Actually, generally a better solution to the problem is to ensure that
+</I>&gt;&gt;<i> the queues do not outlive the consumers - by either marking them
+</I>&gt;&gt;<i> exclusive (if you only have one consumer per queue) or auto-delete.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> That way messages do really get dropped silently when there are no
+</I>&gt;&gt;<i> consumers. By contrast, when setting 'immediate' the server will send a
+</I>&gt;&gt;<i> basic.return to the producer.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> And buffering can still take place to deal with temporarily
+</I>&gt;&gt;<i> backlogged/slow consumers. By contrast, with 'immediate' the messages
+</I>&gt;&gt;<i> will get dropped when the consumers are busy (not just when they are not
+</I>&gt;&gt;<i> present).
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Regards,
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Matthias.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> _______________________________________________
+</I>&gt;&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;&gt;<i> <A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;&gt;<i> <A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>&gt;&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: <A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20090720/8c0cbe64/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20090720/8c0cbe64/attachment.htm</A> 
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="004179.html">[rabbitmq-discuss] fanout exchange that does not keep messages
+</A></li>
+	<LI>Next message: <A HREF="004182.html">[rabbitmq-discuss] fanout exchange that does not keep messages
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#4181">[ date ]</a>
+              <a href="thread.html#4181">[ thread ]</a>
+              <a href="subject.html#4181">[ subject ]</a>
+              <a href="author.html#4181">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

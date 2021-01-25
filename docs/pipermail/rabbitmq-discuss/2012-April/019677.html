@@ -1,0 +1,160 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Cannot send message with STOMP
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Cannot%20send%20message%20with%20STOMP&In-Reply-To=%3C8679EBD0-F2E4-47DE-B5C2-1FDDDAB8ACAA%40rabbitmq.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="019592.html">
+   <LINK REL="Next"  HREF="019678.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Cannot send message with STOMP</H1>
+    <B>Steve Powell</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Cannot%20send%20message%20with%20STOMP&In-Reply-To=%3C8679EBD0-F2E4-47DE-B5C2-1FDDDAB8ACAA%40rabbitmq.com%3E"
+       TITLE="[rabbitmq-discuss] Cannot send message with STOMP">steve at rabbitmq.com
+       </A><BR>
+    <I>Fri Apr 20 14:26:08 BST 2012</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="019592.html">[rabbitmq-discuss] Cannot send message with STOMP
+</A></li>
+        <LI>Next message: <A HREF="019678.html">[rabbitmq-discuss] Cannot send message with STOMP
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#19677">[ date ]</a>
+              <a href="thread.html#19677">[ thread ]</a>
+              <a href="subject.html#19677">[ subject ]</a>
+              <a href="author.html#19677">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Lionel,
+Thank you for reporting this problem with our header en/decoding.
+
+The STOMP 1.0 specification is unsatisfactory in many respects, not
+least because it says nothing about encoding headers (or what it means
+by CHAR in its BNF).
+
+The STOMP 1.1 specification has drawbacks of its own -- the rather
+arbitrary notion of escaping colons in header values as well as names
+(why?) and the insistence of UTF-8 for all header names and values (this
+is not policed in RabbitMQ since this would involve another (complex)
+parsing process -- and it is not clear what we should do with non-UTF-8
+octet streams). Finally, it doesn't correctly describe the escape rules
+in respect of backslashes.
+
+STOMP 1.1 also prescribes (in its improved BNF) OCTETs in headers and
+header values (whereas the text (using MUST) insists they consist of
+UTF-8 sequences) and it (the BNF) allows backslash (followed by anything
+other than c or n) in a header.
+
+So I think it is _incorrect_ in that it specifies a considerable
+superset of what you can receive (or are allowed to send) over the wire.
+
+When RabbitMQ started to support STOMP 1.1 we made it backward
+compatible with 1.0 clients as far as possible. So we do not police some
+of the verboten practices in 1.1 -- for example, we do not insist upon
+UTF-8 strings in header names and values, and we still allow
+subscriptions without ids. (Policing colons in header values (as well as
+names) was probably a mistake in retrospect.)
+
+We managed to produce a STOMP adapter implementation which avoids having
+complicating checks of the connection version on frame parsing and
+generation. It looks like this will have to change.
+
+I'm going to raise a bug [24896] to track this, and propose the
+following solution:
+
+We use the negotiated connection type to determine the parsing rules
+(and generating rules) for frame headers.
+
+For 1.0 connections we will allow OCTET streams for header names and
+values, excepting colons in names, and excepting newlines (\u000A
+newline character coded in UTF-8 is x'0A') anywhere, and do NO escaping
+either on input or output. We will reject no headers on input unless
+they do not contain a colon before the first newline (because they
+cannot be malformed under these rules) though the remaining frame
+parsing can fail.
+
+For 1.1 connections we will allow OCTET streams for header names and
+values, excepting colons, newlines and backslashes, interpreting escape
+sequences for these, and generating escapes for these characters on
+output. We will NOT reject non-UTF-8 OCTETs but instead just pass them
+through asis in order to allow the simplest client access. We will NOT
+reject other escapes (\ followed by non c, n or \), but leave these
+asis.
+
+Although this is not strictly what the spec says (we would not enforce
+UTF-8 or the errors on bad escape sequences) I believe it is a
+reasonable compromise.
+
+Steve Powell
+<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">steve at rabbitmq.com</A>
+[wrk: +44-2380-111-528] [mob: +44-7815-838-558]
+
+On 17 Apr 2012, at 12:02, Tony Garnock-Jones wrote:
+
+&gt;<i> On 17 April 2012 01:34, Lionel Cons &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">lionel.cons at cern.ch</A>&gt; wrote:
+</I>&gt;<i> IMHO, the BNF definition is correct: it accurately defines what you
+</I>&gt;<i> can see on the wire and this is sufficient to extract frames. It does
+</I>&gt;<i> not however define how to interpret what you extract from the wire,
+</I>&gt;<i> like backslash escaping and UTF-8 encoding, which are defined elsewhere
+</I>&gt;<i> in the STOMP 1.1 specification.
+</I>&gt;<i> 
+</I>&gt;<i> Fair enough. Perhaps &quot;incorrect&quot; was a bit strong, but it could definitely have helped this casual reader avoid the dangerous misinterpretation I ended up making by reading the BNF alone. I believe it could profitably also describe the backslash-escaping. (After all, it would also be correct, in some sense, for it to specify the headers block as &quot;a sequence of bytes not including two newlines in a row, followed by two newlines&quot;, leaving it up the the rest of the text to describe how to extract the key-value pairs from that structure! ;-) )
+</I>&gt;<i> 
+</I>&gt;<i> Here's the kind of thing I was expecting:
+</I>&gt;<i> 
+</I>&gt;<i> header              = header-name &quot;:&quot; header-value
+</I>&gt;<i> header-name         = 1*header-text-atom
+</I>&gt;<i> 
+</I>&gt;<i> header-value        = *header-text-atom
+</I>&gt;<i> header-text-atom    = &quot;\n&quot; | &quot;\c&quot; | &quot;\\&quot; | &lt;any OCTET except LF or &quot;:&quot; or &quot;\&quot;&gt;
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> I should have been paying more attention during the 1.1 development process.
+</I>&gt;<i> 
+</I>&gt;<i> Regards,
+</I>&gt;<i>   Tony
+</I>&gt;<i> 
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="019592.html">[rabbitmq-discuss] Cannot send message with STOMP
+</A></li>
+	<LI>Next message: <A HREF="019678.html">[rabbitmq-discuss] Cannot send message with STOMP
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#19677">[ date ]</a>
+              <a href="thread.html#19677">[ thread ]</a>
+              <a href="subject.html#19677">[ subject ]</a>
+              <a href="author.html#19677">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

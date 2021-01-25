@@ -1,0 +1,300 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] RabbitMQ and batch processing
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20RabbitMQ%20and%20batch%20processing&In-Reply-To=%3CCANpjuCvex7U%2BFP%3D9DuAtrZ_gQ2PjLcKDzY70Vz3WU5t5_UobpQ%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="036062.html">
+   <LINK REL="Next"  HREF="036090.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] RabbitMQ and batch processing</H1>
+    <B>Greg Poirier</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20RabbitMQ%20and%20batch%20processing&In-Reply-To=%3CCANpjuCvex7U%2BFP%3D9DuAtrZ_gQ2PjLcKDzY70Vz3WU5t5_UobpQ%40mail.gmail.com%3E"
+       TITLE="[rabbitmq-discuss] RabbitMQ and batch processing">greg.poirier at opower.com
+       </A><BR>
+    <I>Mon May 19 17:48:49 BST 2014</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="036062.html">[rabbitmq-discuss] RabbitMQ and batch processing
+</A></li>
+        <LI>Next message: <A HREF="036090.html">[rabbitmq-discuss] RabbitMQ and batch processing
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#36089">[ date ]</a>
+              <a href="thread.html#36089">[ thread ]</a>
+              <a href="subject.html#36089">[ subject ]</a>
+              <a href="author.html#36089">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Michael,
+
+Good to hear from you again. If you don't mind, I have a few questions
+about your setup.
+
+I assume for the AMQP proxy, you are referring to something like your
+Fabrik. Would that be correct? How is open sourcing that going? I've been
+interested since your original post.
+
+Being short on resources, but working with developers who have resources, I
+am inclined to introduce them to the idea of the middle layer and seeing
+what we can come up with that is equitable for all.
+
+I think being able to not persist messages in RabbitMQ would be a big win
+for us. This removes the bulk of the io, and I solves our still occasional
+partitioning problems. I'm going to talk to other service owners about
+persisting messages themselves in databases and passing only the ids of
+their messages around. I don't think we can implement a unified middle
+layer given some time constraints, but I'm going to propose that as well
+(as I think it is the best way to approach this). Lacking the ability to
+implement, does shifting persistence to databases and maintaining a batch
+table (of ids in flight) seem like a reasonable interim solution? Or is
+there another approach?
+
+A couple of our service owners already do this. Most do not and instead
+pass entire documents via RabbitMQ to persistent queues. I have a hard time
+identifying who some are but am working on that as well. I think providing
+an API for them would make a huge difference in getting them to standardize
+around a better use of RabbitMQ.
+
+I was toying with a simpler implementation of your cluster configuration,
+but (and I think we discussed this) it will require that producers and
+consumers connect to separate proxy hosts, correct? I am still largely
+unfamiliar with how federation and shovel work--despite having read the
+documentation. I am working on a test bed for myself in my spare time (ha).
+It would be nice to have this proxy layer be single unclustered rabbit
+nodes. I could then take do no downtime upgrades of RabbitMQ, add capacity
+for certain vhosts, etc. Am I understanding federation and shovel
+correctly? Is this even possible?
+
+The idea here being
+
+publisher - proxy - backing cluster - proxy - consumer
+
+Where consumers take messages from queues bound to exchanges to which
+publishers are connected.
+
+I think this requires a database for persistence, because if you publish to
+a proxy exchange and no consumers are connected, then the message gets
+lost.
+
+Is there a reasonable way to avoid this without Fabrik? Publisher confirms
+don't help if no queues are bound. And if we are sharing a database between
+producer and consumer, why bother with RabbitMQ at all?
+
+The beauty of message buses is the ability to pass arbitrary messages over
+them. Without that, what are they for? I realize that we don't want to pass
+large documents in them, but a small JSON blob seems perfectly reasonable.
+
+On Sunday, May 18, 2014, Laing, Michael &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">michael.laing at nytimes.com</A>&gt; wrote:
+
+&gt;<i> I'll respond inline w our experience:
+</I>&gt;<i>
+</I>&gt;<i> On Sun, May 18, 2014 at 2:55 PM, Greg Poirier &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">greg.poirier at opower.com</A>&gt;wrote:
+</I>&gt;<i>
+</I>&gt;&gt;<i> I mentioned this on Twitter and a couple of people have requested that I
+</I>&gt;&gt;<i> bring this up on the mailing list.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> It seems to be a given that RabbitMQ was not designed for the batch
+</I>&gt;&gt;<i> processing use case (i.e. using RabbitMQ as a buffer between large serial
+</I>&gt;&gt;<i> steps). We have a system in place that attempts to do just that, however.
+</I>&gt;&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> It is not a 'given' as far as we are concerned. We have some processes
+</I>&gt;<i> that result in a million or more messages being queued within a minute or
+</I>&gt;<i> so. These messages are processed over the ensuing several minutes (for
+</I>&gt;<i> 'dismissals' of news items from individual devices) to several hours (for
+</I>&gt;<i> lower-priority individualized  'offers'). This is the new 'batch'.
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> I have been working with the developers of the software involved in an
+</I>&gt;&gt;<i> attempt to help them redesign around a more ideal use of RabbitMQ (or to
+</I>&gt;&gt;<i> help them move to a different bus altogether -- database or something like
+</I>&gt;&gt;<i> kafka) and some of them have been able to simply operate in smaller batch
+</I>&gt;&gt;<i> sizes (thus keeping their queues relatively small).
+</I>&gt;&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> We put large message bodies in S3 and pass them by reference. We never use
+</I>&gt;<i> RabbitMQ persistence and compensate for that with replication. For 'real'
+</I>&gt;<i> persistence we use Cassandra. Most importantly, none of our internal users
+</I>&gt;<i> know this, as we provide them with an abstracted interface.
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> However, I cannot stem the tide of improper RabbitMQ use.
+</I>&gt;&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> We try to make it easier to use us than not. We work hard to be the most
+</I>&gt;<i> reliable, fastest, most scalable, most flexible and cheapest component of
+</I>&gt;<i> our customers technology mix.
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> When things go poorly, millions of messages end up in the queues.
+</I>&gt;&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> We target zero length queues. If they grow unexpectedly we: 1) autoscale,
+</I>&gt;<i> 2) shift load, 3) start new regions - usually all those. Then we diagnose.
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> In 3.1.x we saw this regularly cause our clusters to partition.
+</I>&gt;&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> We have never had a partition in production because we always
+</I>&gt;<i> overprovision RabbitMQ so it can maintain cluster communications. We
+</I>&gt;<i> basically avoid disk IO due to the risk of IO wait interfering w the
+</I>&gt;<i> cluster heartbeat.
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> In 3.1.x and 3.2.x when we would delete large queues (5+ million messages
+</I>&gt;&gt;<i> enqueued), this would cause the cluster to become unresponsive, run out of
+</I>&gt;&gt;<i> memory, and then crash.
+</I>&gt;&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> When we have tested situations like this, we found it best to just wipe
+</I>&gt;<i> out the cluster and restart. Before doing this, we shift the load to other
+</I>&gt;<i> regions operating in parallel.
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> During the 3.1 -&gt; 3.2 upgrade, we had to completely rebuild our clusters.
+</I>&gt;&gt;<i> When 3.2 came up, it soon crashed.
+</I>&gt;&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> We have not had that problem.
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> In the most recent upgrade, we saw a 3.2.3 cluster in our dev environment
+</I>&gt;&gt;<i> crash. I performed an opportunistic upgrade to 3.3.1, because hey...
+</I>&gt;&gt;<i> downtime already, so let's see if 3.3.1 addresses some of the issues we've
+</I>&gt;&gt;<i> been seeing.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> <A HREF="https://gist.github.com/grepory/384410ac90186ed0ce2a">https://gist.github.com/grepory/384410ac90186ed0ce2a</A>
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> After the upgrade, 3.3.1 would not startup at all. I removed
+</I>&gt;&gt;<i> /var/lib/rabbitmq/mnesia on all of the nodes and brought RabbitMQ back up.
+</I>&gt;&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> We are not yet in production w 3.3.1 but 3.2.4 is running solidly in stage
+</I>&gt;<i> and we will upgrade stage to 3.3.1 this coming week.
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> 3.3.1 has been up and running alright so far, but we haven't done another
+</I>&gt;&gt;<i> end-to-end test in our development environment in a while. One of these
+</I>&gt;&gt;<i> tests can lead to at least a million messages in the queue over a period of
+</I>&gt;&gt;<i> time on average.
+</I>&gt;&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> A million is not that many - depending on size of course. As I said - our
+</I>&gt;<i> target is 0, but really the question is: what's your rate of change? I try
+</I>&gt;<i> to have enough 'headroom' to easily handle the surges - volumes can vary 20
+</I>&gt;<i> to 1 depending on the news of the moment etc. If a queue builds and stays
+</I>&gt;<i> high we add resources until it goes down and then investigate.
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> So, I guess my question is:
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> If I know that I have people using RabbitMQ like this, and there is
+</I>&gt;&gt;<i> nothing I can do to change that fact... what do I do?
+</I>&gt;&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> You need enough resource. And it is good to be able to autoscale.
+</I>&gt;<i>
+</I>&gt;<i> A specific suggestion I would make for any internal service provider is to
+</I>&gt;<i> use an amqp proxy. We locate proxy clusters that we control in our internal
+</I>&gt;<i> customers' computing environments. They publish to and subscribe from these
+</I>&gt;<i> proxies. We control the shoveling/federation of the proxies to/from our
+</I>&gt;<i> core pipelines in regions, redirecting as needed. The proxies are an
+</I>&gt;<i> additional buffer and also allow us to 'launder' incoming messages, e.g. by
+</I>&gt;<i> forcing persistence off.
+</I>&gt;<i>
+</I>&gt;<i> We also track and account for every message using metadata, and can charge
+</I>&gt;<i> back... We are cheap but not free.
+</I>&gt;<i>
+</I>&gt;<i> Anyway, I hope this helps.
+</I>&gt;<i>
+</I>&gt;<i> ml
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> _______________________________________________
+</I>&gt;&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i>
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20140519/71047723/attachment.html">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20140519/71047723/attachment.html</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="036062.html">[rabbitmq-discuss] RabbitMQ and batch processing
+</A></li>
+	<LI>Next message: <A HREF="036090.html">[rabbitmq-discuss] RabbitMQ and batch processing
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#36089">[ date ]</a>
+              <a href="thread.html#36089">[ thread ]</a>
+              <a href="subject.html#36089">[ subject ]</a>
+              <a href="author.html#36089">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,240 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] .Net RabbitMQ.Client Issue: Deadlock on	ConnectionShutdown
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20.Net%20RabbitMQ.Client%20Issue%3A%20Deadlock%20on%0A%09ConnectionShutdown&In-Reply-To=%3C6c426e89-1311-44c7-9668-7d435706fb85%40googlegroups.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="022013.html">
+   <LINK REL="Next"  HREF="022012.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] .Net RabbitMQ.Client Issue: Deadlock on	ConnectionShutdown</H1>
+    <B>Derek Greer</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20.Net%20RabbitMQ.Client%20Issue%3A%20Deadlock%20on%0A%09ConnectionShutdown&In-Reply-To=%3C6c426e89-1311-44c7-9668-7d435706fb85%40googlegroups.com%3E"
+       TITLE="[rabbitmq-discuss] .Net RabbitMQ.Client Issue: Deadlock on	ConnectionShutdown">dbgreer at gmail.com
+       </A><BR>
+    <I>Mon Aug 20 19:29:36 BST 2012</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="022013.html">[rabbitmq-discuss] Exchange/queue setup question
+</A></li>
+        <LI>Next message: <A HREF="022012.html">[rabbitmq-discuss] .Net RabbitMQ.Client Issue: Deadlock on	ConnectionShutdown
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#22000">[ date ]</a>
+              <a href="thread.html#22000">[ thread ]</a>
+              <a href="subject.html#22000">[ subject ]</a>
+              <a href="author.html#22000">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>There appears to be a deadlock if you attempt to dispose, close, or abort a 
+channel within the context of an IConnection.ConnectionShutdown event. 
+ Here's an example client that should demonstrate the issue:
+
+RabbitService.cs (needs to run as admin to shut down the Windows service)
+-------------------------
+using System;
+using System.ServiceProcess;
+
+namespace Consumer
+{
+public class RabbitService
+{
+public void Restart()
+{
+var serviceController = new ServiceController(&quot;RabbitMQ&quot;, &quot;localhost&quot;);
+TimeSpan timeout = TimeSpan.FromMilliseconds(20000);
+Console.WriteLine(&quot;  Stopping RabbitMQ service ...&quot;);
+serviceController.Stop();
+serviceController.WaitForStatus(ServiceControllerStatus.Stopped, timeout);
+Console.WriteLine(&quot;  RabbitMQ service stopped.&quot;);
+Console.WriteLine(&quot;  Starting RabbitMQ service ...&quot;);
+serviceController.Start();
+serviceController.WaitForStatus(ServiceControllerStatus.Running, timeout);
+Console.WriteLine(&quot;  RabbitMQ service started.&quot;);
+}
+
+public void Start()
+{
+var serviceController = new ServiceController(&quot;RabbitMQ&quot;, &quot;localhost&quot;);
+TimeSpan timeout = TimeSpan.FromMilliseconds(20000);
+Console.WriteLine(&quot;  Starting RabbitMQ service ...&quot;);
+serviceController.Start();
+serviceController.WaitForStatus(ServiceControllerStatus.Running, timeout);
+Console.WriteLine(&quot;  RabbitMQ service started.&quot;);
+}
+
+public void Stop()
+{
+var serviceController = new ServiceController(&quot;RabbitMQ&quot;, &quot;localhost&quot;);
+TimeSpan timeout = TimeSpan.FromMilliseconds(20000);
+Console.WriteLine(&quot;  Stopping RabbitMQ service ...&quot;);
+serviceController.Stop();
+serviceController.WaitForStatus(ServiceControllerStatus.Stopped, timeout);
+Console.WriteLine(&quot;  RabbitMQ service stopped.&quot;);
+}
+}
+}
+
+ConsumerProgram.cs
+--------------------------------
+using System;
+using System.Diagnostics;
+using System.IO;
+using System.Text;
+using System.Threading;
+using RabbitMQ.Client;
+using RabbitMQ.Client.Events;
+
+namespace Consumer
+{
+class Program
+{
+const string Id = &quot;2BD27137-9AE3-4342-B4C3-9DEC20D203DF&quot;;
+static Thread _thread;
+static bool _threadCancelled;
+
+static void Main(string[] args)
+{
+IConnection connection = new ConnectionFactory().CreateConnection();
+connection.ConnectionShutdown += ConnectionShutdown;
+SubscribeToQueue(connection);
+Console.WriteLine(&quot;Press a key to restart the RabbitMQ service ...&quot;);
+Console.ReadKey();
+new RabbitService().Restart();
+Console.WriteLine(&quot;Press a key to stop subscription ...&quot;);
+Console.ReadKey();
+
+if (connection.IsOpen)
+{
+connection.Close();
+}
+}
+
+static void ConnectionShutdown(IConnection connection, ShutdownEventArgs 
+reason)
+{
+Console.WriteLine(&quot;Connection was shut down&quot;);
+Console.WriteLine(&quot;Sending the signal to cancel the thread ...&quot;);
+
+// Setting _threadCancelled to true here causes a deadlock.
+_threadCancelled = true;
+_thread.Join();
+}
+
+static void SubscribeToQueue(IConnection connection)
+{
+_thread = new Thread(() =&gt;
+{
+IModel channel = connection.CreateModel();
+
+channel.ExchangeDeclare(Id, ExchangeType.Direct, false, true, null);
+channel.QueueDeclare(Id, false, false, true, null);
+channel.QueueBind(Id, Id, &quot;&quot;);
+
+var consumer = new QueueingBasicConsumer(channel);
+channel.BasicConsume(Id, true, consumer);
+
+while (true)
+{
+if (_threadCancelled)
+{
+Console.WriteLine(&quot;Received signal to cancel this thread.&quot;);
+_threadCancelled = false;
+break;
+}
+
+BasicDeliverEventArgs eventArgs = null;
+
+try
+{
+object eArgs = null;
+consumer.Queue.Dequeue(10, out eArgs);
+
+if (eArgs != null)
+{
+eventArgs = (BasicDeliverEventArgs) eArgs;
+string message = Encoding.UTF8.GetString(eventArgs.Body);
+Console.WriteLine(&quot;Message: &quot; + message);
+}
+}
+catch (EndOfStreamException)
+{
+// Never happens
+Console.WriteLine(&quot;Caught EndOfStreamException&quot;);
+channel.Dispose();
+channel = null;
+break;
+}
+catch (Exception e)
+{
+Console.WriteLine(&quot;An exception occurred while dequeuing a message: &quot; + 
+e.Message, TraceEventType.Error);
+}
+}
+if (channel != null &amp;&amp; channel.IsOpen)
+{
+Console.WriteLine(&quot;Closing channel ...&quot;);
+channel.Close(); // &lt;- Never returns
+Console.WriteLine(&quot;Channel closed.&quot;);
+}
+
+Console.WriteLine(&quot;End of thread execution.&quot;);
+});
+
+_thread.Start();
+}
+}
+}
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20120820/ab0fdca2/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20120820/ab0fdca2/attachment.htm</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="022013.html">[rabbitmq-discuss] Exchange/queue setup question
+</A></li>
+	<LI>Next message: <A HREF="022012.html">[rabbitmq-discuss] .Net RabbitMQ.Client Issue: Deadlock on	ConnectionShutdown
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#22000">[ date ]</a>
+              <a href="thread.html#22000">[ thread ]</a>
+              <a href="subject.html#22000">[ subject ]</a>
+              <a href="author.html#22000">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

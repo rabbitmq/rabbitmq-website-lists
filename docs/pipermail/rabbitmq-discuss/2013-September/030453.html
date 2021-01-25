@@ -1,0 +1,233 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Long pauses when closing many channels	simultaneously
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Long%20pauses%20when%20closing%20many%20channels%0A%09simultaneously&In-Reply-To=%3CCAEnUPMsz8Y9ioFksNw3kGi0YWNTTjgMJMJgYcKToEuNoyoinBg%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="030444.html">
+   <LINK REL="Next"  HREF="030471.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Long pauses when closing many channels	simultaneously</H1>
+    <B>Martin Rogan</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Long%20pauses%20when%20closing%20many%20channels%0A%09simultaneously&In-Reply-To=%3CCAEnUPMsz8Y9ioFksNw3kGi0YWNTTjgMJMJgYcKToEuNoyoinBg%40mail.gmail.com%3E"
+       TITLE="[rabbitmq-discuss] Long pauses when closing many channels	simultaneously">martin.rogan.inc at gmail.com
+       </A><BR>
+    <I>Thu Sep 26 16:26:36 BST 2013</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="030444.html">[rabbitmq-discuss] Long pauses when closing many channels	simultaneously
+</A></li>
+        <LI>Next message: <A HREF="030471.html">[rabbitmq-discuss] Long pauses when closing many channels	simultaneously
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#30453">[ date ]</a>
+              <a href="thread.html#30453">[ thread ]</a>
+              <a href="subject.html#30453">[ subject ]</a>
+              <a href="author.html#30453">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>On 26 September 2013 14:10, Michael Klishin &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">michael at rabbitmq.com</A>&gt; wrote:
+
+&gt;<i>
+</I>&gt;<i> On sep 26, 2013, at 1:50 p.m., josh &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">martin.rogan.inc at gmail.com</A>&gt; wrote:
+</I>&gt;<i>
+</I>&gt;<i> &gt; Let me restate that... With 30K+30K channels the first 100 each take 10
+</I>&gt;<i> seconds to close using 100 simultaneous threads. The remaining 59,900 each
+</I>&gt;<i> take less than 0.5 seconds. My feeling is that there's some funky
+</I>&gt;<i> connection-wide synchronization/continuation going on here. Hit the
+</I>&gt;<i> connection up with 100 channel-close requests on 100 threads simultaneously
+</I>&gt;<i> and it baulks. Whatever causes that initial spasm doesn't seem to affect
+</I>&gt;<i> subsequent close operations and everything swims along nicely.
+</I>&gt;<i>
+</I>&gt;<i> This is correct. Closing either a channel or connection involves waiting
+</I>&gt;<i> for a reply from RabbitMQ.
+</I>&gt;<i> Iit would be interested to see thread dumps and as much information about
+</I>&gt;<i> lock contention you can provide. My guess is that it is _channelMap but I'm
+</I>&gt;<i> not a very reliable prediction machine.
+</I>&gt;<i>
+</I>&gt;<i>
+</I>In tag 3.1.5 I can point to the close(...) method in ChannelN.java at line
+569:
+
+            // Now that we're in quiescing state, channel.close was sent and
+            // we wait for the reply. We ignore the result.
+            // (It's NOT always close-ok.)
+            notify = true;
+            k.getReply(-1);
+
+Here k.getReply(-1) does the waiting. In my dodgy mod I skipped these two
+lines and also the finally block (notify==false):
+
+        } finally {
+            if (abort || notify) {
+                // Now we know everything's been cleaned up and there should
+                // be no more surprises arriving on the wire. Release the
+                // channel number, and dissociate this ChannelN instance
+from
+                // our connection so that any further frames inbound on this
+                // channel can be caught as the errors they are.
+                releaseChannel();
+                notifyListeners();
+            }
+        }
+
+Hence the channel resource leak and subsequent OOM. Although the delay
+disappeared and the channels were closed on the server it doesn't reveal
+where the delay was incurred. The client may have just been waiting for
+replies to come in after other data on the connection, with no lock
+contention, but on the other hand how do the subsequent closures get
+processed so much quicker?
+
+
+&gt;<i>
+</I>&gt;<i> &gt; I've tried ramping up the number of connections to relieve the pressure.
+</I>&gt;<i> This certainly works with predictable results. With 30K+30K connections
+</I>&gt;<i> spread evenly over 2 connections the initial 100 channel-close delays are
+</I>&gt;<i> halved from 10 seconds to 5 seconds. Use 10 connections and the delay is
+</I>&gt;<i> imperceptible when compared to the subsequent 59,900 channel closures. Jump
+</I>&gt;<i> to 50K+50K channels (we can do this with 10 connections but not 1
+</I>&gt;<i> connection due to channel-max) and the delays start to creep back in again.
+</I>&gt;<i>
+</I>&gt;<i> Again, hard to tell what the contention point is without runtime data.
+</I>&gt;<i>
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; My concerns with this approach are that 1) multiple connections are
+</I>&gt;<i> discouraged in the documentation due to i/o resource overhead and that 2)
+</I>&gt;<i> it's not clear for my application how to sensibly predict the optimum
+</I>&gt;<i> number of channels per connection. If there is a soft limit to the number
+</I>&gt;<i> of channels per connection why is it not documented or made available in
+</I>&gt;<i> the api?
+</I>&gt;<i>
+</I>&gt;<i> See ConnectionFactory.DEFAULT_CHANNEL_MAX and
+</I>&gt;<i> ConnectionFactory#setRequestedChannelMax.
+</I>&gt;<i>
+</I>&gt;<i> Note that some clients have a different default (like 65536 channels).
+</I>&gt;<i>
+</I>
+
+In my 3.1.5 client ConnectionFactory.DEFAULT_CHANNEL_MAX==0 and
+connection.getChannelMax()==65,536.
+
+
+&gt;<i>
+</I>&gt;<i> &gt; I've tried my hand at modifying the client library by not waiting for
+</I>&gt;<i> channel-close acknowledgements from the RabbitMQ server. This worked like a
+</I>&gt;<i> charm. Channels were closed instantly with no delay in the client and
+</I>&gt;<i> confirmed as closed on the server. Eight hours later though and I was out
+</I>&gt;<i> of heap space as the channel resources internal to the client library were
+</I>&gt;<i> not being released. I haven't managed to isolate the source of the delay
+</I>&gt;<i> either... is it in the client library or the server itself?
+</I>&gt;<i>
+</I>&gt;<i> You need to make sure that ChannelManager#disconnectChannel is used.
+</I>&gt;<i> VisualVM should
+</I>&gt;<i> pretty quickly show what objects use most heap space.
+</I>
+
+
+As revealed by YourKit mountains of Channels were not cleared up by my
+dodgy mod skipping disconnectChannel(). But I figured it was unsafe to
+invoke as it we don't know &quot;everything's been cleaned up and there should
+be no more surprises arriving on the wire.&quot;
+
+
+
+&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> &gt; Questions:
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; Before making application changes I'd like to know if this is a known
+</I>&gt;<i> issue with the Java client?
+</I>&gt;<i>
+</I>&gt;<i> I've seen this before with 2 other clients. In one case the problem was
+</I>&gt;<i> different and mostly solved
+</I>&gt;<i> (I have not tried 60K channels but for 6-8K it worked reasonably well).
+</I>&gt;<i> Another client is built on the
+</I>&gt;<i> Java one. So, it's a known problem that few people run into.
+</I>&gt;<i>
+</I>&gt;<i>
+</I>
+A few seconds here and there is not so problematic really. RabbitMQ is so
+critical to our application though that we need to ensure we're not falling
+off any edges.
+
+
+&gt;<i> Are there better workarounds than multiple connections and
+</I>&gt;<i> application-level channel management? In practise my actual application
+</I>&gt;<i> uses around 20K channels per process, which I don't feel is excessive, and
+</I>&gt;<i> message throughput is actually pretty light as I'm leveraging RabbitMQ more
+</I>&gt;<i> for it's routing capabilities. if you think the number of channels is a
+</I>&gt;<i> problem in itself then please say so! I could refactor to use less channels
+</I>&gt;<i> but then I'd be sharing channels and would either have to synchronize their
+</I>&gt;<i> usage or ignore documentation guidelines.
+</I>&gt;<i>
+</I>&gt;<i> This is something that should be improved in the Java client, but in the
+</I>&gt;<i> meantime you may need
+</I>&gt;<i> to use a pool of connections that will open channels using round robin or
+</I>&gt;<i> similar.
+</I>&gt;<i>
+</I>&gt;<i>
+</I>Done.
+
+
+&gt;<i> &gt; The error handling paradigm makes this cumbersome though; any channel
+</I>&gt;<i> error results in it's termination so it's difficult to isolate errors,
+</I>&gt;<i> prevent them from permeating across unrelated publishers/consumers and
+</I>&gt;<i> recover in a robust manner.
+</I>&gt;<i>
+</I>&gt;<i> This is in part why having one channel per thread is a very good idea.
+</I>&gt;<i>
+</I>&gt;<i> To summarize: yes, this is a known but rare problem. If you can provide
+</I>&gt;<i> profiling and thread dump
+</I>&gt;<i> information that will help isolating the contention point, I think the
+</I>&gt;<i> issue can be resolved or largely
+</I>&gt;<i> mitigated in a future version.
+</I>&gt;<i>
+</I>&gt;<i>
+</I>Thanks. Will do. Would you prefer a plain old Java app that you can profile
+yourself?
+
+MK
+&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20130926/30e529ba/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20130926/30e529ba/attachment.htm</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="030444.html">[rabbitmq-discuss] Long pauses when closing many channels	simultaneously
+</A></li>
+	<LI>Next message: <A HREF="030471.html">[rabbitmq-discuss] Long pauses when closing many channels	simultaneously
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#30453">[ date ]</a>
+              <a href="thread.html#30453">[ thread ]</a>
+              <a href="subject.html#30453">[ subject ]</a>
+              <a href="author.html#30453">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

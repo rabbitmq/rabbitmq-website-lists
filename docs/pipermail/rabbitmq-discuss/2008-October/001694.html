@@ -1,0 +1,224 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] RabbitMQ C# client
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20RabbitMQ%20C%23%20client&In-Reply-To=">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001692.html">
+   <LINK REL="Next"  HREF="001695.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] RabbitMQ C# client</H1>
+    <B>Michel Polder</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20RabbitMQ%20C%23%20client&In-Reply-To="
+       TITLE="[rabbitmq-discuss] RabbitMQ C# client">michel.polder at quality-it.com
+       </A><BR>
+    <I>Mon Oct  6 14:14:18 BST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001692.html">[rabbitmq-discuss] Sent and received message counts don't match
+</A></li>
+        <LI>Next message: <A HREF="001695.html">[rabbitmq-discuss] RabbitMQ C# client
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1694">[ date ]</a>
+              <a href="thread.html#1694">[ thread ]</a>
+              <a href="subject.html#1694">[ subject ]</a>
+              <a href="author.html#1694">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>I have a RabbitMQ client that connects to an OpenAMQ server and sends a
+message using the BasicPublish function. The problem is that my RabbitMQ
+client connects sucessfully but is disconnected from the OpenAMQ server when
+sending a message. 
+The client that listens for the message is written in C using the WireAPI
+also disconnects on the amq_content_basic_get_body function call. I've attached
+my test code below.
+
+any idea what's going on?
+
+thanks,
+
+Michel
+
+&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;
+C listener
+&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;
+#include &quot;base.h&quot;
+#include &quot;amq_client_connection.h&quot;
+#include &quot;amq_client_session.h&quot;
+
+int main (int argc, char *argv [])
+{
+        amq_client_connection_t *connection;
+        amq_client_session_t    *session;
+        icl_longstr_t           *auth_data;
+        amq_content_basic_t             *content;
+        char                    message_text [1024];
+        size_t                  message_size;
+
+        icl_system_initialise(0, NULL);
+
+        auth_data = amq_client_connection_auth_plain(&quot;guest&quot;, &quot;guest&quot;);
+        connection = amq_client_connection_new(&quot;127.0.0.1:5672&quot;, &quot;/&quot;, 
+            auth_data, &quot;testserver&quot;, 3, 30000);
+
+        icl_longstr_destroy(&amp;auth_data);
+
+        session = amq_client_session_new(connection);
+
+        //  Create a private queue
+        amq_client_session_queue_declare (
+                session,                        //  session
+                0,                              //  ticket
+                &quot;listener&quot;,                     //  queue name
+                FALSE,                          //  passive
+                FALSE,                          //  durable
+                FALSE,                          //  exclusive
+                FALSE,                          //  auto-delete
+                NULL);                          //  arguments
+
+        //  Bind the queue to the exchange
+        amq_client_session_queue_bind (
+                session,                        //  session
+                0,                              //  ticket
+                &quot;listener&quot;,                     //  queue
+                &quot;amq.direct&quot;,                   //  exchange
+                &quot;TEST&quot;,                         //  routing-key
+                NULL);                          //  arguments
+
+        //  Consume from the queue
+        amq_client_session_basic_consume (
+                session,                        //  session
+                0,                              //  ticket
+                &quot;listener&quot;,                     //  queue
+                NULL,                           //  consumer-tag
+                TRUE,                           //  no-local
+                TRUE,                           //  no-ack
+                TRUE,                           //  exclusive
+                NULL);                          //  arguments
+
+        while (1)
+        {
+                while (1)
+                {
+                        //  Get next message
+                        content = amq_client_session_basic_arrived(session);
+                        if      (!content)
+                        {
+                                break;
+                        }
+
+                        //  Get the message body and write it to stdout
+                        message_size = amq_content_basic_get_body(content,
+                             (byte*) message_text, sizeof (message_text));
+
+                        if (message_size)
+                        {
+                                message_text[message_size] = 0;
+                                fputs (message_text, stdout);
+                        }
+
+                        //  Destroy the message
+                        amq_content_basic_unlink (&amp;content);
+        }
+        //  Wait while next message arrives
+        amq_client_session_wait (session, 0);
+
+        //  Exit the loop if Ctrl+C is encountered
+        if      (!connection-&gt;alive)
+        {
+                break;
+        }
+    }
+
+    //  Close the channel
+    amq_client_session_destroy (&amp;session);
+
+    //  Close the connection
+    amq_client_connection_destroy (&amp;connection);
+
+    //  Uninitialise system
+    icl_system_terminate ();
+
+    return 0;
+}
+&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;
+C# client
+&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;&lt;
+using System;
+using System.IO;
+using System.Text;
+
+using RabbitMQ.Client;
+using RabbitMQ.Client.Content;
+using RabbitMQ.Client.Events;
+using RabbitMQ.Client.MessagePatterns;
+using RabbitMQ.Util;
+
+namespace RabbitMQ.Client.Examples {
+    public class LogTail {
+        public static int Main(string[] args) {
+            try {
+                string serverAddress = args[0];
+
+                ConnectionFactory factory = new ConnectionFactory();
+                ConnectionParameters connparams = factory.Parameters;
+                connparams.AccessRequestConfig = AccessRequestConfig.Suppress;
+                IProtocol protocol = Protocols.AMQP_0_9;               
+                using (IConnection conn = factory.CreateConnection(protocol,
+                    serverAddress))
+                {
+                    using (IModel ch = conn.CreateModel()) {
+                        ushort ticket = ch.AccessRequest(&quot;/&quot;);
+                        
+                        byte[] messageBodyBytes = 
+                            Encoding.UTF8.GetBytes(&quot;test message&quot;);
+                        IBasicProperties props = ch.CreateBasicProperties();
+                        props.ContentType = &quot;text/plain&quot;;
+                        props.DeliveryMode = 2;
+                        ch.BasicPublish(ticket,
+                                        &quot;amq.direct&quot;,
+                                        &quot;TEST&quot;,
+                                        props,
+                                        messageBodyBytes);
+                        return 0;
+                    }
+                }
+            } catch (Exception e) {
+                Console.Error.WriteLine(e);
+                return 2;
+            }
+        }
+    }
+}
+
+
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001692.html">[rabbitmq-discuss] Sent and received message counts don't match
+</A></li>
+	<LI>Next message: <A HREF="001695.html">[rabbitmq-discuss] RabbitMQ C# client
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1694">[ date ]</a>
+              <a href="thread.html#1694">[ thread ]</a>
+              <a href="subject.html#1694">[ subject ]</a>
+              <a href="author.html#1694">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

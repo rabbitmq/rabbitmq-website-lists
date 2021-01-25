@@ -1,0 +1,127 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] User/Password maximum lengths
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20User/Password%20maximum%20lengths&In-Reply-To=C7E7594E.8B24%25pdezwart%40rubiconproject.com">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="006839.html">
+   <LINK REL="Next"  HREF="006841.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] User/Password maximum lengths</H1>
+    <B>Tony Garnock-Jones</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20User/Password%20maximum%20lengths&In-Reply-To=C7E7594E.8B24%25pdezwart%40rubiconproject.com"
+       TITLE="[rabbitmq-discuss] User/Password maximum lengths">tonyg at lshift.net
+       </A><BR>
+    <I>Sun Apr 11 22:18:57 BST 2010</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="006839.html">[rabbitmq-discuss] User/Password maximum lengths
+</A></li>
+        <LI>Next message: <A HREF="006841.html">[rabbitmq-discuss] conceptual question
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#6844">[ date ]</a>
+              <a href="thread.html#6844">[ thread ]</a>
+              <a href="subject.html#6844">[ subject ]</a>
+              <a href="author.html#6844">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi Pieter,
+
+Pieter de Zwart wrote:
+&gt;<i> Can someone let me know what the maximum allowed length of the username,
+</I>&gt;<i> password, queue name and exchange name can be? A cursory search of the
+</I>&gt;<i> AMQP spec yielded nothing.
+</I>
+Queue names and exchange names have easy answers: they're limited to 255
+*bytes* long, each. (Not characters, encoded bytes.) This stuff is given in the
+XML part of the specification rather than in the main PDF, and it can be a
+little difficult to piece together the relevant fragments to discover facts
+like these.
+
+Usernames and passwords will take a little more text to explain.
+
+All authentication data is sent on the wire as a longstring, which has a
+maximum length limit of 2^32-1. However, the longstring has to travel in
+an AMQP method frame *before* a maximum frame size has been negotiated,
+meaning that while servers *may* accept authenticating frames longer than 4096
+bytes, they are not required to do so. RabbitMQ doesn't limit frames to 4096
+bytes here, so the full 2^32-1 bytes are in theory available to you.
+
+So if you're thinking about AMQP generally, rather than RabbitMQ in particular,
+the &quot;response&quot; longstring in the connection.start_ok method that carries
+username and password information should be thought of as limited to roughly
+3800 bytes, given a guess at the number of bytes used for other information in
+the start_ok method (see below for details).
+
+AMQP delegates to SASL for its authentication. Both the ad-hoc AMQPLAIN
+method and the more standard PLAIN authentication methods put both the
+username and password (with small constant padding) into that single
+longstring, so your constraint is:
+
+   len(username) + len(password) + k &lt; 3800
+
+where k is either 2 or 23 depending on whether your client library uses
+PLAIN or AMQPLAIN, respectively.
+
+Here's the connection.start-ok frame as sent by our Java client library. We see
+that the frame is 0x122 bytes long after the 7-byte frame header, not including
+the 1-byte frame footer, and that username and password information take up 11
+bytes of that, meaning that the rest of the frame takes up 279 bytes (this will
+vary slightly depending on library version and so forth), which leaves us with
+3817, or about 3800, bytes for the authentication information.
+
+Mon Apr 12 08:42:36 2010 (4bc2343c): TCP: fd 5 (I; localhost) sent 298 bytes:
+00000000: 01 00 00 00 00 01 22 00 : 0A 00 0B 00 00 00 FE 07  ......&quot;.........
+00000010: 70 72 6F 64 75 63 74 53 : 00 00 00 08 52 61 62 62  productS....Rabb
+00000020: 69 74 4D 51 08 70 6C 61 : 74 66 6F 72 6D 53 00 00  itMQ.platformS..
+00000030: 00 04 4A 61 76 61 0B 69 : 6E 66 6F 72 6D 61 74 69  ..Java.informati
+00000040: 6F 6E 53 00 00 00 34 4C : 69 63 65 6E 73 65 64 20  onS...4Licensed
+00000050: 75 6E 64 65 72 20 74 68 : 65 20 4D 50 4C 2E 20 53  under the MPL. S
+00000060: 65 65 20 68 74 74 70 3A : 2F 2F 77 77 77 2E 72 61  ee <A HREF="http://www.ra">http://www.ra</A>
+00000070: 62 62 69 74 6D 71 2E 63 : 6F 6D 2F 07 76 65 72 73  bbitmq.com/.vers
+00000080: 69 6F 6E 53 00 00 00 0F : 24 7B 69 6D 70 6C 2E 76  ionS....${impl.v
+00000090: 65 72 73 69 6F 6E 7D 09 : 63 6F 70 79 72 69 67 68  ersion}.copyrigh
+000000A0: 74 53 00 00 00 67 43 6F : 70 79 72 69 67 68 74 20  tS...gCopyright
+000000B0: 28 43 29 20 32 30 30 37 : 2D 32 30 30 38 20 4C 53  (C) 2007-2008 LS
+000000C0: 68 69 66 74 20 4C 74 64 : 2E 2C 20 43 6F 68 65 73  hift Ltd., Cohes
+000000D0: 69 76 65 20 46 69 6E 61 : 6E 63 69 61 6C 20 54 65  ive Financial Te
+000000E0: 63 68 6E 6F 6C 6F 67 69 : 65 73 20 4C 4C 43 2E 2C  chnologies LLC.,
+000000F0: 20 61 6E 64 20 52 61 62 : 62 69 74 20 54 65 63 68   and Rabbit Tech
+00000100: 6E 6F 6C 6F 67 69 65 73 : 20 4C 74 64 2E 05 50 4C  nologies Ltd..PL
+00000110: 41 49 4E 00 00 00 0C 00 : 67 75 65 73 74 00 67 75  AIN.....guest.gu
+00000120: 65 73 74 05 65 6E 5F 55 : 53 CE                    est.en_US.
+0000012A:
+
+Regards,
+  Tony
+
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="006839.html">[rabbitmq-discuss] User/Password maximum lengths
+</A></li>
+	<LI>Next message: <A HREF="006841.html">[rabbitmq-discuss] conceptual question
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#6844">[ date ]</a>
+              <a href="thread.html#6844">[ thread ]</a>
+              <a href="subject.html#6844">[ subject ]</a>
+              <a href="author.html#6844">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,265 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Queue inspector.
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20Queue%20inspector.&In-Reply-To=6ce0ac130711061202k362ee228kc18329eaf630c455%40mail.gmail.com">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000302.html">
+   <LINK REL="Next"  HREF="000306.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Queue inspector.</H1>
+    <B>Alexis Richardson</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20Queue%20inspector.&In-Reply-To=6ce0ac130711061202k362ee228kc18329eaf630c455%40mail.gmail.com"
+       TITLE="[rabbitmq-discuss] Queue inspector.">alexis.richardson at cohesiveft.com
+       </A><BR>
+    <I>Wed Nov  7 17:58:18 GMT 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000302.html">[rabbitmq-discuss] Queue inspector.
+</A></li>
+        <LI>Next message: <A HREF="000306.html">[rabbitmq-discuss] Queue inspector.
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#305">[ date ]</a>
+              <a href="thread.html#305">[ thread ]</a>
+              <a href="subject.html#305">[ subject ]</a>
+              <a href="author.html#305">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Brian
+
+
+On 11/6/07, Brian Granger &lt;<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">ellisonbg.net at gmail.com</A>&gt; wrote:
+&gt;<i>
+</I>&gt;<i> our system has a
+</I>&gt;<i> few unusual properties (more on that below)
+</I>&gt;<i>
+</I>&gt;<i> &gt; &gt; - each worker needs a private queue
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; Is that strictly needed for your use case?
+</I>&gt;<i>
+</I>&gt;<i> Yes, each worker does need a private queue so workers can directly
+</I>&gt;<i> send messages to a given worker.  But, it gets more complicated than
+</I>&gt;<i> that in a number of ways:
+</I>&gt;<i>
+</I>&gt;<i> - The master needs to be able to push messages to arbitrary sets of
+</I>&gt;<i> workers.  Our general syntax (our master in written in python) looks
+</I>&gt;<i> like this:
+</I>&gt;<i>
+</I>&gt;<i> push(list_of_workers, msg)
+</I>&gt;<i>
+</I>&gt;<i> So you see things like this:
+</I>&gt;<i>
+</I>&gt;<i> push(getIDs(), msg)  that does a broadcast or:
+</I>&gt;<i>
+</I>&gt;<i> push(range(10), msg) that pushes to workers 0,1,...10
+</I>
+OK, this is good.  I assume you also have queues for work done
+(results) and work in progress (lease-based?).
+
+
+&gt;<i> - Obviously, when pushing messages to specific workers, you can't do
+</I>&gt;<i> dynamic load balancing.  To support dynamic load balancing we have
+</I>&gt;<i> another single shared FIFO queue that sits on top of the private
+</I>&gt;<i> worker queues.  We have a scheduler that pulls things off the shared
+</I>&gt;<i> queue and puts them on the private queues, based on how many messages
+</I>&gt;<i> there are in the private queues at any given moment.
+</I>
+Got it.
+
+
+&gt;<i> I am not sure if
+</I>&gt;<i> rabbitmq/amqp will be able to handle this more complex queue logic as
+</I>&gt;<i> it would require logic *in* the rabbitmq server......
+</I>&gt;<i>
+</I>&gt;<i> So, the next question is ..... how easy it is to build custom rabbitmq
+</I>&gt;<i> servers that have custom queue logic.  Basically, I need queues to be
+</I>&gt;<i> able to act as clients to other queues.
+</I>
+OK, there are at least three answers to this question :-)
+
+1. You can do this today by running a scheduler that is a regular
+client and acts both as a producer and a consumer.  You may have
+latency concerns if your units of work are fine grained (say &lt;10ms
+total work time per task).  If you do not, then I would recommend
+looking at this as a solution.  If you do have latency concerns then I
+would still start here as a prototype since you will be able to verify
+that it scales.   By the way, you can also improve latency by
+colocating processes (or using a single process - see 3 below).
+
+2. Future versions of AMQP will support 'chaining' of brokers and
+federation better.  Solutions of type 1 will, most likely, be able to
+gracefully adopt the likely new features at low cost.
+
+3. You can mod the broker by running 'in broker consumers' and 'in
+broker producers'.  This is a very interesting area for future work
+but it would require a knowledge of Erlang.  We would be happy to help
+on list.  However if this is your goal then I would still start at 1
+(which also lets you try out multiple brokers and remain
+interoperability-compliant).
+
+
+
+&gt;<i> Currently we have implemented this system using twisted (an
+</I>&gt;<i> asynchronous networking framework in python).  It works extremely
+</I>&gt;<i> well....but it doesn't scale to  a large number of workers, which is
+</I>&gt;<i> why we are looking at erlang/amqp.
+</I>
+Interesting stuff - how many workers?  (If that's not an impertinent
+question ..)
+
+
+&gt;<i>  It might be the case that we need
+</I>&gt;<i> to implement our server at a lower level in erlang, but I really like
+</I>&gt;<i> rabbitmq/amqp.
+</I>
+Thank-you very much.  I hope we can help you avoid having to care
+about the lower levels.
+
+
+&gt;<i> &gt; I would certainly do this if you want to 'push' work.  In effect you
+</I>&gt;<i> &gt; are making the registry explicit and this would be very useful for
+</I>&gt;<i> &gt; other implementation patterns, eg shared services 'fed' by queues (a
+</I>&gt;<i> &gt; bit like an 'ESB').
+</I>&gt;<i>
+</I>&gt;<i> OK, it is good to know that I am on the right track.
+</I>
+Cool.  Please let us know if you need help, eg with the deregistration methods.
+
+alexis
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+&gt;<i>
+</I>&gt;<i> Thanks
+</I>&gt;<i>
+</I>&gt;<i> Brian
+</I>&gt;<i>
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; &gt; But, it would be nice to have more introspection capabilities.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; I wholly agree!
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; alexis
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; &gt;
+</I>&gt;<i> &gt; &gt; Thanks
+</I>&gt;<i> &gt; &gt;
+</I>&gt;<i> &gt; &gt; Brian
+</I>&gt;<i> &gt; &gt;
+</I>&gt;<i> &gt; &gt; On 11/6/07, Alexis Richardson &lt;<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">alexis.richardson at cohesiveft.com</A>&gt; wrote:
+</I>&gt;<i> &gt; &gt; &gt; Brian
+</I>&gt;<i> &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; Not yet, I'm afraid :-(
+</I>&gt;<i> &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; Management features are due in a future version of AMQP.  How
+</I>&gt;<i> &gt; &gt; &gt; important is this for you today?
+</I>&gt;<i> &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; alexis
+</I>&gt;<i> &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; On 11/5/07, Brian Granger &lt;<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">ellisonbg.net at gmail.com</A>&gt; wrote:
+</I>&gt;<i> &gt; &gt; &gt; &gt; On a related note, is there a way of querying the server to get the
+</I>&gt;<i> &gt; &gt; &gt; &gt; names of all the queues?
+</I>&gt;<i> &gt; &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt; Thanks
+</I>&gt;<i> &gt; &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt; Brian
+</I>&gt;<i> &gt; &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt; On 11/5/07, Matthias Radestock &lt;<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">matthias at lshift.net</A>&gt; wrote:
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; Matt,
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; matt wrote:
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; &gt; Getting the message count only appears to get updated when you declare
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; &gt; the queue.  What if you wanted to poll the queue and see how many
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; &gt; messages were on it every 15 seconds or so?
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; queue.declare has a passive mode of operation where it doesn't actually
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; create a new queue. That's what I was referring to when I wrote that &quot;in
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; combination with queue.declare's passive flag it allows you to determine
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; the length of existing queues&quot;.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; Matthias.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; _______________________________________________
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; rabbitmq-discuss mailing list
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; <A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; <A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt; _______________________________________________
+</I>&gt;<i> &gt; &gt; &gt; &gt; rabbitmq-discuss mailing list
+</I>&gt;<i> &gt; &gt; &gt; &gt; <A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;<i> &gt; &gt; &gt; &gt; <A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>&gt;<i> &gt; &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; --
+</I>&gt;<i> &gt; &gt; &gt; Alexis Richardson
+</I>&gt;<i> &gt; &gt; &gt; +44 20 7617 7339 (UK)
+</I>&gt;<i> &gt; &gt; &gt; +44 77 9865 2911 (cell)
+</I>&gt;<i> &gt; &gt; &gt; +1 650 206 2517 (US)
+</I>&gt;<i> &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt;
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; --
+</I>&gt;<i> &gt; Alexis Richardson
+</I>&gt;<i> &gt; +44 20 7617 7339 (UK)
+</I>&gt;<i> &gt; +44 77 9865 2911 (cell)
+</I>&gt;<i> &gt; +1 650 206 2517 (US)
+</I>&gt;<i> &gt;
+</I>&gt;<i>
+</I>
+
+-- 
+Alexis Richardson
++44 20 7617 7339 (UK)
++44 77 9865 2911 (cell)
++1 650 206 2517 (US)
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000302.html">[rabbitmq-discuss] Queue inspector.
+</A></li>
+	<LI>Next message: <A HREF="000306.html">[rabbitmq-discuss] Queue inspector.
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#305">[ date ]</a>
+              <a href="thread.html#305">[ thread ]</a>
+              <a href="subject.html#305">[ subject ]</a>
+              <a href="author.html#305">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,148 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] RabbitMQ memory management
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20RabbitMQ%20memory%20management&In-Reply-To=48CB3AED.6060606%40lshift.net">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001476.html">
+   <LINK REL="Next"  HREF="001478.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] RabbitMQ memory management</H1>
+    <B>Alexis Richardson</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20RabbitMQ%20memory%20management&In-Reply-To=48CB3AED.6060606%40lshift.net"
+       TITLE="[rabbitmq-discuss] RabbitMQ memory management">alexis.richardson at cohesiveft.com
+       </A><BR>
+    <I>Sat Sep 13 10:07:24 BST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001476.html">[rabbitmq-discuss] RabbitMQ memory management
+</A></li>
+        <LI>Next message: <A HREF="001478.html">[rabbitmq-discuss] RabbitMQ memory management
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1477">[ date ]</a>
+              <a href="thread.html#1477">[ thread ]</a>
+              <a href="subject.html#1477">[ subject ]</a>
+              <a href="author.html#1477">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi all,
+
+I have been following this discussion on the list.  To recap:
+
+1 - the overhead of storing a message in rabbitmq is very low meaning
+that the case 'broker has filled up, I need more nodes' is quite
+unusual and certainly manageable
+2 - anyone who needs more queue memory can add more nodes to the broker
+cluster transparently
+3 - durable/persistent messages are also stored on disk for recovery purposes
+
+If you have slower consumers than producers, then either:
+a) #queues will grow in size
+or:
+b) at least one queue will grow in size.
+
+Note that case (a) is solved by 2 above.  Add more nodes.  How often would you
+have to add more nodes?  Due to 1, you can work this out based on your message
+size.  For almost all use cases the consumers will have to lag
+producers by several
+days.  Think about it.  And don't forget you can add more consumers.
+
+Let's say that you cannot add more nodes and you cannot add more consumers.
+Assume also that rabbitmq is set up to persist messages to disk for recovery per
+point 3 above, but that due to your application you need copies of each message
+in memory.  Finally assume you have only one queue, many fast producers, and
+one slow consumer.  One example would be SMS.  Even a small old server could
+store millions of SMS messages without any of them being consumed.  So that
+is your scenario.
+
+[ the above is extreme but the problem use cases are variants of this ]
+
+In cases like this we would need to do one of the following:
+
+* provide a means to tell producers to back off, or alert an operator
+* or, implement a system that created more queues and nodes for you,
+if one queue became ginormous
+* implement either rolling buffers, or agents, that flushed/paged
+messages to pluggable stores or directly to disk
+* .. or (more extremely) implement rolling buffers that deleted old
+unconsumed messages completely when queue size maxed out, and notified
+consumers and operators as needed
+* some other more fancy flow control TBD
+* OR - recommend the application deigner thinks about why their queues
+are growing to very large size and if this can be prevented through
+application changes
+
+You'll appreciate that the first couple of fixes in this list are
+fairly simple to implement, with potential difficulties increasing as
+you go down the list ;-)
+
+Yet despite all this, in summary, it is reasonable for users to ask
+for a solution that is more 'self healing'.
+
+So - any takers?  Comments, thoughts?
+
+alexis
+
+
+On Sat, Sep 13, 2008 at 5:00 AM, Matthias Radestock &lt;<A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">matthias at lshift.net</A>&gt; wrote:
+&gt;<i> Hi,
+</I>&gt;<i>
+</I>&gt;<i> tsuraan wrote:
+</I>&gt;&gt;<i> If RabbitMQ crashes because it's out of memory, I understand that it
+</I>&gt;&gt;<i> should be able to start again without losing any data
+</I>&gt;<i>
+</I>&gt;<i> Only *durable* queues and exchanges, and *persistent* messages are
+</I>&gt;<i> recoverable, as per the spec.
+</I>&gt;<i>
+</I>&gt;&gt;<i> Will the next message sent to it (before any messages are dequeued)
+</I>&gt;&gt;<i> cause the queue to crash again? I assume that must be the case, since
+</I>&gt;&gt;<i> nothing was lost when the program crashed.
+</I>&gt;<i>
+</I>&gt;<i> Messages aren't the only entities consuming memory. I would hope that
+</I>&gt;<i> RabbitMQ is able to recover the state (as defined above) after an OoM
+</I>&gt;<i> error, and take in a few more messages, but it's not something we have
+</I>&gt;<i> tested. It's possible that the startup sequence uses just that little
+</I>&gt;<i> bit more memory which would push the system over the edge.
+</I>&gt;<i>
+</I>&gt;<i> Generally, if there are worries about RabbitMQ running out of memory one
+</I>&gt;<i> should try catching that case well before it happens. It's not really
+</I>&gt;<i> advisable to run a system so close to the limits.
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> Matthias.
+</I>&gt;<i>
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;<i> <A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;<i> <A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>&gt;<i>
+</I>
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001476.html">[rabbitmq-discuss] RabbitMQ memory management
+</A></li>
+	<LI>Next message: <A HREF="001478.html">[rabbitmq-discuss] RabbitMQ memory management
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1477">[ date ]</a>
+              <a href="thread.html#1477">[ thread ]</a>
+              <a href="subject.html#1477">[ subject ]</a>
+              <a href="author.html#1477">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,182 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Single vs. Multiple Queue Topology	Performance
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Single%20vs.%20Multiple%20Queue%20Topology%0A%09Performance&In-Reply-To=%3C66de83ab-5a3f-4c10-b79a-752749a8870a%40r7g2000vbg.googlegroups.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="015989.html">
+   <LINK REL="Next"  HREF="015992.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Single vs. Multiple Queue Topology	Performance</H1>
+    <B>Ilya Volodarsky</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Single%20vs.%20Multiple%20Queue%20Topology%0A%09Performance&In-Reply-To=%3C66de83ab-5a3f-4c10-b79a-752749a8870a%40r7g2000vbg.googlegroups.com%3E"
+       TITLE="[rabbitmq-discuss] Single vs. Multiple Queue Topology	Performance">ilya at segment.io
+       </A><BR>
+    <I>Fri Nov  4 19:05:24 GMT 2011</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="015989.html">[rabbitmq-discuss] Single vs. Multiple Queue Topology	Performance
+</A></li>
+        <LI>Next message: <A HREF="015992.html">[rabbitmq-discuss] Single vs. Multiple Queue	Topology	Performance
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#15991">[ date ]</a>
+              <a href="thread.html#15991">[ thread ]</a>
+              <a href="subject.html#15991">[ subject ]</a>
+              <a href="author.html#15991">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hey Jerry,
+
+Thanks for your very detailed answer. Regarding availability and
+durability, I definitely plan to use the active/active mirror queue
+approach on the queue. We hope to have the broker be in a &quot;good&quot;
+steady state, in that we'll have enough consumers to empty the queue
+at hopefully the same rate as they come in. The queue is mostly there
+so that we can upgrade the consumers without losing any of the tasks,
+and in case there is a strong spike in traffic, Rabbit can buffer the
+messages for a few seconds.
+
+I have a follow up question if you don't mind:
+
+You said &quot;it shouldn't be a bottleneck unless your production rate
+really overwhelms what a single queue process can handle&quot;. If there a
+process per queue, aren't we losing the advantages of multiple cores
+helping in the dequeuing to consumers? Wouldn't that be the advantage
+of having multiple queues?
+
+The point about premature optimization is well taken, I think it would
+be ideal to have a single queue. Just trying to figure out if that
+puts us at a massive disadvantage since this queue could potentially
+get big at times. Thanks very much!
+
+Ilya
+
+On Nov 4, 12:52&#160;pm, Jerry Kuch &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">jer... at vmware.com</A>&gt; wrote:
+&gt;<i> Hi, Ilya...
+</I>&gt;<i>
+</I>&gt;<i> It really depends on what you see as the likely &quot;steady state&quot; Rabbit will
+</I>&gt;<i> exist in, given your workload. &#160;A good rule of thumb is that &quot;a happy Rabbit
+</I>&gt;<i> is an empty Rabbit,&quot; i.e. the broker is happiest when consumers are pulling
+</I>&gt;<i> messages out of it at a rate reasonably well matched to the rate at which
+</I>&gt;<i> producers are pumping things into it (although of course the broker has
+</I>&gt;<i> mechanisms for coping with imbalances).
+</I>&gt;<i>
+</I>&gt;<i> With respect to using one big queue for all of your work items vs separating
+</I>&gt;<i> things into multiple queues, there are maybe a couple of things to think
+</I>&gt;<i> about:
+</I>&gt;<i>
+</I>&gt;<i> First, you can add multiple consumers to a single queue. &#160;Should you find
+</I>&gt;<i> that your customers are producing jobs at the front end of your web site
+</I>&gt;<i> at a higher than anticipated rate, you can always add more back end workers
+</I>&gt;<i> to consume those jobs from the queue and parallelize their processing (assuming
+</I>&gt;<i> of course the back end tasks are parallelizable). &#160;If you somehow reach the
+</I>&gt;<i> maximum throughput that a single queue can provide, then you could consider
+</I>&gt;<i> adding additional queues and spraying your tasks across them.
+</I>&gt;<i>
+</I>&gt;<i> The second issue to consider is that of availability. &#160;Unless you're using the
+</I>&gt;<i> new active/active HA system that debuted in Rabbit 2.6.x, each queue's contents
+</I>&gt;<i> exist only on a single Rabbit node. &#160;Thus, if that node becomes unavailable that
+</I>&gt;<i> queue's messages are unavailable until it comes back up. &#160;In this case though,
+</I>&gt;<i> the solution is probably not to come up with a complex multi-queue solution in
+</I>&gt;<i> your application but instead to use Rabbit's HA features, either the old style
+</I>&gt;<i> active/passive HA (where shared storage stands behind each active/passive pair)
+</I>&gt;<i> or the new active/active HA (where you can specify that a queue be replicated
+</I>&gt;<i> on multiple nodes in a cluster, as well as how many replicas you want).
+</I>&gt;<i>
+</I>&gt;<i> So bottom line: &#160;because you can put many consumers on a single queue, it
+</I>&gt;<i> shouldn't be a bottleneck unless your production rate really overwhelms
+</I>&gt;<i> what a single queue process can handle. &#160;If you're worried about availability,
+</I>&gt;<i> using a built-in Rabbit HA feature is probably the way to go and will save you
+</I>&gt;<i> having to re-implement that in your application. &#160;Finally, if you are going to
+</I>&gt;<i> use multiple queues and aren't in the situation of being forced to do so
+</I>&gt;<i> by straight-line throughput limitations, introduce new queues based on the logical
+</I>&gt;<i> structure of your app and its semantics for handling tasks, rather than as
+</I>&gt;<i> a possibly premature performance optimization.
+</I>&gt;<i>
+</I>&gt;<i> Does that make sense? &#160;Please feel free to continue the discussion if there
+</I>&gt;<i> are still things you're wondering about...
+</I>&gt;<i>
+</I>&gt;<i> Best regards,
+</I>&gt;<i> Jerry
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> ----- Original Message -----
+</I>&gt;<i> From: &quot;Ilya Volodarsky&quot; &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">i... at segment.io</A>&gt;
+</I>&gt;<i> To: <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-disc... at lists.rabbitmq.com</A>
+</I>&gt;<i> Sent: Friday, November 4, 2011 8:52:42 AM
+</I>&gt;<i> Subject: [rabbitmq-discuss] Single vs. Multiple Queue Topology Performance
+</I>&gt;<i>
+</I>&gt;<i> Hi,
+</I>&gt;<i>
+</I>&gt;<i> We have an high rate API that has three possible tasks. Web servers
+</I>&gt;<i> will receive the client's tasks, validate the input, and queue them in
+</I>&gt;<i> Rabbit. Then, a service will later dequeue these tasks and process
+</I>&gt;<i> them. I was wondering if putting all these messages into one queue has
+</I>&gt;<i> any performance or durability repercussions. An alternative is to
+</I>&gt;<i> separate the tasks into multiple queues based on the client API key,
+</I>&gt;<i> or on the API verb. Is there any preferred method, or does it not
+</I>&gt;<i> matter?
+</I>&gt;<i> Thanks,
+</I>&gt;<i>
+</I>&gt;<i> Ilya
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-disc... at lists.rabbitmq.comhttps</A>://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-disc... at lists.rabbitmq.comhttps</A>://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss
+</I></PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="015989.html">[rabbitmq-discuss] Single vs. Multiple Queue Topology	Performance
+</A></li>
+	<LI>Next message: <A HREF="015992.html">[rabbitmq-discuss] Single vs. Multiple Queue	Topology	Performance
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#15991">[ date ]</a>
+              <a href="thread.html#15991">[ thread ]</a>
+              <a href="subject.html#15991">[ subject ]</a>
+              <a href="author.html#15991">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

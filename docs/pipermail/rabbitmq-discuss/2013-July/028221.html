@@ -1,0 +1,169 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] rabbitmq-c should I start a thread for amqp_simple_wait_frame() to get mesage?
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20rabbitmq-c%20should%20I%20start%20a%20thread%20for%0A%20amqp_simple_wait_frame%28%29%20to%20get%20mesage%3F&In-Reply-To=%3CCAAt2po%2BDWdVDFaGom8fUVYXf%3DsCo4jti8rtHhGgLV_bV0ohMqA%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="028220.html">
+   <LINK REL="Next"  HREF="028247.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] rabbitmq-c should I start a thread for amqp_simple_wait_frame() to get mesage?</H1>
+    <B>Alan Antonuk</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20rabbitmq-c%20should%20I%20start%20a%20thread%20for%0A%20amqp_simple_wait_frame%28%29%20to%20get%20mesage%3F&In-Reply-To=%3CCAAt2po%2BDWdVDFaGom8fUVYXf%3DsCo4jti8rtHhGgLV_bV0ohMqA%40mail.gmail.com%3E"
+       TITLE="[rabbitmq-discuss] rabbitmq-c should I start a thread for amqp_simple_wait_frame() to get mesage?">alan.antonuk at gmail.com
+       </A><BR>
+    <I>Tue Jul  2 06:40:13 BST 2013</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="028220.html">[rabbitmq-discuss] rabbitmq-c should I start a thread for amqp_simple_wait_frame() to get mesage?
+</A></li>
+        <LI>Next message: <A HREF="028247.html">[rabbitmq-discuss] rabbitmq-c should I start a thread for amqp_simple_wait_frame() to get mesage?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#28221">[ date ]</a>
+              <a href="thread.html#28221">[ thread ]</a>
+              <a href="subject.html#28221">[ subject ]</a>
+              <a href="author.html#28221">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>The easiest way to accomplish what you're trying to do is to run each
+consumer in its own connection, which is running in its own thread.
+
+So for each consumer you want to start, do the following:
+- Create a new thread
+- Create a new connection
+- Declare your queue
+- Start the consumer
+- Consume messages
+
+To deal with canceling the consumer I see two ways to go:
+- Have the entity that is sending messages to the queue send a &quot;stop
+message&quot;, so that when you receive that message you know to call
+amqp_basic_cancel() before calling amqp_simple_wait_frame() to start
+waiting for your next message.
+- Enable Consumer Cancellation notifications (
+<A HREF="http://www.rabbitmq.com/consumer-cancel.html">http://www.rabbitmq.com/consumer-cancel.html</A>), then have some other entity
+delete the queue that the consumer is attached to. Then in your message
+read loop, when you receive a AMQP_BASIC_CANCEL_METHOD you know to stop
+reading.
+
+
+Note that this is likely far from an optimal solution to what your problem
+is. I probably can give you a better solution if you can describe to me at
+a high-level what message pattern you're trying to implement (again here
+are some examples: <A HREF="http://www.rabbitmq.com/getstarted.html">http://www.rabbitmq.com/getstarted.html</A>). When I say
+message pattern I don't mean rabbitmq-c code, I mean a description of how
+clients and servers in your environment want to talk to each other.
+
+-Alan
+
+
+On Mon, Jul 1, 2013 at 7:38 PM, 3k4b251 &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">314992959 at qq.com</A>&gt; wrote:
+
+&gt;<i> for  example.   here  is   a    simple   receive server  code.
+</I>&gt;<i>
+</I>&gt;<i> //connection
+</I>&gt;<i> amqp_connection_state_t    conn  =   amqp_new_connection();
+</I>&gt;<i>
+</I>&gt;<i> //socket
+</I>&gt;<i> amqp_socket_t *socket  = amqp_tcp_socket_new();
+</I>&gt;<i>
+</I>&gt;<i> //login
+</I>&gt;<i> amqp_login(conn, &quot;/&quot;, 0, 131072, 0, AMQP_SASL_METHOD_PLAIN, &quot;guest&quot;,
+</I>&gt;<i> &quot;guest&quot;)
+</I>&gt;<i>
+</I>&gt;<i> //open socket
+</I>&gt;<i> amqp_socket_open(socket, hostname, port)
+</I>&gt;<i>
+</I>&gt;<i> //set soket for connection
+</I>&gt;<i> amqp_set_socket(conn, socket);
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> //after  link  to  rabbitmq server. we  start  to  listen  to the  queue
+</I>&gt;<i> consumer_1
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> //open  one  channel       one question:  why we need channel....
+</I>&gt;<i> amqp_channel_open(conn, 1);
+</I>&gt;<i>
+</I>&gt;<i> //declare queue  &quot;test_1&quot;   .   I   usually try to  declare  queue  before
+</I>&gt;<i> declare consumer   to make sure the queue  already  be  there.
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> amqp_queue_declare(conn,1,amqp_cstring_bytes(&quot;consumer_1&quot;),0,0,0,1,amqp_empty_table);
+</I>&gt;<i>
+</I>&gt;<i> //request  consume
+</I>&gt;<i> amqp_basic_consume(conn, 1, amqp_cstring_bytes(&quot;consumer_1&quot;),
+</I>&gt;<i> amqp_cstring_bytes(&quot;consumer_1&quot;),  0, 1, 0, amqp_empty_table);
+</I>&gt;<i>
+</I>&gt;<i> // now  I  will  try  to receive  message
+</I>&gt;<i> while(1)
+</I>&gt;<i> {
+</I>&gt;<i> amqp_frame_t frame;
+</I>&gt;<i> amqp_simple_wait_frame(conn,&amp;frame);
+</I>&gt;<i> .........................
+</I>&gt;<i> ........................
+</I>&gt;<i> ...................
+</I>&gt;<i> }
+</I>&gt;<i>
+</I>&gt;<i> //So   when  the  client  send  message  to  the  queue   &quot;consumer_1&quot;,  I
+</I>&gt;<i> will   receive  the message. And if there  is no message,  it will block
+</I>&gt;<i>  at
+</I>&gt;<i> amqp_simple_wait_frame();
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> //but  what  I want to do  in  online server is that   one  consumer
+</I>&gt;<i> login,I  create a  queue  &quot;consumer_1&quot;  for him,  and  request queue
+</I>&gt;<i> listener  by  amqp_basic_consume().  when  the consumer quit, I  want  to
+</I>&gt;<i> remove  the listener  by amqp_basic_cancel().    but  I can't  do this  in
+</I>&gt;<i> the simple  example.  I  will  block  in  the amqp_simple_wait_frame(). I
+</I>&gt;<i> could  just  wait  the someone  send  message to queue &quot;consumer_1&quot;So  I
+</I>&gt;<i> try
+</I>&gt;<i> to  start    thread  for   message receving.  if  I do  like  this, I share
+</I>&gt;<i> connection in two  threads.   I feel very confused .........
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> --
+</I>&gt;<i> View this message in context:
+</I>&gt;<i> <A HREF="http://rabbitmq.1065348.n5.nabble.com/rabbitmq-c-should-I-start-a-thread-for-amqp-simple-wait-frame-to-get-mesage-tp27666p27729.html">http://rabbitmq.1065348.n5.nabble.com/rabbitmq-c-should-I-start-a-thread-for-amqp-simple-wait-frame-to-get-mesage-tp27666p27729.html</A>
+</I>&gt;<i> Sent from the RabbitMQ mailing list archive at Nabble.com.
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20130701/5fea5f6d/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20130701/5fea5f6d/attachment.htm</A>&gt;
+</PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="028220.html">[rabbitmq-discuss] rabbitmq-c should I start a thread for amqp_simple_wait_frame() to get mesage?
+</A></li>
+	<LI>Next message: <A HREF="028247.html">[rabbitmq-discuss] rabbitmq-c should I start a thread for amqp_simple_wait_frame() to get mesage?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#28221">[ date ]</a>
+              <a href="thread.html#28221">[ thread ]</a>
+              <a href="subject.html#28221">[ subject ]</a>
+              <a href="author.html#28221">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

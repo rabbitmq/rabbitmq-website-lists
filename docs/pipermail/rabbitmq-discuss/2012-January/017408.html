@@ -1,0 +1,166 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Ruby and AMQP
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Ruby%20and%20AMQP&In-Reply-To=%3CAF9B90C6-A3E9-465C-A007-9FFA87693FBE%40gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="017412.html">
+   <LINK REL="Next"  HREF="017411.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Ruby and AMQP</H1>
+    <B>Michael Klishin</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Ruby%20and%20AMQP&In-Reply-To=%3CAF9B90C6-A3E9-465C-A007-9FFA87693FBE%40gmail.com%3E"
+       TITLE="[rabbitmq-discuss] Ruby and AMQP">michael.s.klishin at gmail.com
+       </A><BR>
+    <I>Mon Jan 16 17:07:18 GMT 2012</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="017412.html">[rabbitmq-discuss] Ruby and AMQP
+</A></li>
+        <LI>Next message: <A HREF="017411.html">[rabbitmq-discuss] Recovering Rabbit without restarting
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#17408">[ date ]</a>
+              <a href="thread.html#17408">[ thread ]</a>
+              <a href="subject.html#17408">[ subject ]</a>
+              <a href="author.html#17408">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Mark:
+
+&gt;<i> For example Resque is a great queuing system.
+</I>&gt;<i> We simply throw a job into the queue and have it completed by one of our workers which is dead simple to spawn... ie, just tell Resque how many workers you want for job X. In RabbitMQ or the Ruby-AMQP gem I don't see how this is easily accomplished. How would I spawn multiple workers without each of them loading up the full Rails environment? Is there anything to manage all of these workers?
+</I>&gt;<i> 
+</I>
+I think you are seeing AMQP from slightly incorrect perspective. Resque has very specific usage scenarios and is limited to just Ruby (yes, you can reimplement parts of it in anything but out of the box it assumes Ruby). Resque also assumes your consumers never run for a long time, which has upsides and downsides. For systems that are
+inherently event-driven, it only goes so far. If you need validation of that, take a look at how many Resque extensions people had to build. Many of those features are available out of the box in &quot;real&quot; messaging solutions.
+
+AMQP was created to connect diverse applications that don't necessarily work the way Resque does (cron-driven processes that go up and die all the time) and not necessary are built with Ruby or run on CRuby and use fork(2).
+
+So, AMQP is not a prepackaged highly-specialized solution like Resque. You can build one on top of AMQP and some people do. Whether they are significantly better than similar solutions on top of key-value stores, I don't know.
+
+AMQP also has features that are commonly needed in when you make multiple applications work together. Message acknowledgements &amp; redelivery is one example. Server-named queues for replies is another. Exclusive consumers is one more. A dozen of very common predefined message properties is also a feature in my opinion.
+
+
+
+Now let me tell you a story of one project that is fairly popular in the Ruby community: travis-ci.org. It started with Resque and we migrated to use RabbitMQ and have 4 applications instead of 1. All this has been live since November 25th, 2011 and maybe it is time to take a look at how well that worked.
+
+When I first joined travis-ci.org development team (April last year), it was using Resque for build distribution and HTTP for build log reporting. Things worked relatively well (I can't say anybody was really unhappy with Resque or Redis) but we quickly found ourselves in need of features like
+
+* Operation acknowledgements
+* Redelivery of failed operations to another machine
+* Efficient streaming of build logs (HTTP is not the most efficient protocol for streaming)
+* Better delivery guarantees for messages like build termination
+* Sophisticated routing that includes rules like target OS and CPU architecture
+* HA features
+
+in addition, we have spent many weeks debugging issues with a key C extension and/or CRuby, so at some point several people independently came up with an idea of just using JRuby, JVM and official Java clients for tools we rely on. This also meant we had to split the system into several parts but it was obvious that it is exactly the right thing to do.
+
+If your background processing application needs to load the entire Rails environment, you should consider extracting a library from it. This is exactly what travis-ci.org went through over the last several months and we are very happy with it. That said, even though these days things like IRC notifications are handled by AMQP-based app, they were moved not because Redis did not work for those cases but simply because we wanted to keep related parts of the system together in one app.
+
+More information here: <A HREF="http://about.travis-ci.org/docs/dev/overview/.">http://about.travis-ci.org/docs/dev/overview/.</A>
+
+Did this work well? In my personal opinion and judging from our maintenance burden and stability improvements (even with *quickly* growing number of projects), it did.
+There are upsides for having processes that start and stop all the time, like it they pretty much don't have
+to care about network outages. But overall, even in areas where we still don't tolerate network failures as good as we would like to, we do not lose important data thanks to
+AMQP features (message acknowledgements, message redelivery, persistent messages).
+We do not lose builds unless we decide to purge queues, for example. Many long standing issues with HTTP streaming that resulted in &quot;builds running forever&quot; and other
+similar bugs are now in the past. 
+Fairly performance-sensitive and complicate log stream processing is now handled by a JVM-based app that has throughput capacity that will last us for months even though we are growing at 25-35 projects per day and adding support for new languages and adding more worker machines. Finally, we can use any major programming language for future versions and/or applications if we choose so.
+
+&gt;<i> Secondly, I know RabbitMQ is way more than just a simple queuing system but when it comes to RPC what are the benefits over a simple restful or JSON approach?
+</I>&gt;<i> 
+</I>
+RPC is used to describe many different things these days. Resque is not an RPC system if you ask me. Could you clarify what you mean by RPC? If you need is just delay email delivery or run other operations that don't have to be executed in &quot;near real time&quot;, are never processed by more than one type
+of consumer and don't generate events in turn) Resque is just what you need. There is no upside to using AMQP for these things other than interoperability.
+
+&gt;<i> I was hoping someone can shed some light on these questions. It would also be very helpful if some ruby users out there could explain how you are using AMQP and why you chose it over alternative options?
+</I>
+Why I am my company uses RabbitMQ: because things I build are long running processes that are often not built with Ruby. Because I find it impractical to reinvent AMQP features on top of key-value stores. Because AMQP gives me flexibility and opinionated/specialized solutions like Resque do not.
+
+
+Why travis-ci.org moved to RabbitMQ from Resque: because we find it impractical to reinvent AMQP features on top of key-value stores. Because AMQP works for streaming much better than hybrid Resque/HTTP solutions. Because we can use JRuby, Java, Clojure or anything else we may need or choose to use. Because to build what we want to build we need more advanced features and while RabbitMQ does not provide all of them today, it is the closest open source solution we can find.
+
+If you want to learn more about AMQP in general and amqp gem in particular, take a look at <A HREF="http://rubyamqp.info.">http://rubyamqp.info.</A> We have spent a lot of time trying to explain
+why features exist as much as what API parts you use to access them.
+
+Finally, a disclaimer: keep in mind that I maintain 2 Ruby AMQP clients and have been using RabbitMQ for over 3 years now. I almost definitely am biased. But if you don't
+want to listen to my arguments, check out this blog post about ZeroMQ (which is different from RabbitMQ in many ways, but strives to solve the same problem) from
+one of the Resque creators: <A HREF="http://techno-weenie.net/2011/6/17/zeromq-pub-sub/">http://techno-weenie.net/2011/6/17/zeromq-pub-sub/</A>
+
+
+MK
+
+<A HREF="http://github.com/michaelklishin">http://github.com/michaelklishin</A>
+<A HREF="http://twitter.com/michaelklishin">http://twitter.com/michaelklishin</A>
+
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="017412.html">[rabbitmq-discuss] Ruby and AMQP
+</A></li>
+	<LI>Next message: <A HREF="017411.html">[rabbitmq-discuss] Recovering Rabbit without restarting
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#17408">[ date ]</a>
+              <a href="thread.html#17408">[ thread ]</a>
+              <a href="subject.html#17408">[ subject ]</a>
+              <a href="author.html#17408">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

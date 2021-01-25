@@ -1,0 +1,154 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] HA queue disappears when a node rejoins the	cluster
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20HA%20queue%20disappears%20when%20a%20node%20rejoins%20the%0A%09cluster&In-Reply-To=%3CCACLE7izRCjP%2BLcch6o7vwa78mrMvDr%2BdRqb-c8jiM4X0UWMAVQ%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="022164.html">
+   <LINK REL="Next"  HREF="022171.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] HA queue disappears when a node rejoins the	cluster</H1>
+    <B>Matt Pietrek</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20HA%20queue%20disappears%20when%20a%20node%20rejoins%20the%0A%09cluster&In-Reply-To=%3CCACLE7izRCjP%2BLcch6o7vwa78mrMvDr%2BdRqb-c8jiM4X0UWMAVQ%40mail.gmail.com%3E"
+       TITLE="[rabbitmq-discuss] HA queue disappears when a node rejoins the	cluster">mpietrek at skytap.com
+       </A><BR>
+    <I>Wed Aug 29 18:08:04 BST 2012</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="022164.html">[rabbitmq-discuss] HA queue disappears when a node rejoins the	cluster
+</A></li>
+        <LI>Next message: <A HREF="022171.html">[rabbitmq-discuss] HA queue disappears when a node rejoins	the	cluster
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#22169">[ date ]</a>
+              <a href="thread.html#22169">[ thread ]</a>
+              <a href="subject.html#22169">[ subject ]</a>
+              <a href="author.html#22169">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi Francesco,
+
+Argh... I was so happy that this bug appeared to have been reproduced.
+
+I would happily give you a script to repro, except that the logic is
+intertwined with our own infrastructure. So instead, here's a brain dump of
+everything I can fathom would be relevant.
+
+Each node (<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at play</A>, <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at play2</A>, <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at util</A>) is run on it's own
+separate Ubuntu 10.04 64-bit VM. The management and tracing plugin are
+enabled on all nodes. All nodes are disc nodes.
+
+Clustering is performed by a config file that's the same on all nodes:
+
+----
+[
+    {rabbit, [{cluster_nodes, [<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at play</A><A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">,rabbit at play2</A><A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">,rabbit at util</A>] },
+              {disk_free_limit, 104857600}
+             ]
+    },
+    {mnesia, [{debug, trace}
+             ]
+    }
+].
+----
+
+All queues are created as HA and durable.
+
+Starting from a fully operational cluster with all nodes running and a set
+of ~6 empty queues.
+
+   - Pick a queue to work with (say, &quot;foo&quot;)
+   - Using the management UI, select the queue tab and publish 4 messages
+   to &quot;foo&quot;, delivery-mode = persistent, but  message content doesn't matter.
+   I use &quot;abc&quot; for the content.
+   - Using rabbitmqctl, bring the first node (play) down. In the management
+   UI, note that the queues are now backed by only two nodes (play2, util)
+   - Using rabbitmqctl, bring the first node (play) back up. In the
+   management UI, note that the &quot;foo&quot; queue is synched on (play2, util), but
+   not on play. (UI shows &quot;+1 +1&quot;)
+   - Using the management UI, retrieve all the messages from the queue in
+   question, but with the requeue flag enabled. After this, the queue appears
+   synced on all nodes (&quot;+2).
+   - Using rabbitmqctl, bring down the 2nd node (play2). If you wait long
+   enough, you should see that the &quot;foo&quot; queue has vanished. However, all
+   other queues remain. You should also have logs similar to what I included
+   previously.
+   - On the off chance that &quot;foo&quot; doesn't disappear within 10-15 seconds,
+   use rabbitmqctl to start the second node up again. See if &quot;foo&quot; has
+   vanished.
+
+
+Regarding the resync logic I have (HTTP api to retrieve all messages, with
+requeue), I'm not wedded to that. I'm just looking for some way to quickly
+resynch all contents, preferably without myself reading and re-publishing
+all messages. If there's some way to let the broker do most (all?) of the
+work, I'm all ears. My observation was that the &quot;retrieve with requeue&quot;
+seemed to work as intended, but you're obviously the expert on this, so I'm
+all ears.
+
+
+On Wed, Aug 29, 2012 at 3:56 AM, Francesco Mazzoli
+&lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">francesco at rabbitmq.com</A>&gt;wrote:
+
+&gt;<i> Hi Matt,
+</I>&gt;<i>
+</I>&gt;<i> At Wed, 22 Aug 2012 15:06:42 -0700,
+</I>&gt;<i> Matt Pietrek wrote:
+</I>&gt;<i> &gt; I then take down the play node and start it back up. Afterwards, I force
+</I>&gt;<i> &gt; everything to be synchronized by doing a management API 'get messages&quot;
+</I>&gt;<i> with
+</I>&gt;<i> &gt; requeue=True. When this completes, everything shows up synched as
+</I>&gt;<i> expected.
+</I>&gt;<i>
+</I>&gt;<i> This should not happen.  Messages are requeued at the original position in
+</I>&gt;<i> the
+</I>&gt;<i> queue, see &lt;<A HREF="http://www.rabbitmq.com/semantics.html">http://www.rabbitmq.com/semantics.html</A>&gt;, and thus that has no
+</I>&gt;<i> effect
+</I>&gt;<i> to the syncing of slaves.  Republishing would.
+</I>&gt;<i>
+</I>&gt;<i> I tried to reproduce the problem following exactly what you did, with no
+</I>&gt;<i> success.  Can you describe, in detail, your setup and the steps you're
+</I>&gt;<i> taking to
+</I>&gt;<i> reproduce that?  The most convenient thing would be to automate the
+</I>&gt;<i> procedure in
+</I>&gt;<i> a script.
+</I>&gt;<i>
+</I>&gt;<i> --
+</I>&gt;<i> Francesco * Often in error, never in doubt
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20120829/bd5df0f8/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20120829/bd5df0f8/attachment.htm</A>&gt;
+</PRE>
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="022164.html">[rabbitmq-discuss] HA queue disappears when a node rejoins the	cluster
+</A></li>
+	<LI>Next message: <A HREF="022171.html">[rabbitmq-discuss] HA queue disappears when a node rejoins	the	cluster
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#22169">[ date ]</a>
+              <a href="thread.html#22169">[ thread ]</a>
+              <a href="subject.html#22169">[ subject ]</a>
+              <a href="author.html#22169">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

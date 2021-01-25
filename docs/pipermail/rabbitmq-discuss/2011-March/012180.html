@@ -1,0 +1,197 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Unexpected server crash and .NET API: disconnect is not detected?
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Unexpected%20server%20crash%20and%20.NET%20API%3A%0A%20disconnect%20is%20not%20detected%3F&In-Reply-To=%3CAANLkTimGNpQpjBUBEBKCOKN1BwTB1uUvmSQFeLh8QJ-5%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="012147.html">
+   <LINK REL="Next"  HREF="012181.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Unexpected server crash and .NET API: disconnect is not detected?</H1>
+    <B>Alfonso Pantoja</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Unexpected%20server%20crash%20and%20.NET%20API%3A%0A%20disconnect%20is%20not%20detected%3F&In-Reply-To=%3CAANLkTimGNpQpjBUBEBKCOKN1BwTB1uUvmSQFeLh8QJ-5%40mail.gmail.com%3E"
+       TITLE="[rabbitmq-discuss] Unexpected server crash and .NET API: disconnect is not detected?">alfonso.pantoja at gmail.com
+       </A><BR>
+    <I>Thu Mar 31 10:38:31 BST 2011</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="012147.html">[rabbitmq-discuss] Unexpected server crash and .NET API: disconnect is not detected?
+</A></li>
+        <LI>Next message: <A HREF="012181.html">[rabbitmq-discuss] Unexpected server crash and .NET API:	disconnect is not detected?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#12180">[ date ]</a>
+              <a href="thread.html#12180">[ thread ]</a>
+              <a href="subject.html#12180">[ subject ]</a>
+              <a href="author.html#12180">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi Emile,
+
+I'm using a class based on Subscription (the core functionality is the same
+as Subscription in v2.2.0 and the only differences are that I have new
+methods and made public a pair of private properties) called from a
+RpcServer class (which I also made my own modifications but calls my custom
+Subscription class the same way as the v2.2.0 provided classes)
+
+I can reproduce the issue (but I'm not sure if it is a expected behavior) by
+doing the following steps:
+
+1. Send  messages to a queue
+2. Start a consumer application
+3. Disable the network connection in order to simulate an unexpected crash.
+
+What I see is that the my custom RpcServer class which recover  the messages
+keep looping with the foreach although there connection is closed.
+
+public void MainLoop()
+{
+
+            foreach (BasicDeliverEventArgs evt in m_subscription)
+            {
+                    ProcessRequest(evt);
+            }
+
+ }
+
+In my custom Subscription class I see that the method Next is returning all
+events even if the consumer is not running and no exception is launched when
+is called by foreach loop.
+(note: Next() is identical to Subscription class in v2.2.0 because I didn't
+modiy it)
+
+        public BasicDeliverEventArgs Next()
+        {
+            try
+            {
+                QueueingBasicConsumer consumer = m_consumer;
+                if (consumer == null)
+                {
+                    // Closed!
+                    m_latestEvent = null;
+                }
+                else
+                {
+
+                    m_latestEvent =
+(BasicDeliverEventArgs)consumer.Queue.Dequeue();
+                }
+            }
+            catch (EndOfStreamException)
+            {
+                m_latestEvent = null;
+            }
+            return m_latestEvent;
+        }
+
+
+My question is: should consumer.Queue.Dequeue() raise an exception when
+&quot;consumer&quot; property IsRunning is false?
+Currently this is not happening.
+
+In my code a workaround could be to check consumer.IsRunning and assign
+m_lastestEvent to null when if it is &quot;false&quot; and in MainLoop handle that or
+to launch an excepcion which would cause MainLoop to end.
+
+Any advice would be appreaciated.
+
+Thank you in advance.
+
+
+Regards,
+
+Alfonso
+
+
+
+
+
+
+
+2011/3/30 Emile Joubert &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">emile at rabbitmq.com</A>&gt;
+
+&gt;<i> Hi Alfonso,
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> On 30/03/11 15:43, Alfonso wrote:
+</I>&gt;<i>
+</I>&gt;&gt;<i> Hi,
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> This is a difficult one: I've observed a couple of times that my
+</I>&gt;&gt;<i> consumer (.NET API 2.2.0) doesn't notice when the server that is
+</I>&gt;&gt;<i> running RabbitMQ (2.2.0) crashes.
+</I>&gt;&gt;<i> Please note that I mean server crash -unexpected shutdown, OS crash,
+</I>&gt;&gt;<i> etc.- not RabbitMQ crash.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> My application is consuming from a queue using &quot;foreach&quot; to get the
+</I>&gt;&gt;<i> messages and I has an event handler attached to the onShutdown event.
+</I>&gt;&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> I'm not able to reproduce this using version 2.2.0 of the broker and the
+</I>&gt;<i> .NET client, implementing the the Subscription pattern. A connectivity
+</I>&gt;<i> problem immediately causes an OperationInterruptedException to be thrown
+</I>&gt;<i> from ConnectionBase.Dispose().
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>  Time ago disconnection tests consisting of disconnecting the consumer
+</I>&gt;&gt;<i> from the web admin console were made and the event handler was fired
+</I>&gt;&gt;<i> always. So disconnections are caught and logged properly.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> The problem is that the consumer got stuck when the server crashed and
+</I>&gt;&gt;<i> it didn't notice that the connection was gone (due to a server crash)
+</I>&gt;&gt;<i> so it was impossible to log a disconnection error.
+</I>&gt;&gt;<i> In the code there is a while loop for reconnecting when the connection
+</I>&gt;&gt;<i> fails but didn't loop because my guess is that the code were stuck in
+</I>&gt;&gt;<i> the &quot;foreach&quot;.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Am I missing something or this could be and issue?
+</I>&gt;&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> Is it possible that you are preventing an exception from the socket from
+</I>&gt;<i> affecting the Subscription? Posting a minimal piece of code for
+</I>&gt;<i> demonstration may be useful.
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> Regards
+</I>&gt;<i>
+</I>&gt;<i> Emile
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20110331/1247d780/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20110331/1247d780/attachment.htm</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="012147.html">[rabbitmq-discuss] Unexpected server crash and .NET API: disconnect is not detected?
+</A></li>
+	<LI>Next message: <A HREF="012181.html">[rabbitmq-discuss] Unexpected server crash and .NET API:	disconnect is not detected?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#12180">[ date ]</a>
+              <a href="thread.html#12180">[ thread ]</a>
+              <a href="subject.html#12180">[ subject ]</a>
+              <a href="author.html#12180">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,155 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Throughput observation with RabbitMQ-3.1.3	and Erlang R16B01 - Single Node and Cluster Node
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Throughput%20observation%20with%20RabbitMQ-3.1.3%0A%09and%20Erlang%20R16B01%20-%20Single%20Node%20and%20Cluster%20Node&In-Reply-To=%3C08A73F14-54B9-471A-A195-430D8DCC12AB%40gopivotal.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="029319.html">
+   <LINK REL="Next"  HREF="029330.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Throughput observation with RabbitMQ-3.1.3	and Erlang R16B01 - Single Node and Cluster Node</H1>
+    <B>Michael Klishin</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Throughput%20observation%20with%20RabbitMQ-3.1.3%0A%09and%20Erlang%20R16B01%20-%20Single%20Node%20and%20Cluster%20Node&In-Reply-To=%3C08A73F14-54B9-471A-A195-430D8DCC12AB%40gopivotal.com%3E"
+       TITLE="[rabbitmq-discuss] Throughput observation with RabbitMQ-3.1.3	and Erlang R16B01 - Single Node and Cluster Node">mklishin at gopivotal.com
+       </A><BR>
+    <I>Thu Aug 15 11:06:11 BST 2013</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="029319.html">[rabbitmq-discuss] Throughput observation with RabbitMQ-3.1.3 and Erlang R16B01 - Single Node and Cluster Node
+</A></li>
+        <LI>Next message: <A HREF="029330.html">[rabbitmq-discuss] Throughput observation with RabbitMQ-3.1.3 and Erlang R16B01 - Single Node and Cluster Node
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#29325">[ date ]</a>
+              <a href="thread.html#29325">[ thread ]</a>
+              <a href="subject.html#29325">[ subject ]</a>
+              <a href="author.html#29325">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Priyanki Vashi:
+
+&gt;<i> 1) I have a quite high bandwidth between my client (producer &amp; receiver) and server. Its around 9.2 Gbps. I have confirmed this by running iperf utility. But the maximum bandwidth I can reach is only 160 mbps. (I have pika client and single rabbitmq DISK type)
+</I>
+This means your client cannot publish faster.
+
+&gt;<i> 2) I then also took network traces using wireshark, and what I observed that the AMQP overhead was quite high then the actual payload. If I send 100 bytes of string then overhead is 300 bytes so for every message of 100 bytes I end up sending 400 bytes on wire. 
+</I>
+That does not sound right. AMQP 0-9-1 is a binary protocol and for every published message
+without custom headers, you should get a few dozens of bytes + message payload.
+
+The rest is probably TCP and IP overhead. There is no way to use RabbitMQ over UDP.
+
+&gt;<i> Since I have publish confirm/ack enabled so I understand part of this but there is also content header and some overhead in content body as well. 
+</I>&gt;<i> Is this standard for most of the clients or its specific for pika-clients only ? 
+</I>
+For a basic.publish with payload, you will get 3 frames:
+
+[basic.publish method frame] [content headers] [content payload]
+
+If the message has no content, it becomes
+
+[basic.publish method frame] [content headers]
+
+with every correct client.
+
+&gt;<i> 3) I then also try to observer how my system resources are used. I am new to this but after some googling I learnt a linux command 'dstat -dmnsy'. This provides me disk usage, RAM usage, interrupts and context switches, network send/recev. What I observer that as I increase no of producer/receiver, compare to DISK and RAM usage, its interrupts and context switches, which increases rapidly. 
+</I>&gt;<i> 
+</I>&gt;<i> what does this really mean ?
+</I>
+When you publish rapidly, RabbitMQ stores messages (and some metadata about them) in RAM and on disk. Context switches means that OS gives various processes (your publisher, RabbitMQ, other processes running) time to execute. Flat network traffic rate suggests your publisher cannot
+publish any faster.
+
+&gt;<i> 4) Also, after certain point the value under network send/receive field remains constant. Not sure what does this mean also ?
+</I>
+See above.
+
+&gt;<i> 
+</I>&gt;<i> I am pasting here one of the observed sample from dstat. 
+</I>&gt;<i> 
+</I>&gt;<i>    <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">mq10 at mqserver10</A>:~$ sudo rabbitmqadmin list queues vhost name node messages message_stats.publish_details.rate
+</I>&gt;<i> +-------+------+-----------------+----------+------------------------------------+
+</I>&gt;<i> | vhost | name |      node       | messages | message_stats.publish_details.rate |
+</I>&gt;<i> +-------+------+-----------------+----------+------------------------------------+
+</I>&gt;<i> | /     | 1    | <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">Moon at mqserver10</A> | 5        | 3380.4                             |
+</I>&gt;<i> | /     | 2    | <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">Moon at mqserver10</A> | 3        | 3649.0                             |
+</I>&gt;<i> | /     | 3    | <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">Moon at mqserver10</A> | 6        | 3402.4                             |
+</I>&gt;<i> | /     | 4    | <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">Moon at mqserver10</A> | 2        | 3450.8                             |
+</I>&gt;<i> | /     | 5    | <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">Moon at mqserver10</A> | 3        | 3444.8                             |
+</I>&gt;<i> +-------+------+-----------------+----------+------------------------------------+
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">mq10 at mqserver10</A>:~$ dstat -dmnsy
+</I>&gt;<i> -dsk/total- ------memory-usage----- -net/total- ----swap--- ---system--
+</I>&gt;<i>  read  writ| used  buff  cach  free| recv  send| used  free| int   csw
+</I>&gt;<i>  100k 8974B| 188M 25.7M  115M 9674M|   0     0 |   0     0 |  15k 9759
+</I>&gt;<i>    0    16k| 189M 25.7M  115M 9673M|6363k 4615k|   0     0 |  22k 6590
+</I>&gt;<i>    0     0 | 189M 25.7M  115M 9673M|6666k 4847k|   0     0 |  22k 7846
+</I>&gt;<i>    0     0 | 189M 25.7M  115M 9673M|6293k 4500k|   0     0 |  21k 7518
+</I>&gt;<i>    0     0 | 189M 25.7M  115M 9674M|7049k 5121k|   0     0 |  22k 5936
+</I>&gt;<i>    0     0 | 188M 25.7M  115M 9674M|6947k 5081k|   0     0 |  23k 6309
+</I>&gt;<i>    0     0 | 188M 25.7M  115M 9674M|6387k 4741k|   0     0 |  22k 7020
+</I>&gt;<i>    0     0 | 188M 25.7M  115M 9674M|6482k 4739k|   0     0 |  22k 7094
+</I>&gt;<i>    0     0 | 189M 25.7M  115M 9673M|5642k 3976k|   0     0 |  18k 7586
+</I>&gt;<i>    0     0 | 189M 25.7M  115M 9673M|6246k 4487k|   0     0 |  21k 7497
+</I>&gt;<i>    0     0 | 189M 25.7M  115M 9673M|6631k 4827k|   0     0 |  21k 5924
+</I>&gt;<i>    0     0 | 189M 25.7M  115M 9673M|6615k 4722k|   0     0 |  21k 5448
+</I>&gt;<i>    0     0 | 190M 25.7M  115M 9672M|5677k 4051k|   0     0 |  20k 5757
+</I>&gt;<i>    0     0 | 190M 25.7M  115M 9672M|6007k 4284k|   0     0 |  20k 6581
+</I>&gt;<i>    0     0 | 190M 25.7M  115M 9672M|6983k 5052k|   0     0 |  23k 5704
+</I>&gt;<i>    0     0 | 190M 25.7M  115M 9672M|6318k 4539k|   0     0 |  22k 6208
+</I>&gt;<i>    0     0 | 190M 25.7M  115M 9672M|6769k 4862k|   0     0 |  23k 5952
+</I>&gt;<i>    0     0 | 189M 25.7M  115M 9673M|6334k 4586k|   0     0 |  22k 6518
+</I>&gt;<i>    0     0 | 191M 25.7M  115M 9671M|7019k 5089k|   0     0 |  23k 5937 ^C
+</I>
+This suggests your publisher publishes at a roughly constant rate.
+Which, given spare network capacity (per your own words) suggests
+that the publisher cannot go any faster. 
+
+&gt;<i> Also, what is the good profiler to run for rabbitmq server ?
+</I>
+<A HREF="http://www.erlang.org/doc/efficiency_guide/profiling.html">http://www.erlang.org/doc/efficiency_guide/profiling.html</A>
+
+I'd like to point you that it's not RabbitMQ that seem to need profiling but your
+client.
+
+Try MulticastMain that ships with the RabbitMQ Java client or amqpc [1]
+to see what kind of thoughput your RabbitMQ node can offer with really fast
+clients.
+
+1. <A HREF="https://github.com/gocardless/amqpc">https://github.com/gocardless/amqpc</A>
+--
+MK
+
+-------------- next part --------------
+A non-text attachment was scrubbed...
+Name: signature.asc
+Type: application/pgp-signature
+Size: 495 bytes
+Desc: Message signed with OpenPGP using GPGMail
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20130815/8705b8e2/attachment.pgp">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20130815/8705b8e2/attachment.pgp</A>&gt;
+</PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="029319.html">[rabbitmq-discuss] Throughput observation with RabbitMQ-3.1.3 and Erlang R16B01 - Single Node and Cluster Node
+</A></li>
+	<LI>Next message: <A HREF="029330.html">[rabbitmq-discuss] Throughput observation with RabbitMQ-3.1.3 and Erlang R16B01 - Single Node and Cluster Node
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#29325">[ date ]</a>
+              <a href="thread.html#29325">[ thread ]</a>
+              <a href="subject.html#29325">[ subject ]</a>
+              <a href="author.html#29325">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,182 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Unexaplainable behaviour with shovel plugin.
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Unexaplainable%20behaviour%20with%20shovel%20plugin.&In-Reply-To=%3CCAKgmDnEimbvPhqzjwZSLchZXXKjJkfpVgw3_SAe1%3DrGUdHnmrg%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="034251.html">
+   <LINK REL="Next"  HREF="034260.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Unexaplainable behaviour with shovel plugin.</H1>
+    <B>Laing, Michael</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Unexaplainable%20behaviour%20with%20shovel%20plugin.&In-Reply-To=%3CCAKgmDnEimbvPhqzjwZSLchZXXKjJkfpVgw3_SAe1%3DrGUdHnmrg%40mail.gmail.com%3E"
+       TITLE="[rabbitmq-discuss] Unexaplainable behaviour with shovel plugin.">michael.laing at nytimes.com
+       </A><BR>
+    <I>Sat Mar  1 18:00:36 GMT 2014</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="034251.html">[rabbitmq-discuss] Unexaplainable behaviour with shovel plugin.
+</A></li>
+        <LI>Next message: <A HREF="034260.html">[rabbitmq-discuss] Unexaplainable behaviour with shovel plugin.
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#34252">[ date ]</a>
+              <a href="thread.html#34252">[ thread ]</a>
+              <a href="subject.html#34252">[ subject ]</a>
+              <a href="author.html#34252">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Interesting. We don't use persistent messages. In fact the proxy clusters,
+which stand between our internal clients and the core clusters, explicitly
+remove persistence in case our clients 'forget'. We rely on replication
+instead; our persistence requirements are 'outsourced' to a global
+Cassandra cluster. So no disk IO hence no IO wait - our primo defense
+against network partitions in AWS/EC2, and a nice performance boost.
+
+Although principles play a part too: idempotency - when in doubt,
+reconnect/resend/resubscribe; tolerate replicas. And we try to
+realistically engineer for 5 9's of reliability or more, not 100%, as we
+can decompose that target into realistic actions/costs.
+
+ml
+
+
+On Sat, Mar 1, 2014 at 12:21 PM, Jason McIntosh &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">mcintoshj at gmail.com</A>&gt; wrote:
+
+&gt;<i> On our systems, we've seen consistent 400/sec on some queues. During a
+</I>&gt;<i> heavy data load roughly 2500/sec per queue (these are short lived usually).
+</I>&gt;<i>  Usually at that point flow control kicks in as our consumers can't quite
+</I>&gt;<i> keep up.  We use x-consistent-hashes to get around network latency and
+</I>&gt;<i> shovel each queue in a hash.  SO publishers publish to a fanout queue with
+</I>&gt;<i> a random routing key, which is bound to an x-consistent-hash exchange bound
+</I>&gt;<i> to 8 queues.  Each of the 8 queues is shoveled independently with a 1500
+</I>&gt;<i> prefetch.  We've not been able to overload this mechanism easily - the
+</I>&gt;<i> drive IO is typically our limiting factor.  Or the consumers as stated on
+</I>&gt;<i> the remote side.  And that's because we're doing persistent messages,
+</I>&gt;<i> publisher confirms, and a whole lot of checks to make sure we don't ever
+</I>&gt;<i> lose anything.
+</I>&gt;<i>
+</I>&gt;<i> Jason
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> On Sat, Mar 1, 2014 at 10:22 AM, Laing, Michael &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">michael.laing at nytimes.com</A>
+</I>&gt;<i> &gt; wrote:
+</I>&gt;<i>
+</I>&gt;&gt;<i> Our volumes are quite variable on the shovels, representing a high
+</I>&gt;&gt;<i> overall degree of variability in our message volumes.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Just looking over the last 24 hours, shovel volume ranged from 25/sec to
+</I>&gt;&gt;<i> 2,500/sec on our Oregon core cluster.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Best,
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Michael
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> On Fri, Feb 28, 2014 at 1:14 PM, Ben Hood &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">0x6e6562 at gmail.com</A>&gt; wrote:
+</I>&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i> Michael,
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i> On Fri, Feb 28, 2014 at 12:45 PM, Laing, Michael
+</I>&gt;&gt;&gt;<i> &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">michael.laing at nytimes.com</A>&gt; wrote:
+</I>&gt;&gt;&gt;<i> &gt; So I turned to shovels for more simplicity and control at the expense
+</I>&gt;&gt;&gt;<i> of
+</I>&gt;&gt;&gt;<i> &gt; more difficult configuration.
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i> Yes, it is quite a low level tool, but I guess sometimes your
+</I>&gt;&gt;&gt;<i> requirements are intricate enough to need to reach down to the lower
+</I>&gt;&gt;&gt;<i> layer.
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i> &gt; Some of our core clusters support the 'retail' layer of instances that
+</I>&gt;&gt;&gt;<i> &gt; gateway to clients (candles?). We are introducing federation into one
+</I>&gt;&gt;&gt;<i> of
+</I>&gt;&gt;&gt;<i> &gt; these communication links because we want the propagation of client
+</I>&gt;&gt;&gt;<i> bindings
+</I>&gt;&gt;&gt;<i> &gt; from the gateway instance to the core - an excellent feature of
+</I>&gt;&gt;&gt;<i> federation
+</I>&gt;&gt;&gt;<i> &gt; and an important refinement for us.
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i> Using federation to implement an AMQP gateway seems like a common
+</I>&gt;&gt;&gt;<i> pattern. One wonders why it didn't go into the AMQP spec ....
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i> &gt; Initially I had thought that the 'new' federation replaced the 'old'
+</I>&gt;&gt;&gt;<i> shovel,
+</I>&gt;&gt;&gt;<i> &gt; but this is not true - each tool has its place although their
+</I>&gt;&gt;&gt;<i> capabilities
+</I>&gt;&gt;&gt;<i> &gt; overlap.
+</I>&gt;&gt;&gt;<i> &gt;
+</I>&gt;&gt;&gt;<i> &gt; With easier configuration in 3.3, the lowly shovel may get its due!
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i> It's interesting to see that the shovel still lives on, despite it
+</I>&gt;&gt;&gt;<i> being quite an agricultural component. What sort of message volumes
+</I>&gt;&gt;&gt;<i> are you guys processing with this, BTW?
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i> Thanks for being so detailed about your experiences, it's much
+</I>&gt;&gt;&gt;<i> appreciated.
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i> Cheers,
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i> Ben
+</I>&gt;&gt;&gt;<i> _______________________________________________
+</I>&gt;&gt;&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;&gt;&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;&gt;&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> _______________________________________________
+</I>&gt;&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> --
+</I>&gt;<i> Jason McIntosh
+</I>&gt;<i> <A HREF="https://github.com/jasonmcintosh/">https://github.com/jasonmcintosh/</A>
+</I>&gt;<i> 573-424-7612
+</I>&gt;<i>
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20140301/7c9414af/attachment.html">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20140301/7c9414af/attachment.html</A>&gt;
+</PRE>
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="034251.html">[rabbitmq-discuss] Unexaplainable behaviour with shovel plugin.
+</A></li>
+	<LI>Next message: <A HREF="034260.html">[rabbitmq-discuss] Unexaplainable behaviour with shovel plugin.
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#34252">[ date ]</a>
+              <a href="thread.html#34252">[ thread ]</a>
+              <a href="subject.html#34252">[ subject ]</a>
+              <a href="author.html#34252">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,153 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] RabbitMQ crashed in ets:insert_new - looks like a genuine bug...
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20RabbitMQ%20crashed%20in%20ets%3Ainsert_new%20-%20looks%0A%20like%20a%20genuine%20bug...&In-Reply-To=%3C20110812141156.GC24946%40rabbitmq.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="014519.html">
+   <LINK REL="Next"  HREF="014523.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] RabbitMQ crashed in ets:insert_new - looks like a genuine bug...</H1>
+    <B>Matthew Sackman</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20RabbitMQ%20crashed%20in%20ets%3Ainsert_new%20-%20looks%0A%20like%20a%20genuine%20bug...&In-Reply-To=%3C20110812141156.GC24946%40rabbitmq.com%3E"
+       TITLE="[rabbitmq-discuss] RabbitMQ crashed in ets:insert_new - looks like a genuine bug...">matthew at rabbitmq.com
+       </A><BR>
+    <I>Fri Aug 12 15:11:56 BST 2011</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="014519.html">[rabbitmq-discuss] RabbitMQ crashed in ets:insert_new - looks like a genuine bug...
+</A></li>
+        <LI>Next message: <A HREF="014523.html">[rabbitmq-discuss] RabbitMQ crashed in ets:insert_new - looks like a genuine bug...
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#14521">[ date ]</a>
+              <a href="thread.html#14521">[ thread ]</a>
+              <a href="subject.html#14521">[ subject ]</a>
+              <a href="author.html#14521">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>On Fri, Aug 12, 2011 at 11:26:51AM +0100, Matthew Sackman wrote:
+&gt;<i> There is only one use of lists:any in the msg_store, and thus it's
+</I>&gt;<i> fairly easy to work out what's happened: somehow, there's been an
+</I>&gt;<i> attempt made to sync on disk a msg that turns out not to exist. This is,
+</I>&gt;<i> unsurprisingly, an unexpected situation, hence the dramatic crash.
+</I>
+I've now been able to reproduce it. For me, the following test causes
+this:
+
+%%%%%%%%%%%
+-module(test).
+-include_lib(&quot;amqp_client/include/amqp_client.hrl&quot;).
+
+crash_tx() -&gt;
+    {ok, ConnDel} = amqp_connection:start(#amqp_params_network{}),
+    {ok, ChanDel} = amqp_connection:open_channel(ConnDel),
+    {ok, Conn} = amqp_connection:start(#amqp_params_network{}),
+    TxChanCount = 200,
+    TxChans = [begin
+                   {ok, ChanPubTx} = amqp_connection:open_channel(Conn),
+                   amqp_channel:call(ChanPubTx, #'tx.select'{}),
+                   ChanPubTx
+               end || _ &lt;- lists:seq(1, TxChanCount)],
+    amqp_channel:call(
+      ChanDel, #'queue.declare' { queue = &lt;&lt;&quot;q&quot;&gt;&gt;, durable = true }),
+    Method = #'basic.publish'{ routing_key = &lt;&lt;&quot;q&quot;&gt;&gt; },
+    Content = #amqp_msg { props = #'P_basic'{ delivery_mode = 2 },
+                          payload = &lt;&lt;0:8&gt;&gt; },
+    Rounds = lists:seq(1, 5),
+    PerRound = lists:seq(1, 1000),
+    Parent = self(),
+    PubPidTxs = [spawn(
+                   fun () -&gt;
+                           [begin
+                                io:format(&quot;~p: ~p~n&quot;, [self(), R]),
+                                amqp_channel:call(ChanPubTx, #'tx.commit'{}),
+                                [ok = amqp_channel:cast(ChanPubTx, Method, Content)
+                                 || _ &lt;- PerRound]
+                            end || R &lt;- Rounds],
+                           Parent ! publish_done,
+                           amqp_channel:call(ChanPubTx, #'tx.commit'{})
+                   end) || ChanPubTx &lt;- TxChans],
+    receive
+        publish_done -&gt;
+            io:format(&quot;Deleting queue...~n&quot;),
+            amqp_channel:call(ChanDel, #'queue.delete'{ queue = &lt;&lt;&quot;q&quot;&gt;&gt; }),
+            amqp_channel:close(ChanDel),
+            [exit(PubPidTx, kill) || PubPidTx &lt;- PubPidTxs],
+            [amqp_channel:close(ChanPubTx) || ChanPubTx &lt;- TxChans]
+    end,
+    amqp_connection:close(ConnDel),
+    [receive publish_done -&gt; ok end || _ &lt;- tl(TxChans)],
+    amqp_connection:close(Conn).
+%%%%%%%%%%%%
+
+It's a nasty little bug. Basically, we have all sorts of optimisations
+in place to make sure that when a queue is deleted, even if it has lots
+of outstanding work to do, the queue can be deleted quickly. This
+basically amounts to promoting the delete up the list of things to do,
+the idea being that it can overtake writes and removes and such that
+obviously are now not worth doing considering that the queue is going to
+be deleted.
+
+It turns out that if in the list of things to do, you have a write, and
+then a sync of that write, the write itself can be ignored owing to the
+promoted deletion. But the sync doesn't get ignored, and so tries to
+sync the msg to disk, but the msg isn't known about on disk because it's
+been ignored, hence the not_found, hence the crash.
+
+The good news is that all of that code has changed quite a lot since
+2.5.1 and so I don't think this bug can happen if you run from default
+(and consequently will be fixed in the next release). I think. I'll
+continue checking through the code on default to be sure of this.
+
+Well found!
+
+Matthew
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="014519.html">[rabbitmq-discuss] RabbitMQ crashed in ets:insert_new - looks like a genuine bug...
+</A></li>
+	<LI>Next message: <A HREF="014523.html">[rabbitmq-discuss] RabbitMQ crashed in ets:insert_new - looks like a genuine bug...
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#14521">[ date ]</a>
+              <a href="thread.html#14521">[ thread ]</a>
+              <a href="subject.html#14521">[ subject ]</a>
+              <a href="author.html#14521">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

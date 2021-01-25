@@ -1,0 +1,158 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] HA - missing or incompletely replicated	queues
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20HA%20-%20missing%20or%20incompletely%20replicated%0A%09queues&In-Reply-To=%3C20111107135014.GD6082%40rabbitmq.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="016017.html">
+   <LINK REL="Next"  HREF="016019.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] HA - missing or incompletely replicated	queues</H1>
+    <B>Matthew Sackman</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20HA%20-%20missing%20or%20incompletely%20replicated%0A%09queues&In-Reply-To=%3C20111107135014.GD6082%40rabbitmq.com%3E"
+       TITLE="[rabbitmq-discuss] HA - missing or incompletely replicated	queues">matthew at rabbitmq.com
+       </A><BR>
+    <I>Mon Nov  7 13:50:14 GMT 2011</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="016017.html">[rabbitmq-discuss] HA - missing or incompletely replicated queues
+</A></li>
+        <LI>Next message: <A HREF="016019.html">[rabbitmq-discuss] HA - missing or incompletely replicated	queues
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#16018">[ date ]</a>
+              <a href="thread.html#16018">[ thread ]</a>
+              <a href="subject.html#16018">[ subject ]</a>
+              <a href="author.html#16018">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi Ash,
+
+On Mon, Nov 07, 2011 at 01:27:11PM +0000, Ashley Brown wrote:
+&gt;<i> There are 3 nodes in the cluster, with queues replicated to all nodes. In
+</I>&gt;<i> testing, I've been issuing kill commands to take out beam, rabbit and
+</I>&gt;<i> erlang processes, which close the channels and make clients reconnect to a
+</I>&gt;<i> different nodes. I allow the downed node to recover and come back up before
+</I>&gt;<i> killing another one (also allowing queues to synchronize).
+</I>
+You're aware that there is no eager synchronisation of HA queues, yes?
+So it's only by the unsynchronised head of each queue being consumed
+that synchronisation occurs.
+
+&gt;<i> After doing this a couple of times, we see the following:
+</I>&gt;<i> 
+</I>&gt;<i> <A HREF="http://www.evernote.com/shard/s53/sh/448a967e-b995-4f54-986d-50194955550f/416d4e71af91f6e2f6d5311f7ea9fb44">http://www.evernote.com/shard/s53/sh/448a967e-b995-4f54-986d-50194955550f/416d4e71af91f6e2f6d5311f7ea9fb44</A>
+</I>&gt;<i> 
+</I>&gt;<i> The classifications queue is gone (taking any messages with it), the meta
+</I>&gt;<i> queue is only replicated to one other node. The tracking queue is OK, but
+</I>&gt;<i> only because it disappeared and was recreated empty.
+</I>
+Did the previously downed node really come back up and join the cluster
+correctly? Does the output of rabbitmqctl cluster_status on each of the
+3 nodes report all 3 nodes are running?
+
+&gt;<i> I've also found that sometimes queues stop delivering messages when certain
+</I>&gt;<i> nodes go down (even after being left for minutes), despite being in HA mode
+</I>&gt;<i> (haven't been able to dig into this more yet).
+</I>
+When this happens, could you check the logs please on all nodes for any
+entries regarding the queues. If a node with a queue master goes down
+then there should be entries about some slave on another node being
+promoted, but even if it's just a slave that dies, there should be
+entries in the logs that show others have noticed that.
+
+&gt;<i> Sometimes connections to nodes which have gone down are still shown
+</I>&gt;<i> and get stuck. Using netstat &gt; reveals that those connections do not
+</I>&gt;<i> exist at TCP level, and using the Web UI to 'Force Close' them
+</I>&gt;<i> generates an error (red box saying unable to connect to server -
+</I>&gt;<i> however the rest of the UI works fine).
+</I>
+Interesting. That might be a bug in the mgmt plugin. Does rabbitmqctl
+list_connections also show such phantom connections?
+
+&gt;<i> This seems like rather odd behaviour, and means we can't put it into
+</I>&gt;<i> production. I'm having trouble replicating it, all I know is that after
+</I>&gt;<i> cycling nodes a few times it stops working as we'd expect.
+</I>
+My first guess is that the node hasn't actually rejoined properly, and
+may require a manual removal of the rabbitmq database directory before
+starting the node and explicitly reclustering it. Please note Rabbit
+never has claimed to cope with netsplits or partitions and loss of nodes
+falls under this category. Thus just restarting the failed Rabbit may
+very well not rejoin the cluster and require manual intervention.
+Apologies if I'm telling you things you already know, I just want to be
+clear.
+
+However, if ctl cluster_status shows that it has, then that may well
+indicate some other bug. Log entries, the output of cluster_status, and
+the output of rabbitmqctl report will be useful (if large, please feel
+free to send off-list to info@).
+
+&gt;<i> Today, while bringing up the cluster from scratch (shutdown all instances,
+</I>&gt;<i> wipe mnesia, restart) I've got 3 nodes running, but an HA queue with 1
+</I>&gt;<i> master, 2 synced slaves and 1 unsynced slave. Other queues are showing 1
+</I>&gt;<i> master and 2 synced slaves as expected. (see
+</I>&gt;<i> <A HREF="http://www.evernote.com/shard/s53/sh/b6345885-88d1-4d21-9614-24abda75a1cb/c2a0dd265b39d21f3e8c336c67ced979">http://www.evernote.com/shard/s53/sh/b6345885-88d1-4d21-9614-24abda75a1cb/c2a0dd265b39d21f3e8c336c67ced979</A>
+</I>&gt;<i> )
+</I>
+Well, drain the &quot;unsynced&quot; queue and it'll become synced. Yes, this is
+very much an undesired limitation, and in some cases it might be
+problematic enough to make Rabbit's HA as it stands not-fit-for-purpose.
+It should be fixed in the future, but it seemed the wrong decision to
+delay active-active HA for many further months to ensure it launched
+with eager resync.
+
+Best wishes,
+
+Matthew
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="016017.html">[rabbitmq-discuss] HA - missing or incompletely replicated queues
+</A></li>
+	<LI>Next message: <A HREF="016019.html">[rabbitmq-discuss] HA - missing or incompletely replicated	queues
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#16018">[ date ]</a>
+              <a href="thread.html#16018">[ thread ]</a>
+              <a href="subject.html#16018">[ subject ]</a>
+              <a href="author.html#16018">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

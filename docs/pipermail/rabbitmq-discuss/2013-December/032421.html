@@ -1,0 +1,173 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Best practices for cluster upgrades with	uninterrupted service
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Best%20practices%20for%20cluster%20upgrades%20with%0A%09uninterrupted%20service&In-Reply-To=%3CCACLE7iwJr0PFCWuzOtnR9YQ1NoHjsqUMQjGfrYPeWgM_G5_h5Q%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="032659.html">
+   <LINK REL="Next"  HREF="032613.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Best practices for cluster upgrades with	uninterrupted service</H1>
+    <B>Matt Pietrek</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Best%20practices%20for%20cluster%20upgrades%20with%0A%09uninterrupted%20service&In-Reply-To=%3CCACLE7iwJr0PFCWuzOtnR9YQ1NoHjsqUMQjGfrYPeWgM_G5_h5Q%40mail.gmail.com%3E"
+       TITLE="[rabbitmq-discuss] Best practices for cluster upgrades with	uninterrupted service">mpietrek at skytap.com
+       </A><BR>
+    <I>Mon Dec  9 22:42:18 GMT 2013</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="032659.html">[rabbitmq-discuss] Best way to ping server from client
+</A></li>
+        <LI>Next message: <A HREF="032613.html">[rabbitmq-discuss] Best practices for cluster upgrades with	uninterrupted service
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#32421">[ date ]</a>
+              <a href="thread.html#32421">[ thread ]</a>
+              <a href="subject.html#32421">[ subject ]</a>
+              <a href="author.html#32421">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hey all RabbitMQ devs and experts,
+
+I&#8217;m looking for a validation of an approach, or a better suggestion on how
+to accomplish.
+
+The big picture is that we want to improve how we upgrade our clusters
+without interruptions in service. I know RabbitMQ supports running mixed
+versions within a cluster, but for us, upgrade may also mean bringing down
+a node for reconfiguration, an Erlang upgrade, or any other number of
+scenarios.
+
+Today we do controlled switchover of load from one RabbitMQ cluster to
+another, and then switch it back. We use two clusters (a master and an
+alternate). Both clusters are identically configured with two RabbitMQ
+instances, i.e &#8220;master&#8221; is node1,node2, and &#8220;alternate&#8221; is node3,node4.
+
+All queues are mirrored. We direct traffic to the master or alternate via a
+VIP.
+
+Today our upgrade process looks like this:
+
+--------
+
+* master is operation normally, and pointed to by the VIP.
+
+* Shut down both alternate nodes, upgrade them in whatever manner is
+necessary. Newer version, more ram, whatever.
+
+* Start up alternate cluster, then create the same set of queues on it as
+the master has.
+
+* Redirect the VIP to point to the alternate.
+
+* Clients see a connection drop because of the VIP change, but are tolerant
+and auto-reconnect.
+
+* Copy all queue contents from the master&#8217;s queues to the alternate&#8217;s
+same-named queues.
+
+* Shut down the master nodes and upgrade them.
+
+* Perform similar steps as above to move the VIP and messages back to the
+master.
+
+--------
+
+While this generally works, there are small but important problems with it.
+One problem is that some of our queues are created/deleted. I have seen
+scenarios where unfortunate timing can cause a queue to not be on the right
+cluster at the right moment.
+
+Looking at newer RabbitMQ features, in particular policy based mirroring
+control, I&#8217;m thinking something like this would be better:
+
+-------
+
+* Have node1/node2 running along normally, with the VIP pointing at it.
+
+* Start up node3/node4 in the same cluster
+
+* Use policy to make all queues mirrored by all four nodes. Use synch_queue
+as necessary to force synchronization in a reasonable time frame.
+
+* When all queues are synched, remove node1/node2 from the cluster and
+upgrade them.
+
+* Because our VIP is managed by keepalived, either node3 or node4 will
+obtain the VIP when node1/node2 are removed.
+
+--------
+
+The advantage of this is that it eliminates queue location timing windows
+and we don&#8217;t have to manually copy messages around. The only downside I&#8217;m
+aware of is that it won&#8217;t work when upgrading major/minor versions. That
+is, it should be fine from 3.4.3 to 3.4.7, but not 3.4 to 3.5. In that
+case, we'd use our original upgrade logic.
+
+Thoughts? Suggestions? Better ideas?
+
+Thanks,
+
+
+Matt
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20131209/52688274/attachment.html">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20131209/52688274/attachment.html</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="032659.html">[rabbitmq-discuss] Best way to ping server from client
+</A></li>
+	<LI>Next message: <A HREF="032613.html">[rabbitmq-discuss] Best practices for cluster upgrades with	uninterrupted service
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#32421">[ date ]</a>
+              <a href="thread.html#32421">[ thread ]</a>
+              <a href="subject.html#32421">[ subject ]</a>
+              <a href="author.html#32421">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

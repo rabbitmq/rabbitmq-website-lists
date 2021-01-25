@@ -1,0 +1,110 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] create a policy for concrete nodes
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20create%20a%20policy%20for%20concrete%20nodes&In-Reply-To=%3CF3EAFA9D-B35C-445A-A2E6-74F84D896028%40rabbitmq.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="027280.html">
+   <LINK REL="Next"  HREF="027282.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] create a policy for concrete nodes</H1>
+    <B>Tim Watson</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20create%20a%20policy%20for%20concrete%20nodes&In-Reply-To=%3CF3EAFA9D-B35C-445A-A2E6-74F84D896028%40rabbitmq.com%3E"
+       TITLE="[rabbitmq-discuss] create a policy for concrete nodes">tim at rabbitmq.com
+       </A><BR>
+    <I>Fri May 17 11:17:05 BST 2013</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="027280.html">[rabbitmq-discuss] create a policy for concrete nodes
+</A></li>
+        <LI>Next message: <A HREF="027282.html">[rabbitmq-discuss] create a policy for concrete nodes
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#27281">[ date ]</a>
+              <a href="thread.html#27281">[ thread ]</a>
+              <a href="subject.html#27281">[ subject ]</a>
+              <a href="author.html#27281">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi,
+
+On 17 May 2013, at 10:11, Slyth wrote:
+
+&gt;<i> My boss told me that he want to use rabbitMQ to cluster, for example, 3 VM's
+</I>&gt;<i> and this machines should be mirrored on 3 other VM's for High Availability.
+</I>
+Right. Now RabbitMQ clustering is a separate thing from High Availability Mirrored Queues. If you want really specific guidance on how to set up clustering or mirroring to do a specific job, then you'll need to provide &#229; specific requirement. By the way, if you're a trainee, this is a good time for you to learn how to ensure your boss provides concrete requirements that you can work to without confusion! :) 
+
+&gt;<i> I'm a trainee and this topic is really new for me.
+</I>&gt;<i> I try my best to understand the documentations but I know nothing about
+</I>&gt;<i> queues and policies and so on.
+</I>&gt;<i> 
+</I>
+Ok. Why do you need mirroring? You say it's because you need HA right? I still don't understand your topology, and frankly it sounds to me like you would really benefit from some training - which we are able to offer btw. But just to make sure you understand how all this works, here's a really simple guide.
+
+Let's start with the basics - just one broker.
+
+The RabbitMQ broker will run on exactly one machine. Client applications (written in any language which has a binding available) will send messages to the broker and receive messages from the broker. The broker does not need to run on the same machine as the clients which are sending to it and receiving from it. In this mode - 1 broker, shared by all the clients - there can be 1000s of producers and consumers, sending and receiving messages with one another.
+
+Now let's add clustering. What does it do? You install the RabbitMQ broker on three nodes, and you cluster the three brokers together. What do you get from this?
+
+Firstly, clients can connect to any of the three brokers to publish and consume messages. Now say a queue is created on NODE1, then a client to connect to NODE2 and publish to that queue (which actually resides on NODE1), and another client can connect to NODE3 and consume from that queue on NODE1. The clients do not have to care about which node the queue is actually running on, they can connect to any part of the cluster. Great, now you can handle lots more clients and balance the load of the system across multiple nodes, although you might want to make sure that the queues are not all running on just one node.
+
+So what do you need HA/Mirroring for? Well, let's say that your queue is running on NODE1 and clients are connected to ALL the nodes, publishing to and consuming from this queue on NODE1. Now say NODE1 crashes, because of hardware failure or whatever. Ooops, all the messages in that queue on NODE1 are lost, even the persistent ones because the hard disk melted. Oh dear. It is THIS scenario that you need High Availability for. How does high availability work? For each queue that matches the policy (say `mirror.' which will match mirror.in, mirror.out, mirror.foo, etc), the contents of the queue will be continuously replicated on all the nodes you specify. So if you want every called called mirror.&lt;something&gt; to be replicated across three nodes, the you'll use the 'nodes' policy with [node1, node,2 node3] and that's what you'll get.
+
+Now, let's just be 100% clear. What you said was &quot;My boss told me that he want to use rabbitMQ to cluster, for example, 3 VM's and this machines should be mirrored on 3 other VM's for High Availability.&quot; Here's why that doesn't make any sense...
+
+1. When you cluster RabbitMQ, you are clustering brokers not VMs
+
+To clarify, when I say &quot;broker&quot;, I mean 1 instance of the program, i.e., 1 operating system process. You can have multiple brokers running on a single host, or you can one broker per host. That's all up to you. When you cluster two running brokers - that is, two instances of RabbitMQ running at the same time, potentially on different machines - what you're doing is getting them to (a) know about one another, (b) share definitions of queues, exchanges, users, etc and (c) forward traffic to one another if appropriate (like above, where the queue is started by queue.declare from a client on NODE1, but then another client comes to NODE2 to publish to it. So when you say cluster VMs, that's almost meaningless and quite confusing. 
+
+2. When you use Mirrors/HA in RabbitMQ, you are mirroring queues
+
+You said &quot;this [sic] machines should be mirrored on 3 other VM's for High Availability&quot;. Again, that's confusing. As I explained above - hopefully in a way that's understandable - when you set up a mirroring policy, it is the contents of any queue that matches the policy which are replicated across the chosen set of nodes. What do you mean by *machines should be mirrored* then? Do you mean that messages sent any queue with a name that start &quot;mirror.&lt;queue name&gt;&quot; should be replicated across NODE1, NODE2 and NODE3 as well, just in case one of them dies? That's that HA/Mirroring does. Or do you mean something else?
+
+Cheers,
+Tim
+
+
+ 
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="027280.html">[rabbitmq-discuss] create a policy for concrete nodes
+</A></li>
+	<LI>Next message: <A HREF="027282.html">[rabbitmq-discuss] create a policy for concrete nodes
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#27281">[ date ]</a>
+              <a href="thread.html#27281">[ thread ]</a>
+              <a href="subject.html#27281">[ subject ]</a>
+              <a href="author.html#27281">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

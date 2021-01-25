@@ -1,0 +1,159 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] request for help!
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20request%20for%20help%21&In-Reply-To=w2gfde171c01005060343v17151b47qe6f269f3cd2e230e%40mail.gmail.com">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="007069.html">
+   <LINK REL="Next"  HREF="007074.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] request for help!</H1>
+    <B>Martin Sustrik</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20request%20for%20help%21&In-Reply-To=w2gfde171c01005060343v17151b47qe6f269f3cd2e230e%40mail.gmail.com"
+       TITLE="[rabbitmq-discuss] request for help!">sustrik at 250bpm.com
+       </A><BR>
+    <I>Thu May  6 12:34:27 BST 2010</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="007069.html">[rabbitmq-discuss] request for help!
+</A></li>
+        <LI>Next message: <A HREF="007074.html">[rabbitmq-discuss] request for help!
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#7071">[ date ]</a>
+              <a href="thread.html#7071">[ thread ]</a>
+              <a href="subject.html#7071">[ subject ]</a>
+              <a href="author.html#7071">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi Rob,
+
+First of all I would like to define what's MQ and what's DB. It'll be 
+helpful to get the discussion more focused IMO:
+
+With DB data are long-lived while queries are transient one-off events.
+
+With MQ data are transient one-off events while queries are stable 
+long-lived entities.
+
+Terminology:
+
+Data = record (DB) = message (MQ)
+Query = SQL statement (DB) = subscription (MQ)
+
+&gt;&gt;<i> It's wider than ordering alone. Node with unordered messages is basically a
+</I>&gt;&gt;<i> database table.
+</I>&gt;<i> 
+</I>&gt;<i> A Node with unordered messages would be some sort of Bag I would
+</I>&gt;<i> think... Unlike a DB table there would be no natural notion of a
+</I>&gt;<i> primary key, or necessarily any notion of a way to select the messages
+</I>&gt;<i> (though I guess the node *may* support certain AMQP1-0 filter types).
+</I>&gt;<i> Again, there is no requirement on implementers to write such a Node
+</I>&gt;<i> type (unless Michael has secretly put that in the document he is
+</I>&gt;<i> currently writing ;-) )... All that the core spec is doing is saying
+</I>&gt;<i> is &quot;it's perfectly valid to have nodes that give FIFO ordering, LIFO
+</I>&gt;<i> ordering, or any other (non-)ordering you like&quot;.  This is actually
+</I>&gt;<i> removing a burden on implementers rather than adding one (although the
+</I>&gt;<i> requirement for the same sort of pseudo-FIFO that 0-x requires will
+</I>&gt;<i> probably also be a requirement for AMQP 1-0 *Brokers*).
+</I>
+Yes. Explicitly not defining how the messages are stored and leaving it 
+to layer above is perfectly valid approach. However, it should be done 
+more consistently, see below...
+
+&gt;&gt;<i> However, there are also other DB concepts in the spec. Say a concept of
+</I>&gt;&gt;<i> non-destructive link -- which boils down to a SELECT statement. Or, say,
+</I>&gt;&gt;<i> it seems implied that a message cannot silently disappear from a node
+</I>&gt;&gt;<i> same way as record cannot silently disappear from a DB table.
+</I>&gt;<i> 
+</I>&gt;<i> There is absolutely no intent to prevent a node from silently
+</I>&gt;<i> &quot;disappearing&quot; a message that it is holding.  All that
+</I>&gt;<i> &quot;non-destructive&quot; means is that the act of sending the message to the
+</I>&gt;<i> receiver does not in itself cause the message to be &quot;disappeared&quot;.
+</I>&gt;<i> The two major use cases this functionality is designed for are Queue
+</I>&gt;<i> &quot;browsing&quot; (i.e. the ability to look at what is in your queue without
+</I>&gt;<i> consuming the messages) and the ability to implement &quot;Topics&quot; as a
+</I>&gt;<i> single entity (rather than the AMQP 0-x way of having a queue per
+</I>&gt;<i> consumer).  The Topic case is potentially more interesting as a Topic
+</I>&gt;<i> node would have a policy that says &quot;when all connected consumers have
+</I>&gt;<i> moved beyond a message in the *ordered* Topic, then the message may be
+</I>&gt;<i> deleted&quot;.  This obviously requires some notion of ordering at the
+</I>&gt;<i> (Topic) node.  Having implemented this functionality elsewhere, it
+</I>&gt;<i> certainly doesn't require a database table like data-structure - all
+</I>&gt;<i> it requires is that you hold pointers into the queue.
+</I>
+Let me give you just one example of what problems we are facing here: 
+Destructive vs. non-destructive semantics break &quot;stability&quot; of message 
+dispatch algorithm. In other words, which messages you get is not fully 
+determined by your subscription, rather it depends on ordering of 
+subscriptions in the broker. If destructive subscription is matched 
+first, non-destructive subscription won't get the message. If they are 
+matched in reverse order, both get the message. You do expect such 
+behaviour with DB system -- ordering of SQL statements effects the 
+results -- however, you don't want it to happen with MQ system.
+
+
+My suggestion would be to stretch the abstraction of ignoring the 
+internal node state/algorithms to fully cover the node behaviour:
+
+1. Node is a named endpoint for links and that's it.
+
+2. There's no concept of message being resident on a node.
+
+3. There's no message ordering defined. This follows from the above.
+
+4. There's no message state machine. This follows from 2.
+
+3. There are no destructive/non-destructive links, just &quot;links&quot;.
+
+Adopting the points above would make core specification much cleaner. 
+The burden of defining storage/ordering/routing etc. is left to &quot;broker 
+behaviour&quot; specification.
+
+Martin
+
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="007069.html">[rabbitmq-discuss] request for help!
+</A></li>
+	<LI>Next message: <A HREF="007074.html">[rabbitmq-discuss] request for help!
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#7071">[ date ]</a>
+              <a href="thread.html#7071">[ thread ]</a>
+              <a href="subject.html#7071">[ subject ]</a>
+              <a href="author.html#7071">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

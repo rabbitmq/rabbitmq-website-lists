@@ -1,0 +1,156 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] RabbitMQ 3.1.5 crashed
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20RabbitMQ%203.1.5%20crashed&In-Reply-To=%3C52B2D568.1020607%40rabbitmq.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="032684.html">
+   <LINK REL="Next"  HREF="032629.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] RabbitMQ 3.1.5 crashed</H1>
+    <B>Simon MacMullen</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20RabbitMQ%203.1.5%20crashed&In-Reply-To=%3C52B2D568.1020607%40rabbitmq.com%3E"
+       TITLE="[rabbitmq-discuss] RabbitMQ 3.1.5 crashed">simon at rabbitmq.com
+       </A><BR>
+    <I>Thu Dec 19 11:15:52 GMT 2013</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="032684.html">[rabbitmq-discuss] RabbitMQ 3.1.5 crashed
+</A></li>
+        <LI>Next message: <A HREF="032629.html">[rabbitmq-discuss] Error in the Java testing client for ssl.
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#32698">[ date ]</a>
+              <a href="thread.html#32698">[ thread ]</a>
+              <a href="subject.html#32698">[ subject ]</a>
+              <a href="author.html#32698">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Thanks.
+
+The VM crashed because it couldn't allocate memory.
+
+Normally the memory monitor should detect that RabbitMQ is starting to 
+use too much memory and prevent further publishing before reaching this 
+point (see <A HREF="http://www.rabbitmq.com/memory.html#memsup">http://www.rabbitmq.com/memory.html#memsup</A>). However, you hit 
+a long-standing bug that made this less likely to happen.
+
+When running RabbitMQ on a 32 bit Erlang VM on a 64 bit OS as you are, 
+the memory monitor detects (in your case) 12GB physical memory in the 
+OS, but then adjusts that for the smaller 32 bit address space. 
+Unfortunately in versions of RabbitMQ prior to 3.2.1 running on Linux it 
+adjusts the memory limit down to 4GB - but in fact the kernel will 
+generally only make 2GB addressable.
+
+So the memory alarm will only go off when really quite close to the 
+limit. And in this 32 bit VM on 64 bit OS that's especially deadly - 
+normally when you run out of physical memory you start to swap, which is 
+not great but not disastrous - but when you run out of address space you 
+hit a brick wall and die.
+
+In fact I think I'm going to beef up that warning message, it should say 
+&quot;crashes are much more likely&quot; or similar.
+
+So there are various things you could do about this (upgrade RabbitMQ, 
+reduce vm_memory_high_watermark) but by far the best thing would be to 
+start using a 64 bit Erlang build.
+
+Cheers, Simon
+
+On 18/12/13 23:31, Kapil Goyal wrote:
+&gt;<i> Thanks Simon,
+</I>&gt;<i>
+</I>&gt;<i> I am attaching more logs (zipped) from that day.
+</I>&gt;<i>
+</I>&gt;<i> Crash dump is available at <A HREF="http://goo.gl/iB5Z8Y.">http://goo.gl/iB5Z8Y.</A>
+</I>&gt;<i>
+</I>&gt;<i> Thanks
+</I>&gt;<i> Kapil
+</I>&gt;<i>
+</I>&gt;<i> ----- Original Message -----
+</I>&gt;<i> From: &quot;Simon MacMullen&quot; &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">simon at rabbitmq.com</A>&gt;
+</I>&gt;<i> To: &quot;Discussions about RabbitMQ&quot; &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>&gt;
+</I>&gt;<i> Cc: &quot;Kapil Goyal&quot; &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">goyalk at vmware.com</A>&gt;
+</I>&gt;<i> Sent: Tuesday, December 17, 2013 3:39:55 AM
+</I>&gt;<i> Subject: Re: [rabbitmq-discuss] RabbitMQ 3.1.5 crashed
+</I>&gt;<i>
+</I>&gt;<i> So what I see from the logs is that a connection crashed since it
+</I>&gt;<i> received connection.close and then found that the TCP connection was
+</I>&gt;<i> already closed when it tried to send connection.close-ok in response.
+</I>&gt;<i>
+</I>&gt;<i> That then caused the queue collector for that connection (component
+</I>&gt;<i> which deletes exclusive queues when a connection closes) to crash.
+</I>&gt;<i>
+</I>&gt;<i> So that's some noise in the logs, I think that could be handled better -
+</I>&gt;<i> but I don't see anything there that would amount to the server itself
+</I>&gt;<i> crashing. Can you post complete logs somewhere? Probably more useful
+</I>&gt;<i> than the crash dump.
+</I>&gt;<i>
+</I>&gt;<i> Cheers, Simon
+</I>&gt;<i>
+</I>&gt;<i> On 16/12/2013 23:37, Kapil Goyal wrote:
+</I>&gt;&gt;<i> Hi,
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> A rabbitmq server in one of our setups crashed recently. Can you please
+</I>&gt;&gt;<i> take a look at the attached rabbit and rabbit-sasl logs and help me
+</I>&gt;&gt;<i> understand the issue?
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> The logs attached start from around a minute before and until the crash.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> I also have a 17M crash dump file. If you'd like to look at it, can I
+</I>&gt;&gt;<i> send it as an email attachment or you'd prefer another way?
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Thanks
+</I>&gt;&gt;<i> Kapil
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> _______________________________________________
+</I>&gt;&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;&gt;<i> <A HREF="https://urldefense.proofpoint.com/v1/url?u=https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss&amp;k=oIvRg1%2BdGAgOoM1BIlLLqw%3D%3D%0A&amp;r=JF6BIRiITniYYZhbhzlgNvj%2FeB0%2BYbRBSr0f8NG91qs%3D%0A&amp;m=Z6q%2FpZ9j4Nys6NUpFt3IweKfXsGwzUAXjgvVXmGatz4%3D%0A&amp;s=a92d49282fa22b791fd4ee337e0d46e8d8dc9bea47f5729bd1d35a2305a2a117">https://urldefense.proofpoint.com/v1/url?u=https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss&amp;k=oIvRg1%2BdGAgOoM1BIlLLqw%3D%3D%0A&amp;r=JF6BIRiITniYYZhbhzlgNvj%2FeB0%2BYbRBSr0f8NG91qs%3D%0A&amp;m=Z6q%2FpZ9j4Nys6NUpFt3IweKfXsGwzUAXjgvVXmGatz4%3D%0A&amp;s=a92d49282fa22b791fd4ee337e0d46e8d8dc9bea47f5729bd1d35a2305a2a117</A>
+</I>&gt;&gt;<i>
+</I>
+
+-- 
+Simon MacMullen
+RabbitMQ, Pivotal
+</PRE>
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="032684.html">[rabbitmq-discuss] RabbitMQ 3.1.5 crashed
+</A></li>
+	<LI>Next message: <A HREF="032629.html">[rabbitmq-discuss] Error in the Java testing client for ssl.
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#32698">[ date ]</a>
+              <a href="thread.html#32698">[ thread ]</a>
+              <a href="subject.html#32698">[ subject ]</a>
+              <a href="author.html#32698">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

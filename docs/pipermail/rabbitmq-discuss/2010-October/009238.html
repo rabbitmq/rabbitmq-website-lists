@@ -1,0 +1,141 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] hanging on message sending with py-amqplib
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20hanging%20on%20message%20sending%20with%20py-amqplib&In-Reply-To=%3CAANLkTimYnKYxhxY9RmmBOnRS40c%3D%3Di-nPr5JSxwKPS2w%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="009234.html">
+   <LINK REL="Next"  HREF="009242.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] hanging on message sending with py-amqplib</H1>
+    <B>tsuraan</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20hanging%20on%20message%20sending%20with%20py-amqplib&In-Reply-To=%3CAANLkTimYnKYxhxY9RmmBOnRS40c%3D%3Di-nPr5JSxwKPS2w%40mail.gmail.com%3E"
+       TITLE="[rabbitmq-discuss] hanging on message sending with py-amqplib">tsuraan at gmail.com
+       </A><BR>
+    <I>Fri Oct  1 18:56:27 BST 2010</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="009234.html">[rabbitmq-discuss] hanging on message sending with py-amqplib
+</A></li>
+        <LI>Next message: <A HREF="009242.html">[rabbitmq-discuss] hanging on message sending with py-amqplib
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#9238">[ date ]</a>
+              <a href="thread.html#9238">[ thread ]</a>
+              <a href="subject.html#9238">[ subject ]</a>
+              <a href="author.html#9238">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>&gt;<i> Ok, so you should be seeing a fair amount of disk activity.
+</I>
+Sort of; the disks on the affected machines seem to resist activity
+(i.e. they're crap).  I think I am maxing them out though, which I
+guess is the problem here.
+
+&gt;<i> Are the consumers part of the same clients that are doing the sending or
+</I>&gt;<i> are they different clients?
+</I>
+The consumers also do sending on their own.  It turns out that it's a
+single consumer that is the source of the problem.  That consumer gets
+messages via a subscription, does some pretty IO heavy work
+(parsing/indexing file data), and then publishes new messages and acks
+the ones it was working on.  All the queue work is done
+transactionally, so the acks and the publishes happen at once.  All my
+consumers are also producers, but none of them smash the disk as badly
+as that one, which is probably why the problem goes away when I shut
+off that consumer.
+
+&gt;<i> At what rate are the consumers consuming messages? Rabbit is optimised
+</I>&gt;<i> to get rid of messages quickly, thus if a queue is quite long, it can
+</I>&gt;<i> drive consumers as fast as possible, but will ignore publishes until the
+</I>&gt;<i> queue has become empty... however, that should really only express
+</I>&gt;<i> itself internally within Rabbit - the client shouldn't actually see any
+</I>&gt;<i> impact on publishing, unless it was also doing something synchronous
+</I>&gt;<i> from time to time like tx.commit. Are you finding it blocks when it hits
+</I>&gt;<i> tx.commit?
+</I>
+Yeah, every tx.commit is blocking when that one consumer is running.
+Can the priority of publishes/commits be elevated when in a
+transaction?  It sounds like starvation is really likely for
+transaction producer/consumer processes, if I understand what you said
+correctly.  Would setting a really low prefetch for this consumer
+cause rabbit to send fewer messages to that consumer without
+acknowledgement, and thus maybe provide some degree of throttling?  I
+don't think I'm setting the prefetch limit on that channel at all
+right now, which would maybe explain why it can keep working even when
+rabbit is unable to handle any tx_commits or publishes.
+
+&gt;<i> Seeing as you're using a client to shovel messages from one broker to
+</I>&gt;<i> another, I would suggest experimenting with using the shovel - I'd
+</I>&gt;<i> configure it in the new broker (where it's easiest to install) and just
+</I>&gt;<i> have it drag all messages over from the old broker. If that works, then
+</I>&gt;<i> it does point to something going wrong in the python client library.
+</I>
+To get two broker's running, I'd need to use different names for both,
+and configure the old one to use a non-standard port, right?  Is there
+anything else I'd need to do to get two rabbits running on the same
+machine?  Also, does shovel run in transactional mode to guarantee
+that no messages are lost?
+
+&gt;<i> Socket flushing will block if the broker has hit its high memory
+</I>&gt;<i> watermarks. This is because we now use TCP backpressure to block any
+</I>&gt;<i> clients which are sending us messages. If you have the sender and the
+</I>&gt;<i> consumer on the same connection, this will certainly affect you, and it
+</I>&gt;<i> is possible that memory use will be worse (more fragmented) if you have
+</I>&gt;<i> a consumer and publisher at the same time rather than just a publisher,
+</I>&gt;<i> so you might just be hitting the limits more often. It could be that the
+</I>&gt;<i> socket flush doesn't correctly return even when the socket becomes
+</I>&gt;<i> unblocked.
+</I>
+I'm guessing that maybe it wasn't an eternal block, it was just due to
+how unhappy the machines disks are with running rabbit and my indexing
+at the same time.  I never saw this under bug21673 (last checkout in
+April, though); did the publishes being starved by sends change since
+then?
+
+&gt;<i> Brilliant timing ;) Hmm, check disk access on the broker - if
+</I>&gt;<i> transactions are occurring then there should be a fair amount of disk
+</I>&gt;<i> activity. Probably a dumb question, but you have done a tx.select on the
+</I>&gt;<i> publishing channel first?
+</I>
+Yeah, tx.select is the first thing I do on all my channels.
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="009234.html">[rabbitmq-discuss] hanging on message sending with py-amqplib
+</A></li>
+	<LI>Next message: <A HREF="009242.html">[rabbitmq-discuss] hanging on message sending with py-amqplib
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#9238">[ date ]</a>
+              <a href="thread.html#9238">[ thread ]</a>
+              <a href="subject.html#9238">[ subject ]</a>
+              <a href="author.html#9238">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

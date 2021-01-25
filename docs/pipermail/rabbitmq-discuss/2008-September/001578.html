@@ -1,0 +1,137 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Publish won't work without transaction?
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20Publish%20won%27t%20work%20without%20transaction%3F&In-Reply-To=269388e30809221521p6aca6e30q9cd2cb9511f22aeb%40mail.gmail.com">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001576.html">
+   <LINK REL="Next"  HREF="001579.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Publish won't work without transaction?</H1>
+    <B>tsuraan</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=%5Brabbitmq-discuss%5D%20Publish%20won%27t%20work%20without%20transaction%3F&In-Reply-To=269388e30809221521p6aca6e30q9cd2cb9511f22aeb%40mail.gmail.com"
+       TITLE="[rabbitmq-discuss] Publish won't work without transaction?">tsuraan at gmail.com
+       </A><BR>
+    <I>Tue Sep 23 00:13:24 BST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001576.html">[rabbitmq-discuss] Publish won't work without transaction?
+</A></li>
+        <LI>Next message: <A HREF="001579.html">[rabbitmq-discuss] Publish won't work without transaction?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1578">[ date ]</a>
+              <a href="thread.html#1578">[ thread ]</a>
+              <a href="subject.html#1578">[ subject ]</a>
+              <a href="author.html#1578">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>&gt;<i> So how do you know whether they're enqueued or not?
+</I>
+When the program's done running, I do a passive queue_declare, and the
+message count has increased by ~400 each time the program has run.
+It's actually more like 300 the first time and 500 the second time,
+but it seems like overall, I get about 400 per run.
+
+&gt;&gt;<i> Is there a way that I can tell whether the message I sent was dropped
+</I>&gt;&gt;<i> by the server?
+</I>&gt;<i>
+</I>&gt;<i> You can run rabbit_amqqueue:stat_all() in the shell.
+</I>
+Ok, so there isn't a return code from basic_publish that will tell me
+it was dropped?
+
+&gt;<i> That shouldn't take a minute even with a TX per message and logging to disk.
+</I>&gt;<i>
+</I>&gt;<i> I think something may not be quite right with your setup.
+</I>
+I'd be willing to believe that.  When running with one transaction per
+message, my system is almost idle.  python's taking 2-3% of the cpu,
+beam.smp is taking less than that, and my IO is a few KB/s.  Do you
+have any advice for figuring out what's going on?  My system is a
+core2 duo with a pair of raptor10k drives in RAID1 on a 3ware 9650; I
+shouldn't be too starved for cpu, io, or memory with this setup, so
+any advice for where to start would be much appreciated.
+
+&gt;<i> Either with a transaction or by setting up a return handler (and
+</I>&gt;<i> setting the mandatory flag).
+</I>&gt;<i>
+</I>&gt;<i> BTW, when I run this code:
+</I>&gt;<i>
+</I>&gt;<i> #!/usr/bin/python2.5
+</I>&gt;<i>
+</I>&gt;<i> import sys
+</I>&gt;<i> from time import time
+</I>&gt;<i> import amqplib.client_0_8 as A
+</I>&gt;<i>
+</I>&gt;<i> q = &quot;q-%d&quot; % int(time())
+</I>&gt;<i>
+</I>&gt;<i> conn = A.Connection(&quot;127.0.0.1&quot;, &quot;guest&quot;, &quot;guest&quot;)
+</I>&gt;<i> chan = conn.channel()
+</I>&gt;<i>
+</I>&gt;<i> chan.queue_declare(queue=q, auto_delete=True, durable=False)
+</I>&gt;<i>
+</I>&gt;<i> for i in range(1000):
+</I>&gt;<i>    print i
+</I>&gt;<i>    m = A.Message(str(i), delivery_mode=1)
+</I>&gt;<i>    print chan.basic_publish(m, &quot;&quot;, q, mandatory=True, immediate=False)
+</I>&gt;<i>
+</I>&gt;<i> and then in the shell
+</I>&gt;<i>
+</I>&gt;<i> <A HREF="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at xlr8</A>)3&gt; rabbit_amqqueue:stat_all().
+</I>&gt;<i> [{ok,{resource,&lt;&lt;&quot;/&quot;&gt;&gt;,queue,&lt;&lt;&quot;q-1222121318&quot;&gt;&gt;},1000,0}]
+</I>&gt;<i>
+</I>&gt;<i> which would indicate that 1000 messages got enqueued.
+</I>
+Is the difference then that my queues are persistent?  I'm using a
+topic exchange with just one persistent, non-autodelete queue.  Does
+that change things?
+
+&gt;<i> And maybe this is a stupid question, but why are you enqueuing stuff?
+</I>&gt;<i> Don't you want it to be delivered?
+</I>
+Isn't enqueuing a necessary step before delivery?  The system I'm
+working on processes a lot of files, and as files are processed new
+files or database rows are created that have to be processed
+downstream.  Sometimes the programs doing the processing get hung up
+on invalid data, or get flooded with more data than they can process
+in a timely manner, so the workloads get really badly backed up.  I've
+seen programs that have millions of tasks in their job queues more
+than a few times.
+
+We currently have a &quot;message queue&quot; system that is just files written
+to the hard drive; different directories are the job queues for
+different actors, and the files in them are just identifiers for
+database or file-based workloads.  I want to replace that with real
+message queue system for all sorts of reasons, so I'm just
+experimenting with RabbitMQ to see if it does what I need, and to see
+how good the performance and stability are.
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001576.html">[rabbitmq-discuss] Publish won't work without transaction?
+</A></li>
+	<LI>Next message: <A HREF="001579.html">[rabbitmq-discuss] Publish won't work without transaction?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1578">[ date ]</a>
+              <a href="thread.html#1578">[ thread ]</a>
+              <a href="subject.html#1578">[ subject ]</a>
+              <a href="author.html#1578">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="http://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

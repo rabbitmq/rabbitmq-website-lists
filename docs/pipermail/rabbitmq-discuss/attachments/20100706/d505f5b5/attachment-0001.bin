@@ -1,0 +1,133 @@
+diff -cr rabbitmq-c-f2ac4673ada9/librabbitmq/amqp_api.c rabbitmq-c-new/librabbitmq/amqp_api.c
+*** rabbitmq-c-f2ac4673ada9/librabbitmq/amqp_api.c	2010-05-25 02:33:49.000000000 -0700
+--- rabbitmq-c-new/librabbitmq/amqp_api.c	2010-06-09 21:50:55.000000000 -0700
+***************
+*** 304,306 ****
+--- 304,311 ----
+  {
+    return state->most_recent_api_result;
+  }
++ 
++ void amqp_set_read_timeout(amqp_connection_state_t state,  long long timeout_usec)
++ {
++   state->timeout_usec = timeout_usec;
++ }
+diff -cr rabbitmq-c-f2ac4673ada9/librabbitmq/amqp_connection.c rabbitmq-c-new/librabbitmq/amqp_connection.c
+*** rabbitmq-c-f2ac4673ada9/librabbitmq/amqp_connection.c	2010-05-25 02:33:49.000000000 -0700
+--- rabbitmq-c-new/librabbitmq/amqp_connection.c	2010-06-09 21:50:55.000000000 -0700
+***************
+*** 117,122 ****
+--- 117,124 ----
+    state->first_queued_frame = NULL;
+    state->last_queued_frame = NULL;
+  
++   state->timeout_usec =0;
++ 
+    return state;
+  }
+  
+Only in rabbitmq-c-new/librabbitmq: amqp_framing.c
+Only in rabbitmq-c-new/librabbitmq: amqp_framing.h
+diff -cr rabbitmq-c-f2ac4673ada9/librabbitmq/amqp.h rabbitmq-c-new/librabbitmq/amqp.h
+*** rabbitmq-c-f2ac4673ada9/librabbitmq/amqp.h	2010-05-25 02:33:49.000000000 -0700
+--- rabbitmq-c-new/librabbitmq/amqp.h	2010-06-09 21:50:55.000000000 -0700
+***************
+*** 494,499 ****
+--- 494,501 ----
+   */
+  extern amqp_rpc_reply_t amqp_get_rpc_reply(amqp_connection_state_t state);
+  
++ extern void amqp_set_read_timeout(amqp_connection_state_t state, long long timeout_usec);
++ 
+  #ifdef __cplusplus
+  }
+  #endif
+diff -cr rabbitmq-c-f2ac4673ada9/librabbitmq/amqp_private.h rabbitmq-c-new/librabbitmq/amqp_private.h
+*** rabbitmq-c-f2ac4673ada9/librabbitmq/amqp_private.h	2010-05-25 02:33:49.000000000 -0700
+--- rabbitmq-c-new/librabbitmq/amqp_private.h	2010-06-09 21:50:55.000000000 -0700
+***************
+*** 123,128 ****
+--- 123,130 ----
+    amqp_link_t *last_queued_frame;
+  
+    amqp_rpc_reply_t most_recent_api_result;
++ 
++   long long timeout_usec;
+  };
+  
+  #define CHECK_LIMIT(b, o, l, v) ({ if ((o + l) > (b).len) { return -EFAULT; } (v); })
+diff -cr rabbitmq-c-f2ac4673ada9/librabbitmq/amqp_socket.c rabbitmq-c-new/librabbitmq/amqp_socket.c
+*** rabbitmq-c-f2ac4673ada9/librabbitmq/amqp_socket.c	2010-05-25 02:33:49.000000000 -0700
+--- rabbitmq-c-new/librabbitmq/amqp_socket.c	2010-06-09 21:50:55.000000000 -0700
+***************
+*** 68,73 ****
+--- 68,75 ----
+  
+  #include <assert.h>
+  
++ #include <sys/time.h>
++ 
+  int amqp_open_socket(char const *hostname,
+  		     int portnumber)
+  {
+***************
+*** 170,175 ****
+--- 172,212 ----
+    return (state->sock_inbound_offset < state->sock_inbound_limit);
+  }
+  
++ static long long now_microseconds(void) {
++   struct timeval tv;
++   gettimeofday(&tv, NULL);
++   return (long long) tv.tv_sec * 1000000 + (long long) tv.tv_usec;
++ }
++ 
++ static int ready_for_read(int sockfd, long long timeout_usec) 
++ {
++   int result=0;
++   long long t1, t2;
++   fd_set fdset;
++   struct timeval tv;
++ 
++   while ( timeout_usec > 0 ) {
++     FD_ZERO(&fdset);
++     FD_SET(sockfd, &fdset);
++     tv.tv_sec = 0;
++     tv.tv_usec = timeout_usec;
++ 
++     t1 = now_microseconds();
++     result = select(sockfd + 1, &fdset, NULL, NULL, &tv);
++     if (result <= 0 ) 
++         break;
++ 
++     if (FD_ISSET(sockfd, &fdset)) {
++         result = 1;
++         break;
++     }
++       
++     t2 = now_microseconds();
++     timeout_usec -= t2-t1;
++   }
++   return result;
++ }
++ 
+  static int wait_frame_inner(amqp_connection_state_t state,
+  			    amqp_frame_t *decoded_frame)
+  {
+***************
+*** 192,197 ****
+--- 229,242 ----
+        assert(result != 0);
+      }	
+  
++     if (state->timeout_usec > 0 ) {
++       result = ready_for_read(state->sockfd, state->timeout_usec);
++       if (result == 0)
++ 	return -ETIME;
++       else if (result < 0) 
++         return -errno;
++     }
++ 
+      result = read(state->sockfd,
+  		  state->sock_inbound_buffer.bytes,
+  		  state->sock_inbound_buffer.len);

@@ -1,0 +1,1886 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Strange subtract_acks crash in RabbitMQ 3.1.0-1 (case_clause empty) on EC2
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Strange%20subtract_acks%20crash%20in%20RabbitMQ%0A%203.1.0-1%20%28case_clause%20empty%29%20on%20EC2&In-Reply-To=%3CCALPqkirFsq4d_D0WhRdwwWzMFX_pZBsuOx-0ixwg6kaXxApn7w%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="027300.html">
+   <LINK REL="Next"  HREF="027360.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Strange subtract_acks crash in RabbitMQ 3.1.0-1 (case_clause empty) on EC2</H1>
+    <B>Brett Cameron</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Strange%20subtract_acks%20crash%20in%20RabbitMQ%0A%203.1.0-1%20%28case_clause%20empty%29%20on%20EC2&In-Reply-To=%3CCALPqkirFsq4d_D0WhRdwwWzMFX_pZBsuOx-0ixwg6kaXxApn7w%40mail.gmail.com%3E"
+       TITLE="[rabbitmq-discuss] Strange subtract_acks crash in RabbitMQ 3.1.0-1 (case_clause empty) on EC2">brett.r.cameron at gmail.com
+       </A><BR>
+    <I>Sun May 19 22:11:44 BST 2013</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="027300.html">[rabbitmq-discuss] Strange subtract_acks crash in RabbitMQ 3.1.0-1 (case_clause empty) on EC2
+</A></li>
+        <LI>Next message: <A HREF="027360.html">[rabbitmq-discuss] Strange subtract_acks crash in RabbitMQ 3.1.0-1 (case_clause empty) on EC2
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#27339">[ date ]</a>
+              <a href="thread.html#27339">[ thread ]</a>
+              <a href="subject.html#27339">[ subject ]</a>
+              <a href="author.html#27339">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Karl,
+
+I am not aware of any known issues in this regard (queues strangely
+disapearing). The fact that you get the problem with different versions of
+Erlang and dofferent versions of RabbitMQ would make me suspect that it is
+more likely to be something external to the broker environment.
+
+The &quot;INFO: task beam.smp:18971 blocked for more than 120 seconds.&quot; messages
+in syslog are interesting. What I think is happening here is as follows: By
+default Linux uses up to 40% of the available memory for file system
+caching and if/when this threshold is reached the file system flushes all
+outstanding cached data to disk, causing all following I/O's become
+synchronous (until the flush completes). There is a default time limit of
+120 seconds for the flush to complete. If you're EC2 VM's have a lot of RAM
+and are processing heavy I/O-intensive workloads, it is possible that the
+EBS volumes might sometimes not be able to keep up (or possibly there's
+some spike in network activity and available bandwidth goes through the
+floor). You have mentioned that your messages are not persistent, but
+RabbitMQ's memory usage might be such that it is occasionally deciding to
+flush a whole pile of stuff to disk. I notice that you have
+{vm_memory_high_watermark,0.8}, and this could have something to do with
+the problem - maybe try reducing this, and/or maybe set vm.dirty_ratio to
+something less than 40% in /etc/sysctl.conf (this might increase the
+frequency of flushes, but you'll be flushing less data). I'd possibly start
+by reducing vm_memory_high_watermark. I can't really correlate this with
+your queue disappearing, but if I/O's are getting messed up then all manner
+of weird things could happen I guess. Hopefully others might have some more
+tangible ideas!
+
+Brett
+
+
+On Sun, May 19, 2013 at 12:57 AM, Karl Rieb &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">karl.rieb at gmail.com</A>&gt; wrote:
+
+&gt;<i> Brett Cameron &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">brett.r.cameron at ...</A>&gt; writes:
+</I>&gt;<i>
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; Karl,Wild speculation would be that messages have been consumed from a
+</I>&gt;<i> queue but that queue (name = document_queue?) is for some reason missing in
+</I>&gt;<i> action (gone, inaccessible, ...) when the consumer subsequently tries to
+</I>&gt;<i> ack
+</I>&gt;<i> the message(s).
+</I>&gt;<i> &gt; Brett
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; On Sat, May 18, 2013 at 3:20 PM, Karl Rieb &lt;karl.rieb &lt;at&gt; gmail.com&gt;
+</I>&gt;<i> wrote:Hi,
+</I>&gt;<i> &gt; I am running a RabbitMQ cluster of 4 nodes in AWS EC2 on c1.xlarge
+</I>&gt;<i> instances using Ubuntu 12.04 LTS (kernel 3.2.0-38).  Periodically two of my
+</I>&gt;<i> nodes holding the largest queues will crash and require me to restart the
+</I>&gt;<i> rabbitmq-server service.  Looking at the logs, I'm at a loss as to why the
+</I>&gt;<i> crash is occurring.  I've have tried reproducing the crash manually by
+</I>&gt;<i> flooding my nodes with messages, but that doesn't seem to trigger the
+</I>&gt;<i> issue.
+</I>&gt;<i>  Below is output from various RabbitMQ logs:
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; # cat /var/log/rabbitmq/rabbit &lt;at&gt; ip-10-123-123-123-sasl.log
+</I>&gt;<i> &gt; =CRASH REPORT==== 18-May-2013::01:41:51 ===  crasher:    initial call:
+</I>&gt;<i> gen:init_it/6    pid: &lt;0.301.0&gt;    registered_name: []    exception exit:
+</I>&gt;<i> {{case_clause,{empty,{[],[]}}},
+</I>&gt;<i>  [{rabbit_amqqueue_process,subtract_acks,3,[]},
+</I>&gt;<i> &gt;                       {rabbit_amqqueue_process,subtract_acks,4,[]},
+</I>&gt;<i>
+</I>&gt;<i>               {rabbit_amqqueue_process,handle_cast,2,[]},
+</I>&gt;<i>
+</I>&gt;<i>   {gen_server2,handle_msg,2,[]},                      {proc_lib,wake_up,3,
+</I>&gt;<i> &gt;                                 [{file,&quot;proc_lib.erl&quot;},{line,249}]}]}
+</I>&gt;<i>
+</I>&gt;<i> in function  gen_server2:terminate/3    ancestors:
+</I>&gt;<i> [rabbit_amqqueue_sup,rabbit_sup,&lt;0.207.0&gt;]    messages: [{'$gen_cast',
+</I>&gt;<i> {resume,&lt;0.676.0&gt;}},
+</I>&gt;<i> &gt;
+</I>&gt;<i> {'$gen_cast',{ack,[27583,27606,27629,27652,27675,27698,
+</I>&gt;<i>                                    27721,27744,27767,27790,27813,27836,
+</I>&gt;<i>
+</I>&gt;<i>                                27859,27882,27905,27928,27951,27974,
+</I>&gt;<i> &gt;
+</I>&gt;<i>  27997,28020,28043,28066,28089,28112,
+</I>&gt;<i>                                    28135,28158,28179,28200,28221,28242,
+</I>&gt;<i>
+</I>&gt;<i>                                28263,28284,28305,28324,28342,28360,
+</I>&gt;<i> &gt;
+</I>&gt;<i>  28378,28396,28414,28432,28450,28468,
+</I>&gt;<i>                                    28486,28504,28522,28540,28558,28576,
+</I>&gt;<i>
+</I>&gt;<i>                                28594,28612],
+</I>&gt;<i>     &lt;0.737.0&gt;}},
+</I>&gt;<i> &gt;                   {'$gen_cast',{resume,&lt;0.737.0&gt;}},
+</I>&gt;<i> {'$gen_cast',{ack,[27608,27631,27654,27677,27700,27723,
+</I>&gt;<i>
+</I>&gt;<i>                27746,27769,27792,27815,27838,27861,
+</I>&gt;<i> &gt;
+</I>&gt;<i>  27884,27907,27930,27953,27976,27999,
+</I>&gt;<i>                                    28022,28045,28068,28091,28114,28137,
+</I>&gt;<i>
+</I>&gt;<i>                                28160,28181,28202,28223,28244,28265,
+</I>&gt;<i> &gt;
+</I>&gt;<i>  28286,28307,28326,28344,28362,28380,
+</I>&gt;<i>                                    28398,28416,28434,28452,28470,28488,
+</I>&gt;<i>
+</I>&gt;<i>                                28506,28524,28542,28560,28578,28596,
+</I>&gt;<i> &gt;                                      28614],
+</I>&gt;<i>       &lt;0.676.0&gt;}},                  {'$gen_cast',{ack,
+</I>&gt;<i> [27578,27601,27624,27647,27670,27693,
+</I>&gt;<i>  27716,27739,27762,27785,27808,27831,
+</I>&gt;<i> &gt;
+</I>&gt;<i>  27854,27877,27900,27923,27946,27969,
+</I>&gt;<i>                                    27992,28015,28038,28061,28084,28107,
+</I>&gt;<i>
+</I>&gt;<i>                                28130,28153,28174,28195,28216,28237,
+</I>&gt;<i> &gt;
+</I>&gt;<i>  28258,28279,28300,28321,28340,28358,
+</I>&gt;<i>                                    28376,28394,28412,28430,28448,28466,
+</I>&gt;<i>
+</I>&gt;<i>                                28484,28502,28520,28538,28556,28574,
+</I>&gt;<i> &gt;                                      28592,28610],
+</I>&gt;<i>             &lt;0.716.0&gt;}},
+</I>&gt;<i> {'$gen_cast',{resume,&lt;0.716.0&gt;}},
+</I>&gt;<i>                 {'$gen_cast',{ack,[27582,27605,27628,27651,27674,27697,
+</I>&gt;<i> &gt;
+</I>&gt;<i>  27720,27743,27766,27789,27812,27835,
+</I>&gt;<i>                                    27858,27881,27904,27927,27950,27973,
+</I>&gt;<i>
+</I>&gt;<i>                                27996,28019,28042,28065,28088,28111,
+</I>&gt;<i> &gt;
+</I>&gt;<i>  28134,28157,28178,28199,28220,28241,
+</I>&gt;<i>                                    28262,28283,28304,28323,28341,28359,
+</I>&gt;<i>
+</I>&gt;<i>                                28377,28395,28413,28431,28449,28467,
+</I>&gt;<i> &gt;
+</I>&gt;<i>  28485,28503,28521,28539,28557,28575,
+</I>&gt;<i>                                    28593,28611],
+</I>&gt;<i>         &lt;0.737.0&gt;}}]    links: [&lt;0.300.0&gt;]
+</I>&gt;<i> &gt;     dictionary: [{{ch,&lt;0.729.0&gt;},                   {cr,
+</I>&gt;<i> &lt;0.729.0&gt;,#Ref&lt;0.0.0.12296&gt;,
+</I>&gt;<i>  {[28715,28696,28677,28658,28639,28620,28602,28584,
+</I>&gt;<i>  28566,28548,28530,28512,28494,28476,28458,28440,
+</I>&gt;<i> &gt;
+</I>&gt;<i>  28422,28404,28386,28368,28350,28332,28313,28292,
+</I>&gt;<i>                        28271,28250,28229,28208,28187,28166,28143,28120,
+</I>&gt;<i>
+</I>&gt;<i>                    28097,28074,28051,28028,28005,27982,27959,27936,
+</I>&gt;<i> &gt;
+</I>&gt;<i>  27913,27890,27867,27844,27821,27798,27775,27752,
+</I>&gt;<i>                        27729,27706,27683,27660,27637,27614],
+</I>&gt;<i>         [27591]},                       1,                       {[],[]},
+</I>&gt;<i> &gt;                        {qstate,&lt;0.728.0&gt;,active,{0,nil}},
+</I>&gt;<i>
+</I>&gt;<i>      11}},                  {{credit_to,&lt;7350.877.0&gt;},22},
+</I>&gt;<i> {{ch,&lt;0.608.0&gt;},                   {cr,&lt;0.608.0&gt;,#Ref&lt;0.0.0.9041&gt;,
+</I>&gt;<i> &gt;
+</I>&gt;<i>  {[28708,28689,28670,28651,28632,28607,28589,28571,
+</I>&gt;<i>                        28553,28535,28517,28499,28481,28463,28445,28427,
+</I>&gt;<i>
+</I>&gt;<i>                    28409,28391,28373,28355,28337,28318,28297,28276,
+</I>&gt;<i> &gt;
+</I>&gt;<i>  28255,28234,28213,28192,28171,28150,28127,28104,
+</I>&gt;<i>                        28081,28058,28035,28012,27989,27966,27943,27920,
+</I>&gt;<i>
+</I>&gt;<i>                    27897,27874,27851,27828,27805,27782,27759,27736,
+</I>&gt;<i> &gt;                          27713,27690,27667,27644,27621,27598],
+</I>&gt;<i>             [27575]},                       1,                       {[],
+</I>&gt;<i> []},                       {qstate,&lt;0.607.0&gt;,active,{0,nil}},
+</I>&gt;<i> &gt;                        38}},                  {{ch,&lt;0.624.0&gt;},
+</I>&gt;<i>        {cr,&lt;0.624.0&gt;,#Ref&lt;0.0.0.9436&gt;,
+</I>&gt;<i>  {[28722,28703,28684,28665,28646],[28627]},                       1,
+</I>&gt;<i> &gt;                        {[],[]},                       {qstate,
+</I>&gt;<i> &lt;0.623.0&gt;,active,{0,nil}},                       36}},
+</I>&gt;<i> {{ch,&lt;0.696.0&gt;},                   {cr,&lt;0.696.0&gt;,#Ref&lt;0.0.0.11414&gt;,
+</I>&gt;<i> &gt;                        {[],[]},                       2,
+</I>&gt;<i>      {[],[]},                       {qstate,&lt;0.695.0&gt;,active,{0,nil}},
+</I>&gt;<i>                  24}},                  {{ch,&lt;0.564.0&gt;},
+</I>&gt;<i> &gt;                    {cr,&lt;0.564.0&gt;,#Ref&lt;0.0.0.7285&gt;,
+</I>&gt;<i>  {[28718,28699,28680,28661,28642],[28623]},                       1,
+</I>&gt;<i>                {[],[]},                       {qstate,&lt;0.563.0&gt;,active,
+</I>&gt;<i> {0,nil}},
+</I>&gt;<i> &gt;                        12}},                  {{ch,&lt;0.644.0&gt;},
+</I>&gt;<i>        {cr,&lt;0.644.0&gt;,#Ref&lt;0.0.0.10071&gt;,
+</I>&gt;<i>  {[28713,28694,28675,28656,28637,28618,28600,28582,
+</I>&gt;<i>  28564,28546,28528,28510,28492,28474,28456,28438,
+</I>&gt;<i> &gt;
+</I>&gt;<i>  28420,28402,28384,28366,28348,28330,28311,28290,
+</I>&gt;<i>                        28269,28248,28227,28206,28185,28164,28141,28118,
+</I>&gt;<i>
+</I>&gt;<i>                    28095,28072,28049,28026,28003,27980,27957,27934,
+</I>&gt;<i> &gt;
+</I>&gt;<i>  27911,27888,27865,27842,27819,27796,27773,27750,
+</I>&gt;<i>                        27727,27704,27681,27658,27635,27612],
+</I>&gt;<i>         [27589]},                       1,                       {[],[]},
+</I>&gt;<i> &gt;                        {qstate,&lt;0.643.0&gt;,active,{0,nil}},
+</I>&gt;<i>
+</I>&gt;<i>      11}},                  {{ch,&lt;0.676.0&gt;},                   {cr,
+</I>&gt;<i> &lt;0.676.0&gt;,#Ref&lt;0.0.0.11309&gt;,
+</I>&gt;<i>  {[28614,28613,28596,28595,28578,28577,28560,28559,
+</I>&gt;<i> &gt;
+</I>&gt;<i>  28542,28541,28524,28523,28506,28505,28488,28487,
+</I>&gt;<i>                        28470,28469,28452,28451,28434,28433,28416,28415,
+</I>&gt;<i>
+</I>&gt;<i>                    28398,28397,28380,28379,28362,28361,28344,28343,
+</I>&gt;<i> &gt;
+</I>&gt;<i>  28326,28325,28307,28306,28286,28285,28265,28264,
+</I>&gt;<i>                        28244,28243,28223,28222,28202,28201,28181,28180,
+</I>&gt;<i>
+</I>&gt;<i>                    28160,28159,28137,28136,28114,28113,28091,28090,
+</I>&gt;<i> &gt;
+</I>&gt;<i>  28068,28067,28045,28044,28022,28021,27999,27998,
+</I>&gt;<i>                        27976,27975,27953,27952,27930,27929,27907,27906,
+</I>&gt;<i>
+</I>&gt;<i>                    27884,27883,27861,27860,27838,27837,27815,27814,
+</I>&gt;<i> &gt;
+</I>&gt;<i>  27792,27791,27769,27768,27746,27745,27723,27722,
+</I>&gt;<i>                        27700,27699,27677,27676,27654,27653,27631,27630,
+</I>&gt;<i>
+</I>&gt;<i>                    27608,27607,27585],                        [27584]},
+</I>&gt;<i> &gt;                        2,                       {[{&lt;0.676.0&gt;,
+</I>&gt;<i>
+</I>&gt;<i>             {consumer,&lt;&lt;&quot;amq.ctag-0cvDGmyaAbEW_j15AfhGHQ&quot;&gt;&gt;,
+</I>&gt;<i>                     true}}],
+</I>&gt;<i> &gt;                         [{&lt;0.676.0&gt;,                          {consumer,
+</I>&gt;<i> &lt;&lt;&quot;amq.ctag-YqU04SIfQv6P-QVueEjbRg&quot;&gt;&gt;,
+</I>&gt;<i> true}}]},                       {qstate,&lt;0.675.0&gt;,suspended,{0,nil}},
+</I>&gt;<i> &gt;                        25}},
+</I>&gt;<i> {{xtype_to_module,direct},rabbit_exchange_type_direct},
+</I>&gt;<i> {{credit_to,&lt;7350.833.0&gt;},31},                  {{ch,&lt;0.745.0&gt;},
+</I>&gt;<i>        {cr,&lt;0.745.0&gt;,#Ref&lt;0.0.0.12674&gt;,
+</I>&gt;<i> &gt;
+</I>&gt;<i>  {[28716,28697,28678,28659,28640,28621,28603,28585,
+</I>&gt;<i>                        28567,28549,28531,28513,28495,28477,28459,28441,
+</I>&gt;<i>
+</I>&gt;<i>                    28423,28405,28387,28369,28351,28333,28314,28293,
+</I>&gt;<i> &gt;
+</I>&gt;<i>  28272,28251,28230,28209,28188,28167,28144,28121,
+</I>&gt;<i>                        28098,28075,28052,28029,28006,27983,27960,27937,
+</I>&gt;<i>
+</I>&gt;<i>                    27914,27891,27868,27845,27822,27799,27776,27753,
+</I>&gt;<i> &gt;                          27730,27707,27684,27661,27638,27615],
+</I>&gt;<i>             [27592]},                       1,                       {[],
+</I>&gt;<i> []},                       {qstate,&lt;0.744.0&gt;,active,{0,nil}},
+</I>&gt;<i> &gt;                        37}},                  {{ch,&lt;0.660.0&gt;},
+</I>&gt;<i>        {cr,&lt;0.660.0&gt;,#Ref&lt;0.0.0.10650&gt;,
+</I>&gt;<i>  {[28712,28693,28674,28655,28636,28617,28599,28581,
+</I>&gt;<i>  28563,28545,28527,28509,28491,28473,28455,28437,
+</I>&gt;<i> &gt;
+</I>&gt;<i>  28419,28401,28383,28365,28347,28329,28310,28289,
+</I>&gt;<i>                        28268,28247,28226,28205,28184,28163,28140,28117,
+</I>&gt;<i>
+</I>&gt;<i>                    28094,28071,28048,28025,28002,27979,27956,27933,
+</I>&gt;<i> &gt;
+</I>&gt;<i>  27910,27887,27864,27841,27818,27795,27772,27749,
+</I>&gt;<i>                        27726,27703,27680,27657,27634,27611],
+</I>&gt;<i>         [27588]},                       1,                       {[],[]},
+</I>&gt;<i> &gt;                        {qstate,&lt;0.659.0&gt;,active,{0,nil}},
+</I>&gt;<i>
+</I>&gt;<i>      11}},                  {{credit_to,&lt;7350.837.0&gt;},32},
+</I>&gt;<i> {{credit_to,&lt;7350.881.0&gt;},17},                  {{ch,&lt;0.737.0&gt;},
+</I>&gt;<i> &gt;                    {cr,&lt;0.737.0&gt;,#Ref&lt;0.0.0.12429&gt;,
+</I>&gt;<i>  {[28612,28611,28594,28593,28576,28575,28558,28557,
+</I>&gt;<i>  28540,28539,28522,28521,28504,28503,28486,28485,
+</I>&gt;<i> &gt;
+</I>&gt;<i>  28468,28467,28450,28449,28432,28431,28414,28413,
+</I>&gt;<i>                        28396,28395,28378,28377,28360,28359,28342,28341,
+</I>&gt;<i>
+</I>&gt;<i>                    28324,28323,28305,28304,28284,28283,28263,28262,
+</I>&gt;<i> &gt;
+</I>&gt;<i>  28242,28241,28221,28220,28200,28199,28179,28178,
+</I>&gt;<i>                        28158,28157,28135,28134,28112,28111,28089,28088,
+</I>&gt;<i>
+</I>&gt;<i>                    28066,28065,28043,28042,28020,28019,27997,27996,
+</I>&gt;<i> &gt;
+</I>&gt;<i>  27974,27973,27951,27950,27928,27927,27905,27904,
+</I>&gt;<i>                        27882,27881,27859,27858,27836,27835,27813,27812,
+</I>&gt;<i>
+</I>&gt;<i>                    27790,27789,27767,27766,27744,27743,27721,27720,
+</I>&gt;<i> &gt;
+</I>&gt;<i>  27698,27697,27675,27674,27652,27651,27629,27628,
+</I>&gt;<i>                        27606,27605,27583],
+</I>&gt;<i> [27582]},
+</I>&gt;<i>                      2,                       {[{&lt;0.737.0&gt;,
+</I>&gt;<i> &gt;                           {consumer,&lt;&lt;&quot;amq.ctag-
+</I>&gt;<i> ITZqhulzHhUzx1uy1Eot3g&quot;&gt;&gt;,                                    true}}],
+</I>&gt;<i>                   [{&lt;0.737.0&gt;,                          {consumer,
+</I>&gt;<i> &lt;&lt;&quot;amq.ctag-hpo5ejdoJRdLrT6JS42jGw&quot;&gt;&gt;,
+</I>&gt;<i> &gt;                                     true}}]},
+</I>&gt;<i>  {qstate,&lt;0.736.0&gt;,suspended,{0,nil}},                       11}},
+</I>&gt;<i>         {credit_blocked,[]},                  {{credit_to,&lt;7350.854.0&gt;},3},
+</I>&gt;<i> &gt;                   {{ch,&lt;0.716.0&gt;},                   {cr,
+</I>&gt;<i> &lt;0.716.0&gt;,#Ref&lt;0.0.0.11820&gt;,
+</I>&gt;<i>  {[28610,28609,28592,28591,28574,28573,28556,28555,
+</I>&gt;<i>  28538,28537,28520,28519,28502,28501,28484,28483,
+</I>&gt;<i> &gt;
+</I>&gt;<i>  28466,28465,28448,28447,28430,28429,28412,28411,
+</I>&gt;<i>                        28394,28393,28376,28375,28358,28357,28340,28339,
+</I>&gt;<i>
+</I>&gt;<i>                    28321,28320,28300,28299,28279,28278,28258,28257,
+</I>&gt;<i> &gt;
+</I>&gt;<i>  28237,28236,28216,28215,28195,28194,28174,28173,
+</I>&gt;<i>                        28153,28152,28130,28129,28107,28106,28084,28083,
+</I>&gt;<i>
+</I>&gt;<i>                    28061,28060,28038,28037,28015,28014,27992,27991,
+</I>&gt;<i> &gt;
+</I>&gt;<i>  27969,27968,27946,27945,27923,27922,27900,27899,
+</I>&gt;<i>                        27877,27876,27854,27853,27831,27830,27808,27807,
+</I>&gt;<i>
+</I>&gt;<i>                    27785,27784,27762,27761,27739,27738,27716,27715,
+</I>&gt;<i> &gt;
+</I>&gt;<i>  27693,27692,27670,27669,27647,27646,27624,27623,
+</I>&gt;<i>                        27601,27600,27578],
+</I>&gt;<i> [27577]},
+</I>&gt;<i>                      2,                       {[{&lt;0.716.0&gt;,
+</I>&gt;<i> &gt;                           {consumer,&lt;&lt;&quot;amq.ctag-BTlS-GmbXNpcU-
+</I>&gt;<i> wUlMI60Q&quot;&gt;&gt;,                                    true}}],
+</I>&gt;<i>     [{&lt;0.716.0&gt;,                          {consumer,&lt;&lt;&quot;amq.ctag-
+</I>&gt;<i> loc5monF8M1pz_Bb8ypumw&quot;&gt;&gt;,
+</I>&gt;<i> &gt;                                     true}}]},
+</I>&gt;<i>  {qstate,&lt;0.715.0&gt;,suspended,{0,nil}},                       44}},
+</I>&gt;<i>         {{ch,&lt;0.782.0&gt;},                   {cr,&lt;0.782.0&gt;,#Ref&lt;0.0.0.15649&gt;,
+</I>&gt;<i> &gt;
+</I>&gt;<i>  {[28714,28695,28676,28657,28638,28619,28601,28583,
+</I>&gt;<i>                        28565,28547,28529,28511,28493,28475,28457,28439,
+</I>&gt;<i>
+</I>&gt;<i>                    28421,28403,28385,28367,28349,28331,28312,28291,
+</I>&gt;<i> &gt;
+</I>&gt;<i>  28270,28249,28228,28207,28186,28165,28142,28119,
+</I>&gt;<i>                        28096,28073,28050,28027,28004,27981,27958,27935,
+</I>&gt;<i>
+</I>&gt;<i>                    27912,27889,27866,27843,27820,27797,27774,27751,
+</I>&gt;<i> &gt;                          27728,27705,27682,27659,27636,27613],
+</I>&gt;<i>             [27590]},                       1,                       {[],
+</I>&gt;<i> []},                       {qstate,&lt;0.781.0&gt;,active,{0,nil}},
+</I>&gt;<i> &gt;                        35}},                  {{credit_to,
+</I>&gt;<i> &lt;7350.846.0&gt;},22},                  {{ch,&lt;0.684.0&gt;},                   {cr,
+</I>&gt;<i> &lt;0.684.0&gt;,#Ref&lt;0.0.0.11198&gt;,
+</I>&gt;<i>  {[28711,28692,28673,28654,28635,28616,28598,28580,
+</I>&gt;<i> &gt;
+</I>&gt;<i>  28562,28544,28526,28508,28490,28472,28454,28436,
+</I>&gt;<i>                        28418,28400,28382,28364,28346,28328,28309,28288,
+</I>&gt;<i>
+</I>&gt;<i>                    28267,28246,28225,28204,28183,28162,28139,28116,
+</I>&gt;<i> &gt;
+</I>&gt;<i>  28093,28070,28047,28024,28001,27978,27955,27932,
+</I>&gt;<i>                        27909,27886,27863,27840,27817,27794,27771,27748,
+</I>&gt;<i>
+</I>&gt;<i>                    27725,27702,27679,27656,27633,27610],
+</I>&gt;<i>     [27587]},
+</I>&gt;<i> &gt;                        1,                       {[],[]},
+</I>&gt;<i>      {qstate,&lt;0.683.0&gt;,active,{0,nil}},                       11}},
+</I>&gt;<i>
+</I>&gt;<i>         {{ch,&lt;0.692.0&gt;},                   {cr,&lt;0.692.0&gt;,#Ref&lt;0.0.0.11088&gt;,
+</I>&gt;<i> &gt;
+</I>&gt;<i>  {[28710,28691,28672,28653,28634,28615,28597,28579,
+</I>&gt;<i>                        28561,28543,28525,28507,28489,28471,28453,28435,
+</I>&gt;<i>
+</I>&gt;<i>                    28417,28399,28381,28363,28345,28327,28308,28287,
+</I>&gt;<i> &gt;
+</I>&gt;<i>  28266,28245,28224,28203,28182,28161,28138,28115,
+</I>&gt;<i>                        28092,28069,28046,28023,28000,27977,27954,27931,
+</I>&gt;<i>
+</I>&gt;<i>                    27908,27885,27862,27839,27816,27793,27770,27747,
+</I>&gt;<i> &gt;                          27724,27701,27678,27655,27632,27609],
+</I>&gt;<i>             [27586]},                       1,                       {[],
+</I>&gt;<i> []},                       {qstate,&lt;0.691.0&gt;,active,{0,nil}},
+</I>&gt;<i> &gt;                        12}},                  {{ch,&lt;0.648.0&gt;},
+</I>&gt;<i>        {cr,&lt;0.648.0&gt;,#Ref&lt;0.0.0.10283&gt;,
+</I>&gt;<i>  {[28717,28698,28679,28660,28641],[28622]},                       1,
+</I>&gt;<i> &gt;                        {[],[]},                       {qstate,
+</I>&gt;<i> &lt;0.647.0&gt;,active,{0,nil}},                       12}},
+</I>&gt;<i> {guid,{{2296174761,591959305,1562876388,1822892473},1}},
+</I>&gt;<i> &gt;                   {{ch,&lt;0.720.0&gt;},                   {cr,
+</I>&gt;<i> &lt;0.720.0&gt;,#Ref&lt;0.0.0.12036&gt;,
+</I>&gt;<i>  {[28723,28704,28685,28666,28647],[28628]},                       1,
+</I>&gt;<i>                {[],[]},
+</I>&gt;<i> &gt;                        {qstate,&lt;0.719.0&gt;,active,{0,nil}},
+</I>&gt;<i>
+</I>&gt;<i>      37}},                  {{credit_to,&lt;7350.869.0&gt;},39},
+</I>&gt;<i> {{ch,&lt;0.636.0&gt;},                   {cr,&lt;0.636.0&gt;,#Ref&lt;0.0.0.9960&gt;,
+</I>&gt;<i> &gt;
+</I>&gt;<i>  {[28705,28686,28667,28648,28629,28604,28586,28568,
+</I>&gt;<i>                        28550,28532,28514,28496,28478,28460,28442,28424,
+</I>&gt;<i>
+</I>&gt;<i>                    28406,28388,28370,28352,28334,28315,28294,28273,
+</I>&gt;<i> &gt;
+</I>&gt;<i>  28252,28231,28210,28189,28168,28147,28124,28101,
+</I>&gt;<i>                        28078,28055,28032,28009,27986,27963,27940,27917,
+</I>&gt;<i>
+</I>&gt;<i>                    27894,27871,27848,27825,27802,27779,27756,27733,
+</I>&gt;<i> &gt;                          27710,27687,27664,27641,27618,27595],
+</I>&gt;<i>             [27572]},                       1,                       {[],
+</I>&gt;<i> []},                       {qstate,&lt;0.635.0&gt;,active,{0,nil}},
+</I>&gt;<i> &gt;                        15}},                  {{credit_to,
+</I>&gt;<i> &lt;7350.850.0&gt;},50},                  {{ch,&lt;0.616.0&gt;},                   {cr,
+</I>&gt;<i> &lt;0.616.0&gt;,#Ref&lt;0.0.0.9300&gt;,
+</I>&gt;<i>  {[28719,28700,28681,28662,28643],[28624]},
+</I>&gt;<i> &gt;                        1,                       {[],[]},
+</I>&gt;<i>      {qstate,&lt;0.615.0&gt;,active,{0,nil}},                       12}},
+</I>&gt;<i>
+</I>&gt;<i>         {{ch,&lt;0.509.0&gt;},                   {cr,&lt;0.509.0&gt;,#Ref&lt;0.0.0.2243&gt;,
+</I>&gt;<i> &gt;
+</I>&gt;<i>  {[28302,28281,28260,28239,28218,28197,28176,28155,
+</I>&gt;<i>                        28132,28109,28086,28063,28040,28017,27994,27971],
+</I>&gt;<i>                     [27580,27603,27626,27649,27672,27695,27718,27741,
+</I>&gt;<i> &gt;
+</I>&gt;<i>  27764,27787,27810,27833,27856,27879,27902,27925,
+</I>&gt;<i>                        27948]},                       3,
+</I>&gt;<i>    {[],[]},                       {qstate,&lt;0.508.0&gt;,active,{0,nil}},
+</I>&gt;<i> &gt;                        36}},                  {{credit_to,
+</I>&gt;<i> &lt;7350.873.0&gt;},17},                  {{ch,&lt;0.588.0&gt;},                   {cr,
+</I>&gt;<i> &lt;0.588.0&gt;,#Ref&lt;0.0.0.7808&gt;,
+</I>&gt;<i>  {[28721,28702,28683,28664,28645],[28626]},
+</I>&gt;<i> &gt;                        1,                       {[],[]},
+</I>&gt;<i>      {qstate,&lt;0.587.0&gt;,active,{0,nil}},                       12}},
+</I>&gt;<i>
+</I>&gt;<i>         {{ch,&lt;0.664.0&gt;},                   {cr,&lt;0.664.0&gt;,#Ref&lt;0.0.0.10772&gt;,
+</I>&gt;<i> &gt;                        {[28720,28701,28682,28663,28644],[28625]},
+</I>&gt;<i>
+</I>&gt;<i>              1,                       {[],[]},
+</I>&gt;<i>  {qstate,&lt;0.663.0&gt;,active,{0,nil}},                       13}},
+</I>&gt;<i> &gt;                   {fhc_age_tree,{0,nil}},                  {{ch,
+</I>&gt;<i> &lt;0.708.0&gt;},                   {cr,&lt;0.708.0&gt;,#Ref&lt;0.0.0.11695&gt;,
+</I>&gt;<i>          {[28707,28688,28669,28650,28631,28606,28588,28570,
+</I>&gt;<i> &gt;
+</I>&gt;<i>  28552,28534,28516,28498,28480,28462,28444,28426,
+</I>&gt;<i>                        28408,28390,28372,28354,28336,28317,28296,28275,
+</I>&gt;<i>
+</I>&gt;<i>                    28254,28233,28212,28191,28170,28149,28126,28103,
+</I>&gt;<i> &gt;
+</I>&gt;<i>  28080,28057,28034,28011,27988,27965,27942,27919,
+</I>&gt;<i>                        27896,27873,27850,27827,27804,27781,27758,27735,
+</I>&gt;<i>
+</I>&gt;<i>                    27712,27689,27666,27643,27620,27597],
+</I>&gt;<i>     [27574]},
+</I>&gt;<i> &gt;                        1,                       {[],[]},
+</I>&gt;<i>      {qstate,&lt;0.707.0&gt;,active,{0,nil}},                       35}},
+</I>&gt;<i>
+</I>&gt;<i>         {{credit_to,&lt;7350.829.0&gt;},13},
+</I>&gt;<i> &gt;                   {{ch,&lt;0.757.0&gt;},                   {cr,
+</I>&gt;<i> &lt;0.757.0&gt;,#Ref&lt;0.0.0.13150&gt;,
+</I>&gt;<i>  {[28706,28687,28668,28649,28630,28605,28587,28569,
+</I>&gt;<i>  28551,28533,28515,28497,28479,28461,28443,28425,
+</I>&gt;<i> &gt;
+</I>&gt;<i>  28407,28389,28371,28353,28335,28316,28295,28274,
+</I>&gt;<i>                        28253,28232,28211,28190,28169,28148,28125,28102,
+</I>&gt;<i>
+</I>&gt;<i>                    28079,28056,28033,28010,27987,27964,27941,27918,
+</I>&gt;<i> &gt;
+</I>&gt;<i>  27895,27872,27849,27826,27803,27780,27757,27734,
+</I>&gt;<i>                        27711,27688,27665,27642,27619,27596],
+</I>&gt;<i>         [27573]},                       1,                       {[],[]},
+</I>&gt;<i> &gt;                        {qstate,&lt;0.756.0&gt;,active,{0,nil}},
+</I>&gt;<i>
+</I>&gt;<i>      49}},                  {{ch,&lt;0.572.0&gt;},                   {cr,
+</I>&gt;<i> &lt;0.572.0&gt;,#Ref&lt;0.0.0.7536&gt;,
+</I>&gt;<i>  {[28709,28690,28671,28652,28633,28608,28590,28572,
+</I>&gt;<i> &gt;
+</I>&gt;<i>  28554,28536,28518,28500,28482,28464,28446,28428,
+</I>&gt;<i>                        28410,28392,28374,28356,28338,28319,28298,28277,
+</I>&gt;<i>
+</I>&gt;<i>                    28256,28235,28214,28193,28172,28151,28128,28105,
+</I>&gt;<i> &gt;
+</I>&gt;<i>  28082,28059,28036,28013,27990,27967,27944,27921,
+</I>&gt;<i>                        27898,27875,27852,27829,27806,27783,27760,27737,
+</I>&gt;<i>
+</I>&gt;<i>                    27714,27691,27668,27645,27622,27599],
+</I>&gt;<i>     [27576]},
+</I>&gt;<i> &gt;                        1,                       {[],[]},
+</I>&gt;<i>      {qstate,&lt;0.571.0&gt;,active,{0,nil}},                       35}},
+</I>&gt;<i>
+</I>&gt;<i>         {{credit_to,&lt;7350.825.0&gt;},2},                  {{credit_to,
+</I>&gt;<i> &lt;7350.858.0&gt;},3}]
+</I>&gt;<i> &gt;     trap_exit: true    status: running    heap_size: 121536
+</I>&gt;<i> stack_size:
+</I>&gt;<i> 27    reductions: 9363545  neighbours:=SUPERVISOR REPORT==== 18-May-
+</I>&gt;<i> 2013::01:41:51 ===     Supervisor: {local,rabbit_amqqueue_sup}
+</I>&gt;<i> &gt;      Context:    child_terminated     Reason:     {{case_clause,{empty,
+</I>&gt;<i> {[],[]}}},                  [{rabbit_amqqueue_process,subtract_acks,3,[]},
+</I>&gt;<i>                  {rabbit_amqqueue_process,subtract_acks,4,[]},
+</I>&gt;<i> &gt;                    {rabbit_amqqueue_process,handle_cast,2,[]},
+</I>&gt;<i>        {gen_server2,handle_msg,2,[]},
+</I>&gt;<i>  {proc_lib,wake_up,3,
+</I>&gt;<i> [{file,&quot;proc_lib.erl&quot;},{line,249}]}]}     Offender:   [{pid,&lt;0.301.0&gt;},
+</I>&gt;<i> &gt;                   {name,rabbit_amqqueue},                  {mfa,
+</I>&gt;<i>             {rabbit_amqqueue_process,start_link,
+</I>&gt;<i> [{amqqueue,                               {resource,&lt;&lt;&quot;/&quot;&gt;&gt;,queue,
+</I>&gt;<i> &gt;                                    &lt;&lt;&quot;document_queue&quot;&gt;&gt;},
+</I>&gt;<i>
+</I>&gt;<i>              true,false,none,[],&lt;0.7622.0&gt;,[],[],undefined,
+</I>&gt;<i>
+</I>&gt;<i>              []}]}},                  {restart_type,temporary},
+</I>&gt;<i> &gt;                   {shutdown,4294967295},
+</I>&gt;<i> {child_type,worker}]
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; Notice how the case_clause is empty.  The other rabbit log looks similar:
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; # cat /var/log/rabbitmq/rabbit-
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">72dRMgatfUn5amjFlPYPZgfGRAsWV3w2 at public.gmane.org</A>
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; =ERROR REPORT==== 18-May-2013::01:41:48 ===
+</I>&gt;<i> &gt; ** Generic server &lt;0.301.0&gt; terminating
+</I>&gt;<i> &gt; ** Last message in was {'$gen_cast',
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt;                            {ack,
+</I>&gt;<i> &gt;
+</I>&gt;<i>  [27585,27584,27607,27630,27653,27676,27699,
+</I>&gt;<i> &gt;
+</I>&gt;<i> 27722,27745,27768,27791,27814,27837,27860,
+</I>&gt;<i> &gt;
+</I>&gt;<i> 27883,27906,27929,27952,27975,27998,28021,
+</I>&gt;<i> &gt;
+</I>&gt;<i> 28044,28067,28090,28113,28136,28159,28180,
+</I>&gt;<i> &gt;
+</I>&gt;<i> 28201,28222,28243,28264,28285,28306,28325,
+</I>&gt;<i> &gt;
+</I>&gt;<i> 28343,28361,28379,28397,28415,28433,28451,
+</I>&gt;<i> &gt;
+</I>&gt;<i> 28469,28487,28505,28523,28541,28559,28577,
+</I>&gt;<i> &gt;                                 28595,28613],
+</I>&gt;<i> &gt;                                &lt;0.676.0&gt;}}
+</I>&gt;<i> &gt; ** When Server state == {q,
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt;                          {amqqueue,
+</I>&gt;<i> &gt;                           {resource,&lt;&lt;&quot;/&quot;&gt;&gt;,queue,
+</I>&gt;<i> &gt;                            &lt;&lt;&quot;document_queue&quot;&gt;&gt;},
+</I>&gt;<i> &gt;                           true,false,none,[],&lt;0.301.0&gt;,[],[],undefined,
+</I>&gt;<i> []},
+</I>&gt;<i> &gt;                          none,true,rabbit_variable_queue,
+</I>&gt;<i> &gt;                          {vqstate,
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt;                           {0,{[],[]}},
+</I>&gt;<i> &gt;                           {0,{[],[]}},
+</I>&gt;<i> &gt;                           {delta,undefined,0,undefined},
+</I>&gt;<i> &gt;                           {0,{[],[]}},
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt;                           {0,{[],[]}},
+</I>&gt;<i> &gt;                           ... [ thousands of lines of state ] ...
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; ** Reason for termination ==
+</I>&gt;<i> &gt; ** {{case_clause,{empty,{[],[]}}},
+</I>&gt;<i> &gt;     [{rabbit_amqqueue_process,subtract_acks,3,[]},
+</I>&gt;<i> &gt;      {rabbit_amqqueue_process,subtract_acks,4,[]},
+</I>&gt;<i> &gt;      {rabbit_amqqueue_process,handle_cast,2,[]},
+</I>&gt;<i> &gt;      {gen_server2,handle_msg,2,[]},
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt;      {proc_lib,wake_up,3,[{file,&quot;proc_lib.erl&quot;},{line,249}]}]}
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; =ERROR REPORT==== 18-May-2013::01:41:51 ===
+</I>&gt;<i> &gt; connection &lt;0.430.0&gt;, channel 22 - soft error:
+</I>&gt;<i> &gt; {amqp_error,not_found,
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt;             &quot;no queue 'document_queue' in vhost '/'&quot;,
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt;             'queue.declare'}
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; =ERROR REPORT==== 18-May-2013::01:41:51 ===
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; connection &lt;0.384.0&gt;, channel 12 - soft error:
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; {amqp_error,not_found,
+</I>&gt;<i> &gt;             &quot;no queue 'document_queue' in vhost '/'&quot;,
+</I>&gt;<i> &gt;             'queue.declare'}
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; =ERROR REPORT==== 18-May-2013::01:41:51 ===
+</I>&gt;<i> &gt; connection &lt;0.384.0&gt;, channel 15 - soft error:
+</I>&gt;<i> &gt; {amqp_error,not_found,
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt;             &quot;no queue 'document_queue' in vhost '/'&quot;,
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt;             'queue.declare'}
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; =ERROR REPORT==== 18-May-2013::01:41:51 ===
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; connection &lt;0.373.0&gt;, channel 23 - soft error:
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; {amqp_error,not_found,
+</I>&gt;<i> &gt;             &quot;no queue 'document_queue' in vhost '/'&quot;,
+</I>&gt;<i> &gt;             'queue.declare'}
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt;  ... [ repeated a bunch of times ] ...
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; I also see this in my /var/log/syslog with regards to beam.smp:
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; # cat /var/log/syslogMay 17 22:46:23 ip-10-123-123-123 kernel:
+</I>&gt;<i> [244800.176041] INFO: task beam.smp:18971 blocked for more than 120
+</I>&gt;<i> seconds.May 17 22:46:23 ip-10-123-123-123 kernel: [244800.176053] &quot;echo 0 &gt;
+</I>&gt;<i> /proc/sys/kernel/hung_task_timeout_secs&quot; disables this message.
+</I>&gt;<i> &gt; May 17 22:46:23 ip-10-123-123-123 kernel: [244800.176060] beam.smp
+</I>&gt;<i>  D ffff8801bfd93700     0 18971  18962 0x00000000May 17 22:46:23 ip-10-123-
+</I>&gt;<i> 123-123 kernel: [244800.176065]  ffff8801b11cdcb8 0000000000000282
+</I>&gt;<i> 0000000000000000 ffffffffffffffe0
+</I>&gt;<i> &gt; May 17 22:46:23 ip-10-123-123-123 kernel: [244800.176070]
+</I>&gt;<i>  ffff8801b11cdfd8 ffff8801b11cdfd8 ffff8801b11cdfd8 0000000000013700May 17
+</I>&gt;<i> 22:46:23 ip-10-123-123-123 kernel: [244800.176075]  ffff8801b3180000
+</I>&gt;<i> ffff8801b35244a0 00007f500e2079e0 ffff8801b146bb80
+</I>&gt;<i> &gt; May 17 22:46:23 ip-10-123-123-123 kernel: [244800.176079] Call Trace:May
+</I>&gt;<i> 17 22:46:23 ip-10-123-123-123 kernel: [244800.176089]  [&lt;ffffffff8165434f&gt;]
+</I>&gt;<i> schedule+0x3f/0x60May 17 22:46:23 ip-10-123-123-123 kernel: [244800.176094]
+</I>&gt;<i>  [&lt;ffffffff8106aef5&gt;] exit_mm+0x85/0x130
+</I>&gt;<i> &gt; May 17 22:46:23 ip-10-123-123-123 kernel: [244800.176097]
+</I>&gt;<i>  [&lt;ffffffff8106b10e&gt;] do_exit+0x16e/0x450May 17 22:46:23 ip-10-123-123-123
+</I>&gt;<i> kernel: [244800.176102]  [&lt;ffffffff810797aa&gt;] ? __dequeue_signal+0x6a/0xb0
+</I>&gt;<i> &gt; May 17 22:46:23 ip-10-123-123-123 kernel: [244800.176105]
+</I>&gt;<i>  [&lt;ffffffff8106b594&gt;] do_group_exit+0x44/0xa0May 17 22:46:23 ip-10-123-123-
+</I>&gt;<i> 123 kernel: [244800.176108]  [&lt;ffffffff8107c36c&gt;]
+</I>&gt;<i> get_signal_to_deliver+0x21c/0x420
+</I>&gt;<i> &gt; May 17 22:46:23 ip-10-123-123-123 kernel: [244800.176113]
+</I>&gt;<i>  [&lt;ffffffff81014825&gt;] do_signal+0x45/0x130May 17 22:46:23 ip-10-123-123-123
+</I>&gt;<i> kernel: [244800.176116]  [&lt;ffffffff8105539d&gt;] ? set_next_entity+0xad/0xd0
+</I>&gt;<i> &gt; May 17 22:46:23 ip-10-123-123-123 kernel: [244800.176120]
+</I>&gt;<i>  [&lt;ffffffff81014ad5&gt;] do_notify_resume+0x65/0x80May 17 22:46:23 ip-10-123-
+</I>&gt;<i> 123-123 kernel: [244800.176124]  [&lt;ffffffff8165ea90&gt;]
+</I>&gt;<i> int_signal+0x12/0x17... [ repeated 9 more times with same timestamp ] ...
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; There are no strange CPU spikes on my EC2 node based on AWS monitoring.
+</I>&gt;<i> The only thing that seems to stand out is that my writes to my EBS volume
+</I>&gt;<i> spike during the crash (~90 write OPs/sec, 4 MiB/sec write bandwidth,
+</I>&gt;<i> ~30ms/op write latency).
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; My team and I are completely stumped and would appreciate any insight you
+</I>&gt;<i> might have to the crash reports.  Is this a problem with writes hanging
+</I>&gt;<i> when
+</I>&gt;<i> going against the EBS volume since EBS volumes are essentially network
+</I>&gt;<i> mounted?  Is there a way to configure rabbit to be more tolerant of these
+</I>&gt;<i> delays?
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; For debugging purposes, below is the status output of one of the nodes
+</I>&gt;<i> when it is healthy (so you can see the versions of everything i'm running):
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; # rabbitmqctl statusStatus of node 'rabbit &lt;at&gt; ip-10-123-123-123' ...
+</I>&gt;<i> [{pid,28978}, {running_applications,     [{rabbitmq_management,&quot;RabbitMQ
+</I>&gt;<i> Management Console&quot;,&quot;3.1.0&quot;},      {rabbitmq_web_dispatch,&quot;RabbitMQ Web
+</I>&gt;<i> Dispatcher&quot;,&quot;3.1.0&quot;},
+</I>&gt;<i> &gt;       {webmachine,&quot;webmachine&quot;,&quot;1.9.1-rmq3.1.0-git52e62bc&quot;},
+</I>&gt;<i> {mochiweb,&quot;MochiMedia Web Server&quot;,&quot;2.3.1-rmq3.1.0-gitd541e9a&quot;},
+</I>&gt;<i> {rabbitmq_management_agent,&quot;RabbitMQ Management Agent&quot;,&quot;3.1.0&quot;},
+</I>&gt;<i> &gt;       {rabbit,&quot;RabbitMQ&quot;,&quot;3.1.0&quot;},      {os_mon,&quot;CPO  CXC 138
+</I>&gt;<i> 46&quot;,&quot;2.2.11&quot;},      {inets,&quot;INETS  CXC 138 49&quot;,&quot;5.9.4&quot;},
+</I>&gt;<i> {mnesia,&quot;MNESIA  CXC 138 12&quot;,&quot;4.8&quot;},
+</I>&gt;<i> &gt;       {amqp_client,&quot;RabbitMQ AMQP Client&quot;,&quot;3.1.0&quot;},      {xmerl,&quot;XML
+</I>&gt;<i> parser&quot;,&quot;1.3.3&quot;},      {sasl,&quot;SASL  CXC 138 11&quot;,&quot;2.3.1&quot;},
+</I>&gt;<i> {stdlib,&quot;ERTS
+</I>&gt;<i>  CXC 138 10&quot;,&quot;1.19.1&quot;},
+</I>&gt;<i> &gt;       {kernel,&quot;ERTS  CXC 138 10&quot;,&quot;2.16.1&quot;}]}, {os,
+</I>&gt;<i> {unix,linux}}, {erlang_version,     &quot;Erlang R16B (erts-5.10.1) [source-
+</I>&gt;<i> 05f1189] [64-bit] [smp:8:8] [async-threads:30] [hipe] [kernel-
+</I>&gt;<i> poll:true]\n&quot;},
+</I>&gt;<i> &gt;  {memory,     [{total,60179048},      {connection_procs,5274808},
+</I>&gt;<i> {queue_procs,13107264},      {plugins,354272},      {other_proc,9741830},
+</I>&gt;<i> &gt;       {mnesia,150456},      {mgmt_db,12248},      {msg_index,34768},
+</I>&gt;<i> {other_ets,1148248},      {binary,4905584},      {code,19565863},
+</I>&gt;<i> {atom,703377},      {other_system,5180330}]},
+</I>&gt;<i> &gt;
+</I>&gt;<i>
+</I>&gt;<i>  {vm_memory_high_watermark,0.8}, {vm_memory_limit,5828434329}, {disk_free_li
+</I>&gt;<i> mit,1000000000}, {disk_free,3953344512}, {file_descriptors,
+</I>&gt;<i>  [{total_limit,924},{total_used,6},{sockets_limit,829},{sockets_used,4}]},
+</I>&gt;<i> &gt;  {processes,[{limit,1048576},
+</I>&gt;<i> {used,348}]}, {run_queue,0}, {uptime,3796}]...done.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; Note that I am using Erlang v16 from the Erlang Solutions repo
+</I>&gt;<i> (esl-erlang
+</I>&gt;<i> package).  I originally was using Erlang v14 from Ubuntu repos (erlang-
+</I>&gt;<i> base), but decided to upgrade hoping it would resolve the issue (which it
+</I>&gt;<i> did not).  I have also tried running RabbitMQ 3.0.4 without success.  This
+</I>&gt;<i> issue seems to affect both versions.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; Thanks,
+</I>&gt;<i> &gt; Karl
+</I>&gt;<i> &gt; _______________________________________________
+</I>&gt;<i> &gt; rabbitmq-discuss mailing listrabbitmq-discuss &lt;at&gt;
+</I>&gt;<i> lists.rabbitmq.<A HREF="comhttps://lists.rabbitmq.com/cgi-">comhttps://lists.rabbitmq.com/cgi-</A>
+</I>&gt;<i> bin/mailman/listinfo/rabbitmq-discuss
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; &lt;div&gt;
+</I>&gt;<i> &gt; &lt;div dir=&quot;ltr&quot;&gt;
+</I>&gt;<i> &gt; &lt;div&gt;Karl,&lt;br&gt;&lt;br&gt;Wild speculation would be that messages have been
+</I>&gt;<i> consumed from a queue but that queue (name = document_queue?) is for some
+</I>&gt;<i> reason missing in action (gone, inaccessible, ...) when the consumer
+</I>&gt;<i> subsequently tries to ack the message(s). &lt;br&gt;&lt;br&gt;
+</I>&gt;<i> &gt; &lt;/div&gt;Brett&lt;br&gt;&lt;br&gt;
+</I>&gt;<i> &gt; &lt;/div&gt;
+</I>&gt;<i> &gt; &lt;div class=&quot;gmail_extra&quot;&gt;
+</I>&gt;<i> &gt; &lt;br&gt;&lt;br&gt;&lt;div class=&quot;gmail_quote&quot;&gt;On Sat, May 18, 2013 at 3:20 PM, Karl
+</I>&gt;<i> Rieb &lt;span dir=&quot;ltr&quot;&gt;&amp;lt;&lt;a href=&quot;mailto:<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">karl.rieb at ...</A>&quot;
+</I>&gt;<i> target=&quot;_blank&quot;&gt;karl.rieb &lt;at&gt; gmail.com&lt;/a&gt;&amp;gt;&lt;/span&gt; wrote:&lt;br&gt;
+</I>&gt;<i> &lt;blockquote class=&quot;gmail_quote&quot;&gt;Hi,&lt;div&gt;&lt;br&gt;&lt;/div&gt;
+</I>&gt;<i> &gt; &lt;div&gt;I am running a RabbitMQ cluster of 4 nodes in AWS EC2 on c1.xlarge
+</I>&gt;<i> instances using Ubuntu 12.04 LTS (kernel 3.2.0-38). &amp;nbsp;Periodically two
+</I>&gt;<i> of my nodes holding the largest queues will crash and require me to restart
+</I>&gt;<i> the rabbitmq-server service. &amp;nbsp;Looking at the logs, I'm at a loss as to
+</I>&gt;<i> why the crash is occurring. &amp;nbsp;I've have tried reproducing the crash
+</I>&gt;<i> manually by flooding my nodes with messages, but that doesn't seem to
+</I>&gt;<i> trigger the issue. &amp;nbsp;Below is output from various RabbitMQ logs:&lt;/div&gt;
+</I>&gt;<i> &gt; &lt;div&gt;&lt;br&gt;&lt;/div&gt;
+</I>&gt;<i> &gt; &lt;blockquote class=&quot;gmail_quote&quot;&gt;# cat /var/log/rabbitmq/rabbit &lt;at&gt;
+</I>&gt;<i> ip-10-
+</I>&gt;<i> 123-123-123-sasl.log&lt;br&gt;
+</I>&gt;<i> &gt; =CRASH REPORT==== 18-May-2013::01:41:51 ===&lt;br&gt;&amp;nbsp; crasher:&lt;br&gt;&amp;nbsp;
+</I>&gt;<i> &amp;nbsp; initial call: gen:init_it/6&lt;br&gt;&amp;nbsp; &amp;nbsp; pid: &amp;lt;0.301.0&amp;gt;
+</I>&gt;<i> &lt;br&gt;&amp;nbsp; &amp;nbsp; registered_name: []&lt;br&gt;&amp;nbsp; &amp;nbsp; exception exit:
+</I>&gt;<i> {{case_clause,{empty,{[],[]}}},&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp;[{rabbit_amqqueue_process,subtract_acks,3,
+</I>&gt;<i> []},&lt;br&gt;
+</I>&gt;<i> &gt; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; {rabbit_amqqueue_process,subtract_acks,4,[]},&lt;br&gt;&amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> {rabbit_amqqueue_process,handle_cast,2,[]},&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; {gen_server2,handle_msg,2,
+</I>&gt;<i> []},&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; {proc_lib,wake_up,3,&lt;br&gt;
+</I>&gt;<i> &gt; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; [{file,&quot;proc_lib.erl&quot;},
+</I>&gt;<i> {line,249}]}]}&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; in function
+</I>&gt;<i> &amp;nbsp;gen_server2:terminate/3&lt;br&gt;&amp;nbsp; &amp;nbsp; ancestors:
+</I>&gt;<i> [rabbit_amqqueue_sup,rabbit_sup,&amp;lt;0.207.0&amp;gt;]&lt;br&gt;&amp;nbsp; &amp;nbsp; messages:
+</I>&gt;<i> [{'$gen_cast',{resume,&amp;lt;0.676.0&amp;gt;}},&lt;br&gt;
+</I>&gt;<i> &gt; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> {'$gen_cast',{ack,[27583,27606,27629,27652,27675,27698,&lt;br&gt;&amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp;27721,27744,27767,27790,27813,27836,&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;27859,27882,27905,27928,27951,27974,&lt;br&gt;
+</I>&gt;<i> &gt; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp;27997,28020,28043,28066,28089,28112,&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;28135,28158,28179,28200,28221,28242,&lt;br&gt;&amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp;28263,28284,28305,28324,28342,28360,&lt;br&gt;
+</I>&gt;<i> &gt; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp;28378,28396,28414,28432,28450,28468,&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;28486,28504,28522,28540,28558,28576,&lt;br&gt;&amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;28594,28612],&lt;br&gt;&amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;lt;0.737.0&amp;gt;}},&lt;br&gt;
+</I>&gt;<i> &gt; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> {'$gen_cast',{resume,&amp;lt;0.737.0&amp;gt;}},&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; {'$gen_cast',{ack,
+</I>&gt;<i> [27608,27631,27654,27677,27700,27723,&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp;27746,27769,27792,27815,27838,27861,&lt;br&gt;
+</I>&gt;<i> &gt; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp;27884,27907,27930,27953,27976,27999,&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;28022,28045,28068,28091,28114,28137,&lt;br&gt;&amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp;28160,28181,28202,28223,28244,28265,&lt;br&gt;
+</I>&gt;<i> &gt; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp;28286,28307,28326,28344,28362,28380,&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;28398,28416,28434,28452,28470,28488,&lt;br&gt;&amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp;28506,28524,28542,28560,28578,28596,&lt;br&gt;
+</I>&gt;<i> &gt; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;28614],
+</I>&gt;<i> &lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;lt;0.676.0&amp;gt;}},
+</I>&gt;<i> &lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> {'$gen_cast',{ack,[27578,27601,27624,27647,27670,27693,&lt;br&gt;&amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp;27716,27739,27762,27785,27808,27831,&lt;br&gt;
+</I>&gt;<i> &gt; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp;27854,27877,27900,27923,27946,27969,&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;27992,28015,28038,28061,28084,28107,&lt;br&gt;&amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp;28130,28153,28174,28195,28216,28237,&lt;br&gt;
+</I>&gt;<i> &gt; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp;28258,28279,28300,28321,28340,28358,&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;28376,28394,28412,28430,28448,28466,&lt;br&gt;&amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp;28484,28502,28520,28538,28556,28574,&lt;br&gt;
+</I>&gt;<i> &gt; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;28592,28610],
+</I>&gt;<i> &lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;lt;0.716.0&amp;gt;}},
+</I>&gt;<i> &lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> {'$gen_cast',{resume,&amp;lt;0.716.0&amp;gt;}},&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; {'$gen_cast',{ack,
+</I>&gt;<i> [27582,27605,27628,27651,27674,27697,&lt;br&gt;
+</I>&gt;<i> &gt; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp;27720,27743,27766,27789,27812,27835,&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;27858,27881,27904,27927,27950,27973,&lt;br&gt;&amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp;27996,28019,28042,28065,28088,28111,&lt;br&gt;
+</I>&gt;<i> &gt; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp;28134,28157,28178,28199,28220,28241,&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;28262,28283,28304,28323,28341,28359,&lt;br&gt;&amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp;28377,28395,28413,28431,28449,28467,&lt;br&gt;
+</I>&gt;<i> &gt; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp;28485,28503,28521,28539,28557,28575,&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;28593,28611],&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;lt;0.737.0&amp;gt;}}]&lt;br&gt;&amp;nbsp; &amp;nbsp; links:
+</I>&gt;<i> [&amp;lt;0.300.0&amp;gt;]&lt;br&gt;
+</I>&gt;<i> &gt; &amp;nbsp; &amp;nbsp; dictionary: [{{ch,&amp;lt;0.729.0&amp;gt;},&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> {cr,&amp;lt;0.729.0&amp;gt;,#Ref&amp;lt;0.0.0.12296&amp;gt;,&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> {[28715,28696,28677,28658,28639,28620,28602,28584,&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp;28566,28548,28530,28512,28494,28476,28458,28440,&lt;br&gt;
+</I>&gt;<i> &gt; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp;28422,28404,28386,28368,28350,28332,28313,28292,
+</I>&gt;<i> &lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp;28271,28250,28229,28208,28187,28166,28143,28120,
+</I>&gt;<i> &lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp;28097,28074,28051,28028,28005,27982,27959,27936,&lt;br&gt;
+</I>&gt;<i> &gt; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp;27913,27890,27867,27844,27821,27798,27775,27752,
+</I>&gt;<i> &lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp;27729,27706,27683,27660,27637,27614],&lt;br&gt;&amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> [27591]},&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp;1,&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;{[],[]},&lt;br&gt;
+</I>&gt;<i> &gt; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp;{qstate,&amp;lt;0.728.0&amp;gt;,active,{0,nil}},&lt;br&gt;&amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;11}},
+</I>&gt;<i> &lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> {{credit_to,&amp;lt;7350.877.0&amp;gt;},22},&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; {{ch,&amp;lt;0.608.0&amp;gt;},&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> {cr,&amp;lt;0.608.0&amp;gt;,#Ref&amp;lt;0.0.0.9041&amp;gt;,&lt;br&gt;
+</I>&gt;<i> &gt; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp;{[28708,28689,28670,28651,28632,28607,28589,28571,&lt;br&gt;&amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp;
+</I>&gt;<i> &amp;nbsp;28553,28535,28517,28499,28481,28463,28445,28427,&lt;br&gt;&amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp;28409,28391,28373,28355,28337,28318,28297,28276,&lt;br&gt;
+</I>&gt;<i> &gt; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp;28255,28234,28213,28192,28171,28150,28127,28104,
+</I>&gt;<i> &lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp;28081,28058,28035,28012,27989,27966,27943,27920,
+</I>&gt;<i> &lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp;27897,27874,27851,27828,27805,27782,27759,27736,&lt;br&gt;
+</I>&gt;<i> &gt; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp;27713,27690,27667,27644,27621,27598],&lt;br&gt;&amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> [27575]},&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp;1,&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;{[],[]},&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> {qstate,&amp;lt;0.607.0&amp;gt;,active,{0,nil}},&lt;br&gt;
+</I>&gt;<i> &gt; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp;38}},&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; {{ch,&amp;lt;0.624.0&amp;gt;},&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> {cr,&amp;lt;0.624.0&amp;gt;,#Ref&amp;lt;0.0.0.9436&amp;gt;,&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> {[28722,28703,28684,28665,28646],[28627]},&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;1,&lt;br&gt;
+</I>&gt;<i> &gt; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp;{[],[]},&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;{qstate,&amp;lt;0.623.0&amp;gt;,active,{0,nil}},
+</I>&gt;<i> &lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp;36}},&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; {{ch,&amp;lt;0.696.0&amp;gt;},&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> {cr,&amp;lt;0.696.0&amp;gt;,#Ref&amp;lt;0.0.0.11414&amp;gt;,&lt;br&gt;
+</I>&gt;<i> &gt; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp;{[],[]},&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;2,&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;{[],[]},&lt;br&gt;&amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> {qstate,&amp;lt;0.695.0&amp;gt;,active,{0,nil}},&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;24}},&lt;br&gt;&amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> {{ch,&amp;lt;0.564.0&amp;gt;},&lt;br&gt;
+</I>&gt;<i> &gt; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> {cr,&amp;lt;0.564.0&amp;gt;,#Ref&amp;lt;0.0.0.7285&amp;gt;,&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> {[28718,28699,28680,28661,28642],[28623]},&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;1,&lt;br&gt;&amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;{[],
+</I>&gt;<i> []},&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp;{qstate,&amp;lt;0.563.0&amp;gt;,active,{0,nil}},&lt;br&gt;
+</I>&gt;<i> &gt; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp;12}},&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; {{ch,&amp;lt;0.644.0&amp;gt;},&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> {cr,&amp;lt;0.644.0&amp;gt;,#Ref&amp;lt;0.0.0.10071&amp;gt;,&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> {[28713,28694,28675,28656,28637,28618,28600,28582,&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp;28564,28546,28528,28510,28492,28474,28456,28438,&lt;br&gt;
+</I>&gt;<i> &gt; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp;28420,28402,28384,28366,28348,28330,28311,28290,
+</I>&gt;<i> &lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp;28269,28248,28227,28206,28185,28164,28141,28118,
+</I>&gt;<i> &lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp;28095,28072,28049,28026,28003,27980,27957,27934,&lt;br&gt;
+</I>&gt;<i> &gt; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp;27911,27888,27865,27842,27819,27796,27773,27750,
+</I>&gt;<i> &lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp;27727,27704,27681,27658,27635,27612],&lt;br&gt;&amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> [27589]},&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp;1,&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;{[],[]},&lt;br&gt;
+</I>&gt;<i> &gt; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp;{qstate,&amp;lt;0.643.0&amp;gt;,active,{0,nil}},&lt;br&gt;&amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;11}},
+</I>&gt;<i> &lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> {{ch,&amp;lt;0.676.0&amp;gt;},&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp;{cr,&amp;lt;0.676.0&amp;gt;,#Ref&amp;lt;0.0.0.11309&amp;gt;,&lt;br&gt;&amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp;
+</I>&gt;<i> {[28614,28613,28596,28595,28578,28577,28560,28559,&lt;br&gt;
+</I>&gt;<i> &gt; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp;28542,28541,28524,28523,28506,28505,28488,28487,
+</I>&gt;<i> &lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp;28470,28469,28452,28451,28434,28433,28416,28415,
+</I>&gt;<i> &lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp;28398,28397,28380,28379,28362,28361,28344,28343,&lt;br&gt;
+</I>&gt;<i> &gt; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp;28326,28325,28307,28306,28286,28285,28265,28264,
+</I>&gt;<i> &lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp;28244,28243,28223,28222,28202,28201,28181,28180,
+</I>&gt;<i> &lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp;28160,28159,28137,28136,28114,28113,28091,28090,&lt;br&gt;
+</I>&gt;<i> &gt; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp;28068,28067,28045,28044,28022,28021,27999,27998,
+</I>&gt;<i> &lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp;27976,27975,27953,27952,27930,27929,27907,27906,
+</I>&gt;<i> &lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp;27884,27883,27861,27860,27838,27837,27815,27814,&lt;br&gt;
+</I>&gt;<i> &gt; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp;27792,27791,27769,27768,27746,27745,27723,27722,
+</I>&gt;<i> &lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp;27700,27699,27677,27676,27654,27653,27631,27630,
+</I>&gt;<i> &lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp;27608,27607,27585],&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; [27584]},&lt;br&gt;
+</I>&gt;<i> &gt; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp;2,&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;{[{&amp;lt;0.676.0&amp;gt;,&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> {consumer,&amp;lt;&amp;lt;&quot;amq.ctag-0cvDGmyaAbEW_j15AfhGHQ&quot;&amp;gt;&amp;gt;,&lt;br&gt;&amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; true}}],&lt;br&gt;
+</I>&gt;<i> &gt; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; [{&amp;lt;0.676.0&amp;gt;,&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> {consumer,&amp;lt;&amp;lt;&quot;amq.ctag-YqU04SIfQv6P-QVueEjbRg&quot;&amp;gt;&amp;gt;,&lt;br&gt;&amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; true}}]},&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> {qstate,&amp;lt;0.675.0&amp;gt;,suspended,{0,nil}},&lt;br&gt;
+</I>&gt;<i> &gt; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp;25}},&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; {{xtype_to_module,direct},rabbit_exchange_type_direct},
+</I>&gt;<i> &lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> {{credit_to,&amp;lt;7350.833.0&amp;gt;},31},&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; {{ch,&amp;lt;0.745.0&amp;gt;},&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> {cr,&amp;lt;0.745.0&amp;gt;,#Ref&amp;lt;0.0.0.12674&amp;gt;,&lt;br&gt;
+</I>&gt;<i> &gt; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp;{[28716,28697,28678,28659,28640,28621,28603,28585,&lt;br&gt;&amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp;
+</I>&gt;<i> &amp;nbsp;28567,28549,28531,28513,28495,28477,28459,28441,&lt;br&gt;&amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp;28423,28405,28387,28369,28351,28333,28314,28293,&lt;br&gt;
+</I>&gt;<i> &gt; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp;28272,28251,28230,28209,28188,28167,28144,28121,
+</I>&gt;<i> &lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp;28098,28075,28052,28029,28006,27983,27960,27937,
+</I>&gt;<i> &lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp;27914,27891,27868,27845,27822,27799,27776,27753,&lt;br&gt;
+</I>&gt;<i> &gt; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp;27730,27707,27684,27661,27638,27615],&lt;br&gt;&amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> [27592]},&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp;1,&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;{[],[]},&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> {qstate,&amp;lt;0.744.0&amp;gt;,active,{0,nil}},&lt;br&gt;
+</I>&gt;<i> &gt; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp;37}},&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; {{ch,&amp;lt;0.660.0&amp;gt;},&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> {cr,&amp;lt;0.660.0&amp;gt;,#Ref&amp;lt;0.0.0.10650&amp;gt;,&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> {[28712,28693,28674,28655,28636,28617,28599,28581,&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp;28563,28545,28527,28509,28491,28473,28455,28437,&lt;br&gt;
+</I>&gt;<i> &gt; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp;28419,28401,28383,28365,28347,28329,28310,28289,
+</I>&gt;<i> &lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp;28268,28247,28226,28205,28184,28163,28140,28117,
+</I>&gt;<i> &lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp;28094,28071,28048,28025,28002,27979,27956,27933,&lt;br&gt;
+</I>&gt;<i> &gt; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp;27910,27887,27864,27841,27818,27795,27772,27749,
+</I>&gt;<i> &lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp;27726,27703,27680,27657,27634,27611],&lt;br&gt;&amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> [27588]},&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp;1,&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;{[],[]},&lt;br&gt;
+</I>&gt;<i> &gt; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp;{qstate,&amp;lt;0.659.0&amp;gt;,active,{0,nil}},&lt;br&gt;&amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;11}},
+</I>&gt;<i> &lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> {{credit_to,&amp;lt;7350.837.0&amp;gt;},32},&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; {{credit_to,&amp;lt;7350.881.0&amp;gt;},17},&lt;br&gt;&amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> {{ch,&amp;lt;0.737.0&amp;gt;},&lt;br&gt;
+</I>&gt;<i> &gt; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> {cr,&amp;lt;0.737.0&amp;gt;,#Ref&amp;lt;0.0.0.12429&amp;gt;,&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> {[28612,28611,28594,28593,28576,28575,28558,28557,&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp;28540,28539,28522,28521,28504,28503,28486,28485,&lt;br&gt;
+</I>&gt;<i> &gt; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp;28468,28467,28450,28449,28432,28431,28414,28413,
+</I>&gt;<i> &lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp;28396,28395,28378,28377,28360,28359,28342,28341,
+</I>&gt;<i> &lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp;28324,28323,28305,28304,28284,28283,28263,28262,&lt;br&gt;
+</I>&gt;<i> &gt; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp;28242,28241,28221,28220,28200,28199,28179,28178,
+</I>&gt;<i> &lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp;28158,28157,28135,28134,28112,28111,28089,28088,
+</I>&gt;<i> &lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp;28066,28065,28043,28042,28020,28019,27997,27996,&lt;br&gt;
+</I>&gt;<i> &gt; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp;27974,27973,27951,27950,27928,27927,27905,27904,
+</I>&gt;<i> &lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp;27882,27881,27859,27858,27836,27835,27813,27812,
+</I>&gt;<i> &lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp;27790,27789,27767,27766,27744,27743,27721,27720,&lt;br&gt;
+</I>&gt;<i> &gt; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp;27698,27697,27675,27674,27652,27651,27629,27628,
+</I>&gt;<i> &lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp;27606,27605,27583],&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; [27582]},&lt;br&gt;&amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp;2,&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp;{[{&amp;lt;0.737.0&amp;gt;,&lt;br&gt;
+</I>&gt;<i> &gt; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; {consumer,&amp;lt;&amp;lt;&quot;amq.ctag-
+</I>&gt;<i> ITZqhulzHhUzx1uy1Eot3g&quot;&amp;gt;&amp;gt;,&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; true}}],&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; [{&amp;lt;0.737.0&amp;gt;,&lt;br&gt;&amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp;
+</I>&gt;<i> {consumer,&amp;lt;&amp;lt;&quot;amq.ctag-hpo5ejdoJRdLrT6JS42jGw&quot;&amp;gt;&amp;gt;,&lt;br&gt;
+</I>&gt;<i> &gt; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; true}}]},&lt;br&gt;&amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp;
+</I>&gt;<i> {qstate,&amp;lt;0.736.0&amp;gt;,suspended,{0,nil}},&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;11}},&lt;br&gt;&amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> {credit_blocked,[]},
+</I>&gt;<i> &lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> {{credit_to,&amp;lt;7350.854.0&amp;gt;},3},&lt;br&gt;
+</I>&gt;<i> &gt; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> {{ch,&amp;lt;0.716.0&amp;gt;},&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp;{cr,&amp;lt;0.716.0&amp;gt;,#Ref&amp;lt;0.0.0.11820&amp;gt;,&lt;br&gt;&amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp;
+</I>&gt;<i> {[28610,28609,28592,28591,28574,28573,28556,28555,&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp;28538,28537,28520,28519,28502,28501,28484,28483,&lt;br&gt;
+</I>&gt;<i> &gt; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp;28466,28465,28448,28447,28430,28429,28412,28411,
+</I>&gt;<i> &lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp;28394,28393,28376,28375,28358,28357,28340,28339,
+</I>&gt;<i> &lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp;28321,28320,28300,28299,28279,28278,28258,28257,&lt;br&gt;
+</I>&gt;<i> &gt; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp;28237,28236,28216,28215,28195,28194,28174,28173,
+</I>&gt;<i> &lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp;28153,28152,28130,28129,28107,28106,28084,28083,
+</I>&gt;<i> &lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp;28061,28060,28038,28037,28015,28014,27992,27991,&lt;br&gt;
+</I>&gt;<i> &gt; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp;27969,27968,27946,27945,27923,27922,27900,27899,
+</I>&gt;<i> &lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp;27877,27876,27854,27853,27831,27830,27808,27807,
+</I>&gt;<i> &lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp;27785,27784,27762,27761,27739,27738,27716,27715,&lt;br&gt;
+</I>&gt;<i> &gt; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp;27693,27692,27670,27669,27647,27646,27624,27623,
+</I>&gt;<i> &lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp;27601,27600,27578],&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; [27577]},&lt;br&gt;&amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp;2,&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp;{[{&amp;lt;0.716.0&amp;gt;,&lt;br&gt;
+</I>&gt;<i> &gt; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; {consumer,&amp;lt;&amp;lt;&quot;amq.ctag-BTlS-GmbXNpcU-
+</I>&gt;<i> wUlMI60Q&quot;&amp;gt;&amp;gt;,&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp;
+</I>&gt;<i> true}}],&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; [{&amp;lt;0.716.0&amp;gt;,&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> {consumer,&amp;lt;&amp;lt;&quot;amq.ctag-loc5monF8M1pz_Bb8ypumw&quot;&amp;gt;&amp;gt;,&lt;br&gt;
+</I>&gt;<i> &gt; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; true}}]},&lt;br&gt;&amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp;
+</I>&gt;<i> {qstate,&amp;lt;0.715.0&amp;gt;,suspended,{0,nil}},&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;44}},&lt;br&gt;&amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> {{ch,&amp;lt;0.782.0&amp;gt;},&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp;{cr,&amp;lt;0.782.0&amp;gt;,#Ref&amp;lt;0.0.0.15649&amp;gt;,&lt;br&gt;
+</I>&gt;<i> &gt; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp;{[28714,28695,28676,28657,28638,28619,28601,28583,&lt;br&gt;&amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp;
+</I>&gt;<i> &amp;nbsp;28565,28547,28529,28511,28493,28475,28457,28439,&lt;br&gt;&amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp;28421,28403,28385,28367,28349,28331,28312,28291,&lt;br&gt;
+</I>&gt;<i> &gt; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp;28270,28249,28228,28207,28186,28165,28142,28119,
+</I>&gt;<i> &lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp;28096,28073,28050,28027,28004,27981,27958,27935,
+</I>&gt;<i> &lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp;27912,27889,27866,27843,27820,27797,27774,27751,&lt;br&gt;
+</I>&gt;<i> &gt; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp;27728,27705,27682,27659,27636,27613],&lt;br&gt;&amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> [27590]},&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp;1,&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;{[],[]},&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> {qstate,&amp;lt;0.781.0&amp;gt;,active,{0,nil}},&lt;br&gt;
+</I>&gt;<i> &gt; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp;35}},&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; {{credit_to,&amp;lt;7350.846.0&amp;gt;},22},&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; {{ch,&amp;lt;0.684.0&amp;gt;},&lt;br&gt;&amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> {cr,&amp;lt;0.684.0&amp;gt;,#Ref&amp;lt;0.0.0.11198&amp;gt;,&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> {[28711,28692,28673,28654,28635,28616,28598,28580,&lt;br&gt;
+</I>&gt;<i> &gt; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp;28562,28544,28526,28508,28490,28472,28454,28436,
+</I>&gt;<i> &lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp;28418,28400,28382,28364,28346,28328,28309,28288,
+</I>&gt;<i> &lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp;28267,28246,28225,28204,28183,28162,28139,28116,&lt;br&gt;
+</I>&gt;<i> &gt; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp;28093,28070,28047,28024,28001,27978,27955,27932,
+</I>&gt;<i> &lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp;27909,27886,27863,27840,27817,27794,27771,27748,
+</I>&gt;<i> &lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp;27725,27702,27679,27656,27633,27610],&lt;br&gt;&amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> [27587]},&lt;br&gt;
+</I>&gt;<i> &gt; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp;1,&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;{[],[]},&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> {qstate,&amp;lt;0.683.0&amp;gt;,active,{0,nil}},&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;11}},&lt;br&gt;&amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> {{ch,&amp;lt;0.692.0&amp;gt;},&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp;{cr,&amp;lt;0.692.0&amp;gt;,#Ref&amp;lt;0.0.0.11088&amp;gt;,&lt;br&gt;
+</I>&gt;<i> &gt; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp;{[28710,28691,28672,28653,28634,28615,28597,28579,&lt;br&gt;&amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp;
+</I>&gt;<i> &amp;nbsp;28561,28543,28525,28507,28489,28471,28453,28435,&lt;br&gt;&amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp;28417,28399,28381,28363,28345,28327,28308,28287,&lt;br&gt;
+</I>&gt;<i> &gt; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp;28266,28245,28224,28203,28182,28161,28138,28115,
+</I>&gt;<i> &lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp;28092,28069,28046,28023,28000,27977,27954,27931,
+</I>&gt;<i> &lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp;27908,27885,27862,27839,27816,27793,27770,27747,&lt;br&gt;
+</I>&gt;<i> &gt; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp;27724,27701,27678,27655,27632,27609],&lt;br&gt;&amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> [27586]},&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp;1,&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;{[],[]},&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> {qstate,&amp;lt;0.691.0&amp;gt;,active,{0,nil}},&lt;br&gt;
+</I>&gt;<i> &gt; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp;12}},&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; {{ch,&amp;lt;0.648.0&amp;gt;},&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> {cr,&amp;lt;0.648.0&amp;gt;,#Ref&amp;lt;0.0.0.10283&amp;gt;,&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> {[28717,28698,28679,28660,28641],[28622]},&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;1,&lt;br&gt;
+</I>&gt;<i> &gt; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp;{[],[]},&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;{qstate,&amp;lt;0.647.0&amp;gt;,active,{0,nil}},
+</I>&gt;<i> &lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp;12}},&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; {guid,{{&lt;a href=&quot;tel:2296174761&quot; value=&quot;+12296174761&quot;
+</I>&gt;<i> target=&quot;_blank&quot;&gt;2296174761&lt;/a&gt;,591959305,1562876388,1822892473},1}},&lt;br&gt;
+</I>&gt;<i> &gt; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> {{ch,&amp;lt;0.720.0&amp;gt;},&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp;{cr,&amp;lt;0.720.0&amp;gt;,#Ref&amp;lt;0.0.0.12036&amp;gt;,&lt;br&gt;&amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp;
+</I>&gt;<i> {[28723,28704,28685,28666,28647],[28628]},&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;1,&lt;br&gt;&amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;{[],
+</I>&gt;<i> []},&lt;br&gt;
+</I>&gt;<i> &gt; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp;{qstate,&amp;lt;0.719.0&amp;gt;,active,{0,nil}},&lt;br&gt;&amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;37}},
+</I>&gt;<i> &lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> {{credit_to,&amp;lt;7350.869.0&amp;gt;},39},&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; {{ch,&amp;lt;0.636.0&amp;gt;},&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> {cr,&amp;lt;0.636.0&amp;gt;,#Ref&amp;lt;0.0.0.9960&amp;gt;,&lt;br&gt;
+</I>&gt;<i> &gt; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp;{[28705,28686,28667,28648,28629,28604,28586,28568,&lt;br&gt;&amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp;
+</I>&gt;<i> &amp;nbsp;28550,28532,28514,28496,28478,28460,28442,28424,&lt;br&gt;&amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp;28406,28388,28370,28352,28334,28315,28294,28273,&lt;br&gt;
+</I>&gt;<i> &gt; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp;28252,28231,28210,28189,28168,28147,28124,28101,
+</I>&gt;<i> &lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp;28078,28055,28032,28009,27986,27963,27940,27917,
+</I>&gt;<i> &lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp;27894,27871,27848,27825,27802,27779,27756,27733,&lt;br&gt;
+</I>&gt;<i> &gt; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp;27710,27687,27664,27641,27618,27595],&lt;br&gt;&amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> [27572]},&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp;1,&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;{[],[]},&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> {qstate,&amp;lt;0.635.0&amp;gt;,active,{0,nil}},&lt;br&gt;
+</I>&gt;<i> &gt; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp;15}},&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; {{credit_to,&amp;lt;7350.850.0&amp;gt;},50},&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; {{ch,&amp;lt;0.616.0&amp;gt;},&lt;br&gt;&amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> {cr,&amp;lt;0.616.0&amp;gt;,#Ref&amp;lt;0.0.0.9300&amp;gt;,&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> {[28719,28700,28681,28662,28643],[28624]},&lt;br&gt;
+</I>&gt;<i> &gt; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp;1,&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;{[],[]},&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> {qstate,&amp;lt;0.615.0&amp;gt;,active,{0,nil}},&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;12}},&lt;br&gt;&amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> {{ch,&amp;lt;0.509.0&amp;gt;},&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp;{cr,&amp;lt;0.509.0&amp;gt;,#Ref&amp;lt;0.0.0.2243&amp;gt;,&lt;br&gt;
+</I>&gt;<i> &gt; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp;{[28302,28281,28260,28239,28218,28197,28176,28155,&lt;br&gt;&amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp;
+</I>&gt;<i> &amp;nbsp;28132,28109,28086,28063,28040,28017,27994,27971],&lt;br&gt;&amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> [27580,27603,27626,27649,27672,27695,27718,27741,&lt;br&gt;
+</I>&gt;<i> &gt; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp;27764,27787,27810,27833,27856,27879,27902,27925,
+</I>&gt;<i> &lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp;27948]},&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;3,&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;{[],[]},&lt;br&gt;&amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp;
+</I>&gt;<i> {qstate,&amp;lt;0.508.0&amp;gt;,active,{0,nil}},&lt;br&gt;
+</I>&gt;<i> &gt; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp;36}},&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; {{credit_to,&amp;lt;7350.873.0&amp;gt;},17},&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; {{ch,&amp;lt;0.588.0&amp;gt;},&lt;br&gt;&amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> {cr,&amp;lt;0.588.0&amp;gt;,#Ref&amp;lt;0.0.0.7808&amp;gt;,&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> {[28721,28702,28683,28664,28645],[28626]},&lt;br&gt;
+</I>&gt;<i> &gt; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp;1,&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;{[],[]},&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> {qstate,&amp;lt;0.587.0&amp;gt;,active,{0,nil}},&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;12}},&lt;br&gt;&amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> {{ch,&amp;lt;0.664.0&amp;gt;},&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp;{cr,&amp;lt;0.664.0&amp;gt;,#Ref&amp;lt;0.0.0.10772&amp;gt;,&lt;br&gt;
+</I>&gt;<i> &gt; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp;{[28720,28701,28682,28663,28644],[28625]},&lt;br&gt;&amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;1,
+</I>&gt;<i> &lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp;{[],[]},&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;{qstate,&amp;lt;0.663.0&amp;gt;,active,{0,nil}},
+</I>&gt;<i> &lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp;13}},&lt;br&gt;
+</I>&gt;<i> &gt; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> {fhc_age_tree,{0,nil}},&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; {{ch,&amp;lt;0.708.0&amp;gt;},&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> {cr,&amp;lt;0.708.0&amp;gt;,#Ref&amp;lt;0.0.0.11695&amp;gt;,&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> {[28707,28688,28669,28650,28631,28606,28588,28570,&lt;br&gt;
+</I>&gt;<i> &gt; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp;28552,28534,28516,28498,28480,28462,28444,28426,
+</I>&gt;<i> &lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp;28408,28390,28372,28354,28336,28317,28296,28275,
+</I>&gt;<i> &lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp;28254,28233,28212,28191,28170,28149,28126,28103,&lt;br&gt;
+</I>&gt;<i> &gt; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp;28080,28057,28034,28011,27988,27965,27942,27919,
+</I>&gt;<i> &lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp;27896,27873,27850,27827,27804,27781,27758,27735,
+</I>&gt;<i> &lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp;27712,27689,27666,27643,27620,27597],&lt;br&gt;&amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> [27574]},&lt;br&gt;
+</I>&gt;<i> &gt; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp;1,&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;{[],[]},&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> {qstate,&amp;lt;0.707.0&amp;gt;,active,{0,nil}},&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;35}},&lt;br&gt;&amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> {{credit_to,&amp;lt;7350.829.0&amp;gt;},13},&lt;br&gt;
+</I>&gt;<i> &gt; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> {{ch,&amp;lt;0.757.0&amp;gt;},&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp;{cr,&amp;lt;0.757.0&amp;gt;,#Ref&amp;lt;0.0.0.13150&amp;gt;,&lt;br&gt;&amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp;
+</I>&gt;<i> {[28706,28687,28668,28649,28630,28605,28587,28569,&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp;28551,28533,28515,28497,28479,28461,28443,28425,&lt;br&gt;
+</I>&gt;<i> &gt; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp;28407,28389,28371,28353,28335,28316,28295,28274,
+</I>&gt;<i> &lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp;28253,28232,28211,28190,28169,28148,28125,28102,
+</I>&gt;<i> &lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp;28079,28056,28033,28010,27987,27964,27941,27918,&lt;br&gt;
+</I>&gt;<i> &gt; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp;27895,27872,27849,27826,27803,27780,27757,27734,
+</I>&gt;<i> &lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp;27711,27688,27665,27642,27619,27596],&lt;br&gt;&amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> [27573]},&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp;1,&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;{[],[]},&lt;br&gt;
+</I>&gt;<i> &gt; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp;{qstate,&amp;lt;0.756.0&amp;gt;,active,{0,nil}},&lt;br&gt;&amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;49}},
+</I>&gt;<i> &lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> {{ch,&amp;lt;0.572.0&amp;gt;},&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp;{cr,&amp;lt;0.572.0&amp;gt;,#Ref&amp;lt;0.0.0.7536&amp;gt;,&lt;br&gt;&amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp;
+</I>&gt;<i> {[28709,28690,28671,28652,28633,28608,28590,28572,&lt;br&gt;
+</I>&gt;<i> &gt; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp;28554,28536,28518,28500,28482,28464,28446,28428,
+</I>&gt;<i> &lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp;28410,28392,28374,28356,28338,28319,28298,28277,
+</I>&gt;<i> &lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp;28256,28235,28214,28193,28172,28151,28128,28105,&lt;br&gt;
+</I>&gt;<i> &gt; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp;28082,28059,28036,28013,27990,27967,27944,27921,
+</I>&gt;<i> &lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp;27898,27875,27852,27829,27806,27783,27760,27737,
+</I>&gt;<i> &lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp;27714,27691,27668,27645,27622,27599],&lt;br&gt;&amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> [27576]},&lt;br&gt;
+</I>&gt;<i> &gt; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp;1,&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;{[],[]},&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> {qstate,&amp;lt;0.571.0&amp;gt;,active,{0,nil}},&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;35}},&lt;br&gt;&amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> {{credit_to,&amp;lt;7350.825.0&amp;gt;},2},&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; {{credit_to,&amp;lt;7350.858.0&amp;gt;},3}]&lt;br&gt;
+</I>&gt;<i> &gt; &amp;nbsp; &amp;nbsp; trap_exit: true&lt;br&gt;&amp;nbsp; &amp;nbsp; status: running&lt;br&gt;&amp;nbsp;
+</I>&gt;<i> &amp;nbsp; heap_size: 121536&lt;br&gt;&amp;nbsp; &amp;nbsp; stack_size: 27&lt;br&gt;&amp;nbsp; &amp;nbsp;
+</I>&gt;<i> reductions: 9363545&lt;br&gt;&amp;nbsp; neighbours:&lt;br&gt;&lt;br&gt;=SUPERVISOR REPORT==== 18-
+</I>&gt;<i> May-2013::01:41:51 ===&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp;Supervisor:
+</I>&gt;<i> {local,rabbit_amqqueue_sup}&lt;br&gt;
+</I>&gt;<i> &gt; &amp;nbsp; &amp;nbsp; &amp;nbsp;Context: &amp;nbsp; &amp;nbsp;child_terminated&lt;br&gt;&amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp;Reason: &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> {{case_clause,{empty,{[],[]}}},&lt;br&gt;&amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> [{rabbit_amqqueue_process,subtract_acks,3,[]},&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> {rabbit_amqqueue_process,subtract_acks,4,[]},&lt;br&gt;
+</I>&gt;<i> &gt; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> {rabbit_amqqueue_process,handle_cast,2,[]},&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;{gen_server2,handle_msg,2,[]},
+</I>&gt;<i> &lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> {proc_lib,wake_up,3,[{file,&quot;proc_lib.erl&quot;},{line,249}]}]}&lt;br&gt;&amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp;Offender: &amp;nbsp; [{pid,&amp;lt;0.301.0&amp;gt;},&lt;br&gt;
+</I>&gt;<i> &gt; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> {name,rabbit_amqqueue},&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; {mfa,&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; {rabbit_amqqueue_process,start_link,&lt;br&gt;&amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; [{amqqueue,&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> {resource,&amp;lt;&amp;lt;&quot;/&quot;&amp;gt;&amp;gt;,queue,&lt;br&gt;
+</I>&gt;<i> &gt; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp;&amp;lt;&amp;lt;&quot;document_queue&quot;&amp;gt;&amp;gt;},&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp;
+</I>&gt;<i> &amp;nbsp;true,false,none,[],&amp;lt;0.7622.0&amp;gt;,[],[],undefined,&lt;br&gt;&amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp;[]}]}},&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; {restart_type,temporary},&lt;br&gt;
+</I>&gt;<i> &gt; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> {shutdown,4294967295},&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; {child_type,worker}]&lt;/blockquote&gt;
+</I>&gt;<i> &gt; &lt;div&gt;&lt;br&gt;&lt;/div&gt;
+</I>&gt;<i> &gt; &lt;div&gt;Notice how the case_clause is empty. &amp;nbsp;The other rabbit log
+</I>&gt;<i> looks
+</I>&gt;<i> similar:&lt;/div&gt;
+</I>&gt;<i> &gt; &lt;div&gt;&lt;br&gt;&lt;/div&gt;
+</I>&gt;<i> &gt; &lt;blockquote class=&quot;gmail_quote&quot;&gt;# cat /var/log/rabbitmq/<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at ...</A>&amp;nbsp;
+</I>&gt;<i> &lt;/blockquote&gt;
+</I>&gt;<i> &gt; &lt;blockquote class=&quot;gmail_quote&quot;&gt;&amp;nbsp;&lt;/blockquote&gt;
+</I>&gt;<i> &gt; &lt;blockquote class=&quot;gmail_quote&quot;&gt;
+</I>&gt;<i> &gt; =ERROR REPORT==== 18-May-2013::01:41:48 ===&lt;/blockquote&gt;
+</I>&gt;<i> &gt; &lt;blockquote class=&quot;gmail_quote&quot;&gt;** Generic server &amp;lt;0.301.0&amp;gt;
+</I>&gt;<i> terminating&lt;/blockquote&gt;
+</I>&gt;<i> &gt; &lt;blockquote class=&quot;gmail_quote&quot;&gt;** Last message in was {'$gen_cast',
+</I>&gt;<i> &lt;/blockquote&gt;
+</I>&gt;<i> &gt; &lt;blockquote class=&quot;gmail_quote&quot;&gt;
+</I>&gt;<i> &gt; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;{ack,&lt;/blockquote&gt;
+</I>&gt;<i> &gt; &lt;blockquote class=&quot;gmail_quote&quot;&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> [27585,27584,27607,27630,27653,27676,27699,&lt;/blockquote&gt;
+</I>&gt;<i> &gt; &lt;blockquote class=&quot;gmail_quote&quot;&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> 27722,27745,27768,27791,27814,27837,27860,&lt;/blockquote&gt;
+</I>&gt;<i> &gt; &lt;blockquote class=&quot;gmail_quote&quot;&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> 27883,27906,27929,27952,27975,27998,28021,&lt;/blockquote&gt;
+</I>&gt;<i> &gt; &lt;blockquote class=&quot;gmail_quote&quot;&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> 28044,28067,28090,28113,28136,28159,28180,&lt;/blockquote&gt;
+</I>&gt;<i> &gt; &lt;blockquote class=&quot;gmail_quote&quot;&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> 28201,28222,28243,28264,28285,28306,28325,&lt;/blockquote&gt;
+</I>&gt;<i> &gt; &lt;blockquote class=&quot;gmail_quote&quot;&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> 28343,28361,28379,28397,28415,28433,28451,&lt;/blockquote&gt;
+</I>&gt;<i> &gt; &lt;blockquote class=&quot;gmail_quote&quot;&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> 28469,28487,28505,28523,28541,28559,28577,&lt;/blockquote&gt;
+</I>&gt;<i> &gt; &lt;blockquote class=&quot;gmail_quote&quot;&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> 28595,28613],&lt;/blockquote&gt;
+</I>&gt;<i> &gt; &lt;blockquote class=&quot;gmail_quote&quot;&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp;&amp;lt;0.676.0&amp;gt;}}&lt;/blockquote&gt;
+</I>&gt;<i> &gt; &lt;blockquote class=&quot;gmail_quote&quot;&gt;** When Server state == {q,&lt;/blockquote&gt;
+</I>&gt;<i> &gt; &lt;blockquote class=&quot;gmail_quote&quot;&gt;
+</I>&gt;<i> &gt; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp;{amqqueue,&lt;/blockquote&gt;
+</I>&gt;<i> &gt; &lt;blockquote class=&quot;gmail_quote&quot;&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> {resource,&amp;lt;&amp;lt;&quot;/&quot;&amp;gt;&amp;gt;,queue,&lt;/blockquote&gt;
+</I>&gt;<i> &gt; &lt;blockquote class=&quot;gmail_quote&quot;&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp;&amp;lt;&amp;lt;&quot;document_queue&quot;&amp;gt;&amp;gt;},&lt;/blockquote&gt;
+</I>&gt;<i> &gt; &lt;blockquote class=&quot;gmail_quote&quot;&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; true,false,none,
+</I>&gt;<i> [],&amp;lt;0.301.0&amp;gt;,[],[],undefined,[]},&lt;/blockquote&gt;
+</I>&gt;<i> &gt; &lt;blockquote class=&quot;gmail_quote&quot;&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp;none,true,rabbit_variable_queue,&lt;/blockquote&gt;
+</I>&gt;<i> &gt; &lt;blockquote class=&quot;gmail_quote&quot;&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;{vqstate,&lt;/blockquote&gt;
+</I>&gt;<i> &gt; &lt;blockquote class=&quot;gmail_quote&quot;&gt;
+</I>&gt;<i> &gt; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; {0,{[],[]}},&lt;/blockquote&gt;
+</I>&gt;<i> &gt; &lt;blockquote class=&quot;gmail_quote&quot;&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; {0,{[],[]}},&lt;/blockquote&gt;
+</I>&gt;<i> &gt; &lt;blockquote class=&quot;gmail_quote&quot;&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> {delta,undefined,0,undefined},&lt;/blockquote&gt;
+</I>&gt;<i> &gt; &lt;blockquote class=&quot;gmail_quote&quot;&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; {0,{[],[]}},&lt;/blockquote&gt;
+</I>&gt;<i> &gt; &lt;blockquote class=&quot;gmail_quote&quot;&gt;
+</I>&gt;<i> &gt; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; {0,{[],[]}},&amp;nbsp;&lt;/blockquote&gt;
+</I>&gt;<i> &gt; &lt;blockquote class=&quot;gmail_quote&quot;&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; ... [ thousands of lines
+</I>&gt;<i> of
+</I>&gt;<i> state ] ...&amp;nbsp;&lt;/blockquote&gt;
+</I>&gt;<i> &gt; &lt;blockquote class=&quot;gmail_quote&quot;&gt;&amp;nbsp;&lt;/blockquote&gt;
+</I>&gt;<i> &gt; &lt;blockquote class=&quot;gmail_quote&quot;&gt;
+</I>&gt;<i> &gt; ** Reason for termination ==&lt;/blockquote&gt;
+</I>&gt;<i> &gt; &lt;blockquote class=&quot;gmail_quote&quot;&gt;** {{case_clause,{empty,{[],[]}}},
+</I>&gt;<i> &lt;/blockquote&gt;
+</I>&gt;<i> &gt; &lt;blockquote class=&quot;gmail_quote&quot;&gt;&amp;nbsp; &amp;nbsp;
+</I>&gt;<i> [{rabbit_amqqueue_process,subtract_acks,3,[]},&lt;/blockquote&gt;
+</I>&gt;<i> &gt; &lt;blockquote class=&quot;gmail_quote&quot;&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> {rabbit_amqqueue_process,subtract_acks,4,[]},&lt;/blockquote&gt;
+</I>&gt;<i> &gt; &lt;blockquote class=&quot;gmail_quote&quot;&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> {rabbit_amqqueue_process,handle_cast,2,[]},&lt;/blockquote&gt;
+</I>&gt;<i> &gt; &lt;blockquote class=&quot;gmail_quote&quot;&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> {gen_server2,handle_msg,2,[]},&lt;/blockquote&gt;
+</I>&gt;<i> &gt; &lt;blockquote class=&quot;gmail_quote&quot;&gt;
+</I>&gt;<i> &gt; &amp;nbsp; &amp;nbsp; &amp;nbsp;{proc_lib,wake_up,3,[{file,&quot;proc_lib.erl&quot;},
+</I>&gt;<i> {line,249}]}]}&lt;/blockquote&gt;
+</I>&gt;<i> &gt; &lt;blockquote class=&quot;gmail_quote&quot;&gt;
+</I>&gt;<i> &gt; &lt;br&gt;
+</I>&gt;<i> &gt; &lt;/blockquote&gt;
+</I>&gt;<i> &gt; &lt;blockquote class=&quot;gmail_quote&quot;&gt;=ERROR REPORT==== 18-May-2013::01:41:51
+</I>&gt;<i> ===&lt;/blockquote&gt;
+</I>&gt;<i> &gt; &lt;blockquote class=&quot;gmail_quote&quot;&gt;connection &amp;lt;0.430.0&amp;gt;, channel 22 -
+</I>&gt;<i> soft error:&lt;/blockquote&gt;
+</I>&gt;<i> &gt; &lt;blockquote class=&quot;gmail_quote&quot;&gt;{amqp_error,not_found,&lt;/blockquote&gt;
+</I>&gt;<i> &gt; &lt;blockquote class=&quot;gmail_quote&quot;&gt;
+</I>&gt;<i> &gt; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &quot;no queue 'document_queue' in
+</I>&gt;<i> vhost '/'&quot;,&lt;/blockquote&gt;
+</I>&gt;<i> &gt; &lt;blockquote class=&quot;gmail_quote&quot;&gt;
+</I>&gt;<i> &gt; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; 'queue.declare'}&lt;/blockquote&gt;
+</I>&gt;<i> &gt; &lt;blockquote class=&quot;gmail_quote&quot;&gt;&lt;br&gt;&lt;/blockquote&gt;
+</I>&gt;<i> &gt; &lt;blockquote class=&quot;gmail_quote&quot;&gt;=ERROR REPORT==== 18-May-2013::01:41:51
+</I>&gt;<i> ===&lt;/blockquote&gt;
+</I>&gt;<i> &gt; &lt;blockquote class=&quot;gmail_quote&quot;&gt;
+</I>&gt;<i> &gt; connection &amp;lt;0.384.0&amp;gt;, channel 12 - soft error:&lt;/blockquote&gt;
+</I>&gt;<i> &gt; &lt;blockquote class=&quot;gmail_quote&quot;&gt;
+</I>&gt;<i> &gt; {amqp_error,not_found,&lt;/blockquote&gt;
+</I>&gt;<i> &gt; &lt;blockquote class=&quot;gmail_quote&quot;&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &quot;no queue 'document_queue' in vhost '/'&quot;,&lt;/blockquote&gt;
+</I>&gt;<i> &gt; &lt;blockquote class=&quot;gmail_quote&quot;&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> 'queue.declare'}&lt;/blockquote&gt;
+</I>&gt;<i> &gt; &lt;blockquote class=&quot;gmail_quote&quot;&gt;
+</I>&gt;<i> &gt; &lt;br&gt;
+</I>&gt;<i> &gt; &lt;/blockquote&gt;
+</I>&gt;<i> &gt; &lt;blockquote class=&quot;gmail_quote&quot;&gt;=ERROR REPORT==== 18-May-2013::01:41:51
+</I>&gt;<i> ===&lt;/blockquote&gt;
+</I>&gt;<i> &gt; &lt;blockquote class=&quot;gmail_quote&quot;&gt;connection &amp;lt;0.384.0&amp;gt;, channel 15 -
+</I>&gt;<i> soft error:&lt;/blockquote&gt;
+</I>&gt;<i> &gt; &lt;blockquote class=&quot;gmail_quote&quot;&gt;{amqp_error,not_found,&lt;/blockquote&gt;
+</I>&gt;<i> &gt; &lt;blockquote class=&quot;gmail_quote&quot;&gt;
+</I>&gt;<i> &gt; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &quot;no queue 'document_queue' in
+</I>&gt;<i> vhost '/'&quot;,&lt;/blockquote&gt;
+</I>&gt;<i> &gt; &lt;blockquote class=&quot;gmail_quote&quot;&gt;
+</I>&gt;<i> &gt; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; 'queue.declare'}&lt;/blockquote&gt;
+</I>&gt;<i> &gt; &lt;blockquote class=&quot;gmail_quote&quot;&gt;&lt;br&gt;&lt;/blockquote&gt;
+</I>&gt;<i> &gt; &lt;blockquote class=&quot;gmail_quote&quot;&gt;=ERROR REPORT==== 18-May-2013::01:41:51
+</I>&gt;<i> ===&lt;/blockquote&gt;
+</I>&gt;<i> &gt; &lt;blockquote class=&quot;gmail_quote&quot;&gt;
+</I>&gt;<i> &gt; connection &amp;lt;0.373.0&amp;gt;, channel 23 - soft error:&lt;/blockquote&gt;
+</I>&gt;<i> &gt; &lt;blockquote class=&quot;gmail_quote&quot;&gt;
+</I>&gt;<i> &gt; {amqp_error,not_found,&lt;/blockquote&gt;
+</I>&gt;<i> &gt; &lt;blockquote class=&quot;gmail_quote&quot;&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &quot;no queue 'document_queue' in vhost '/'&quot;,&lt;/blockquote&gt;
+</I>&gt;<i> &gt; &lt;blockquote class=&quot;gmail_quote&quot;&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> 'queue.declare'}&amp;nbsp;&lt;/blockquote&gt;
+</I>&gt;<i> &gt; &lt;blockquote class=&quot;gmail_quote&quot;&gt;
+</I>&gt;<i> &gt; &amp;nbsp;... [ repeated a bunch of times ] ...&lt;/blockquote&gt;
+</I>&gt;<i> &gt; &lt;div&gt;&lt;br&gt;&lt;/div&gt;
+</I>&gt;<i> &gt; &lt;div&gt;I also see this in my /var/log/syslog&amp;nbsp;with regards to beam.smp:
+</I>&gt;<i> &lt;/div&gt;
+</I>&gt;<i> &gt; &lt;div&gt;&lt;br&gt;&lt;/div&gt;
+</I>&gt;<i> &gt; &lt;blockquote class=&quot;gmail_quote&quot;&gt;
+</I>&gt;<i> &gt; # cat /var/log/syslog&lt;br&gt;May 17 22:46:23 ip-10-123-123-123 kernel:
+</I>&gt;<i> [244800.176041] INFO: task beam.smp:18971 blocked for more than 120
+</I>&gt;<i> seconds.
+</I>&gt;<i> &lt;br&gt;May 17 22:46:23 ip-10-123-123-123 kernel: [244800.176053] &quot;echo 0 &amp;gt;
+</I>&gt;<i> /proc/sys/kernel/hung_task_timeout_secs&quot; disables this message.&lt;br&gt;
+</I>&gt;<i> &gt; May 17 22:46:23 ip-10-123-123-123 kernel: [244800.176060] beam.smp &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; &amp;nbsp;D ffff8801bfd93700 &amp;nbsp; &amp;nbsp; 0 18971 &amp;nbsp;18962
+</I>&gt;<i> 0x00000000&lt;br&gt;May 17 22:46:23 ip-10-123-123-123 kernel: [244800.176065]
+</I>&gt;<i> &amp;nbsp;ffff8801b11cdcb8 0000000000000282 0000000000000000
+</I>&gt;<i> ffffffffffffffe0&lt;br&gt;
+</I>&gt;<i> &gt; May 17 22:46:23 ip-10-123-123-123 kernel: [244800.176070]
+</I>&gt;<i> &amp;nbsp;ffff8801b11cdfd8 ffff8801b11cdfd8 ffff8801b11cdfd8
+</I>&gt;<i> 0000000000013700&lt;br&gt;May 17 22:46:23 ip-10-123-123-123 kernel:
+</I>&gt;<i> [244800.176075] &amp;nbsp;ffff8801b3180000 ffff8801b35244a0 00007f500e2079e0
+</I>&gt;<i> ffff8801b146bb80&lt;br&gt;
+</I>&gt;<i> &gt; May 17 22:46:23 ip-10-123-123-123 kernel: [244800.176079] Call Trace:
+</I>&gt;<i> &lt;br&gt;May 17 22:46:23 ip-10-123-123-123 kernel: [244800.176089] &amp;nbsp;
+</I>&gt;<i> [&amp;lt;ffffffff8165434f&amp;gt;] schedule+0x3f/0x60&lt;br&gt;May 17 22:46:23 ip-10-123-
+</I>&gt;<i> 123-123 kernel: [244800.176094] &amp;nbsp;[&amp;lt;ffffffff8106aef5&amp;gt;]
+</I>&gt;<i> exit_mm+0x85/0x130&lt;br&gt;
+</I>&gt;<i> &gt; May 17 22:46:23 ip-10-123-123-123 kernel: [244800.176097] &amp;nbsp;
+</I>&gt;<i> [&amp;lt;ffffffff8106b10e&amp;gt;] do_exit+0x16e/0x450&lt;br&gt;May 17 22:46:23
+</I>&gt;<i> ip-10-123-
+</I>&gt;<i> 123-123 kernel: [244800.176102] &amp;nbsp;[&amp;lt;ffffffff810797aa&amp;gt;] ?
+</I>&gt;<i> __dequeue_signal+0x6a/0xb0&lt;br&gt;
+</I>&gt;<i> &gt; May 17 22:46:23 ip-10-123-123-123 kernel: [244800.176105] &amp;nbsp;
+</I>&gt;<i> [&amp;lt;ffffffff8106b594&amp;gt;] do_group_exit+0x44/0xa0&lt;br&gt;May 17 22:46:23
+</I>&gt;<i> ip-10-
+</I>&gt;<i> 123-123-123 kernel: [244800.176108] &amp;nbsp;[&amp;lt;ffffffff8107c36c&amp;gt;]
+</I>&gt;<i> get_signal_to_deliver+0x21c/0x420&lt;br&gt;
+</I>&gt;<i> &gt; May 17 22:46:23 ip-10-123-123-123 kernel: [244800.176113] &amp;nbsp;
+</I>&gt;<i> [&amp;lt;ffffffff81014825&amp;gt;] do_signal+0x45/0x130&lt;br&gt;May 17 22:46:23 ip-10-
+</I>&gt;<i> 123-123-123 kernel: [244800.176116] &amp;nbsp;[&amp;lt;ffffffff8105539d&amp;gt;] ?
+</I>&gt;<i> set_next_entity+0xad/0xd0&lt;br&gt;
+</I>&gt;<i> &gt; May 17 22:46:23 ip-10-123-123-123 kernel: [244800.176120] &amp;nbsp;
+</I>&gt;<i> [&amp;lt;ffffffff81014ad5&amp;gt;] do_notify_resume+0x65/0x80&lt;br&gt;May 17 22:46:23
+</I>&gt;<i> ip-
+</I>&gt;<i> 10-123-123-123 kernel: [244800.176124] &amp;nbsp;[&amp;lt;ffffffff8165ea90&amp;gt;]
+</I>&gt;<i> int_signal+0x12/0x17&lt;br&gt;... [ repeated 9 more times with same timestamp ]
+</I>&gt;<i> ...&lt;/blockquote&gt;
+</I>&gt;<i> &gt; &lt;div&gt;&lt;br&gt;&lt;/div&gt;
+</I>&gt;<i> &gt; &lt;div&gt;There are no strange CPU spikes on my EC2 node based on AWS
+</I>&gt;<i> monitoring. The only thing that seems to stand out is that my writes to my
+</I>&gt;<i> EBS volume spike during the crash (~90 write OPs/sec, 4 MiB/sec write
+</I>&gt;<i> bandwidth, ~30ms/op write latency).&lt;/div&gt;
+</I>&gt;<i> &gt; &lt;div&gt;&lt;br&gt;&lt;/div&gt;
+</I>&gt;<i> &gt; &lt;div&gt;My team and I are completely stumped and would appreciate any
+</I>&gt;<i> insight
+</I>&gt;<i> you might have to the crash reports. &amp;nbsp;Is this a problem with writes
+</I>&gt;<i> hanging when going against the EBS volume since EBS volumes are essentially
+</I>&gt;<i> network mounted? &amp;nbsp;Is there a way to configure rabbit to be more
+</I>&gt;<i> tolerant of these delays? &amp;nbsp;&lt;/div&gt;
+</I>&gt;<i> &gt; &lt;div&gt;&lt;br&gt;&lt;/div&gt;
+</I>&gt;<i> &gt; &lt;div&gt;&lt;br&gt;&lt;/div&gt;
+</I>&gt;<i> &gt; &lt;div&gt;For debugging purposes, below is the status output of one of the
+</I>&gt;<i> nodes when it is healthy (so you can see the versions of everything i'm
+</I>&gt;<i> running):&lt;br&gt;
+</I>&gt;<i> &gt; &lt;/div&gt;
+</I>&gt;<i> &gt; &lt;div&gt;&lt;br&gt;&lt;/div&gt;
+</I>&gt;<i> &gt; &lt;blockquote class=&quot;gmail_quote&quot;&gt;
+</I>&gt;<i> &gt; # rabbitmqctl status&lt;br&gt;Status of node 'rabbit &lt;at&gt; ip-10-123-123-123'
+</I>&gt;<i> ...
+</I>&gt;<i> &lt;br&gt;[{pid,28978},&lt;br&gt;&amp;nbsp;{running_applications,&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> [{rabbitmq_management,&quot;RabbitMQ Management Console&quot;,&quot;3.1.0&quot;},&lt;br&gt;&amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp; {rabbitmq_web_dispatch,&quot;RabbitMQ Web
+</I>&gt;<i> Dispatcher&quot;,&quot;3.1.0&quot;},&lt;br&gt;
+</I>&gt;<i> &gt; &amp;nbsp; &amp;nbsp; &amp;nbsp; {webmachine,&quot;webmachine&quot;,&quot;1.9.1-rmq3.1.0-
+</I>&gt;<i> git52e62bc&quot;},&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; {mochiweb,&quot;MochiMedia Web
+</I>&gt;<i> Server&quot;,&quot;2.3.1-rmq3.1.0-gitd541e9a&quot;},&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> {rabbitmq_management_agent,&quot;RabbitMQ Management Agent&quot;,&quot;3.1.0&quot;},&lt;br&gt;
+</I>&gt;<i> &gt; &amp;nbsp; &amp;nbsp; &amp;nbsp; {rabbit,&quot;RabbitMQ&quot;,&quot;3.1.0&quot;},&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> {os_mon,&quot;CPO &amp;nbsp;CXC 138 46&quot;,&quot;2.2.11&quot;},&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> {inets,&quot;INETS &amp;nbsp;CXC 138 49&quot;,&quot;5.9.4&quot;},&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> {mnesia,&quot;MNESIA &amp;nbsp;CXC 138 12&quot;,&quot;4.8&quot;},&lt;br&gt;
+</I>&gt;<i> &gt; &amp;nbsp; &amp;nbsp; &amp;nbsp; {amqp_client,&quot;RabbitMQ AMQP Client&quot;,&quot;3.1.0&quot;},
+</I>&gt;<i> &lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; {xmerl,&quot;XML parser&quot;,&quot;1.3.3&quot;},&lt;br&gt;&amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; {sasl,&quot;SASL &amp;nbsp;CXC 138 11&quot;,&quot;2.3.1&quot;},&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> {stdlib,&quot;ERTS &amp;nbsp;CXC 138 10&quot;,&quot;1.19.1&quot;},&lt;br&gt;
+</I>&gt;<i> &gt; &amp;nbsp; &amp;nbsp; &amp;nbsp; {kernel,&quot;ERTS &amp;nbsp;CXC 138 10&quot;,&quot;2.16.1&quot;}]},
+</I>&gt;<i> &lt;br&gt;&amp;nbsp;{os,{unix,linux}},&lt;br&gt;&amp;nbsp;{erlang_version,&lt;br&gt;&amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp;&quot;Erlang R16B (erts-5.10.1) [source-05f1189] [64-bit] [smp:8:8]
+</I>&gt;<i> [async-
+</I>&gt;<i> threads:30] [hipe] [kernel-poll:true]\n&quot;},&lt;br&gt;
+</I>&gt;<i> &gt; &amp;nbsp;{memory,&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp;[{total,60179048},&lt;br&gt;&amp;nbsp; &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; {connection_procs,5274808},&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; {queue_procs,&lt;a
+</I>&gt;<i> href=&quot;tel:13107264&quot; value=&quot;+13107264&quot; target=&quot;_blank&quot;&gt;13107264&lt;/a&gt;},
+</I>&gt;<i> &lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; {plugins,354272},&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> {other_proc,9741830},&lt;br&gt;
+</I>&gt;<i> &gt; &amp;nbsp; &amp;nbsp; &amp;nbsp; {mnesia,150456},&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> {mgmt_db,12248},&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; {msg_index,34768},&lt;br&gt;&amp;nbsp;
+</I>&gt;<i> &amp;nbsp;
+</I>&gt;<i> &amp;nbsp; {other_ets,1148248},&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; {binary,4905584},
+</I>&gt;<i> &lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; {code,19565863},&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp;
+</I>&gt;<i> {atom,703377},&lt;br&gt;&amp;nbsp; &amp;nbsp; &amp;nbsp; {other_system,5180330}]},&lt;br&gt;
+</I>&gt;<i> &gt; &amp;nbsp;{vm_memory_high_watermark,0.8},&lt;br&gt;&amp;nbsp;
+</I>&gt;<i> {vm_memory_limit,5828434329},&lt;br&gt;&amp;nbsp;{disk_free_limit,1000000000},
+</I>&gt;<i> &lt;br&gt;&amp;nbsp;{disk_free,3953344512},&lt;br&gt;&amp;nbsp;{file_descriptors,&lt;br&gt;&amp;nbsp;
+</I>&gt;<i> &amp;nbsp; &amp;nbsp;[{total_limit,924},{total_used,6},{sockets_limit,829},
+</I>&gt;<i> {sockets_used,4}]},&lt;br&gt;
+</I>&gt;<i> &gt; &amp;nbsp;{processes,[{limit,1048576},{used,348}]},&lt;br&gt;&amp;nbsp;{run_queue,0},
+</I>&gt;<i> &lt;br&gt;&amp;nbsp;{uptime,3796}]&lt;br&gt;...done.&lt;/blockquote&gt;
+</I>&gt;<i> &gt; &lt;div&gt;&lt;br&gt;&lt;/div&gt;
+</I>&gt;<i> &gt; &lt;div&gt;Note that I am using Erlang v16 from the Erlang Solutions repo (esl-
+</I>&gt;<i> erlang package). &amp;nbsp;I originally was using Erlang v14 from Ubuntu repos
+</I>&gt;<i> (erlang-base), but decided to upgrade hoping it would resolve the issue
+</I>&gt;<i> (which it did not). &amp;nbsp;I have also tried running RabbitMQ 3.0.4 without
+</I>&gt;<i> success. &amp;nbsp;This issue seems to affect both versions.&lt;/div&gt;
+</I>&gt;<i> &gt; &lt;div&gt;&lt;br&gt;&lt;/div&gt;
+</I>&gt;<i> &gt; &lt;div&gt;Thanks,&lt;/div&gt;
+</I>&gt;<i> &gt; &lt;div&gt;Karl&lt;/div&gt;
+</I>&gt;<i> &gt; &lt;br&gt;_______________________________________________&lt;br&gt;
+</I>&gt;<i> &gt; rabbitmq-discuss mailing list&lt;br&gt;&lt;a href=&quot;mailto:rabbitmq-
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">discuss at ...</A>&quot;&gt;rabbitmq-discuss &lt;at&gt; lists.rabbitmq.com&lt;/a&gt;&lt;br&gt;&lt;a
+</I>&gt;<i> href=&quot;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>&gt;<i> &quot;
+</I>&gt;<i> target=&quot;_blank&quot;&gt;<A HREF="https://lists.rabbitmq.com/cgi-">https://lists.rabbitmq.com/cgi-</A>
+</I>&gt;<i> bin/mailman/listinfo/rabbitmq-discuss&lt;/a&gt;&lt;br&gt;&lt;br&gt;
+</I>&gt;<i> &gt; &lt;/blockquote&gt;
+</I>&gt;<i> &gt; &lt;/div&gt;
+</I>&gt;<i> &gt; &lt;br&gt;
+</I>&gt;<i> &gt; &lt;/div&gt;
+</I>&gt;<i> &gt; &lt;/div&gt;
+</I>&gt;<i> &gt;
+</I>&gt;<i>
+</I>&gt;<i> Hi Brett,
+</I>&gt;<i>
+</I>&gt;<i> That would explain why all hell breaks lose when the acks are being
+</I>&gt;<i> subtracted, but I still don't understand what is causing the queue to
+</I>&gt;<i> disappear in the first place.  The only administrative actions performed on
+</I>&gt;<i> the queues in all our code base are declares or passive declares (to check
+</I>&gt;<i> for queue existence).  We are just using Spring AMQP's
+</I>&gt;<i> SimpleMessageListenerContainer (which, btw, the code for that class is
+</I>&gt;<i> anything but &quot;Simple&quot;) for consumers, and I've scanned through that code
+</I>&gt;<i> and
+</I>&gt;<i> didn't find any place where it is dropping or destroying a queue or
+</I>&gt;<i> binding.
+</I>&gt;<i>
+</I>&gt;<i> Is there are known bug where rabbit will cause a queue to disappear?  All
+</I>&gt;<i> my
+</I>&gt;<i> queues are durable and my messages are NOT persistent (we need high
+</I>&gt;<i> throughput and loosing a few messages is not a big deal).  I made the queue
+</I>&gt;<i> durable after we first started noticing the crashes so the queue would come
+</I>&gt;<i> back up on node restart.  But durability doesn't seem to protect it from
+</I>&gt;<i> disappearing.
+</I>&gt;<i>
+</I>&gt;<i> Any thoughts on this would be greatly, greatly appreciated.
+</I>&gt;<i>
+</I>&gt;<i> -Karl
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20130520/71043d8f/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20130520/71043d8f/attachment.htm</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="027300.html">[rabbitmq-discuss] Strange subtract_acks crash in RabbitMQ 3.1.0-1 (case_clause empty) on EC2
+</A></li>
+	<LI>Next message: <A HREF="027360.html">[rabbitmq-discuss] Strange subtract_acks crash in RabbitMQ 3.1.0-1 (case_clause empty) on EC2
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#27339">[ date ]</a>
+              <a href="thread.html#27339">[ thread ]</a>
+              <a href="subject.html#27339">[ subject ]</a>
+              <a href="author.html#27339">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

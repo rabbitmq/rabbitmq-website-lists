@@ -1,0 +1,145 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] =?utf-8?Q?Help=EF=BC=8Cquestion_?=about =?utf-8?Q?rabbitmq+Haproxy=EF=BC=8Cclient_?=java
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20%3D%3Futf-8%3FQ%3FHelp%3DEF%3DBC%3D8Cquestion_%3F%3Dabout%0A%20%3D%3Futf-8%3FQ%3Frabbitmq%2BHaproxy%3DEF%3DBC%3D8Cclient_%3F%3Djava&In-Reply-To=%3CetPan.53ce38a2.643c9869.60fb%40mercurio.local%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="037228.html">
+   <LINK REL="Next"  HREF="037237.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] =?utf-8?Q?Help=EF=BC=8Cquestion_?=about =?utf-8?Q?rabbitmq+Haproxy=EF=BC=8Cclient_?=java</H1>
+    <B>Michael Klishin</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20%3D%3Futf-8%3FQ%3FHelp%3DEF%3DBC%3D8Cquestion_%3F%3Dabout%0A%20%3D%3Futf-8%3FQ%3Frabbitmq%2BHaproxy%3DEF%3DBC%3D8Cclient_%3F%3Djava&In-Reply-To=%3CetPan.53ce38a2.643c9869.60fb%40mercurio.local%3E"
+       TITLE="[rabbitmq-discuss] =?utf-8?Q?Help=EF=BC=8Cquestion_?=about =?utf-8?Q?rabbitmq+Haproxy=EF=BC=8Cclient_?=java">mklishin at gopivotal.com
+       </A><BR>
+    <I>Tue Jul 22 11:10:14 BST 2014</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="037228.html">[rabbitmq-discuss] Help&#65292;question about rabbitmq+Haproxy&#65292;client java
+</A></li>
+        <LI>Next message: <A HREF="037237.html">[rabbitmq-discuss] RabbitMQ SSL issue
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#37229">[ date ]</a>
+              <a href="thread.html#37229">[ thread ]</a>
+              <a href="subject.html#37229">[ subject ]</a>
+              <a href="author.html#37229">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>
+
+On 22 July 2014 at 12:20:46, Aaron (<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">584911644 at qq.com</A>) wrote:
+&gt;<i> &gt; so that can keep all messages complete no matter when the related  
+</I>&gt;<i> server or app is down.Such like&#65292;another node will work still  
+</I>&gt;<i> and keep the produce&#12289;customer healthy when a node is down.
+</I>&gt;<i> So&#65292;i have considered a solution to protect from losting messages,it&#8216;s  
+</I>&gt;<i> rabbitmq&#65288;mirrored queue&#65289;+Haproxy.
+</I>
+There are *many* things that may fail and HAproxy won't protect you from
+many of them. See
+
+<A HREF="http://www.rabbitmq.com/ha.html">http://www.rabbitmq.com/ha.html</A>
+<A HREF="http://www.rabbitmq.com/reliability.html">http://www.rabbitmq.com/reliability.html</A>
+<A HREF="http://www.rabbitmq.com/partitions.html">http://www.rabbitmq.com/partitions.html</A>
+<A HREF="http://www.rabbitmq.com/nettick.html">http://www.rabbitmq.com/nettick.html</A>
+
+You have to use publisher confirms:
+
+<A HREF="http://www.rabbitmq.com/confirms.html">http://www.rabbitmq.com/confirms.html</A>
+
+and be ready to reconnect and re-try publishes. In case the client
+itself may crash between re-publishes, you may also need to keep a write-ahead log
+(WAL) for messages. Yes, 100% guaranteed delivery is much harder than just adding
+HAproxy to the mix.
+
+&gt;<i> But&#65292;java code is not enough fortunately&#65292;LOL... Testing for  
+</I>&gt;<i> several times&#65292;and I get a result&#65292;that is java code doesn&#8216;t work  
+</I>&gt;<i> at all in HA,but only load balancing....&#65292;during testing&#65292;when  
+</I>&gt;<i> I down a random node&#65292;producer will throw out a related session  
+</I>&gt;<i> error.
+</I>&gt;<i> Having troubled me for almost one week this problem&#65292;and looking  
+</I>&gt;<i> sincerely forward to ur reply.
+</I>
+Sorry, can you explain what &quot;a related session error&quot; is? If you lose a node,
+HAproxy will detect that a backend is down after a moment of time. RabbitMQ
+connections have a certain amount of state (e.g. active consumers and delivery tag
+counters), so you need to recover them.
+
+This is much easier for consumers, though. In recent RabbitMQ versions, consumers
+will be re-subscribed if the queue master node fails. In other words, if you are
+not connected to the failed node, you won't have to basic.consume again, RabbitMQ
+will do it for you.
+
+Starting with RabbitMQ Java client 3.3, there's an automatic connection/channel/topology recovery
+feature:
+
+<A HREF="http://www.rabbitmq.com/api-guide.html">http://www.rabbitmq.com/api-guide.html</A>
+
+which is usually sufficient for recovering consumers. However, the client itself does not
+perform internal queueing of outgoing messages, so in the period of time that the connection
+is down, you need to accumulate messages in a collection/queue in memory
+and re-send them with confirmation checking.&#160;
+--  
+MK  
+
+Staff Software Engineer, Pivotal/RabbitMQ
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="037228.html">[rabbitmq-discuss] Help&#65292;question about rabbitmq+Haproxy&#65292;client java
+</A></li>
+	<LI>Next message: <A HREF="037237.html">[rabbitmq-discuss] RabbitMQ SSL issue
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#37229">[ date ]</a>
+              <a href="thread.html#37229">[ thread ]</a>
+              <a href="subject.html#37229">[ subject ]</a>
+              <a href="author.html#37229">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

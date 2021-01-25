@@ -1,0 +1,227 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] TTL
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20TTL&In-Reply-To=%3CCAAzMEC%3DZ9irPK6C9emqRz%2BMZjT3_EJKzHcK_CcjQdFGdWTBWHg%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="026356.html">
+   <LINK REL="Next"  HREF="026380.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] TTL</H1>
+    <B>Derek Greer</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20TTL&In-Reply-To=%3CCAAzMEC%3DZ9irPK6C9emqRz%2BMZjT3_EJKzHcK_CcjQdFGdWTBWHg%40mail.gmail.com%3E"
+       TITLE="[rabbitmq-discuss] TTL">dbgreer at gmail.com
+       </A><BR>
+    <I>Thu Apr  4 21:35:16 BST 2013</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="026356.html">[rabbitmq-discuss] TTL
+</A></li>
+        <LI>Next message: <A HREF="026380.html">[rabbitmq-discuss] TTL
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#26357">[ date ]</a>
+              <a href="thread.html#26357">[ thread ]</a>
+              <a href="subject.html#26357">[ subject ]</a>
+              <a href="author.html#26357">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>A note of clarification, I was using values of 1, 3, 5, 10 milliseconds,
+not seconds, to give the server enough time to expire a 1 millisecond TTL
+on a message.  I discovered 10 milliseconds still wasn't always successful.
+ Regardless, I would expect to only have to sleep for 1 millisecond to give
+the sever enough time to remove a 1 millisecond TTL message.  Here's my
+example using the .Net API in which I'm seeing about a 3% failure rate:
+
+
+using System;
+using System.Text;
+using System.Threading;
+using RabbitMQ.Client;
+using RabbitMQ.Client.Framing.v0_9_1;
+
+namespace RabbitTTLTest
+{
+class Program
+{
+static void Main(string[] args)
+{
+var messages = 0;
+var iterations = 1000;
+
+for (int i = 0; i &lt; iterations; i++)
+messages += SendAndReceive();
+
+Console.WriteLine(&quot;Received {0} messages&quot;, messages);
+Console.WriteLine(&quot;API works {0}% of the time.&quot;, ((iterations - messages) /
+(decimal)iterations) * 100);
+Console.WriteLine(&quot;Press any key to exit&quot;);
+Console.ReadKey();
+}
+
+static int SendAndReceive()
+{
+ProduceMessage();
+Thread.Sleep(10);
+return ConsumeMessage();
+}
+
+static int ConsumeMessage()
+{
+int messages = 0;
+var connectionFactory = new ConnectionFactory();
+IConnection connection = connectionFactory.CreateConnection();
+IModel channel = connection.CreateModel();
+channel.QueueDeclare(&quot;sample-queue&quot;, false, false, false, null);
+BasicGetResult result = channel.BasicGet(&quot;sample-queue&quot;, true);
+if (result != null)
+{
+messages++;
+string message = Encoding.UTF8.GetString(result.Body);
+Console.WriteLine(message);
+}
+channel.Close();
+connection.Close();
+return messages;
+}
+
+static void ProduceMessage()
+{
+var connectionFactory = new ConnectionFactory();
+IConnection connection = connectionFactory.CreateConnection();
+IModel channel = connection.CreateModel();
+channel.QueueDeclare(&quot;sample-queue&quot;, false, false, false, null);
+byte[] message = Encoding.UTF8.GetBytes(&quot;Hello, World!&quot;);
+var properties = new BasicProperties();
+properties.Expiration = &quot;1&quot;;
+channel.BasicPublish(string.Empty, &quot;sample-queue&quot;, properties, message);
+channel.Close();
+connection.Close();
+}
+}
+}
+
+
+On Thu, Apr 4, 2013 at 3:10 PM, Derek Greer &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">dbgreer at gmail.com</A>&gt; wrote:
+
+&gt;<i> Perhaps an important note, I'm using the pull API which I'm remembering
+</I>&gt;<i> doesn't create a &quot;consumer&quot;.
+</I>&gt;<i>
+</I>&gt;<i> I'll pull together a small example and post it here.
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> On Thu, Apr 4, 2013 at 2:48 PM, Michael Klishin &lt;
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">michael.s.klishin at gmail.com</A>&gt; wrote:
+</I>&gt;<i>
+</I>&gt;&gt;<i> 2013/4/4 Derek Greer &lt;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">dbgreer at gmail.com</A>&gt;
+</I>&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i> No, I'm seeing my consumer retrieve a message which should have been
+</I>&gt;&gt;&gt;<i> expired.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Derek,
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Can you post a code example that reproduces the problem?
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Thanks.
+</I>&gt;&gt;<i> --
+</I>&gt;&gt;<i> MK
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> <A HREF="http://github.com/michaelklishin">http://github.com/michaelklishin</A>
+</I>&gt;&gt;<i> <A HREF="http://twitter.com/michaelklishin">http://twitter.com/michaelklishin</A>
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> _______________________________________________
+</I>&gt;&gt;<i> rabbitmq-discuss mailing list
+</I>&gt;&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbitmq-discuss at lists.rabbitmq.com</A>
+</I>&gt;&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss</A>
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> --
+</I>&gt;<i> ___________________________________________
+</I>&gt;<i> Derek Greer
+</I>&gt;<i> <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">dbgreer at gmail.com</A>     | @derekgreer &lt;<A HREF="http://twitter.com/derekgreer">http://twitter.com/derekgreer</A>&gt;
+</I>&gt;<i> lostechies.com &lt;<A HREF="http://derekgreer.lostechies.com/">http://derekgreer.lostechies.com/</A>&gt; | freshbrewedcode.com&lt;<A HREF="http://derekgreer.freshbrewedcode.com">http://derekgreer.freshbrewedcode.com</A>&gt;
+</I>&gt;<i>  | aspiringcraftsman.com
+</I>&gt;<i> ___________________________________________
+</I>&gt;<i>
+</I>&gt;<i>
+</I>
+
+-- 
+___________________________________________
+Derek Greer
+<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">dbgreer at gmail.com</A>     | @derekgreer &lt;<A HREF="http://twitter.com/derekgreer">http://twitter.com/derekgreer</A>&gt;
+lostechies.com &lt;<A HREF="http://derekgreer.lostechies.com/">http://derekgreer.lostechies.com/</A>&gt; |
+freshbrewedcode.com&lt;<A HREF="http://derekgreer.freshbrewedcode.com">http://derekgreer.freshbrewedcode.com</A>&gt;
+ | aspiringcraftsman.com
+___________________________________________
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20130404/b64355c5/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20130404/b64355c5/attachment.htm</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="026356.html">[rabbitmq-discuss] TTL
+</A></li>
+	<LI>Next message: <A HREF="026380.html">[rabbitmq-discuss] TTL
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#26357">[ date ]</a>
+              <a href="thread.html#26357">[ thread ]</a>
+              <a href="subject.html#26357">[ subject ]</a>
+              <a href="author.html#26357">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,150 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Usefulness of Channel.Flow with RabbitMQ 2.x.x
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Usefulness%20of%20Channel.Flow%20with%20RabbitMQ%0A%202.x.x&In-Reply-To=%3C20101109172358.GH22102%40rabbitmq.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="009869.html">
+   <LINK REL="Next"  HREF="009872.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Usefulness of Channel.Flow with RabbitMQ 2.x.x</H1>
+    <B>Matthew Sackman</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Usefulness%20of%20Channel.Flow%20with%20RabbitMQ%0A%202.x.x&In-Reply-To=%3C20101109172358.GH22102%40rabbitmq.com%3E"
+       TITLE="[rabbitmq-discuss] Usefulness of Channel.Flow with RabbitMQ 2.x.x">matthew at rabbitmq.com
+       </A><BR>
+    <I>Tue Nov  9 17:23:59 GMT 2010</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="009869.html">[rabbitmq-discuss] Usefulness of Channel.Flow with RabbitMQ 2.x.x
+</A></li>
+        <LI>Next message: <A HREF="009872.html">[rabbitmq-discuss] Usefulness of Channel.Flow with RabbitMQ	2.x.x
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#9870">[ date ]</a>
+              <a href="thread.html#9870">[ thread ]</a>
+              <a href="subject.html#9870">[ subject ]</a>
+              <a href="author.html#9870">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>On Tue, Nov 09, 2010 at 08:43:27AM -0800, A. MacLeod wrote:
+&gt;<i> Am I correct in concluding that a RabbitMQ 2.x.x broker will never
+</I>&gt;<i> generate a channel.flow message, ever?
+</I>
+Yes, you are.
+
+&gt;<i>  I grepped the Erlang source
+</I>&gt;<i> and saw that the broker responds to incoming channel.flow messages
+</I>&gt;<i> appropriately.  There is a comment in the memory management code that
+</I>&gt;<i> mentions that a memory alarm should cause channel.flow, but I did not
+</I>&gt;<i> see anything in actual code to back that up.
+</I>
+Superb - the comment is out of date. I have fixed that.
+
+&gt;<i> A post from Marek M. in
+</I>&gt;<i> <A HREF="http://groups.google.com/group/rabbitmq-discuss/browse_thread/thread/2d26d2d740c216be/a3ff743a389bb360">http://groups.google.com/group/rabbitmq-discuss/browse_thread/thread/2d26d2d740c216be/a3ff743a389bb360</A>
+</I>&gt;<i> indicates that channel.flow behavior has changed between 1.8.1 and
+</I>&gt;<i> 2.0.0.  From what I understand, the broker now effects flow control by
+</I>&gt;<i> just not reading bytes from the socket instead of issuing channel.flow
+</I>&gt;<i> messages.  This is consistent with a test I ran, using the 2.0.0 Java
+</I>&gt;<i> client library, where I have a producer thread continuously shove 8kb
+</I>&gt;<i> messages into a direct exchange, and have a slow-poke consumer using
+</I>&gt;<i> basic.consume to receive acknowledgement-required messages very
+</I>&gt;<i> slowly.  Once the memory fills up, the producer visibly slows down,
+</I>&gt;<i> but FlowListener never has handleFlow called.
+</I>
+Indeed that is correct.
+
+&gt;<i> I have also tried some experiments where I use something like
+</I>&gt;<i> consumerChannel.flow(false) to stop flow on the consumer's channel.
+</I>&gt;<i> However, when I try to reopen the flow by doing
+</I>&gt;<i> consumerChannel.flow(true), my consumer instance (of a class derived
+</I>&gt;<i> from DefaultConsumer) never receives any more messages.  Do I need to
+</I>&gt;<i> re-issue consumerChannel.basicConsume(...) after I re-enable flow from
+</I>&gt;<i> the consumer side?
+</I>
+No, you shouldn't do. The Java client has a test for channel.flow in
+com.rabbitmq.client.test.functional.QosTests. If you can't make it work
+please let us know - it should all &quot;just work&quot;.
+
+FWIW, the idea of the broker sending channel.flow to the client is a
+good one - it's sensible for the broker to be able to ignore just
+publishes amongst other methods on each given channel.
+
+Unfortunately, channel.flow is synchronous, so the broker has to wait
+for the client to respond (and send back the flow_ok) before it can
+start getting upperty should the producer continue to send messages. The
+problem here then is what timeout do you apply before you just start
+ignoring the producer anyway? If the client is only doing publishes
+anyway, you have absolutely no idea what the round trip time is.
+Furthermore, as we discovered when we tried to implement it, there's the
+possibility that the client _did_ respond and issue the flow_ok, but the
+broker was so overloaded it didn't notice it until after the timeout.
+Thus the client gets disconnected even when it did all the right things.
+
+Consequently, relying on TCP backpressure is pretty much the only
+sensible thing that can be done.
+
+Matthew
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="009869.html">[rabbitmq-discuss] Usefulness of Channel.Flow with RabbitMQ 2.x.x
+</A></li>
+	<LI>Next message: <A HREF="009872.html">[rabbitmq-discuss] Usefulness of Channel.Flow with RabbitMQ	2.x.x
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#9870">[ date ]</a>
+              <a href="thread.html#9870">[ thread ]</a>
+              <a href="subject.html#9870">[ subject ]</a>
+              <a href="author.html#9870">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,141 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Colocation Ignored,	Cluster Resources Moved and Failing
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Colocation%20Ignored%2C%0A%09Cluster%20Resources%20Moved%20and%20Failing&In-Reply-To=%3CCACExCv2xF%3DEO2madsC1KxcHVzhW2ND1Ut%3DFza_8JML-TxnK8HA%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="015005.html">
+   <LINK REL="Next"  HREF="015006.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Colocation Ignored,	Cluster Resources Moved and Failing</H1>
+    <B>Cheyenne T. Greatorex</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Colocation%20Ignored%2C%0A%09Cluster%20Resources%20Moved%20and%20Failing&In-Reply-To=%3CCACExCv2xF%3DEO2madsC1KxcHVzhW2ND1Ut%3DFza_8JML-TxnK8HA%40mail.gmail.com%3E"
+       TITLE="[rabbitmq-discuss] Colocation Ignored,	Cluster Resources Moved and Failing">ctg at magrathea.com
+       </A><BR>
+    <I>Fri Sep  9 18:13:11 BST 2011</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="015005.html">[rabbitmq-discuss] Mirror queue recovery questions
+</A></li>
+        <LI>Next message: <A HREF="015006.html">[rabbitmq-discuss] Colocation Ignored, Cluster Resources Moved and Failing
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#15004">[ date ]</a>
+              <a href="thread.html#15004">[ thread ]</a>
+              <a href="subject.html#15004">[ subject ]</a>
+              <a href="author.html#15004">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>I am trying to setup a cluster of machines to provide an HA RabbitMQ solution.
+
+I have been following the instructions on this page...
+
+<A HREF="http://www.rabbitmq.com/pacemaker.html">http://www.rabbitmq.com/pacemaker.html</A>
+
+...to no avail.
+
+As of this writing, I have narrowed down the problems I'm having.
+Either my cluster is not configured correctly, or it is ignoring the
+colocation directives.  There may be other problems, such as I don't
+understand how to setup colocation and the cluster in general.
+
+Symptoms...
+
+I have corosync/pacemaker cluster running on one node.  When I start
+the second node in the cluster, the cluster attempts to start the
+resource 'bunny1' on the second node.  This, despite the colocation
+directives.  When the startup on the second node is attempted, it
+fails miserably because of missing dependent resources ('bunny1_fs'
+and 'bunny1_ip').  As such, not only is the colocation directive being
+ignored, so is the order directive which should tell the cluster the
+order in which to start things.  When this failure occurs, the only
+recourse I've found for getting the cluster back into working order is
+to hard kill -9 corosync on the second node.
+
+I'm unclear what information will be useful in fixing this, but I
+assume the cluster config is required...
+
+node rabbitmq3.colo.bluestatedigital.com
+node rabbitmq4.colo.bluestatedigital.com
+primitive bunny1 ocf:rabbitmq:rabbitmq-server \
+       params mnesia_base=&quot;/mnt/bunny1/mnesia&quot; ip=&quot;10.0.210.35&quot;
+nodename=&quot;<A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at riak1</A>&quot; \
+       meta target-role=&quot;Started&quot;
+primitive bunny1_drbd ocf:linbit:drbd \
+       params drbd_resource=&quot;r0&quot; \
+       op monitor interval=&quot;10s&quot; role=&quot;Master&quot; \
+       op monitor interval=&quot;30s&quot; role=&quot;Slave&quot; \
+       op start interval=&quot;0&quot; timeout=&quot;240s&quot; \
+       op stop interval=&quot;0&quot; timeout=&quot;100s&quot;
+primitive bunny1_fs ocf:heartbeat:Filesystem \
+       params device=&quot;/dev/drbd0&quot; directory=&quot;/mnt/bunny1&quot; fstype=&quot;ext3&quot; \
+       op start interval=&quot;0&quot; timeout=&quot;60s&quot; \
+       op stop interval=&quot;0&quot; timeout=&quot;60s&quot; \
+       meta target-role=&quot;Started&quot;
+primitive bunny1_ip ocf:heartbeat:IPaddr2 \
+       params ip=&quot;10.0.210.35&quot; cidr_netmask=&quot;16&quot;
+ms bunny1_drbd_ms bunny1_drbd \
+       meta master-max=&quot;1&quot; master-node-max=&quot;1&quot; clone-max=&quot;2&quot;
+clone-node-max=&quot;1&quot; notify=&quot;true&quot; target-role=&quot;Master&quot;
+colocation bunny1_colo1 inf: bunny1 bunny1_ip
+colocation bunny1_colo2 inf: bunny1 bunny1_fs
+colocation bunny1_fs_colo inf: bunny1_fs bunny1_drbd_ms:Master
+order bunny1_fs_order inf: bunny1_drbd_ms:promote bunny1_fs:start
+order bunny1_order inf: bunny1_fs bunny1_ip bunny1
+property $id=&quot;cib-bootstrap-options&quot; \
+       dc-version=&quot;1.0.11-1554a83db0d3c3e546cfd3aaff6af1184f79ee87&quot; \
+       cluster-infrastructure=&quot;openais&quot; \
+       expected-quorum-votes=&quot;2&quot; \
+       stonith-enabled=&quot;false&quot; \
+       no-quorum-policy=&quot;ignore&quot;
+rsc_defaults $id=&quot;rsc-options&quot; \
+       resource-stickiness=&quot;0&quot;
+
+I have tried several variations of the colocation commands, none have
+worked.  I have tried to find the answer via Google and in the many
+docs, wiki pages, and forums, again, all to no avail.  I've tried
+looking through the log files for the cluster, but they contain so
+much info that I'm not sure if I can't find a relevant tidbit or
+whether it just doesn't exist.
+
+Any help will be very much appreciated.
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="015005.html">[rabbitmq-discuss] Mirror queue recovery questions
+</A></li>
+	<LI>Next message: <A HREF="015006.html">[rabbitmq-discuss] Colocation Ignored, Cluster Resources Moved and Failing
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#15004">[ date ]</a>
+              <a href="thread.html#15004">[ thread ]</a>
+              <a href="subject.html#15004">[ subject ]</a>
+              <a href="author.html#15004">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

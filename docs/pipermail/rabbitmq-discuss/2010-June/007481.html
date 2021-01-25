@@ -1,0 +1,123 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] Ordering of messages after txRollback()
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Ordering%20of%20messages%20after%20txRollback%28%29&In-Reply-To=%3C20100606182542.GD27119%40wellquite.org%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="007496.html">
+   <LINK REL="Next"  HREF="007485.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] Ordering of messages after txRollback()</H1>
+    <B>Matthew Sackman</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20Ordering%20of%20messages%20after%20txRollback%28%29&In-Reply-To=%3C20100606182542.GD27119%40wellquite.org%3E"
+       TITLE="[rabbitmq-discuss] Ordering of messages after txRollback()">matthew at rabbitmq.com
+       </A><BR>
+    <I>Sun Jun  6 19:25:42 BST 2010</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="007496.html">[rabbitmq-discuss] Ordering of messages after txRollback()
+</A></li>
+        <LI>Next message: <A HREF="007485.html">[rabbitmq-discuss] FINAL: June 9th - Pubsub Meetup in London
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#7481">[ date ]</a>
+              <a href="thread.html#7481">[ thread ]</a>
+              <a href="subject.html#7481">[ subject ]</a>
+              <a href="author.html#7481">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>On Sun, Jun 06, 2010 at 11:05:49AM -0700, Oleg Zhurakousky wrote:
+&gt;<i> Let me get this straight. TX are only for publishers, not consumers,
+</I>
+Not necessarily. A consumer, within a channel, can make the ack to one
+message and the publish of another message atomic by using a
+transaction. That's a pretty common use case for clients which do
+transformations of messages.
+
+&gt;<i> thus the only way to implement TX behavior on the consumer side is by not sending ACK. Is that correct?
+</I>
+The server remembers messages until they have been acked. Whilst the
+channel to which a message was delivered stays up, the server waits for
+the client to ack the message and will not deliver the message to
+another client in the meantime (in the absence of
+basic.recover{requeue=true}). When the channel closes, or the connection
+dies, or the client specifically requeues requeuing of messages, the
+unacknowledged messages get reinserted into the queue. You can sort of
+think of that as a rollback.
+
+&gt;<i> Since the spec is &quot;completely silent&quot; on the 'ordering',
+</I>
+You're always welcome to read the spec btw, it does contain many
+answers...
+
+&gt;<i> does that mean that when I retrieve messages initially and they come in order it is just a coincidence?
+</I>&gt;<i> I was under the impression that Queue semantics imply FIFO ordering, regardless of which spec implements such Queue. Am I missing something?
+</I>
+The spec specifies ordering with messages from one channel of a producer
+going to one channel of a consumer. You're guaranteed FIFO semantics
+there. But when not acking messages, requesting requeues, dealing with
+multiple producers, consumers, transactions and rollbacks in the middle,
+most bets are off. Rabbit does a best effort. Messages from the same
+producer will hit the queue in order, when initially published.
+
+But let's say you have 2 consumers off the same queue, and they're round
+robining. The stream of messages into the queue is &#945; &#946; &#947; &#948; &#949; &#950;. The first
+consumer will get &#945; &#947; &#949;, and the second &#946; &#948; &#950;. The queue is now empty.
+The first consumer now dies, so even if we &quot;maintained order&quot;, the queue
+would now look like &#945; &#947; &#949;. Now the second consumer dies, and the queue
+now looks like &#945; &#947; &#949; &#946; &#948; &#950;. So we now have messages in the queue in a
+different order from being published, but we could claim we've
+&quot;maintained order&quot;. What are you going to do - reshuffle them to get
+back to &#945; &#946; &#947; &#948; &#949; &#950;? What happens if another consumer's already appeared
+and consumed (and acked) &#945; and &#947; - what are you going to do to &#946;? -
+silently drop it? Thus in the event of any requeue operations, whether
+explicit or implicit, all bets are off on subsequent ordering of
+requeued messages, because even if we tried as hard as possible to
+maintain ordering, it would still be unavoidably observably wrong, in
+comparison to the published ordering.
+
+Matthew
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="007496.html">[rabbitmq-discuss] Ordering of messages after txRollback()
+</A></li>
+	<LI>Next message: <A HREF="007485.html">[rabbitmq-discuss] FINAL: June 9th - Pubsub Meetup in London
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#7481">[ date ]</a>
+              <a href="thread.html#7481">[ thread ]</a>
+              <a href="subject.html#7481">[ subject ]</a>
+              <a href="author.html#7481">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,144 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 3.2//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [rabbitmq-discuss] RabbitMQ's Mirroring results in weird	behavior when slave goes down
+   </TITLE>
+   <LINK REL="Index" HREF="index.html" >
+   <LINK REL="made" HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20RabbitMQ%27s%20Mirroring%20results%20in%20weird%0A%09behavior%20when%20slave%20goes%20down&In-Reply-To=%3CA888D5A8-3C9F-49D4-82D2-130A4BB0BA66%40rabbitmq.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="028062.html">
+   <LINK REL="Next"  HREF="028101.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[rabbitmq-discuss] RabbitMQ's Mirroring results in weird	behavior when slave goes down</H1>
+    <B>Tim Watson</B> 
+    <A HREF="mailto:rabbitmq-discuss%40lists.rabbitmq.com?Subject=Re%3A%20%5Brabbitmq-discuss%5D%20RabbitMQ%27s%20Mirroring%20results%20in%20weird%0A%09behavior%20when%20slave%20goes%20down&In-Reply-To=%3CA888D5A8-3C9F-49D4-82D2-130A4BB0BA66%40rabbitmq.com%3E"
+       TITLE="[rabbitmq-discuss] RabbitMQ's Mirroring results in weird	behavior when slave goes down">tim at rabbitmq.com
+       </A><BR>
+    <I>Tue Jun 25 11:48:51 BST 2013</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="028062.html">[rabbitmq-discuss] RabbitMQ's Mirroring results in weird behavior	when slave goes down
+</A></li>
+        <LI>Next message: <A HREF="028101.html">[rabbitmq-discuss] RabbitMQ's Mirroring results in weird behavior when slave goes down
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#28075">[ date ]</a>
+              <a href="thread.html#28075">[ thread ]</a>
+              <a href="subject.html#28075">[ subject ]</a>
+              <a href="author.html#28075">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Thomas,
+
+On 25 Jun 2013, at 07:28, thomas wrote:
+
+&gt;<i> I have set up 3 cluster nodes namely <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at A</A>, <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at B</A>, <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at C</A> all running
+</I>&gt;<i> on erlang 16B and rabbitmq 3.1.1. I set net_ticktime to 2 so as to detect
+</I>&gt;<i> node failure faster.
+</I>&gt;<i> 
+</I>
+That's a bit excessive I think. Let me quote Erlang's net_kernel man page for a moment:
+
+&lt;quote&gt;
+net_ticktime = TickTime
+Specifies the net_kernel tick time. TickTime is given in seconds. Once every TickTime/4 second, all connected nodes are ticked (if anything else has been written to a node) and if nothing has been received from another node within the last four (4) tick times that node is considered to be down. This ensures that nodes which are not responding, for reasons such as hardware errors, are considered to be down.
+
+The time T, in which a node that is not responding is detected, is calculated as: MinT &lt; T &lt; MaxT where:
+
+MinT = TickTime - TickTime / 4
+MaxT = TickTime + TickTime / 4
+TickTime is by default 60 (seconds). Thus, 45 &lt; T &lt; 75 seconds.
+
+Note: All communicating nodes should have the same TickTime value specified.
+
+Note: Normally, a terminating node is detected immediately.
+
+&lt;/quote&gt;
+
+So, you're increasing the requirement for nodes to ping one another every 2 / 4 seconds, i.e., every 500 milliseconds. You're also sending 200k messages to a node and expecting HA to distribute those messages across all your nodes, which happens over the same distribution channel as that TickTime message. So I suspect you're not doing yourself any favours here. I'd suggest that *if you must* change net_ticktime (and personally I would leave it alone if I were you) then you should set it to maybe 45 seconds, but not to 2 seconds - that's almost guaranteed to end up in weird behaviour.
+
+&gt;<i> 2)For my 2nd test, it is almost identical to the 1st test except that i am
+</I>&gt;<i> using mirroring using the following command:
+</I>&gt;<i> 
+</I>&gt;<i> rabbitmqctl set_policy HA '^(?!amq\.).*' '{&quot;ha-mode&quot;: &quot;all&quot;}'&quot;
+</I>&gt;<i> 
+</I>&gt;<i> The observation is different from that of the 1st test. Shortly after I cut
+</I>&gt;<i> off the network connection from <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at B</A>, <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at A</A> which is the master
+</I>&gt;<i> handling the client's messages comes to a pause for over 15 seconds and the
+</I>&gt;<i> pause is consistent for 10 tries. The client gets stuck in basic publish
+</I>&gt;<i> when <A HREF="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">rabbit at A</A> comes to a pause.
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> I am quite puzzled about this behavior and would like to find out if that is
+</I>&gt;<i> the intended behavior for rabbit's mirroring feature? Does anyone else
+</I>&gt;<i> encounter such behavior when using mirroring? 
+</I>&gt;<i> 
+</I>
+What version of rabbit are you using? Do you have a cluster auto-recovery (i.e., autoheal) set up, and if so, which mode are you using? Some delay (which blocks publishers temporarily) is possible during failover, but also if you've got autoheal set up, then node can be restarted and waiting (for node restarts) can occur. Remember that a cluster partition is a serious problem, which rabbitmq clusters are /not/ tolerant of. If you're expecting partitions, you should consider using the federation or shovel plugins instead. Automatic cluster partition recovery is there to help, but isn't a panacea.
+
+Cheers,
+Tim
+
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20130625/1eb29152/attachment.htm">http://lists.rabbitmq.com/pipermail/rabbitmq-discuss/attachments/20130625/1eb29152/attachment.htm</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="028062.html">[rabbitmq-discuss] RabbitMQ's Mirroring results in weird behavior	when slave goes down
+</A></li>
+	<LI>Next message: <A HREF="028101.html">[rabbitmq-discuss] RabbitMQ's Mirroring results in weird behavior when slave goes down
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#28075">[ date ]</a>
+              <a href="thread.html#28075">[ thread ]</a>
+              <a href="subject.html#28075">[ subject ]</a>
+              <a href="author.html#28075">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.rabbitmq.com/cgi-bin/mailman/listinfo/rabbitmq-discuss">More information about the rabbitmq-discuss
+mailing list</a><br>
+</body></html>
